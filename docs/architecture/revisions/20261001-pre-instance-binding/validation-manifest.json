@@ -1,0 +1,213 @@
+{
+  "schemaVersion": 1,
+  "scope": "Historical handoff system description compared with approved design contract; not current deployment or Git-object proof",
+  "archify": {
+    "packageVersion": "3.0.1",
+    "skillDocumentVersion": "3.0",
+    "revision": "d5a1333d7447c866a765adac7d4d062f2f02e4d2",
+    "origin": "https://github.com/tt-a1i/archify.git",
+    "node": "v24.19.0",
+    "installedUserSkillChanged": false
+  },
+  "diagrams": [
+    {
+      "diagram": "original",
+      "type": "architecture",
+      "output": "docs/architecture/original/original.html",
+      "specification": {
+        "path": "docs/architecture/original/candidate.json",
+        "sha256": "4a26d33bbdb23ea4c45571e8b59eba69f244e9914cceb6ffa245f6ec8da7917a",
+        "bytes": 4738
+      },
+      "artifact": {
+        "sha256": "f7e72035189ff28601ebc70df00f50b5bad4acdd929ba14eaa47c82f9b0cba3d",
+        "bytes": 761373
+      },
+      "validation": {
+        "checksPassed": 9,
+        "checkCount": 9,
+        "compositionProfile": "showcase",
+        "compositionStatus": "pass",
+        "errors": 0,
+        "warnings": 0
+      },
+      "artifactProvenance": "current",
+      "repositoryProvenance": "unverified; system-description scope",
+      "browserEvidence": "failed",
+      "browserFailure": "viewer/browser-check-runtime: Chromium socket() Operation not permitted",
+      "visualReview": "browser/Viewer review not performed; separate static SVG projection inspected",
+      "screenshots": [],
+      "finalizeReceipt": "docs/architecture/original/review-3/original.finalize.json",
+      "finalizeExitCode": 1,
+      "staticDiagramVisualInspection": {
+        "status": "passed-scoped-static-inspection",
+        "pngCount": 4,
+        "officialExport": false,
+        "browserScreenshot": false
+      }
+    },
+    {
+      "diagram": "target",
+      "type": "architecture",
+      "output": "docs/architecture/target/target.html",
+      "specification": {
+        "path": "docs/architecture/target/candidate.json",
+        "sha256": "2be1b6af7bd2a478e0d87e072b1e27dc11d1c1f320f286b2c53155c26f646477",
+        "bytes": 5223
+      },
+      "artifact": {
+        "sha256": "ea57dcf551632b7e1ad596a2325935904ea4aba149cfb8aeeb5b6742bcfb1968",
+        "bytes": 763961
+      },
+      "validation": {
+        "checksPassed": 9,
+        "checkCount": 9,
+        "compositionProfile": "showcase",
+        "compositionStatus": "pass",
+        "errors": 0,
+        "warnings": 0
+      },
+      "artifactProvenance": "current",
+      "repositoryProvenance": "unverified; system-description scope",
+      "browserEvidence": "failed",
+      "browserFailure": "viewer/browser-check-runtime: Chromium socket() Operation not permitted",
+      "visualReview": "browser/Viewer review not performed; separate static SVG projection inspected",
+      "screenshots": [],
+      "finalizeReceipt": "docs/architecture/target/review-3/target.finalize.json",
+      "finalizeExitCode": 1,
+      "staticDiagramVisualInspection": {
+        "status": "passed-scoped-static-inspection",
+        "pngCount": 4,
+        "officialExport": false,
+        "browserScreenshot": false
+      }
+    },
+    {
+      "diagram": "task-lifecycle",
+      "type": "lifecycle",
+      "output": "docs/architecture/task-lifecycle/task-lifecycle.html",
+      "specification": {
+        "path": "docs/architecture/task-lifecycle/candidate.json",
+        "sha256": "e7f8bcf892b32a7f9641fcc4cac4dbdb34c72b99436831a4932b1109b3f01d33",
+        "bytes": 3706
+      },
+      "artifact": {
+        "sha256": "377d7267d2422dfa28df652a282f7dc79ec1b131c590cd7d2c807342348f9af1",
+        "bytes": 760074
+      },
+      "validation": {
+        "checksPassed": 9,
+        "checkCount": 9,
+        "compositionProfile": "showcase",
+        "compositionStatus": "pass",
+        "errors": 0,
+        "warnings": 0
+      },
+      "artifactProvenance": "current",
+      "repositoryProvenance": "unverified; system-description scope",
+      "browserEvidence": "failed",
+      "browserFailure": "viewer/browser-check-runtime: Chromium socket() Operation not permitted",
+      "visualReview": "browser/Viewer review not performed; separate static SVG projection inspected",
+      "screenshots": [],
+      "finalizeReceipt": "docs/architecture/task-lifecycle/task-lifecycle.finalize.json",
+      "finalizeExitCode": 1,
+      "staticDiagramVisualInspection": {
+        "status": "passed-scoped-static-inspection",
+        "pngCount": 4,
+        "officialExport": false,
+        "browserScreenshot": false
+      }
+    },
+    {
+      "diagram": "report-lifecycle",
+      "type": "lifecycle",
+      "output": "docs/architecture/report-lifecycle/report-lifecycle.html",
+      "specification": {
+        "path": "docs/architecture/report-lifecycle/candidate.json",
+        "sha256": "61a4587df39be2ebee520248e87d592519e48eb301b01ff8b935f86f7946f4f4",
+        "bytes": 3857
+      },
+      "artifact": {
+        "sha256": "9247431d1718c8a1e1b365da60aa0f57640a872fb9683bb42585f6cc6bc3bb4e",
+        "bytes": 760865
+      },
+      "validation": {
+        "checksPassed": 9,
+        "checkCount": 9,
+        "compositionProfile": "showcase",
+        "compositionStatus": "pass",
+        "errors": 0,
+        "warnings": 0
+      },
+      "artifactProvenance": "current",
+      "repositoryProvenance": "unverified; system-description scope",
+      "browserEvidence": "failed",
+      "browserFailure": "viewer/browser-check-runtime: Chromium socket() Operation not permitted",
+      "visualReview": "browser/Viewer review not performed; separate static SVG projection inspected",
+      "screenshots": [],
+      "finalizeReceipt": "docs/architecture/report-lifecycle/report-lifecycle.finalize.json",
+      "finalizeExitCode": 1,
+      "staticDiagramVisualInspection": {
+        "status": "passed-scoped-static-inspection",
+        "pngCount": 4,
+        "officialExport": false,
+        "browserScreenshot": false
+      }
+    }
+  ],
+  "comparison": {
+    "output": "docs/architecture/comparison.html",
+    "sha256": "538c0a2941bae4e7cf24b386209ac21310168ae73ba365b63d45b80e2e977599",
+    "bytes": 2163012,
+    "proofLevel": "authored",
+    "validation": {
+      "checksPassed": 28,
+      "checkCount": 28,
+      "baseComposition": "pass",
+      "headComposition": "pass"
+    },
+    "receipt": "docs/architecture/comparison.receipt.json",
+    "browserEvidence": "not measured",
+    "visualReview": "not performed"
+  },
+  "environmentAttempts": [
+    "Official finalize browser-check failed at Chromium ProcessSingleton local socket; sanctioned escalated retry same failure",
+    "Official visual-check against current target artifact failed; zero captures produced",
+    "Cloud Chrome rejects file: scheme; loopback HTTP navigation ERR_BLOCKED_BY_CLIENT",
+    "Public upstream clone required unavailable GitHub authentication; no fabricated origin or source proof"
+  ],
+  "notes": [
+    "Shared comparison component IDs identify logical responsibilities, not the same implementation/process or proven migrated identities",
+    "Design artifact provenance binds generated bytes only; it does not prove repository source",
+    "*.repository-draft.json retain source references for later verification and are not finalized diagrams",
+    "No renderer/test internals inspected, no full npm scripts run, no installed skill update"
+  ],
+  "staticDiagramVisualInspection": {
+    "status": "passed-scoped-static-inspection",
+    "method": "Exact generated inline SVG extracted without changing HTML; source semantic CSS variables resolved; rgba fill/stroke normalized to SVG rgb+opacity; Inkscape 1.4 rasterization; image-capable review",
+    "officialExport": false,
+    "browserScreenshot": false,
+    "widths": [
+      1440,
+      2048
+    ],
+    "themes": [
+      "light",
+      "dark"
+    ],
+    "inspectedPngs": 16,
+    "sourceHtmlUnchanged": true,
+    "observations": [
+      "No node, label or legend clipping visible in the inspected SVG-only projections",
+      "Architecture reads use consumer-to-store directions; branches do not cross unrelated opaque nodes",
+      "Lifecycle return/revision/replay paths remain distinguishable; authored crossing gaps preserved",
+      "Chinese and code identifiers are legible at both rendered widths"
+    ],
+    "limitations": [
+      "Viewer toolbar, cards, page layout, pan/zoom, focus/search, theme toggle and exports were not rendered or tested",
+      "Static font metrics, currentColor icons, node shadows and background paint may differ from a browser",
+      "Small muted relationship labels remain an actual-browser contrast/readability item"
+    ],
+    "manifest": "docs/architecture/static-inspection/derivation-manifest.json"
+  }
+}

@@ -1,0 +1,176 @@
+{
+  "kind": "noncanonical-static-svg-inspection",
+  "renderer": "Inkscape 1.4",
+  "browserProof": false,
+  "officialExport": false,
+  "derivations": [
+    {
+      "diagram": "original",
+      "theme": "light",
+      "sourceHtml": "original/original.html",
+      "sourceSha256": "f7e72035189ff28601ebc70df00f50b5bad4acdd929ba14eaa47c82f9b0cba3d",
+      "derivedSvg": "static-inspection/original/light.derived.svg",
+      "pngs": [
+        {
+          "path": "static-inspection/original/light-1440.png",
+          "width": 1440,
+          "exitCode": 0,
+          "sha256": "d7fc418979eeeb4bc7ff9cdd5b6facce5068c78a337e345bf8a44ea346325df0"
+        },
+        {
+          "path": "static-inspection/original/light-2048.png",
+          "width": 2048,
+          "exitCode": 0,
+          "sha256": "914c07c5890e7204d1b4fe6dd2535220de7657d4c99e6aa60afc75a1b9b250f7"
+        }
+      ]
+    },
+    {
+      "diagram": "original",
+      "theme": "dark",
+      "sourceHtml": "original/original.html",
+      "sourceSha256": "f7e72035189ff28601ebc70df00f50b5bad4acdd929ba14eaa47c82f9b0cba3d",
+      "derivedSvg": "static-inspection/original/dark.derived.svg",
+      "pngs": [
+        {
+          "path": "static-inspection/original/dark-1440.png",
+          "width": 1440,
+          "exitCode": 0,
+          "sha256": "d7f5a34e3b4f4643f25a2a328120f3c752990e78c449b5cb8122cfb1ca2fe8d6"
+        },
+        {
+          "path": "static-inspection/original/dark-2048.png",
+          "width": 2048,
+          "exitCode": 0,
+          "sha256": "cd3bd6b394bf4599c47a4bee169c0255286c1f88cdd318460390faea7aab0ec2"
+        }
+      ]
+    },
+    {
+      "diagram": "target",
+      "theme": "light",
+      "sourceHtml": "target/target.html",
+      "sourceSha256": "759af49407bd8288ab02f6afbde9018b9ee7ea6430e233857948b82b6026284a",
+      "derivedSvg": "static-inspection/target/light.derived.svg",
+      "pngs": [
+        {
+          "path": "static-inspection/target/light-1440.png",
+          "width": 1440,
+          "exitCode": 0,
+          "sha256": "a14090aa6ded002ec5e5e5c37005ddda56a42087f37ca46f69dc89746619abe3"
+        },
+        {
+          "path": "static-inspection/target/light-2048.png",
+          "width": 2048,
+          "exitCode": 0,
+          "sha256": "f0a20f3842ece7121c8bfb869b78faa2272b21aee07fa6f2e016ab4ef7e1a282"
+        }
+      ]
+    },
+    {
+      "diagram": "target",
+      "theme": "dark",
+      "sourceHtml": "target/target.html",
+      "sourceSha256": "759af49407bd8288ab02f6afbde9018b9ee7ea6430e233857948b82b6026284a",
+      "derivedSvg": "static-inspection/target/dark.derived.svg",
+      "pngs": [
+        {
+          "path": "static-inspection/target/dark-1440.png",
+          "width": 1440,
+          "exitCode": 0,
+          "sha256": "c922e8febfe9f029e1a3cd052ca543cee6d1cd7b774d2012997acd08dfcbbe8f"
+        },
+        {
+          "path": "static-inspection/target/dark-2048.png",
+          "width": 2048,
+          "exitCode": 0,
+          "sha256": "0dc2044b2ee67e76f0e527c9664f631a5c05008939a72b4abb74bec0ec2e888f"
+        }
+      ]
+    },
+    {
+      "diagram": "task-lifecycle",
+      "theme": "light",
+      "sourceHtml": "task-lifecycle/task-lifecycle.html",
+      "sourceSha256": "65854aef472edf894e265cbf332745a6091a1ebcfe4dafec5df58a84f082c6c3",
+      "derivedSvg": "static-inspection/task-lifecycle/light.derived.svg",
+      "pngs": [
+        {
+          "path": "static-inspection/task-lifecycle/light-1440.png",
+          "width": 1440,
+          "exitCode": 0,
+          "sha256": "954e96d58a265f6b1cfa1a01d4aa445c2b360c9229f2f7d40835502466c3ca48"
+        },
+        {
+          "path": "static-inspection/task-lifecycle/light-2048.png",
+          "width": 2048,
+          "exitCode": 0,
+          "sha256": "a507f6f6aba64f5af3d420561a130511bc3c14297c87712f5ec383d8a28a3553"
+        }
+      ]
+    },
+    {
+      "diagram": "task-lifecycle",
+      "theme": "dark",
+      "sourceHtml": "task-lifecycle/task-lifecycle.html",
+      "sourceSha256": "65854aef472edf894e265cbf332745a6091a1ebcfe4dafec5df58a84f082c6c3",
+      "derivedSvg": "static-inspection/task-lifecycle/dark.derived.svg",
+      "pngs": [
+        {
+          "path": "static-inspection/task-lifecycle/dark-1440.png",
+          "width": 1440,
+          "exitCode": 0,
+          "sha256": "be8a4255c783959bad4dc63341c933225f6262b6ad9821251425369d430cc53e"
+        },
+        {
+          "path": "static-inspection/task-lifecycle/dark-2048.png",
+          "width": 2048,
+          "exitCode": 0,
+          "sha256": "2272884abc46412349578ab7f33ba4ee9d8f1d8695942428ad758c0bb9ab165a"
+        }
+      ]
+    },
+    {
+      "diagram": "report-lifecycle",
+      "theme": "light",
+      "sourceHtml": "report-lifecycle/report-lifecycle.html",
+      "sourceSha256": "b8f17384c29e8aa41a57fd1b85d4828e41c60806567e2326841496ab53c1a7af",
+      "derivedSvg": "static-inspection/report-lifecycle/light.derived.svg",
+      "pngs": [
+        {
+          "path": "static-inspection/report-lifecycle/light-1440.png",
+          "width": 1440,
+          "exitCode": 0,
+          "sha256": "bdc31106290a5f11f26a898d6994429dd1359e28db87d80cb48b84be3080472f"
+        },
+        {
+          "path": "static-inspection/report-lifecycle/light-2048.png",
+          "width": 2048,
+          "exitCode": 0,
+          "sha256": "bc0b7f1a81902f6fb9430e995e767d733fad4df6e164a9673cd6704c06e02e69"
+        }
+      ]
+    },
+    {
+      "diagram": "report-lifecycle",
+      "theme": "dark",
+      "sourceHtml": "report-lifecycle/report-lifecycle.html",
+      "sourceSha256": "b8f17384c29e8aa41a57fd1b85d4828e41c60806567e2326841496ab53c1a7af",
+      "derivedSvg": "static-inspection/report-lifecycle/dark.derived.svg",
+      "pngs": [
+        {
+          "path": "static-inspection/report-lifecycle/dark-1440.png",
+          "width": 1440,
+          "exitCode": 0,
+          "sha256": "69bc9fe828eff5f789ec7d9f78272e10495bb8f32bb9b50cacc672a5f33ded49"
+        },
+        {
+          "path": "static-inspection/report-lifecycle/dark-2048.png",
+          "width": 2048,
+          "exitCode": 0,
+          "sha256": "854569745534964b9bf4c4cb1458c290512c0f8c66205599804704b31417989a"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "92e3cf57-0c2b-456c-9d89-29a4d4faea91",
+  "status": "current",
+  "command": "deliver",
+  "type": "lifecycle",
+  "input": "/workspace/shared/dsh-orchestration/project/docs/architecture/report-lifecycle/candidate.json",
+  "output": "/workspace/shared/dsh-orchestration/project/docs/architecture/report-lifecycle/report-lifecycle.html",
+  "specification": {
+    "sha256": "ca6711d209c90dd6f3235d25db032e49284bad8ad617e14e7fa54f67c0f2b13f",
+    "bytes": 3996
+  },
+  "artifact": {
+    "sha256": "c324dda0f0eb32a7dc329e84289bfc82e026b47ce7368736c33bd6bd2ff53e56",
+    "bytes": 761024
+  }
+}

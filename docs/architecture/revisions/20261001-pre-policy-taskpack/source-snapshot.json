@@ -1,0 +1,77 @@
+{
+  "kind": "unverified-working-tree-read-snapshot",
+  "observedAt": "2026-10-01T21:24:18.856447+00:00",
+  "repositoryProvenance": false,
+  "files": [
+    {
+      "path": "dashboard/server.mjs",
+      "sha256": "e754b21d994dcb4e5cbbcb53f48dd0642a2ceb044cf7650e06e78437c63ec41b",
+      "bytes": 7903
+    },
+    {
+      "path": "docs/architecture/sources.md",
+      "sha256": "26779f1efcf312185682e4fba7d40ebd05543909ad645f2354d8c61687ddea61",
+      "bytes": 12071
+    },
+    {
+      "path": "packages/feishu-channel/src/dsh-chat.ts",
+      "sha256": "4d97f6a6d002a315a27c531550ba0f176f206a0224203e73b98368dc844efe67",
+      "bytes": 18412
+    },
+    {
+      "path": "packages/feishu-channel/src/dsh-plugin.ts",
+      "sha256": "db153a8e1ef9a0fc711fa0cc54bec9ddfe7dab136ce6dfb2e8b4cce039f75cc5",
+      "bytes": 20805
+    },
+    {
+      "path": "packages/remote-execution/src/index.ts",
+      "sha256": "e8d654c034f391ba5d2d6ac18ed2584f098f9190c6766d4534e1a8f9ed13833c",
+      "bytes": 11016
+    },
+    {
+      "path": "packages/remote-execution/src/observation.ts",
+      "sha256": "569c2b3b7b1bd87aeb51ca04ddcc1a012ca7461f7ea865069aef3f7f83353d95",
+      "bytes": 1999
+    },
+    {
+      "path": "packages/remote-execution/src/store.ts",
+      "sha256": "443e9efc37622152534ceb126e61bec90d78c7db6e76504079d2a1a91621b7ce",
+      "bytes": 9550
+    },
+    {
+      "path": "packages/remote-execution/src/worker.ts",
+      "sha256": "fab744262c18c4c41840d6694955376efe476342ce8db354da711113f7b30fa8",
+      "bytes": 11094
+    },
+    {
+      "path": "packages/task-system/src/dsh-plugin.ts",
+      "sha256": "1a14304b6aaf1710a4772c47fd2d4fd9b1ebdda3f6995720fdaa888ad2e696c5",
+      "bytes": 59568
+    },
+    {
+      "path": "packages/task-system/src/ledger.ts",
+      "sha256": "0e0d859408fbf90a2e690e5041eae3530c7d7252e62da6e8d52f0d6c90557073",
+      "bytes": 69742
+    },
+    {
+      "path": "packages/task-system/src/observer-dsh.ts",
+      "sha256": "841a5692da0aedd9cd536da883757d4753180c3ff4af03f00c28b0479be1b55a",
+      "bytes": 4156
+    },
+    {
+      "path": "packages/task-system/src/planning.ts",
+      "sha256": "47ae3cc6943f34667fd4f0b656debf1864ef2132667e96634a3140c68f55c334",
+      "bytes": 8407
+    },
+    {
+      "path": "packages/task-system/src/workspaces.ts",
+      "sha256": "49cd8c564f5614d9c9eb4091f70d935dfbc08ce42f91b25b9a3d2a4774ea02bc",
+      "bytes": 5628
+    },
+    {
+      "path": "packages/typed-decisions/src/dsh-completion.ts",
+      "sha256": "50e901914bd870039a3b50151037ab709c3b368bbc5548364bde6062040a2e4a",
+      "bytes": 11219
+    }
+  ]
+}

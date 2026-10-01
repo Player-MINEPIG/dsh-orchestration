@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "5af61c92-57ea-41e5-a20c-51eae59a8b40",
+  "status": "current",
+  "command": "deliver",
+  "type": "lifecycle",
+  "input": "/workspace/shared/dsh-orchestration/project/docs/architecture/task-lifecycle/candidate.json",
+  "output": "/workspace/shared/dsh-orchestration/project/docs/architecture/task-lifecycle/task-lifecycle.html",
+  "specification": {
+    "sha256": "e7f8bcf892b32a7f9641fcc4cac4dbdb34c72b99436831a4932b1109b3f01d33",
+    "bytes": 3706
+  },
+  "artifact": {
+    "sha256": "377d7267d2422dfa28df652a282f7dc79ec1b131c590cd7d2c807342348f9af1",
+    "bytes": 760074
+  }
+}

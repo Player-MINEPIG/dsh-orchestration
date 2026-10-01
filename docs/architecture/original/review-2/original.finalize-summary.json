@@ -1,0 +1,64 @@
+{
+  "schemaVersion": 1,
+  "ok": false,
+  "command": "finalize",
+  "status": "fail",
+  "type": "architecture",
+  "quality": "showcase",
+  "specification": {
+    "path": "/workspace/shared/dsh-orchestration/project/docs/architecture/original/candidate.json",
+    "sha256": "b7825f5bf4a25a5104558422d5aff769fb44a4ffab7d4c504a4defb4cf0b399f",
+    "bytes": 4746
+  },
+  "artifact": {
+    "path": "/workspace/shared/dsh-orchestration/project/docs/architecture/original/original.html",
+    "sha256": "4fae3dae6f5964ec6e254c0f529cc268a9c9db0be267bae1c29a9fe7cea56df8",
+    "bytes": 761389
+  },
+  "gates": {
+    "validate": "pass",
+    "deliver": "pass",
+    "check": "pass",
+    "browser-check": "fail"
+  },
+  "failedStage": "browser-check",
+  "diagnostics": [
+    {
+      "code": "viewer/browser-check-runtime",
+      "severity": "error",
+      "message": "browser-check could not complete its Chrome inspection.",
+      "subject": {
+        "artifact": "/workspace/shared/dsh-orchestration/project/docs/architecture/original/original.html"
+      },
+      "evidence": {
+        "reason": "Chrome DevTools read pipe failed: stream ended\nChrome process: still running.\nChrome stderr:\n[13:13:1002/060655.091950:ERROR:third_party/crashpad/crashpad/util/file/file_io_posix.cc:208] open /home/agent/.config/chromium/Crash Reports/settings.dat: Read-only file system (30)\n[13:13:1002/060655.092013:ERROR:third_party/crashpad/crashpad/util/file/file_io_posix.cc:208] open /home/agent/.config/chromium/Crash Reports/settings.dat: Read-only file system (30)\n[13:13:1002/060655.146599:FATAL:chrome/browser/process_singleton_posix.cc:297] Check failed: . socket() failed: Operation not permitted (1)\n[1002/060655.146769:ERROR:third_party/crashpad/crashpad/util/linux/scoped_ptrace_attach.cc:27] ptrace: Operation not permitted (1)\nChrome transport: Node v24.19.0, libuv 1.52.1, linux; pid=13, exitCode=null, signalCode=null.\nChrome read pipe: readable=false, ended=true, destroyed=false, receivedBytes=0, messages=0, bufferedBytes=0.\nChrome write pipe: writable=true, ended=false, destroyed=false, completedWrites=1, writtenBytes=50, bufferedBytes=0."
+      },
+      "supportedFixes": [
+        "resolve the reported Chrome inspection error, then rerun browser-check"
+      ]
+    }
+  ],
+  "diagnosticSummary": {
+    "total": 1,
+    "shown": 1,
+    "truncated": false
+  },
+  "evidence": {
+    "receipt": "/workspace/shared/dsh-orchestration/project/docs/architecture/original/review-2/original.finalize.json",
+    "summaryReceipt": "/workspace/shared/dsh-orchestration/project/docs/architecture/original/review-2/original.finalize-summary.json",
+    "browserCheckReceipt": "/workspace/shared/dsh-orchestration/project/docs/architecture/original/review-2/original.browser-check.json"
+  },
+  "update": {
+    "status": "unavailable",
+    "installedVersion": null,
+    "availableVersion": null,
+    "releaseNotes": null,
+    "checkedAt": null,
+    "source": null,
+    "noticeRequired": false,
+    "noticeText": null,
+    "reason": "cache-valid"
+  },
+  "visualReview": "not-requested",
+  "durationMs": 654
+}

@@ -1,0 +1,13 @@
+PASS default tasks and sidebar count exclude dismissed work
+PASS a newly appended report does not make dismissed work reappear
+PASS explicit opt-in shows dismissed label and retained lifecycle
+PASS opt-in and search compose
+PASS deep-linked history stays complete and clearly curated
+PASS global normal report list hides both old and newly appended reports
+PASS global opt-in restores all report records and labels their task
+PASS global run list observes the same scope
+PASS opt-in keeps historical execution
+PASS schedule list hides excluded task associations
+PASS opt-in keeps schedule record visible
+PASS view changes never mutate source curation or timestamps
+{"passed":12,"total":12,"method":"DOM-only; no visual acceptance claim"}

@@ -1,0 +1,242 @@
+{
+  "schema_version": 2,
+  "diagram_type": "lifecycle",
+  "meta": {
+    "title": "报告与修订生命周期 · 追加保存（设计约定）",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "output": "docs/architecture/report-lifecycle/report-lifecycle.html"
+  },
+  "lanes": [
+    {
+      "id": "main",
+      "label": "报告与版本"
+    },
+    {
+      "id": "review",
+      "label": "追加证据"
+    },
+    {
+      "id": "terminal",
+      "label": "请求处理结果"
+    }
+  ],
+  "states": [
+    {
+      "id": "author",
+      "type": "start",
+      "label": "形成报告 / note",
+      "sublabel": "task / run / session 来源",
+      "lane": "main",
+      "col": 0,
+      "sources": [
+        {
+          "path": "packages/task-system/src/ledger.ts",
+          "line": 1110,
+          "label": "note；本地源码，未通过 Git 来源门"
+        },
+        {
+          "path": "examples/legacy-task-pack/index.mjs",
+          "line": 150,
+          "label": "prepare / finalized artifact；本地源码，未通过 Git 来源门"
+        }
+      ]
+    },
+    {
+      "id": "identity",
+      "type": "decision",
+      "label": "检查身份 / 幂等",
+      "sublabel": "command ID 与内容",
+      "lane": "main",
+      "col": 1,
+      "sources": [
+        {
+          "path": "packages/task-system/src/ledger.ts",
+          "line": 317,
+          "label": "command；本地源码，未通过 Git 来源门"
+        }
+      ]
+    },
+    {
+      "id": "append",
+      "type": "active",
+      "label": "追加不可变记录",
+      "sublabel": "来源 · revision · artifact",
+      "lane": "main",
+      "col": 2,
+      "sources": [
+        {
+          "path": "packages/task-system/src/ledger.ts",
+          "line": 1311,
+          "label": "appendReport；本地源码，未通过 Git 来源门"
+        },
+        {
+          "path": "packages/task-system/src/ledger.ts",
+          "line": 707,
+          "label": "newRun；本地源码，未通过 Git 来源门"
+        }
+      ]
+    },
+    {
+      "id": "view",
+      "type": "neutral",
+      "label": "更新当前视图",
+      "sublabel": "历史仍完整可查",
+      "lane": "main",
+      "col": 3,
+      "sources": [
+        {
+          "path": "packages/task-system/src/ledger.ts",
+          "line": 2532,
+          "label": "snapshot；本地源码，未通过 Git 来源门"
+        }
+      ]
+    },
+    {
+      "id": "review",
+      "type": "success",
+      "label": "复盘与追溯",
+      "sublabel": "跨 run / session 阅读",
+      "lane": "main",
+      "col": 4,
+      "sources": [
+        {
+          "path": "packages/task-system/src/ledger.ts",
+          "line": 2473,
+          "label": "history；本地源码，未通过 Git 来源门"
+        }
+      ]
+    },
+    {
+      "id": "correction",
+      "type": "active",
+      "label": "形成新修订",
+      "sublabel": "明确 previousReportId",
+      "lane": "review",
+      "col": 2,
+      "sources": [
+        {
+          "path": "packages/task-system/src/ledger.ts",
+          "line": 1238,
+          "label": "report；本地源码，未通过 Git 来源门"
+        }
+      ]
+    },
+    {
+      "id": "replay",
+      "type": "success",
+      "label": "返回原回执",
+      "sublabel": "精确相同请求",
+      "lane": "terminal",
+      "col": 1,
+      "sources": [
+        {
+          "path": "packages/task-system/src/ledger.ts",
+          "line": 317,
+          "label": "command；本地源码，未通过 Git 来源门"
+        }
+      ]
+    },
+    {
+      "id": "conflict",
+      "type": "failure",
+      "label": "拒绝冲突",
+      "sublabel": "同 ID 不同内容",
+      "lane": "terminal",
+      "col": 2,
+      "sources": [
+        {
+          "path": "packages/task-system/src/ledger.ts",
+          "line": 317,
+          "label": "command；本地源码，未通过 Git 来源门"
+        }
+      ]
+    }
+  ],
+  "transitions": [
+    {
+      "id": "author_identity",
+      "from": "author",
+      "to": "identity",
+      "label": "提交"
+    },
+    {
+      "id": "identity_append",
+      "from": "identity",
+      "to": "append",
+      "label": "新内容"
+    },
+    {
+      "id": "append_view",
+      "from": "append",
+      "to": "view",
+      "label": "投影"
+    },
+    {
+      "id": "view_review",
+      "from": "view",
+      "to": "review",
+      "label": "查询"
+    },
+    {
+      "id": "view_correction",
+      "from": "view",
+      "to": "correction",
+      "label": "修正"
+    },
+    {
+      "id": "correction_append",
+      "from": "correction",
+      "to": "append",
+      "label": "追加"
+    },
+    {
+      "id": "identity_replay",
+      "from": "identity",
+      "to": "replay",
+      "label": "相同重放"
+    },
+    {
+      "id": "identity_conflict",
+      "from": "identity",
+      "to": "conflict",
+      "label": "冲突"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "追加报告与排队备注",
+      "items": [
+        "同正文不同身份分别保存；修订关联旧报告；工件保留 digest / bytes",
+        "note 先成为历史报告，再在下一 run 事务中进入 contextNotes；不授予新权限"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "证据与权威 settlement",
+      "items": [
+        "迟到 / 失败 / 取消证据可追加；不能逆转权威终态",
+        "submit 校验 executionId / node / fence / lease 与后代 quiet window",
+        "结果、报告追加、Feishu 投递回执分别记录"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "可选 Task Pack 报告管线",
+      "items": [
+        "显式 readers → native prepare → finalized artifact → task_settle",
+        "语义校验器由可信代码注册；核心验证 schema / payload / artifact 实际字节",
+        "schema Feishu renderer 只消费账本报告；prepare 不提前完成执行"
+      ]
+    },
+    {
+      "dot": "slate",
+      "title": "同源查询与证据边界",
+      "items": [
+        "dashboard 读取同账本 / 明确快照并显示来源时间与 stale",
+        "sources.md 记录本地工作树映射；Git 来源门与浏览器验收尚未通过"
+      ]
+    }
+  ]
+}

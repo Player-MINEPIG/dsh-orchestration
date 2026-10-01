@@ -1,0 +1,16 @@
+# Merge explicitly into a DSH host already providing agents, agentLoop,
+# sessions, sessionPersistence, tools, systemPrompt and an enabled feishuChannel.
+# Select an adapter/model already registered in that host; no credentials here.
+- insert:
+    - id: feishu-chat
+      name: '@dsh-task/feishu-channel/dsh-chat'
+      config:
+        enabled: true
+        databasePath: !!js "dshHomePath('feishu-channel', 'chat.sqlite')"
+        provider: YOUR_EXISTING_PROVIDER
+        model: YOUR_EXISTING_MODEL
+        reasoningEffort: ''
+        allowedTools: []
+        taskIntegration: false
+        plannerTools: []
+        timeoutMs: 110000

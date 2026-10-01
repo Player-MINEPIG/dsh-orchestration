@@ -1,0 +1,10 @@
+- id: task-system
+  config:
+    databasePath: !!js "process.env.DSH_TASK_DATABASE || dshHomePath('task-system', 'tasks.sqlite')"
+    nodeId: !!js "process.env.DSH_TASK_NODE_ID || 'local'"
+    role: executor
+    keepAlive: true
+    maintenanceIntervalMs: 1000
+    leaseTtlMs: 60000
+    schedulerEnabled: false
+    executionTools: []

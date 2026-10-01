@@ -1,0 +1,84 @@
+import http from 'node:http';
+import {readFile} from 'node:fs/promises';
+import {fileURLToPath,pathToFileURL} from 'node:url';
+import path from 'node:path';
+
+const HERE=path.dirname(fileURLToPath(import.meta.url));
+const PUBLIC=path.join(HERE,'public');
+const STATIC=new Map([['','index.html'],['index.html','index.html'],['app.js','app.js'],['model.js','model.js'],['styles.css','styles.css'],['favicon.svg','favicon.svg']]);
+const TYPES={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.svg':'image/svg+xml'};
+const LOOPBACK=new Set(['127.0.0.1','::1','::ffff:127.0.0.1']);
+const PRIVATE_KEYS=/password|passwd|secret|token|api.?key|authorization|cookie|system.?prompt|chain.?of.?thought|private.?notes/i;
+const normalBase=value=>{const raw=value||'/';if(!/^\/[a-zA-Z0-9/_-]*$/.test(raw)||raw.includes('//'))throw new Error('basePath must be a simple absolute URL path');return raw==='/'?'/':raw.replace(/\/$/,'')+'/';};
+function redact(value){if(Array.isArray(value))return value.map(redact);if(value&&typeof value==='object')return Object.fromEntries(Object.entries(value).filter(([key])=>!PRIVATE_KEYS.test(key)).map(([key,item])=>[key,redact(item)]));return value;}
+function pick(record,fields){return Object.fromEntries(fields.filter(key=>record[key]!==undefined).map(key=>[key,record[key]]));}
+/** Keep the shared query shape; omit operational credentials, raw settings, and unstructured event payloads. */
+export function dashboardSnapshot(source){
+  return {
+    schemaVersion:source.schemaVersion,generatedAt:source.generatedAt,
+    source:pick(source.source,['kind','label','observedAt','staleAfterMs']),
+    tasks:(source.tasks||[]).map(x=>({...pick(x,['taskId','title','description','state','kind','createdAt','updatedAt','parentTaskId','workspaceId','tags','admissionState','admissionRevision']),...(x.source?{source:pick(x.source,['observedAt','importedAt','originalCreatedAt','label'])}:{})})),
+    runs:(source.runs||[]).map(x=>({...pick(x,['runId','taskId','state','createdAt','updatedAt','sessionIds','outcome','occurrenceId','cancellationRequested']),...(x.route?{route:pick(x.route,['nodeId','provider','model','reasoningEffort','workspaceId','requiredCapabilities'])}:{}),configuration:{}})),
+    reports:(source.reports||[]).map(x=>pick(x,['reportId','taskId','runId','attemptId','sessionId','revision','previousReportId','title','body','createdAt','recordedAt','artifactIds','kind'])),
+    artifacts:(source.artifacts||[]).map(x=>pick(x,['artifactId','taskId','reportId','name','mediaType','uri','sha256','bytes','createdAt','finalized'])),
+    templates:(source.templates||[]).map(x=>({...pick(x,['templateId','version','name','description']),inputSchema:redact(x.inputSchema),defaults:{},resultContract:{}})),
+    events:(source.events||[]).map(x=>({...pick(x,['eventId','taskId','runId','type','at']),detail:x.detail&&typeof x.detail==='object'?pick(x.detail,['summary','message','title']):{}})),
+    ...(Array.isArray(source.workspaces)?{workspaces:source.workspaces.map(x=>pick(x,['workspaceId','nodeId','path','label','state','createdAt']))}:{}),
+    ...(Array.isArray(source.schedules)?{schedules:source.schedules.map(x=>pick(x,['scheduleId','taskId','templateId','templateVersion','enabled','intervalMs','nextDueAt','overlap']))}:{})
+  };
+}
+function securityHeaders(res){
+ res.setHeader('Cache-Control','no-store');res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Referrer-Policy','no-referrer');
+ res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'self'");
+ res.setHeader('Permissions-Policy','camera=(), microphone=(), geolocation=()');
+}
+function send(res,code,body,type='text/plain; charset=utf-8',method='GET'){res.writeHead(code,{'Content-Type':type});res.end(method==='HEAD'?undefined:body);}
+/**
+ * Portable Node handler for DSH/another authenticated host. The default is local-only.
+ * authorize(req) must validate the host's existing session before returning true.
+ * No token creation, credential persistence, mutation, or database of its own.
+ */
+export function createDashboardHandler({snapshot,basePath='/',authorize,accessLabel='云电脑本地视图',accessDescription='只读 · 不对公网开放',refreshIntervalMs=15000}={}){
+ if(typeof snapshot!=='function')throw new Error('snapshot callback is required');
+ const base=normalBase(basePath);
+ return async(req,res)=>{
+  securityHeaders(res);
+  try{
+   if(authorize){if(!(await authorize(req))){send(res,401,'Authentication required');return;}}
+   else{
+    const hostname=(req.headers.host||'').toLowerCase().replace(/:\d+$/,'');
+    if(!LOOPBACK.has(req.socket.remoteAddress)||!['127.0.0.1','localhost','[::1]'].includes(hostname)){send(res,403,'Local access only');return;}
+   }
+   if(!['GET','HEAD'].includes(req.method)){res.setHeader('Allow','GET, HEAD');send(res,405,'Read-only dashboard');return;}
+   let pathname;
+   try{pathname=new URL(req.url,'http://localhost').pathname;}catch{send(res,400,'Invalid URL');return;}
+   if(base!=='/'&&pathname===base.slice(0,-1)){res.writeHead(308,{Location:base});res.end();return;}
+   if(!pathname.startsWith(base)){send(res,404,'Not found');return;}
+   const relative=pathname.slice(base.length);
+   if(relative==='api/health'){send(res,200,JSON.stringify({ok:true,readOnly:true}),'application/json; charset=utf-8',req.method);return;}
+   if(relative==='api/snapshot'){send(res,200,JSON.stringify(dashboardSnapshot(await snapshot())),'application/json; charset=utf-8',req.method);return;}
+   if(relative==='config.js'){
+    const config={apiBase:base+'api',refreshIntervalMs,title:'DSH · 任务看板',accessLabel,accessDescription};
+    send(res,200,`window.DSH_DASHBOARD_CONFIG=Object.freeze(${JSON.stringify(config).replace(/</g,'\\u003c')});`,'text/javascript; charset=utf-8',req.method);return;
+   }
+   const asset=STATIC.get(relative);if(!asset){send(res,404,'Not found');return;}
+   send(res,200,await readFile(path.join(PUBLIC,asset)),TYPES[path.extname(asset)],req.method);
+  }catch(error){console.error('[dashboard] Task data source unavailable');if(!res.headersSent)send(res,503,JSON.stringify({error:'Task data source unavailable'}),'application/json; charset=utf-8');else res.end();}
+ };
+}
+export function createDashboardServer(options){return http.createServer(createDashboardHandler(options));}
+
+async function main(){
+ const args=process.argv.slice(2),argument=(name,fallback)=>{const index=args.indexOf(name);return index<0?fallback:args[index+1];};
+ const ledgerPath=path.resolve(argument('--ledger',path.join(HERE,'../.runtime/tasks.sqlite')));
+ const port=Number(argument('--port','4317'));if(!Number.isInteger(port)||port<1||port>65535)throw new Error('Invalid port');
+ const basePath=argument('--base-path','/');normalBase(basePath);
+ if(args.includes('--host'))throw new Error('Standalone dashboard is loopback-only. Use an authenticated host adapter for deployment.');
+ const {TaskLedger}=await import('../packages/task-system/dist/index.js');
+ const ledger=TaskLedger.open(ledgerPath,{readOnly:true});
+ const server=createDashboardServer({snapshot:()=>ledger.snapshot(),basePath});
+ server.listen(port,'127.0.0.1',()=>console.log(`DSH task dashboard: http://127.0.0.1:${port}${normalBase(basePath)} (read-only, loopback-only)`));
+ let closing=false;const close=()=>{if(closing)return;closing=true;server.close(()=>{ledger.close?.();process.exit(0);});server.closeIdleConnections();};
+ process.on('SIGTERM',close);process.on('SIGINT',close);server.on('error',error=>{console.error(error.message);ledger.close?.();process.exitCode=1;});
+}
+if(process.argv[1]&&import.meta.url===pathToFileURL(path.resolve(process.argv[1])).href)main().catch(error=>{console.error(`Dashboard could not start: ${error.message}`);process.exitCode=1;});

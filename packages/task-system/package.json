@@ -7,7 +7,15 @@
   "exports": {
     ".": "./dist/index.js",
     "./plugin": "./dist/dsh-plugin.js",
-    "./contracts": "./dist/contracts.js"
+    "./contracts": "./dist/contracts.js",
+    "./planning": "./dist/planning.js",
+    "./task-pack": "./dist/task-pack/index.mjs",
+    "./task-pack/plugin": "./dist/task-pack/plugin.mjs",
+    "./task-pack/readers": "./dist/task-pack/readers/index.mjs",
+    "./task-pack/quota": "./dist/task-pack/quota/index.mjs",
+    "./task-pack/quota/plugin": "./dist/task-pack/quota/plugin.mjs",
+    "./task-pack/compatibility": "./dist/task-pack/compatibility/index.mjs",
+    "./approval-bridge": "./dist/approval-bridge.js"
   },
   "types": "./dist/index.d.ts",
   "files": [
@@ -24,7 +32,7 @@
     "node": ">=24.0.0"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node ../../scripts/build-task-pack.mjs",
     "test": "node --test test/*.test.mjs"
   },
   "peerDependencies": {
@@ -33,7 +41,10 @@
     "@deepseek-ai/dsh-tools": "0.2.0-rc.2",
     "@deepseek-ai/dsh-agent": "0.2.0-rc.2",
     "@deepseek-ai/dsh-session": "0.2.0-rc.2",
-    "@deepseek-ai/dsh-llm": "0.2.0-rc.2"
+    "@deepseek-ai/dsh-llm": "0.2.0-rc.2",
+    "@dsh-task/typed-decisions": "0.1.0",
+    "@deepseek-ai/dsh-session-projection": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-user-approval": "0.2.0-rc.2"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "4.0.4",
@@ -41,6 +52,25 @@
     "@deepseek-ai/dsh-tools": "0.2.0-rc.2",
     "@deepseek-ai/dsh-agent": "0.2.0-rc.2",
     "@deepseek-ai/dsh-session": "0.2.0-rc.2",
-    "@deepseek-ai/dsh-llm": "0.2.0-rc.2"
+    "@deepseek-ai/dsh-llm": "0.2.0-rc.2",
+    "@dsh-task/typed-decisions": "0.1.0",
+    "@deepseek-ai/dsh-session-projection": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-user-approval": "0.2.0-rc.2"
+  },
+  "dependencies": {
+    "ajv": "8.17.1",
+    "cron-parser": "5.4.0",
+    "zod": "4.6.5"
+  },
+  "peerDependenciesMeta": {
+    "@dsh-task/typed-decisions": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-session-projection": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-user-approval": {
+      "optional": true
+    }
   }
 }

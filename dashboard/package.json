@@ -1,0 +1,11 @@
+{
+  "name": "@dsh-orchestration/dashboard",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Portable read-only dashboard for the shared DSH Task/Run/Report contract",
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node --test tests/*.test.mjs"
+  }
+}

@@ -1,0 +1,1 @@
+Historical bytes retained before the 2026-10-01 execution-instance update. Prior receipts apply only to these prior hashes; consult the current ../../validation-manifest.json for delivery status. Original source notes are in sources.md.

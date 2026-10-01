@@ -1,0 +1,12 @@
+# Apply over a custom base-backed profile after installing @dsh-task/task-system.
+# Do not derive this persistent host from the one-shot headless profile.
+- id: task-system
+  config:
+    databasePath: !!js "process.env.DSH_TASK_DATABASE || dshHomePath('task-system', 'tasks.sqlite')"
+    nodeId: !!js "process.env.DSH_TASK_NODE_ID || 'local'"
+    role: both
+    keepAlive: true
+    maintenanceIntervalMs: 1000
+    leaseTtlMs: 60000
+    schedulerEnabled: true
+    executionTools: []

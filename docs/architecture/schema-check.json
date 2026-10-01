@@ -1,0 +1,29 @@
+{
+  "check": "JSON Schema only, not Archify showcase/provenance/geometry/browser acceptance",
+  "results": [
+    {
+      "candidate": "docs/architecture/original/candidate.json",
+      "schema": "architecture",
+      "status": "pass",
+      "errors": []
+    },
+    {
+      "candidate": "docs/architecture/report-lifecycle/candidate.json",
+      "schema": "lifecycle",
+      "status": "pass",
+      "errors": []
+    },
+    {
+      "candidate": "docs/architecture/target/candidate.json",
+      "schema": "architecture",
+      "status": "pass",
+      "errors": []
+    },
+    {
+      "candidate": "docs/architecture/task-lifecycle/candidate.json",
+      "schema": "lifecycle",
+      "status": "pass",
+      "errors": []
+    }
+  ]
+}

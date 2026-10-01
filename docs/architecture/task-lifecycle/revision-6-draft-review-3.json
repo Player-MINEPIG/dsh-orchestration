@@ -1,0 +1,247 @@
+{
+  "schemaVersion": 1,
+  "ok": false,
+  "command": "validate",
+  "stage": "render",
+  "type": "lifecycle",
+  "input": "/workspace/shared/dsh-orchestration/project/docs/architecture/task-lifecycle/candidate.json",
+  "error": "Lifecycle layout validation failed:\n- [composition/label-route-clearance] showcase lifecycle label \"请求批准\" on transitions[7] id \"active_approval\" \"active\" -> \"approval\" label \"请求批准\" is 1.4px from transitions[4] id \"active_wait\" \"active\" -> \"wait\" label \"待复核\" segment 0 [601, 120] -> [601, 182] (label rect [548, 144, 51, 16]; minimum 4px) — if the authored labelAt are not required by the user, remove them so the renderer can re-plan; otherwise preserve that intent and adjust labelAt, labelDx, labelDy, or labelSegment; otherwise adjust the other relationship route/via/channel.\n- [composition/label-route-clearance] showcase lifecycle label \"请求批准\" on transitions[7] id \"active_approval\" \"active\" -> \"approval\" label \"请求批准\" is 0px from transitions[8] id \"approval_active\" \"approval\" -> \"active\" label \"一次 / 拒绝\" segment 0 [589, 244] -> [589, 120] (label rect [548, 144, 51, 16]; minimum 4px) — if the authored labelAt are not required by the user, remove them so the renderer can re-plan; otherwise preserve that intent and adjust labelAt, labelDx, labelDy, or labelSegment; otherwise adjust the other relationship route/via/channel.\n- [composition/label-route-clearance] showcase lifecycle label \"请求批准\" on transitions[7] id \"active_approval\" \"active\" -> \"approval\" label \"请求批准\" is 0px from transitions[9] id \"active_retry\" \"active\" -> \"safe_retry\" label \"零工具暂态\" segment 0 [560.5, 120] -> [560.5, 226] (label rect [548, 144, 51, 16]; minimum 4px) — if the authored labelAt are not required by the user, remove them so the renderer can re-plan; otherwise preserve that intent and adjust labelAt, labelDx, labelDy, or labelSegment; otherwise adjust the other relationship route/via/channel.\n- [composition/label-route-clearance] showcase lifecycle label \"请求批准\" on transitions[7] id \"active_approval\" \"active\" -> \"approval\" label \"请求批准\" is 1.4px from transitions[10] id \"retry_active\" \"safe_retry\" -> \"active\" label \"退避 / 再 claim\" segment 4 [547, 204] -> [547, 120] (label rect [548, 144, 51, 16]; minimum 4px) — if the authored labelAt are not required by the user, remove them so the renderer can re-plan; otherwise preserve that intent and adjust labelAt, labelDx, labelDy, or labelSegment; otherwise adjust the other relationship route/via/channel.",
+  "diagnostics": [
+    {
+      "code": "composition/label-route-clearance",
+      "severity": "error",
+      "message": "[composition/label-route-clearance] showcase lifecycle label \"请求批准\" on transitions[7] id \"active_approval\" \"active\" -> \"approval\" label \"请求批准\" is 1.4px from transitions[4] id \"active_wait\" \"active\" -> \"wait\" label \"待复核\" segment 0 [601, 120] -> [601, 182] (label rect [548, 144, 51, 16]; minimum 4px) — if the authored labelAt are not required by the user, remove them so the renderer can re-plan; otherwise preserve that intent and adjust labelAt, labelDx, labelDy, or labelSegment; otherwise adjust the other relationship route/via/channel.",
+      "subject": {
+        "diagramType": "lifecycle",
+        "collection": "transitions",
+        "index": 7,
+        "id": "active_approval",
+        "from": "active",
+        "to": "approval"
+      },
+      "evidence": {
+        "label": "请求批准",
+        "otherRelationship": {
+          "diagramType": "lifecycle",
+          "collection": "transitions",
+          "index": 4,
+          "id": "active_wait",
+          "from": "active",
+          "to": "wait"
+        },
+        "segmentIndex": 0,
+        "clearancePx": 1.4,
+        "minimumPx": 4,
+        "labelRect": {
+          "relation": {
+            "id": "active_approval",
+            "from": "active",
+            "to": "approval",
+            "label": "请求批准",
+            "variant": "security",
+            "labelAt": [
+              574,
+              155
+            ]
+          },
+          "relationIndex": 7,
+          "label": "请求批准",
+          "x": 548.4,
+          "y": 144,
+          "width": 51.2,
+          "height": 16,
+          "lx": 574,
+          "ly": 155
+        },
+        "from": [
+          601,
+          120
+        ],
+        "to": [
+          601,
+          182
+        ]
+      },
+      "supportedFixes": [
+        "if the authored labelAt are not required by the user, remove them so the renderer can re-plan; otherwise preserve that intent and adjust labelAt, labelDx, labelDy, or labelSegment; otherwise adjust the other relationship route/via/channel"
+      ]
+    },
+    {
+      "code": "composition/label-route-clearance",
+      "severity": "error",
+      "message": "[composition/label-route-clearance] showcase lifecycle label \"请求批准\" on transitions[7] id \"active_approval\" \"active\" -> \"approval\" label \"请求批准\" is 0px from transitions[8] id \"approval_active\" \"approval\" -> \"active\" label \"一次 / 拒绝\" segment 0 [589, 244] -> [589, 120] (label rect [548, 144, 51, 16]; minimum 4px) — if the authored labelAt are not required by the user, remove them so the renderer can re-plan; otherwise preserve that intent and adjust labelAt, labelDx, labelDy, or labelSegment; otherwise adjust the other relationship route/via/channel.",
+      "subject": {
+        "diagramType": "lifecycle",
+        "collection": "transitions",
+        "index": 7,
+        "id": "active_approval",
+        "from": "active",
+        "to": "approval"
+      },
+      "evidence": {
+        "label": "请求批准",
+        "otherRelationship": {
+          "diagramType": "lifecycle",
+          "collection": "transitions",
+          "index": 8,
+          "id": "approval_active",
+          "from": "approval",
+          "to": "active"
+        },
+        "segmentIndex": 0,
+        "clearancePx": 0,
+        "minimumPx": 4,
+        "labelRect": {
+          "relation": {
+            "id": "active_approval",
+            "from": "active",
+            "to": "approval",
+            "label": "请求批准",
+            "variant": "security",
+            "labelAt": [
+              574,
+              155
+            ]
+          },
+          "relationIndex": 7,
+          "label": "请求批准",
+          "x": 548.4,
+          "y": 144,
+          "width": 51.2,
+          "height": 16,
+          "lx": 574,
+          "ly": 155
+        },
+        "from": [
+          589,
+          244
+        ],
+        "to": [
+          589,
+          120
+        ]
+      },
+      "supportedFixes": [
+        "if the authored labelAt are not required by the user, remove them so the renderer can re-plan; otherwise preserve that intent and adjust labelAt, labelDx, labelDy, or labelSegment; otherwise adjust the other relationship route/via/channel"
+      ]
+    },
+    {
+      "code": "composition/label-route-clearance",
+      "severity": "error",
+      "message": "[composition/label-route-clearance] showcase lifecycle label \"请求批准\" on transitions[7] id \"active_approval\" \"active\" -> \"approval\" label \"请求批准\" is 0px from transitions[9] id \"active_retry\" \"active\" -> \"safe_retry\" label \"零工具暂态\" segment 0 [560.5, 120] -> [560.5, 226] (label rect [548, 144, 51, 16]; minimum 4px) — if the authored labelAt are not required by the user, remove them so the renderer can re-plan; otherwise preserve that intent and adjust labelAt, labelDx, labelDy, or labelSegment; otherwise adjust the other relationship route/via/channel.",
+      "subject": {
+        "diagramType": "lifecycle",
+        "collection": "transitions",
+        "index": 7,
+        "id": "active_approval",
+        "from": "active",
+        "to": "approval"
+      },
+      "evidence": {
+        "label": "请求批准",
+        "otherRelationship": {
+          "diagramType": "lifecycle",
+          "collection": "transitions",
+          "index": 9,
+          "id": "active_retry",
+          "from": "active",
+          "to": "safe_retry"
+        },
+        "segmentIndex": 0,
+        "clearancePx": 0,
+        "minimumPx": 4,
+        "labelRect": {
+          "relation": {
+            "id": "active_approval",
+            "from": "active",
+            "to": "approval",
+            "label": "请求批准",
+            "variant": "security",
+            "labelAt": [
+              574,
+              155
+            ]
+          },
+          "relationIndex": 7,
+          "label": "请求批准",
+          "x": 548.4,
+          "y": 144,
+          "width": 51.2,
+          "height": 16,
+          "lx": 574,
+          "ly": 155
+        },
+        "from": [
+          560.5,
+          120
+        ],
+        "to": [
+          560.5,
+          226
+        ]
+      },
+      "supportedFixes": [
+        "if the authored labelAt are not required by the user, remove them so the renderer can re-plan; otherwise preserve that intent and adjust labelAt, labelDx, labelDy, or labelSegment; otherwise adjust the other relationship route/via/channel"
+      ]
+    },
+    {
+      "code": "composition/label-route-clearance",
+      "severity": "error",
+      "message": "[composition/label-route-clearance] showcase lifecycle label \"请求批准\" on transitions[7] id \"active_approval\" \"active\" -> \"approval\" label \"请求批准\" is 1.4px from transitions[10] id \"retry_active\" \"safe_retry\" -> \"active\" label \"退避 / 再 claim\" segment 4 [547, 204] -> [547, 120] (label rect [548, 144, 51, 16]; minimum 4px) — if the authored labelAt are not required by the user, remove them so the renderer can re-plan; otherwise preserve that intent and adjust labelAt, labelDx, labelDy, or labelSegment; otherwise adjust the other relationship route/via/channel.",
+      "subject": {
+        "diagramType": "lifecycle",
+        "collection": "transitions",
+        "index": 7,
+        "id": "active_approval",
+        "from": "active",
+        "to": "approval"
+      },
+      "evidence": {
+        "label": "请求批准",
+        "otherRelationship": {
+          "diagramType": "lifecycle",
+          "collection": "transitions",
+          "index": 10,
+          "id": "retry_active",
+          "from": "safe_retry",
+          "to": "active"
+        },
+        "segmentIndex": 4,
+        "clearancePx": 1.4,
+        "minimumPx": 4,
+        "labelRect": {
+          "relation": {
+            "id": "active_approval",
+            "from": "active",
+            "to": "approval",
+            "label": "请求批准",
+            "variant": "security",
+            "labelAt": [
+              574,
+              155
+            ]
+          },
+          "relationIndex": 7,
+          "label": "请求批准",
+          "x": 548.4,
+          "y": 144,
+          "width": 51.2,
+          "height": 16,
+          "lx": 574,
+          "ly": 155
+        },
+        "from": [
+          547,
+          204
+        ],
+        "to": [
+          547,
+          120
+        ]
+      },
+      "supportedFixes": [
+        "if the authored labelAt are not required by the user, remove them so the renderer can re-plan; otherwise preserve that intent and adjust labelAt, labelDx, labelDy, or labelSegment; otherwise adjust the other relationship route/via/channel"
+      ]
+    }
+  ]
+}

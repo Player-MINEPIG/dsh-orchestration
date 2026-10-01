@@ -1,0 +1,149 @@
+import { randomUUID } from 'node:crypto'
+import type { KeyObject } from 'node:crypto'
+import { assertEndpoint } from './http.js'
+import { byteLimit, DEFAULT_MAX_BODY_BYTES, DEFAULT_MAX_RESPONSE_BYTES, digest, insist, isRecord, signEnvelope } from './protocol.js'
+import type { Json, Operation } from './protocol.js'
+import type { CommandReceipt, RecoveryStore } from './store.js'
+import type { ApprovalOffer, ApprovalRequest, Attempt, CapturedText, Claim, DelegationInput, HeartbeatInput, NodeStatus, LedgerPort, LeaseRef, ObservationCandidate, ObservationInput, Receipt, Run, SafeRetryWitness, Settlement, SettlementView, Task, TaskHistory, TaskReportInput } from './ports.js'
+
+export interface ClientOptions { endpoint: string; audience: string; nodeId: string; keyId: string; privateKey: KeyObject; store: RecoveryStore; allowLoopbackHttp?: boolean; timeoutMs?: number; maxBodyBytes?: number; maxResponseBytes?: number; now?: () => number; fetch?: typeof fetch }
+/** Existing key material is injected by the host. This package never generates or saves credentials. */
+export class RemoteClient {
+  private options: ClientOptions
+  private busy = false
+  private tail: Promise<unknown> = Promise.resolve()
+  private lifetime = new AbortController()
+  private active = true
+  private endpoint: URL
+  constructor(options: ClientOptions) {
+    this.options = { ...options,maxBodyBytes: byteLimit(options.maxBodyBytes,DEFAULT_MAX_BODY_BYTES),maxResponseBytes: byteLimit(options.maxResponseBytes,DEFAULT_MAX_RESPONSE_BYTES) }
+    this.endpoint = assertEndpoint(options.endpoint,options.allowLoopbackHttp)
+  }
+  send(operation: Operation, commandId: string, payload: Record<string, Json>, options?: { signal?: AbortSignal }): Promise<CommandReceipt> {
+    const request = this.tail.then(() => this.sendOwned(operation,commandId,payload,options?.signal))
+    this.tail = request.catch(() => undefined)
+    return request
+  }
+  private async sendOwned(operation: Operation, commandId: string, payload: Record<string, Json>, signal?: AbortSignal): Promise<CommandReceipt> {
+    insist(this.active && !signal?.aborted,'TRANSPORT_ABORTED',503)
+    insist(!this.busy, 'CLIENT_SEND_IN_PROGRESS', 409)
+    this.busy = true
+    try {
+      const { store, nodeId, keyId, privateKey, audience } = this.options
+      const requestHash = digest({ operation,payload })
+      const destination = { sender: nodeId,audience,endpoint: this.endpoint.href }
+      const existing = store.outbound(commandId)
+      if (existing) {
+        insist(isRecord(existing) && existing.digest === requestHash, 'COMMAND_CONFLICT', 409)
+        if (existing.sender !== undefined) insist(existing.sender === nodeId && existing.audience === audience && existing.endpoint === this.endpoint.href,'SAVED_DESTINATION_MISMATCH',409)
+        if (existing.state === 'done') return existing.receipt as unknown as CommandReceipt
+        // Retrying this exact command is safe at the gateway: stored pending/uncertain
+        // work is never dispatched again. It may only return its existing receipt.
+      }
+      const now = (this.options.now ?? Date.now)()
+      const envelope = signEnvelope({ version: 1,nodeId,keyId,audience,commandId,nonce: randomUUID(),sequence: store.nextSequence(nodeId),issuedAt: now,expiresAt: now + 60000,operation,payload },privateKey)
+      const body = JSON.stringify(envelope)
+      insist(Buffer.byteLength(body) <= this.options.maxBodyBytes!,'BODY_LIMIT',413)
+      store.saveOutbound(commandId, { ...destination,digest: requestHash,operation,payload,state: 'sending' })
+      try {
+        const response = await (this.options.fetch ?? fetch)(this.endpoint, {
+          method: 'POST', headers: { 'content-type': 'application/json' }, body,
+          redirect: 'error', credentials: 'omit', signal: AbortSignal.any([this.lifetime.signal,AbortSignal.timeout(this.options.timeoutMs ?? 15000),...(signal ? [signal] : [])]),
+        })
+        insist(response.ok, 'REMOTE_REJECTED', response.status)
+        const length = response.headers.get('content-length')
+        if (length !== null && (!/^\d+$/.test(length) || Number(length) > this.options.maxResponseBytes!)) {
+          await response.body?.cancel().catch(() => undefined)
+          insist(false,'RESPONSE_LIMIT')
+        }
+        insist(response.body, 'EMPTY_RESPONSE')
+        const reader = response.body.getReader(); const chunks: Uint8Array[] = []; let bytes = 0
+        try {
+          while (true) { const chunk = await reader.read(); if (chunk.done) break; bytes += chunk.value.length; insist(bytes <= this.options.maxResponseBytes!,'RESPONSE_LIMIT'); chunks.push(chunk.value) }
+        } finally { await reader.cancel().catch(() => undefined) }
+        const receipt = JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown
+        insist(isRecord(receipt) && receipt.commandId === commandId && ['done','pending','uncertain'].includes(String(receipt.state)), 'INVALID_RECEIPT')
+        store.saveOutbound(commandId,{ ...destination,digest: requestHash,operation,payload,state: receipt.state as Json,receipt: receipt as Json })
+        return receipt as unknown as CommandReceipt
+      } catch {
+        store.saveOutbound(commandId,{ ...destination,digest: requestHash,operation,payload,state: 'uncertain' })
+        return { commandId,state: 'uncertain' }
+      }
+    } finally { this.busy = false }
+  }
+  async retryPendingObservations(limit = 32, options?: { signal?: AbortSignal }): Promise<CommandReceipt[]> {
+    const results: CommandReceipt[] = []
+    for (const row of this.options.store.pendingObservations(limit)) {
+      insist(row.data.sender === this.options.nodeId && row.data.audience === this.options.audience && row.data.endpoint === this.endpoint.href,'SAVED_DESTINATION_MISMATCH',409)
+      insist(isRecord(row.data.payload),'INVALID_SAVED_OBSERVATION')
+      results.push(await this.send('observe',row.commandId,row.data.payload as Record<string,Json>,options))
+    }
+    return results
+  }
+  async dispose(): Promise<void> { this.active = false; this.lifetime.abort(); await this.tail }
+}
+
+/** Complete bounded protocol adapter; all caller node IDs must match this signing identity. */
+export class RemoteLedgerClient implements LedgerPort {
+  private client: RemoteClient
+  private nodeId: string
+  constructor(client: RemoteClient, nodeId: string) { this.client = client; this.nodeId = nodeId }
+  private async command<T>(operation: Operation, commandId: string, payload: Record<string, Json>, options?: { signal?: AbortSignal }): Promise<T> {
+    const response = await this.client.send(operation,commandId,payload,options)
+    insist(response.state === 'done' && response.result !== undefined,'REMOTE_OUTCOME_UNCERTAIN',503)
+    return response.result as unknown as T
+  }
+  private scoped(input: LeaseRef): Record<string, Json> {
+    insist(input.nodeId === this.nodeId,'WRONG_CLIENT_NODE',403)
+    return { runId: input.runId,attemptId: input.attemptId,fence: input.fence,...(input.executionId !== undefined ? { executionId: input.executionId } : {}) }
+  }
+  claim(commandId: string,input: { runId: string; nodeId: string; ttlMs: number }): Promise<Receipt<Claim>> {
+    insist(input.nodeId === this.nodeId,'WRONG_CLIENT_NODE',403)
+    return this.command('claim',commandId,{ runId: input.runId,ttlMs: input.ttlMs })
+  }
+  renew(commandId: string,input: LeaseRef & { ttlMs: number }): Promise<Receipt<Attempt>> { return this.command('renew',commandId,{ ...this.scoped(input),ttlMs: input.ttlMs }) }
+  submit(commandId: string,input: Settlement): Promise<Receipt<Run>> { return this.command('submit',commandId,{ ...this.scoped(input),outcome: input.outcome,summary: input.summary,...(input.report ? { report: input.report as unknown as Json } : {}) }) }
+  async cancel(commandId: string,input: { taskId: string; runId?: string; reason: string }): Promise<Receipt<Task>> {
+    insist(input.runId,'RUN_SCOPED_CANCEL_REQUIRED')
+    const run = await this.getRun(input.runId)
+    insist(run?.taskId === input.taskId,'TASK_RUN_MISMATCH',403)
+    return this.command('cancel',commandId,{ runId: input.runId,reason: input.reason })
+  }
+  bindSession(commandId: string,input: LeaseRef & { sessionId: string }): Promise<Receipt<Attempt>> { return this.command('bindSession',commandId,{ ...this.scoped(input),sessionId: input.sessionId }) }
+  markRunning(commandId: string,input: LeaseRef): Promise<Receipt<Attempt>> { return this.command('markRunning',commandId,this.scoped(input)) }
+  acknowledgeCancellation(commandId: string,input: LeaseRef): Promise<Receipt<Run>> { return this.command('acknowledgeCancellation',commandId,this.scoped(input)) }
+  retryBeforeEffects(commandId: string,input: LeaseRef & { witness: SafeRetryWitness; allowRetry?: boolean }): Promise<Receipt<Run>> { return this.command('retryBeforeEffects',commandId,{ ...this.scoped(input),witness: input.witness as unknown as Json,...(input.allowRetry !== undefined ? { allowRetry: input.allowRetry } : {}) }) }
+  getRun(runId: string): Promise<Run | undefined> { return this.command('getRun',`read-${randomUUID()}`,{ runId }) }
+  getAttempt(attemptId: string): Promise<Attempt | undefined> { return this.command('getAttempt',`read-${randomUUID()}`,{ attemptId }) }
+  pendingRuns(nodeId: string): Promise<Run[]> {
+    insist(nodeId === this.nodeId,'WRONG_CLIENT_NODE',403)
+    return this.command('listWork',`read-${randomUUID()}`,{})
+  }
+  offerApproval(commandId: string,input: LeaseRef & ApprovalOffer,options?: { signal?: AbortSignal }): Promise<Receipt<ApprovalRequest>> {
+    return this.command('offerApproval',commandId,{ ...this.scoped(input),requestId: input.requestId,sessionId: input.sessionId,agentId: input.agentId,callId: input.callId,toolName: input.toolName,argumentsDigest: input.argumentsDigest,description: input.description,expiresAt: input.expiresAt,allowRemoteOnce: input.allowRemoteOnce },options)
+  }
+  approvalStatus(input: LeaseRef & { requestId: string },options?: { signal?: AbortSignal }): Promise<ApprovalRequest> { return this.command('approvalStatus',`read-${randomUUID()}`,{ ...this.scoped(input),requestId: input.requestId },options) }
+  cancelApproval(commandId: string,input: LeaseRef & { requestId: string; reason: string },options?: { signal?: AbortSignal }): Promise<Receipt<ApprovalRequest>> { return this.command('cancelApproval',commandId,{ ...this.scoped(input),requestId: input.requestId,reason: input.reason },options) }
+  recordNodeHeartbeat(commandId: string,input: HeartbeatInput,options?: { signal?: AbortSignal }): Promise<Receipt<unknown>> {
+    insist(input.nodeId === this.nodeId,'WRONG_CLIENT_NODE',403)
+    return this.command('heartbeat',commandId,{ sampledAt: input.sampledAt,runtimeReady: input.runtimeReady,activeExecutions: input.activeExecutions,...(input.providerStatus !== undefined ? { providerStatus: input.providerStatus } : {}) },options)
+  }
+  ownNodeStatus(options?: { signal?: AbortSignal }): Promise<NodeStatus> { return this.command('nodeStatus',`read-${randomUUID()}`,{},options) }
+  observe(commandId: string,input: ObservationInput, options?: { signal?: AbortSignal }): Promise<Receipt<ObservationCandidate>> {
+    return this.command('observe',commandId,{ workspaceId: input.workspaceId,sessionId: input.sessionId,sourceRevision: input.sourceRevision,title: input.title,body: input.body,observedAt: input.observedAt,truncated: input.truncated },options)
+  }
+  captureObservation(commandId: string,input: CapturedText | ObservationInput, options?: { signal?: AbortSignal }): Promise<Receipt<ObservationCandidate>> {
+    insist('workspaceId' in input,'OBSERVATION_WORKSPACE_REQUIRED')
+    return this.observe(commandId,input,options)
+  }
+  recoverObservations(limit = 32, options?: { signal?: AbortSignal }): Promise<CommandReceipt[]> { return this.client.retryPendingObservations(limit,options) }
+  delegateTask(commandId: string,input: LeaseRef & DelegationInput,options?: { signal?: AbortSignal }): Promise<Receipt<{ task: Task; run: Run }>> {
+    return this.command('delegate',commandId,{ ...this.scoped(input),title: input.title,...(input.description !== undefined ? { description: input.description } : {}),...(input.route ? { route: input.route as unknown as Json } : {}),...(input.policy ? { policy: input.policy as unknown as Json } : {}),...(input.configuration !== undefined ? { configuration: input.configuration } : {}) },options)
+  }
+  scopedHistory(input: LeaseRef & { taskId?: string },options?: { signal?: AbortSignal }): Promise<TaskHistory> { return this.command('taskHistory',`read-${randomUUID()}`,{ ...this.scoped(input),...(input.taskId !== undefined ? { targetTaskId: input.taskId } : {}) },options) }
+  scopedAllSettled(input: LeaseRef & { taskId?: string; quietMs?: number },options?: { signal?: AbortSignal }): Promise<SettlementView> { return this.command('taskWait',`read-${randomUUID()}`,{ ...this.scoped(input),...(input.taskId !== undefined ? { targetTaskId: input.taskId } : {}),...(input.quietMs !== undefined ? { quietMs: input.quietMs } : {}) },options) }
+  queueScopedNote(commandId: string,input: LeaseRef & { taskId?: string; body: string },options?: { signal?: AbortSignal }): Promise<Receipt<unknown>> { return this.command('taskNote',commandId,{ ...this.scoped(input),body: input.body,...(input.taskId !== undefined ? { targetTaskId: input.taskId } : {}) },options) }
+  appendScopedReport(commandId: string,input: LeaseRef & { taskId?: string } & Omit<TaskReportInput,'targetTaskId'>,options?: { signal?: AbortSignal }): Promise<Receipt<unknown>> {
+    return this.command('taskReport',commandId,{ ...this.scoped(input),title: input.title,body: input.body,...(input.taskId !== undefined ? { targetTaskId: input.taskId } : {}),...(input.data !== undefined ? { data: input.data } : {}),...(input.schemaId !== undefined ? { schemaId: input.schemaId } : {}),...(input.artifactIds !== undefined ? { artifactIds: input.artifactIds } : {}) },options)
+  }
+}

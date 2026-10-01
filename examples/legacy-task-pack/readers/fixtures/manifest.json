@@ -1,0 +1,17 @@
+{
+  "window": { "date": "2026-09-15", "timezone": "UTC", "start": "2026-09-15T00:00:00Z", "end": "2026-09-16T00:00:00Z" },
+  "codex": { "threadsFile": "codex-threads.json" },
+  "hermes": { "exportFile": "hermes-export.json" },
+  "game": {
+    "reportMeta": { "device_id": "synthetic-node", "business_date": "2026-09-15", "report_timezone": "UTC", "source_timezone": "UTC", "source_utc_offset": "+00:00", "collected_at": "2026-09-16T01:00:00Z" },
+    "scheduler": { "appLog": "scheduler.log", "expectedItems": 1 },
+    "automations": [{
+      "id": "custom-example", "engine": "Synthetic engine", "game": "Configured automation",
+      "tasks": [
+        { "taskId": "example.main", "label": "Required work", "required": true, "successMarkers": ["MAIN DONE"] },
+        { "taskId": "example.cleanup", "label": "Optional cleanup", "required": false, "failureMarkers": ["SCREENSHOT FAILED"], "nonblockingAfterTaskId": "example.main" }
+      ],
+      "runs": [{ "logFile": "game.log", "resultFile": "game-result.json" }]
+    }]
+  }
+}

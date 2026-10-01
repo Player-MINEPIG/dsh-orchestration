@@ -1,0 +1,55 @@
+{
+  "method": "linkedom DOM smoke; not browser layout or visual QA",
+  "checks": [
+    {
+      "name": "Three real imported tasks render",
+      "passed": true
+    },
+    {
+      "name": "Snapshot warning and exact observation timestamp are visible",
+      "passed": true
+    },
+    {
+      "name": "Completed filter shows completed production task only",
+      "passed": true
+    },
+    {
+      "name": "Search narrows by title",
+      "passed": true
+    },
+    {
+      "name": "Task report history retains all four reports",
+      "passed": true
+    },
+    {
+      "name": "Historical progress is qualified and final limitations retained",
+      "passed": true
+    },
+    {
+      "name": "Unknown runs are not fabricated",
+      "passed": true
+    },
+    {
+      "name": "All five actual artifacts render without guessed download links",
+      "passed": true
+    },
+    {
+      "name": "Global reports keep ten independent records",
+      "passed": true
+    },
+    {
+      "name": "Configuration does not fake templates",
+      "passed": true
+    },
+    {
+      "name": "Missing task has bounded empty state",
+      "passed": true
+    },
+    {
+      "name": "Navigation can return to task list without duplication",
+      "passed": true
+    }
+  ],
+  "passed": 12,
+  "total": 12
+}

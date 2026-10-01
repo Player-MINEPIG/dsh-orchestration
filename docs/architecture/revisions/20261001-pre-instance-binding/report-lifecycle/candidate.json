@@ -1,0 +1,174 @@
+{
+  "schema_version": 2,
+  "diagram_type": "lifecycle",
+  "meta": {
+    "title": "报告与修订生命周期 · 追加保存（设计约定）",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "output": "docs/architecture/report-lifecycle/report-lifecycle.html"
+  },
+  "lanes": [
+    {
+      "id": "main",
+      "label": "报告与版本"
+    },
+    {
+      "id": "review",
+      "label": "追加证据"
+    },
+    {
+      "id": "terminal",
+      "label": "请求处理结果"
+    }
+  ],
+  "states": [
+    {
+      "id": "author",
+      "type": "start",
+      "label": "形成报告",
+      "sublabel": "任意已绑定 session",
+      "lane": "main",
+      "col": 0
+    },
+    {
+      "id": "identity",
+      "type": "decision",
+      "label": "检查身份 / 幂等",
+      "sublabel": "command ID 与内容",
+      "lane": "main",
+      "col": 1
+    },
+    {
+      "id": "append",
+      "type": "active",
+      "label": "追加不可变记录",
+      "sublabel": "来源 · revision · artifact",
+      "lane": "main",
+      "col": 2
+    },
+    {
+      "id": "view",
+      "type": "neutral",
+      "label": "更新当前视图",
+      "sublabel": "历史仍完整可查",
+      "lane": "main",
+      "col": 3
+    },
+    {
+      "id": "review",
+      "type": "success",
+      "label": "复盘与追溯",
+      "sublabel": "跨 run / session 阅读",
+      "lane": "main",
+      "col": 4
+    },
+    {
+      "id": "correction",
+      "type": "active",
+      "label": "形成新修订",
+      "sublabel": "明确 previousReportId",
+      "lane": "review",
+      "col": 2
+    },
+    {
+      "id": "replay",
+      "type": "success",
+      "label": "返回原回执",
+      "sublabel": "精确相同请求",
+      "lane": "terminal",
+      "col": 1
+    },
+    {
+      "id": "conflict",
+      "type": "failure",
+      "label": "拒绝冲突",
+      "sublabel": "同 ID 不同内容",
+      "lane": "terminal",
+      "col": 2
+    }
+  ],
+  "transitions": [
+    {
+      "id": "author_identity",
+      "from": "author",
+      "to": "identity",
+      "label": "提交"
+    },
+    {
+      "id": "identity_append",
+      "from": "identity",
+      "to": "append",
+      "label": "新内容"
+    },
+    {
+      "id": "append_view",
+      "from": "append",
+      "to": "view",
+      "label": "投影"
+    },
+    {
+      "id": "view_review",
+      "from": "view",
+      "to": "review",
+      "label": "查询"
+    },
+    {
+      "id": "view_correction",
+      "from": "view",
+      "to": "correction",
+      "label": "修正"
+    },
+    {
+      "id": "correction_append",
+      "from": "correction",
+      "to": "append",
+      "label": "追加"
+    },
+    {
+      "id": "identity_replay",
+      "from": "identity",
+      "to": "replay",
+      "label": "相同重放"
+    },
+    {
+      "id": "identity_conflict",
+      "from": "identity",
+      "to": "conflict",
+      "label": "冲突"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "追加而不抹除",
+      "items": [
+        "同正文但不同报告身份仍分别保存",
+        "修订关联旧报告；工件保留版本或摘要"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "证据与执行权限不同",
+      "items": [
+        "迟到 / 失败 / 取消后的证据仍可留存",
+        "追加报告不能绕过 lease 或改写权威终态"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "来源清楚的同源查看",
+      "items": [
+        "dashboard 读取同一账本或明确导入快照",
+        "来源时间与 stale 可见；快照不成为第二账本"
+      ]
+    },
+    {
+      "dot": "slate",
+      "title": "此图是设计约定",
+      "items": [
+        "来源与实现差异见同目录 sources.md；本图不验证代码",
+        "仓库 provenance 尚未通过；生产部署与外部连通待验证"
+      ]
+    }
+  ]
+}

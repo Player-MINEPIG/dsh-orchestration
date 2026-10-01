@@ -1,0 +1,136 @@
+Passed: official-pinned-runtime
+Passed: built-tarball
+Passed: actual-plugin-add
+Passed: persistent-base-backed-composition
+Passed: native-config-schema
+Passed: boot-both-persistent-and-dispose
+Passed: boot-planner-persistent-and-dispose
+Passed: boot-executor-persistent-and-dispose
+Passed: actual-plugin-remove-retains-data
+Passed: boot-after-removal
+{
+  "ok": true,
+  "dshVersion": "0.2.0-rc.2",
+  "upstreamCommit": "639ed015397290b3745d163aafe02ffee4aa3f84",
+  "node": "v24.19.0",
+  "scratch": "/tmp/dsh-task-distribution-MWBNA7",
+  "stages": [
+    {
+      "name": "official-pinned-runtime",
+      "ok": true
+    },
+    {
+      "name": "built-tarball",
+      "ok": true,
+      "filename": "dsh-task-task-system-0.1.0.tgz",
+      "integrity": "sha512-8mIw9jodYYqhoRqjx4toodONhBJwunLXLBdCfjzwFqfRcxwNvgqcf6JSLzrB4Fh3RnrNRNVnuQiCI4YSkWdyUA=="
+    },
+    {
+      "name": "actual-plugin-add",
+      "ok": true
+    },
+    {
+      "name": "persistent-base-backed-composition",
+      "ok": true
+    },
+    {
+      "name": "native-config-schema",
+      "ok": true
+    },
+    {
+      "name": "boot-both-persistent-and-dispose",
+      "ok": true,
+      "role": "both",
+      "native": true,
+      "tools": [
+        "task_query",
+        "task_curate",
+        "task_nodes",
+        "task_alerts",
+        "task_history",
+        "task_create",
+        "task_run",
+        "task_delegate",
+        "task_note",
+        "task_children",
+        "task_wait",
+        "task_claim",
+        "task_execute",
+        "task_report",
+        "task_settle",
+        "task_cancel",
+        "task_schedule",
+        "task_observations",
+        "task_workspace"
+      ],
+      "taskId": "cli-retained-task",
+      "installedTaskPack": true,
+      "installedDisabledQuota": true,
+      "installedDisabledApprovalBridge": true,
+      "preparedArtifact": true
+    },
+    {
+      "name": "boot-planner-persistent-and-dispose",
+      "ok": true,
+      "role": "planner",
+      "native": false,
+      "tools": [
+        "task_query",
+        "task_curate",
+        "task_nodes",
+        "task_alerts",
+        "task_history",
+        "task_create",
+        "task_run",
+        "task_note",
+        "task_children",
+        "task_wait",
+        "task_report",
+        "task_cancel",
+        "task_schedule",
+        "task_observations",
+        "task_workspace"
+      ],
+      "taskId": "cli-retained-task",
+      "installedTaskPack": true,
+      "installedDisabledQuota": true,
+      "installedDisabledApprovalBridge": true,
+      "preparedArtifact": false
+    },
+    {
+      "name": "boot-executor-persistent-and-dispose",
+      "ok": true,
+      "role": "executor",
+      "native": true,
+      "tools": [
+        "task_query",
+        "task_nodes",
+        "task_history",
+        "task_delegate",
+        "task_note",
+        "task_children",
+        "task_wait",
+        "task_claim",
+        "task_execute",
+        "task_report",
+        "task_settle",
+        "task_schedule",
+        "task_workspace"
+      ],
+      "taskId": "cli-retained-task",
+      "installedTaskPack": true,
+      "installedDisabledQuota": true,
+      "installedDisabledApprovalBridge": true,
+      "preparedArtifact": false
+    },
+    {
+      "name": "actual-plugin-remove-retains-data",
+      "ok": true
+    },
+    {
+      "name": "boot-after-removal",
+      "ok": true,
+      "removed": true
+    }
+  ]
+}

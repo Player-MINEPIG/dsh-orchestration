@@ -1,0 +1,143 @@
+{
+  "kind": "unverified-working-tree-read-snapshot",
+  "observedAt": "2026-10-01T22:10:28.439019+00:00",
+  "repositoryProvenance": false,
+  "sourceFreezeNote": null,
+  "files": [
+    {
+      "path": "dashboard/server.mjs",
+      "sha256": "5e389bd7edc957efa084b26395d54306d677fa1e4aa75c1fabedb7cd6218416d",
+      "bytes": 7940
+    },
+    {
+      "path": "docs/architecture/sources.md",
+      "sha256": "b42f51b814a739e107aa7e7de4424ceccc4aba6856348a5f53c2859414156703",
+      "bytes": 16143
+    },
+    {
+      "path": "examples/legacy-task-pack/index.mjs",
+      "sha256": "f53c33ec3f6ba1926eb78967da00d66fbc66bc874ec481a535b60edf35cf26d1",
+      "bytes": 15505
+    },
+    {
+      "path": "examples/legacy-task-pack/plugin.mjs",
+      "sha256": "6344567d6a9db6e815300ea8669560d18debf809ee9902de23f50c0d9f3b55b3",
+      "bytes": 6219
+    },
+    {
+      "path": "examples/legacy-task-pack/readers/common.mjs",
+      "sha256": "5e04caa1c417eb477152ebea92114a571201c77346b0acb34a33fd108780faf7",
+      "bytes": 11863
+    },
+    {
+      "path": "examples/legacy-task-pack/readers/index.mjs",
+      "sha256": "f0c16b8afeb3d0de631a3e327454637c21becb8988bf8c1020e755c84ee8bb3b",
+      "bytes": 466
+    },
+    {
+      "path": "examples/legacy-task-pack/reporting.mjs",
+      "sha256": "4ede707732880cf72c779b266ceacba87bd5d0be13e2d3c25219907b0fbc691c",
+      "bytes": 37765
+    },
+    {
+      "path": "packages/feishu-channel/src/dsh-chat.ts",
+      "sha256": "7e7315d4b30ac9e15a918ebc7d5801afd6a23c46b19b772871c1c3f63d9a48c2",
+      "bytes": 18427
+    },
+    {
+      "path": "packages/feishu-channel/src/dsh-plugin.ts",
+      "sha256": "0d061847bea038ea77b67dd029fbc4107f62f02141525d7d7d04fafcbc47dcae",
+      "bytes": 27712
+    },
+    {
+      "path": "packages/remote-execution/src/client.ts",
+      "sha256": "d727da5e674af0069b27568b49bfffcef9556aec1649f8c03199a509fa163d1a",
+      "bytes": 11889
+    },
+    {
+      "path": "packages/remote-execution/src/collaboration.ts",
+      "sha256": "8e6f5795239f489a285dd87344394688ac0abaffbbe48d2a51a4f304d07b74f3",
+      "bytes": 2549
+    },
+    {
+      "path": "packages/remote-execution/src/gateway.ts",
+      "sha256": "272ca1c6da4abb71c21ab9830d2bf01cc1fd31b37cf4929f402d720e05b443ee",
+      "bytes": 17316
+    },
+    {
+      "path": "packages/remote-execution/src/http.ts",
+      "sha256": "023e414f1a32e88257a5e9f5bff7e699dab02de434633a930f88d3a7b3123e49",
+      "bytes": 3340
+    },
+    {
+      "path": "packages/remote-execution/src/index.ts",
+      "sha256": "1e6a556619fe17f76571eba525ee4bbfbd3f28f045f07a71a5bcecf2f063580a",
+      "bytes": 11708
+    },
+    {
+      "path": "packages/remote-execution/src/observation.ts",
+      "sha256": "569c2b3b7b1bd87aeb51ca04ddcc1a012ca7461f7ea865069aef3f7f83353d95",
+      "bytes": 1999
+    },
+    {
+      "path": "packages/remote-execution/src/protocol.ts",
+      "sha256": "52efaebf733b06c123af24b14d8db3cff8df8722ac38673b12a929dfd2eb872c",
+      "bytes": 6911
+    },
+    {
+      "path": "packages/remote-execution/src/store.ts",
+      "sha256": "a0670d78fbfe4ffd5bce083034fc038c9c352dffa6d20bb6bf9f0f5a649d4301",
+      "bytes": 9747
+    },
+    {
+      "path": "packages/remote-execution/src/worker.ts",
+      "sha256": "d9b3938259b8c4c93172a5b2f47d7011b492d3fad6232ea0c42b71dc14b4a343",
+      "bytes": 11457
+    },
+    {
+      "path": "packages/task-system/package.json",
+      "sha256": "a4deb30ae6e5dd1175e60521efb9ea18925ba406a87ca15bb58a74fc28e15026",
+      "bytes": 1935
+    },
+    {
+      "path": "packages/task-system/src/contracts.ts",
+      "sha256": "ceebbc7acb0a6bfac63dde3665217ee3fdb0c7c1678d21b8d6804e6087584a8f",
+      "bytes": 6045
+    },
+    {
+      "path": "packages/task-system/src/dsh-plugin.ts",
+      "sha256": "13722206f2b1b5d9918abdfd73e6cf7843b8d8944b9b8649e762452999334aec",
+      "bytes": 72109
+    },
+    {
+      "path": "packages/task-system/src/ledger.ts",
+      "sha256": "7d59fbba63604bae2fb7e0b58654ea542c2f911d8fd03497eec9cf862e5edcc7",
+      "bytes": 89093
+    },
+    {
+      "path": "packages/task-system/src/observer-dsh.ts",
+      "sha256": "841a5692da0aedd9cd536da883757d4753180c3ff4af03f00c28b0479be1b55a",
+      "bytes": 4156
+    },
+    {
+      "path": "packages/task-system/src/planning.ts",
+      "sha256": "47ae3cc6943f34667fd4f0b656debf1864ef2132667e96634a3140c68f55c334",
+      "bytes": 8407
+    },
+    {
+      "path": "packages/task-system/src/workspaces.ts",
+      "sha256": "361f37658a6ede4863384dd2603e2aca9407373cbbf2bf81a47aa6ccfa19ea40",
+      "bytes": 6580
+    },
+    {
+      "path": "packages/typed-decisions/src/dsh-completion.ts",
+      "sha256": "50e901914bd870039a3b50151037ab709c3b368bbc5548364bde6062040a2e4a",
+      "bytes": 11219
+    },
+    {
+      "path": "scripts/build-task-pack.mjs",
+      "sha256": "39d1b3662efed6bdf56cfc0a1af2722b226daf8d89a50aaff143c022d786f93f",
+      "bytes": 777
+    }
+  ]
+}

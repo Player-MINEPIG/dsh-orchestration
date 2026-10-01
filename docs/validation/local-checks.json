@@ -1,0 +1,96 @@
+{
+  "schemaVersion": 1,
+  "verifiedAt": "2026-10-01T23:20:18Z",
+  "nodeVersion": "v24.19.0",
+  "dshVersion": "0.2.0-rc.2",
+  "dshCommit": "639ed015397290b3745d163aafe02ffee4aa3f84",
+  "check": {
+    "command": "npm run check",
+    "passed": 397,
+    "failed": 0,
+    "skipped": 0,
+    "suites": {
+      "task-system": 80,
+      "remote-execution": 67,
+      "feishu-channel": 50,
+      "typed-decisions": 36,
+      "dashboard": 17,
+      "actual-dsh-native": 51,
+      "legacy-task-pack": 96
+    }
+  },
+  "cleanInstall": {
+    "commands": [
+      "npm ci --ignore-scripts",
+      "npm run check"
+    ],
+    "passed": 397,
+    "failed": 0,
+    "skipped": 0,
+    "runtimeAndFixtureSourceFilesCompared": 123,
+    "sourceMismatches": 0
+  },
+  "separateChecks": {
+    "originalValidatorComparisons": {
+      "passed": 3,
+      "skipped": 0,
+      "syntheticCorpusOnly": true
+    },
+    "dashboardDom": {
+      "passed": 12,
+      "linkedomVersion": "0.18.12",
+      "visualAcceptance": false
+    }
+  },
+  "logs": [
+    {
+      "name": "final-check",
+      "path": "docs/validation/final-check.log",
+      "sha256": "0a5952674220f94f81d3c24fba03713418209a0f9a5aa3bfad22fb2e5ce854c1"
+    },
+    {
+      "name": "clean-install",
+      "path": "docs/validation/clean-install.log",
+      "sha256": "fd02fdff12e68626dafce30352a5ef102fc7bab24204ff95ac3fa711fdeae0ea"
+    },
+    {
+      "name": "original-validator-comparison",
+      "path": "docs/validation/original-validator-comparison.log",
+      "sha256": "e119602ed4f3f7117221d7d44ef492a798e8829037c887a3f2b110f77135f8d2"
+    },
+    {
+      "name": "dashboard-dom",
+      "path": "docs/validation/dashboard-dom.log",
+      "sha256": "fbb334888b8e206bb1330f5a372c4577738632d51b334f2d1111322321ec4988"
+    }
+  ],
+  "notVerified": [
+    "Live Feishu/Jev/model-provider calls and probability calibration",
+    "Production hardware network and Windows automation/log exports",
+    "Full real automatic cross-node daily report and post-August legacy fix run",
+    "Real browser layout/visual acceptance",
+    "Private GitHub repository creation/push and exact pushed-commit CI"
+  ],
+  "limitedReview": "Parent reviewed selected approval/journal source boundaries; not a full independent security audit.",
+  "distribution": {
+    "version": "0.2.0-rc.2",
+    "taskSystemStages": 10,
+    "independentCapabilityStages": 13,
+    "status": "passed",
+    "receipts": [
+      "tests/dsh/results/distribution.json",
+      "tests/dsh/results/capabilities.json"
+    ],
+    "packageIntegrityManifest": "tests/dsh/results/final-pack-integrities.json",
+    "packageBytesRepackedAndMatched": true
+  },
+  "architecture": {
+    "revision": 6,
+    "showcaseChecksPerDiagram": 9,
+    "comparisonChecks": 28,
+    "staticPngsInspected": 16,
+    "sourceFilesHashed": 46,
+    "browserVerified": false,
+    "gitSourceGateVerified": false
+  }
+}

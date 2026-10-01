@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "58009802-7ae7-40fb-b488-3cc7aab1a5b9",
+  "status": "current",
+  "command": "deliver",
+  "type": "architecture",
+  "input": "/workspace/shared/dsh-orchestration/project/docs/architecture/target/candidate.json",
+  "output": "/workspace/shared/dsh-orchestration/project/docs/architecture/target/target.html",
+  "specification": {
+    "sha256": "b8d584ab9fc319224b25dc94e9f15ad16c73a20c00885e70ba1f750890ffec68",
+    "bytes": 5457
+  },
+  "artifact": {
+    "sha256": "8dac60083ed1a3a9ed8da196f777b220d238f209af8a283b378cf01e3f54d867",
+    "bytes": 764302
+  }
+}

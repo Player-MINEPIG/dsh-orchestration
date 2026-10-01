@@ -1,0 +1,15 @@
+- insert:
+    - id: task-typed-decisions
+      name: '@dsh-task/typed-decisions'
+      config:
+        defaultProvider: rules
+        timeoutMs: 10000
+        maxAttempts: 1
+        failureLimit: 3
+        cooldownMs: 30000
+        maxReceipts: 10000
+        providers:
+          - id: rules
+            kind: rules
+            rulesVersion: '1'
+            rules: []

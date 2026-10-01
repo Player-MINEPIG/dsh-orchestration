@@ -1,0 +1,228 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "历史移交材料 · Hermes 系统描述",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "output": "docs/architecture/original/original.html"
+  },
+  "components": [
+    {
+      "id": "supervisor",
+      "type": "external",
+      "label": "外部 supervisor",
+      "sublabel": "保活 Hermes 宿主",
+      "pos": [
+        380,
+        20
+      ],
+      "size": [
+        220,
+        78
+      ]
+    },
+    {
+      "id": "host_runtime",
+      "type": "backend",
+      "label": "Hermes Gateway",
+      "sublabel": "插件与 Agent 的宿主",
+      "pos": [
+        380,
+        200
+      ],
+      "size": [
+        220,
+        78
+      ]
+    },
+    {
+      "id": "channel_ingress",
+      "type": "external",
+      "label": "飞书 / Cron",
+      "sublabel": "对话与定时入口",
+      "pos": [
+        40,
+        200
+      ],
+      "size": [
+        220,
+        78
+      ]
+    },
+    {
+      "id": "task_management",
+      "type": "backend",
+      "label": "hermes_monitor",
+      "sublabel": "准入 · 派发 · 对账",
+      "pos": [
+        730,
+        200
+      ],
+      "size": [
+        220,
+        78
+      ]
+    },
+    {
+      "id": "execution",
+      "type": "backend",
+      "label": "官方 Agent 执行",
+      "sublabel": "Serve / CLI · session state.db",
+      "pos": [
+        1070,
+        200
+      ],
+      "size": [
+        220,
+        78
+      ]
+    },
+    {
+      "id": "old_observer",
+      "type": "backend",
+      "label": "Observer + Outbox",
+      "sublabel": "只读观察 · ACK / 重试",
+      "pos": [
+        730,
+        20
+      ],
+      "size": [
+        220,
+        78
+      ]
+    },
+    {
+      "id": "task_ledger",
+      "type": "database",
+      "label": "SQLite Registry",
+      "sublabel": "最新 candidate / run 状态",
+      "pos": [
+        730,
+        440
+      ],
+      "size": [
+        220,
+        78
+      ]
+    },
+    {
+      "id": "old_outputs",
+      "type": "backend",
+      "label": "报告 / Bitable 输出",
+      "sublabel": "脚本与投影消费者",
+      "pos": [
+        380,
+        440
+      ],
+      "size": [
+        220,
+        78
+      ]
+    },
+    {
+      "id": "task_view",
+      "type": "frontend",
+      "label": "Datasette",
+      "sublabel": "独立的只读浏览服务",
+      "pos": [
+        730,
+        670
+      ],
+      "size": [
+        220,
+        78
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "host-supervision",
+      "from": "supervisor",
+      "to": "host_runtime",
+      "label": "保活 / 自启动"
+    },
+    {
+      "id": "channel-ingress",
+      "from": "channel_ingress",
+      "to": "host_runtime",
+      "label": "触发"
+    },
+    {
+      "id": "mount-task-management",
+      "from": "host_runtime",
+      "to": "task_management",
+      "label": "register / hook"
+    },
+    {
+      "id": "dispatch-execution",
+      "from": "task_management",
+      "to": "execution",
+      "label": "权限通过后派发"
+    },
+    {
+      "id": "ledger-ownership",
+      "from": "task_management",
+      "to": "task_ledger",
+      "label": "SQLite 读写"
+    },
+    {
+      "id": "old_observer_executor",
+      "from": "old_observer",
+      "to": "execution",
+      "label": "只读 state.db"
+    },
+    {
+      "id": "old_observer_monitor",
+      "from": "old_observer",
+      "to": "task_management",
+      "label": "HTTP intake + ACK"
+    },
+    {
+      "id": "old_outputs_registry",
+      "from": "old_outputs",
+      "to": "task_ledger",
+      "label": "读取任务结果"
+    },
+    {
+      "id": "read-task-view",
+      "from": "task_view",
+      "to": "task_ledger",
+      "label": "只读 SQL"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "amber",
+      "title": "历史证据边界",
+      "items": [
+        "材料 mtime：2026-09-07 UTC；文档自述当地 2026-09-08",
+        "不是当前线上状态；未重验在线、执行或送达"
+      ]
+    },
+    {
+      "dot": "cyan",
+      "title": "控制与读取方向",
+      "items": [
+        "core / server 是导入模块；不是额外微服务",
+        "Observer 由 monitor intake 入库；报告与浏览器主动查询"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "重构要加强的部分",
+      "items": [
+        "latest-row upsert 不等于完整多报告修订历史",
+        "旧 follow-up / occurrence 新建任务；目标改为稳定任务身份"
+      ]
+    },
+    {
+      "dot": "slate",
+      "title": "来源与验证范围",
+      "items": [
+        "依据移交 Archify JSON / README；记载旧源码 1dfacb5",
+        "本图未通过 Git 对象来源门；详细映射见 sources.md"
+      ]
+    }
+  ]
+}

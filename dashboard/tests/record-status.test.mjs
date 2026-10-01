@@ -1,0 +1,20 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdtemp,writeFile,rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import path from 'node:path';
+import {spawnSync} from 'node:child_process';
+import {fileURLToPath} from 'node:url';
+import {filteredTasks,taskRecords} from '../public/model.js';
+import {TaskLedger} from '../../packages/task-system/dist/index.js';
+const script=fileURLToPath(new URL('../record-status.mjs',import.meta.url));
+test('status append preserves identity/history, replays exactly, and never regresses newer task state or readmits dismissed tasks',async t=>{
+ const dir=await mkdtemp(path.join(tmpdir(),'dsh-status-test-'));t.after(()=>rm(dir,{recursive:true,force:true}));const db=path.join(dir,'tasks.sqlite'),body=path.join(dir,'body.txt');await writeFile(body,'Operator-authorized progress');
+ const ledger=TaskLedger.open(db);ledger.importSnapshot('seed',{schemaVersion:'1',generatedAt:'2026-10-01T10:00:00Z',source:{kind:'explicit-import',label:'Test fixture',observedAt:'2026-10-01T10:00:00Z',staleAfterMs:900000},tasks:[{taskId:'task-test',title:'Test fixture',description:'',state:'running',kind:'observed',admissionState:'dismissed',admissionRevision:1,createdAt:'2026-10-01T10:00:00Z',updatedAt:'2026-10-01T10:00:00Z',tags:[]}],runs:[],reports:[],artifacts:[],templates:[],events:[]});ledger.close();
+ const run=(id,at,state)=>spawnSync(process.execPath,[script,'--ledger',db,'--task','task-test','--report',id,'--title','Status report','--body-file',body,'--observed-at',at,'--state',state],{encoding:'utf8'});
+ assert.equal(run('report-latest','2026-10-01T12:00:00Z','completed').status,0);
+ const replay=run('report-latest','2026-10-01T12:00:00Z','completed');assert.equal(replay.status,0);assert.equal(JSON.parse(replay.stdout).status,'already-recorded');
+ assert.notEqual(run('report-latest','2026-10-01T12:00:00Z','failed').status,0);
+ assert.equal(run('report-older','2026-10-01T11:00:00Z','running').status,0);
+ const read=TaskLedger.open(db,{readOnly:true});const snapshot=read.snapshot();read.close();assert.equal(snapshot.tasks.length,1);assert.equal(snapshot.tasks[0].state,'completed');assert.equal(snapshot.reports.length,2);assert.equal(snapshot.tasks[0].admissionState,'dismissed');assert.equal(filteredTasks(snapshot).length,0);assert.equal(filteredTasks(snapshot,'all','',{includeDismissed:true}).length,1);assert.equal(taskRecords(snapshot,'task-test').reports.length,2);assert.equal(snapshot.tasks[0].updatedAt,'2026-10-01T12:00:00.000Z');assert.equal(snapshot.source.observedAt,'2026-10-01T12:00:00.000Z');
+});

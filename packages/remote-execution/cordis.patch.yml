@@ -1,0 +1,8 @@
+- insert:
+    - id: task-remote-execution
+      name: '@dsh-task/remote-execution'
+      config:
+        role: executor
+        nodeId: unconfigured
+        statePath: .dsh-task/remote-execution.sqlite
+        exposeHttp: false

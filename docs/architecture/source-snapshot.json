@@ -1,0 +1,238 @@
+{
+  "kind": "unverified-working-tree-read-snapshot",
+  "observedAt": "2026-10-01T23:22:51.767699+00:00",
+  "repositoryProvenance": false,
+  "sourceFreezeNote": "Lead confirmed SOURCE FREEZE for core/remote/native functionality at 2026-10-01T23:18:25Z; parity/acceptance documentation may still change; this records local source bytes only, not Git provenance.",
+  "files": [
+    {
+      "path": "dashboard/server.mjs",
+      "sha256": "5e389bd7edc957efa084b26395d54306d677fa1e4aa75c1fabedb7cd6218416d",
+      "bytes": 7940
+    },
+    {
+      "path": "docs/architecture/sources.md",
+      "sha256": "e9ef62833a41d6157ba11af46a4378fa2e3b6e9793b43a032a5d1c6ec21b5378",
+      "bytes": 22771
+    },
+    {
+      "path": "examples/legacy-task-pack/ad-hoc.mjs",
+      "sha256": "d30c52721d79e980499ede92bc1474692b43ac1d654f1d0f2d9d46f6b8bef29a",
+      "bytes": 15718
+    },
+    {
+      "path": "examples/legacy-task-pack/compatibility/index.mjs",
+      "sha256": "14065d59be5efc0d22663925556692dc4ae161b66adf5b57b415379dc20515ec",
+      "bytes": 8323
+    },
+    {
+      "path": "examples/legacy-task-pack/configured-sources.mjs",
+      "sha256": "8f5400b039dcc75fbf5c94b55886ea507ce2f6f7c5c117d802a94a2252af3db3",
+      "bytes": 3724
+    },
+    {
+      "path": "examples/legacy-task-pack/diagnostics/index.mjs",
+      "sha256": "d4a61bd0941ff492e7fc29cf92e2f27b05af837f2b4e0e52d0c1779800a56f3a",
+      "bytes": 39528
+    },
+    {
+      "path": "examples/legacy-task-pack/index.mjs",
+      "sha256": "23a56ca589e9506ba3e4a54a0c6b20514fe0952d661cb5cc864acef2ae75435f",
+      "bytes": 18349
+    },
+    {
+      "path": "examples/legacy-task-pack/plugin.mjs",
+      "sha256": "52f3d8e2ecee6ebea6df828c983801e6ab0299b3d61f37d0999c32dd10fa8a4a",
+      "bytes": 8399
+    },
+    {
+      "path": "examples/legacy-task-pack/quota/monitor.mjs",
+      "sha256": "07827175af4d855b7a616c66c333331729d3a1fc754657dac6b0a5e691f1be10",
+      "bytes": 8255
+    },
+    {
+      "path": "examples/legacy-task-pack/quota/plugin.mjs",
+      "sha256": "f0a05f4d980a54dc28358ad63f7b752417ecf747b7b22d1067a64d3d1f197211",
+      "bytes": 7655
+    },
+    {
+      "path": "examples/legacy-task-pack/quota/providers.mjs",
+      "sha256": "b5205bf78ff693354ccf70a061e0dc2fdc90a47f85bb8da71aa6406dd9b4477c",
+      "bytes": 10504
+    },
+    {
+      "path": "examples/legacy-task-pack/quota/reader.mjs",
+      "sha256": "23518bad8213c73c1ed778d793c9099140b0b0f92205c10fc9d5c613857b49af",
+      "bytes": 2813
+    },
+    {
+      "path": "examples/legacy-task-pack/quota/store.mjs",
+      "sha256": "f30b1572d079977e61848dc1a464ee77abf67c6816e9561171ef0340f513aace",
+      "bytes": 6944
+    },
+    {
+      "path": "examples/legacy-task-pack/readers/automas.mjs",
+      "sha256": "17a9595a5f068127211f4cba0cc5afa554bdf5b7851749b8e2f92a4f6bdedb29",
+      "bytes": 9822
+    },
+    {
+      "path": "examples/legacy-task-pack/readers/common.mjs",
+      "sha256": "b8845d31ca6a8959d0df1997c3c06a328fac644e1e248e243aae39d7791029df",
+      "bytes": 11868
+    },
+    {
+      "path": "examples/legacy-task-pack/readers/daily.mjs",
+      "sha256": "bb2ba60348e1374fc93b2f04ca28b0a4929b5becd5b900b527dbd096b9e56fe5",
+      "bytes": 19827
+    },
+    {
+      "path": "examples/legacy-task-pack/readers/game.mjs",
+      "sha256": "ff95138964d2f1b68dffdfaebcc1c59b4491ac0f00b6192cad7a8db6230d3cbf",
+      "bytes": 26378
+    },
+    {
+      "path": "examples/legacy-task-pack/readers/index.mjs",
+      "sha256": "f0c16b8afeb3d0de631a3e327454637c21becb8988bf8c1020e755c84ee8bb3b",
+      "bytes": 466
+    },
+    {
+      "path": "examples/legacy-task-pack/readers/time.mjs",
+      "sha256": "2fdf737c044f025d12f36fee75a2c23f8917248d441f1d8b314f716c90fb7ec1",
+      "bytes": 4163
+    },
+    {
+      "path": "examples/legacy-task-pack/reporting.mjs",
+      "sha256": "1c87704e2141bc2be464d090bb0d0efe1bcfa8c48b91f29e864c1cb6d5a3f51d",
+      "bytes": 38130
+    },
+    {
+      "path": "packages/feishu-channel/src/cards.ts",
+      "sha256": "8be5f96001e742d25d1fca5ca3fca423cabeb99e4ae199fdd17626b61a5d3892",
+      "bytes": 8119
+    },
+    {
+      "path": "packages/feishu-channel/src/dsh-chat.ts",
+      "sha256": "7e7315d4b30ac9e15a918ebc7d5801afd6a23c46b19b772871c1c3f63d9a48c2",
+      "bytes": 18427
+    },
+    {
+      "path": "packages/feishu-channel/src/dsh-plugin.ts",
+      "sha256": "781bd78630cb2c0dd850c79f502c24afb1daf2ef4bd9ffa8cb58788077ac7eb4",
+      "bytes": 43842
+    },
+    {
+      "path": "packages/remote-execution/src/client.ts",
+      "sha256": "fb8dd1b733144a8726fc98a84e3c96eb2813e213fcfabddb9c3bd396c649160a",
+      "bytes": 13917
+    },
+    {
+      "path": "packages/remote-execution/src/collaboration.ts",
+      "sha256": "8a2e05799bf6273d75ed8c681d919aed116ba9f114fb1daf0e8a2d0f0cfa347a",
+      "bytes": 3595
+    },
+    {
+      "path": "packages/remote-execution/src/gateway.ts",
+      "sha256": "b1714f258f4a3ba8641ce154b603fd034180672ed8445458fd5ca5b0140e152f",
+      "bytes": 23787
+    },
+    {
+      "path": "packages/remote-execution/src/http.ts",
+      "sha256": "023e414f1a32e88257a5e9f5bff7e699dab02de434633a930f88d3a7b3123e49",
+      "bytes": 3340
+    },
+    {
+      "path": "packages/remote-execution/src/index.ts",
+      "sha256": "34a107aafadf24f30765ca4c1d4a33ece02b0ab8212576e924f39b44aa50f1bc",
+      "bytes": 14275
+    },
+    {
+      "path": "packages/remote-execution/src/observation.ts",
+      "sha256": "569c2b3b7b1bd87aeb51ca04ddcc1a012ca7461f7ea865069aef3f7f83353d95",
+      "bytes": 1999
+    },
+    {
+      "path": "packages/remote-execution/src/ports.ts",
+      "sha256": "a8d9823673fd366c15bf5a512b5941c4344b74eaed5c94af88190829c597d3c7",
+      "bytes": 9254
+    },
+    {
+      "path": "packages/remote-execution/src/protocol.ts",
+      "sha256": "5bd19d86110728a6085b37793d8564bec713b2bb23995a6a50bd497ef618934c",
+      "bytes": 7115
+    },
+    {
+      "path": "packages/remote-execution/src/retry.ts",
+      "sha256": "972571576f7e3e00bb0d485a91e60db38c7e94a03e4f337a24de91b838406213",
+      "bytes": 2579
+    },
+    {
+      "path": "packages/remote-execution/src/store.ts",
+      "sha256": "6d903231e86fba059899239ed01a81e243678484f45fa82834d3280fb863a8be",
+      "bytes": 9785
+    },
+    {
+      "path": "packages/remote-execution/src/worker.ts",
+      "sha256": "e50e52d7f9d08ff597035c24e24a78cbe75f08b86e225d028274034a495da102",
+      "bytes": 14395
+    },
+    {
+      "path": "packages/task-system/package.json",
+      "sha256": "077a52e3fd9f69dd8567690e5974cc79b94274edbda0d8d4601ea77efdf1d1cc",
+      "bytes": 2370
+    },
+    {
+      "path": "packages/task-system/src/approval-bridge.ts",
+      "sha256": "5afd06e1b1ca4e36b47892997c356822bd817c59d07cb3844d51eee371bf0034",
+      "bytes": 10266
+    },
+    {
+      "path": "packages/task-system/src/contracts.ts",
+      "sha256": "93d5ea4347c00e887dc2059087d96532ef677fca3d101dae86d704bb61226755",
+      "bytes": 8862
+    },
+    {
+      "path": "packages/task-system/src/dsh-plugin.ts",
+      "sha256": "bdeba92b7469fb0cca614d37e5be3b8e7cb66896e91ba05c065f0cbc86e81695",
+      "bytes": 89907
+    },
+    {
+      "path": "packages/task-system/src/ledger.ts",
+      "sha256": "91b820d5164d0287766921c8f8f9a0289d2938dffd3f2ba4e7a3f36c4b9e8e72",
+      "bytes": 128176
+    },
+    {
+      "path": "packages/task-system/src/native-result-journal.ts",
+      "sha256": "72b64b1fcba547705b6a4e1982e465dd0ca3afb07656c6eedae09e7e797a25c1",
+      "bytes": 16803
+    },
+    {
+      "path": "packages/task-system/src/native-retry.ts",
+      "sha256": "17779fdfc2cc754f56c71d75c7948e62cca587850bd0a88cbccf205ca947a850",
+      "bytes": 10299
+    },
+    {
+      "path": "packages/task-system/src/observer-dsh.ts",
+      "sha256": "841a5692da0aedd9cd536da883757d4753180c3ff4af03f00c28b0479be1b55a",
+      "bytes": 4156
+    },
+    {
+      "path": "packages/task-system/src/planning.ts",
+      "sha256": "47ae3cc6943f34667fd4f0b656debf1864ef2132667e96634a3140c68f55c334",
+      "bytes": 8407
+    },
+    {
+      "path": "packages/task-system/src/workspaces.ts",
+      "sha256": "361f37658a6ede4863384dd2603e2aca9407373cbbf2bf81a47aa6ccfa19ea40",
+      "bytes": 6580
+    },
+    {
+      "path": "packages/typed-decisions/src/dsh-completion.ts",
+      "sha256": "50e901914bd870039a3b50151037ab709c3b368bbc5548364bde6062040a2e4a",
+      "bytes": 11219
+    },
+    {
+      "path": "scripts/build-task-pack.mjs",
+      "sha256": "39d1b3662efed6bdf56cfc0a1af2722b226daf8d89a50aaff143c022d786f93f",
+      "bytes": 777
+    }
+  ]
+}

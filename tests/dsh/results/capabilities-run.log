@@ -1,0 +1,121 @@
+Passed: official-pinned-runtime
+Passed: typed-actual-plugin-add
+Passed: typed-real-cli-boot
+Passed: typed-actual-plugin-remove
+Passed: typed-boot-after-remove
+Passed: remote-actual-plugin-add
+Passed: remote-real-cli-boot
+Passed: remote-actual-plugin-remove-retains-recovery
+Passed: remote-boot-after-remove
+Passed: feishu-actual-plugin-add
+Passed: feishu-real-cli-boot
+Passed: feishu-actual-plugin-remove
+Passed: feishu-boot-after-remove
+{
+  "ok": true,
+  "dshVersion": "0.2.0-rc.2",
+  "scratch": "/tmp/dsh-capability-distribution-oWluBa",
+  "packages": [
+    {
+      "name": "@dsh-task/typed-decisions",
+      "filename": "dsh-task-typed-decisions-0.1.0.tgz",
+      "integrity": "sha512-YS2na2yLFiLp2qNn9TcyGr6P55x/Pl31RY9r5PBhhl8UdCTihf/2g9Mp/gSW4LNp8Dl+Roxx7vRzsHBk9XTd2g=="
+    },
+    {
+      "name": "@dsh-task/task-system",
+      "filename": "dsh-task-task-system-0.1.0.tgz",
+      "integrity": "sha512-8mIw9jodYYqhoRqjx4toodONhBJwunLXLBdCfjzwFqfRcxwNvgqcf6JSLzrB4Fh3RnrNRNVnuQiCI4YSkWdyUA=="
+    },
+    {
+      "name": "@dsh-task/remote-execution",
+      "filename": "dsh-task-remote-execution-0.1.0.tgz",
+      "integrity": "sha512-L9WcBtIDdEeetJHD63Su3nTvTIHm7gA53lR7ZJHUWNXuPg0sZsSbUFEZtb8y2Redi9IMclOnhOFfs1gOUAHOFg=="
+    },
+    {
+      "name": "@dsh-task/feishu-channel",
+      "filename": "dsh-task-feishu-channel-0.1.0.tgz",
+      "integrity": "sha512-rq/vSyczM2E1JtlQvQEc2ifrUm/BM1k8yChWY606Kcx7zn4/t3VY2u6IaeVBvI3iCOEf+twQDjP434FS0XzaSA=="
+    }
+  ],
+  "stages": [
+    {
+      "name": "official-pinned-runtime",
+      "ok": true
+    },
+    {
+      "name": "typed-actual-plugin-add",
+      "ok": true
+    },
+    {
+      "name": "typed-real-cli-boot",
+      "ok": true,
+      "independent": true,
+      "service": "typedDecisions",
+      "status": "answered",
+      "evidence": {
+        "kind": "deterministic",
+        "calibration": "not-applicable"
+      },
+      "ordinaryModelBridge": "installed-native-service-scripted-model"
+    },
+    {
+      "name": "typed-actual-plugin-remove",
+      "ok": true
+    },
+    {
+      "name": "typed-boot-after-remove",
+      "ok": true,
+      "removed": "typedDecisions"
+    },
+    {
+      "name": "remote-actual-plugin-add",
+      "ok": true
+    },
+    {
+      "name": "remote-real-cli-boot",
+      "ok": true,
+      "independentOfDecisions": true,
+      "service": "remoteExecution",
+      "signedPeerRoundtrip": true,
+      "structuredReport": true,
+      "registeredSemanticValidator": true,
+      "signedObservationOnly": true,
+      "commandReceiptRecovered": true,
+      "nonceReplayRejected": true,
+      "forgedSignatureRejected": true,
+      "externalPeer": "offline-fixture"
+    },
+    {
+      "name": "remote-actual-plugin-remove-retains-recovery",
+      "ok": true
+    },
+    {
+      "name": "remote-boot-after-remove",
+      "ok": true,
+      "removed": "remoteExecution"
+    },
+    {
+      "name": "feishu-actual-plugin-add",
+      "ok": true
+    },
+    {
+      "name": "feishu-real-cli-boot",
+      "ok": true,
+      "independent": true,
+      "service": "feishuChannel",
+      "enabled": false,
+      "consumerLifecycle": true,
+      "optionalNativeChat": "installed-and-disabled",
+      "liveDelivery": false
+    },
+    {
+      "name": "feishu-actual-plugin-remove",
+      "ok": true
+    },
+    {
+      "name": "feishu-boot-after-remove",
+      "ok": true,
+      "removed": "feishuChannel"
+    }
+  ]
+}

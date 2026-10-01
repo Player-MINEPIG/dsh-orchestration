@@ -1,0 +1,13 @@
+- insert:
+    - id: feishu-channel
+      name: '@dsh-task/feishu-channel/plugin'
+      config:
+        enabled: false
+        databasePath: !!js "dshHomePath('feishu-channel', 'channel.sqlite')"
+        appIdEnv: DSH_FEISHU_APP_ID
+        appSecretEnv: DSH_FEISHU_APP_SECRET
+        allowedChatIds: []
+        allowedUserIds: []
+        operatorUserIds: []
+        callbacksEnabled: false
+        taskIntegration: false

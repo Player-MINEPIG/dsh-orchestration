@@ -1,0 +1,245 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "设计约定 · DSH 宿主内的任务配置与历史",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "output": "docs/architecture/target/target.html"
+  },
+  "components": [
+    {
+      "id": "supervisor",
+      "type": "external",
+      "label": "外部 supervisor",
+      "sublabel": "仅保活 / 启动 DSH host",
+      "pos": [
+        40,
+        20
+      ],
+      "size": [
+        250,
+        84
+      ]
+    },
+    {
+      "id": "host_runtime",
+      "type": "backend",
+      "label": "长驻 DSH host",
+      "sublabel": "native plugin 生命周期",
+      "pos": [
+        40,
+        230
+      ],
+      "size": [
+        250,
+        84
+      ]
+    },
+    {
+      "id": "channel_ingress",
+      "type": "frontend",
+      "label": "Feishu / native chat",
+      "sublabel": "鉴权入口 · 持久化对话 / 回执",
+      "pos": [
+        40,
+        450
+      ],
+      "size": [
+        250,
+        84
+      ],
+      "tag": "已实现 · 外部连通待验"
+    },
+    {
+      "id": "new_template",
+      "type": "backend",
+      "label": "Template / Schedule",
+      "sublabel": "日报 · 游戏日报 · 自定义",
+      "pos": [
+        430,
+        20
+      ],
+      "size": [
+        250,
+        84
+      ]
+    },
+    {
+      "id": "task_management",
+      "type": "backend",
+      "label": "Task System",
+      "sublabel": "配置 / 规划 · 调度 · 历史",
+      "pos": [
+        430,
+        230
+      ],
+      "size": [
+        250,
+        84
+      ]
+    },
+    {
+      "id": "execution",
+      "type": "backend",
+      "label": "执行适配 / Remote Execution",
+      "sublabel": "executionId · lease / fence",
+      "pos": [
+        820,
+        230
+      ],
+      "size": [
+        250,
+        84
+      ]
+    },
+    {
+      "id": "new_decision",
+      "type": "security",
+      "label": "Typed Decisions",
+      "sublabel": "可选 native 单次模型桥接",
+      "pos": [
+        1060,
+        20
+      ],
+      "size": [
+        250,
+        84
+      ]
+    },
+    {
+      "id": "task_ledger",
+      "type": "database",
+      "label": "唯一 TaskLedger / SQLite",
+      "sublabel": "任务 · 运行 · 报告 · 回执",
+      "pos": [
+        430,
+        450
+      ],
+      "size": [
+        250,
+        84
+      ]
+    },
+    {
+      "id": "new_workspace",
+      "type": "external",
+      "label": "实际 Workspace",
+      "sublabel": "受控目录 · 创建 / 复用",
+      "pos": [
+        820,
+        450
+      ],
+      "size": [
+        250,
+        84
+      ]
+    },
+    {
+      "id": "task_view",
+      "type": "frontend",
+      "label": "私有任务 dashboard",
+      "sublabel": "source / observedAt / stale",
+      "pos": [
+        430,
+        690
+      ],
+      "size": [
+        250,
+        84
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "host-supervision",
+      "from": "supervisor",
+      "to": "host_runtime",
+      "label": "保活 / 自启动"
+    },
+    {
+      "id": "channel-ingress",
+      "from": "channel_ingress",
+      "to": "host_runtime",
+      "label": "鉴权后对话"
+    },
+    {
+      "id": "mount-task-management",
+      "from": "host_runtime",
+      "to": "task_management",
+      "label": "挂载 / 卸载"
+    },
+    {
+      "id": "new_template_task",
+      "from": "new_template",
+      "to": "task_management",
+      "label": "版本化配置"
+    },
+    {
+      "id": "dispatch-execution",
+      "from": "task_management",
+      "to": "execution",
+      "label": "准入与实例绑定后"
+    },
+    {
+      "id": "new_task_decision",
+      "from": "task_management",
+      "to": "new_decision",
+      "label": "可选提案回执",
+      "variant": "dashed"
+    },
+    {
+      "id": "ledger-ownership",
+      "from": "task_management",
+      "to": "task_ledger",
+      "label": "事务读写"
+    },
+    {
+      "id": "new_execution_workspace",
+      "from": "execution",
+      "to": "new_workspace",
+      "label": "路径与工具校验"
+    },
+    {
+      "id": "read-task-view",
+      "from": "task_view",
+      "to": "task_ledger",
+      "label": "同源只读 query"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "稳定身份与唯一执行实例",
+      "items": [
+        "task_id 跨 session；run / report / revision / artifact 追加保留",
+        "attempt 先原子绑定 executionId，再创建 agent / 产生执行副作用"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "模型提案与观察收录",
+      "items": [
+        "task_plan：typed receipt → 确定性授权 apply；单次模型桥接不执行工具",
+        "可选 session 观察先存候选；按工作区配置转发；收录不能派发"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "真实目录与受控执行",
+      "items": [
+        "workspaceRoots 创建 / 复用目录；node 工具集与 task policy 取交集",
+        "到期调度和 autoExecute 有并发上限；success / partial 等候子任务稳定"
+      ]
+    },
+    {
+      "dot": "slate",
+      "title": "设计约定与工作树源码映射",
+      "items": [
+        "native chat / decision bridge 已实现；生产与外部连通仍待验证",
+        "一个权威 TaskLedger；remote / chat 恢复日志不成为任务主账本",
+        "Git 来源门未通过；sources.md 区分静态源码、测试与运行证据"
+      ]
+    }
+  ]
+}

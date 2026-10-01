@@ -1,0 +1,11 @@
+{
+  "sessions": [{ "id": "synthetic-hermes", "source": "cli", "title": "Synthetic ACK remainder", "origin_json": "{}", "started_at": 1789434000, "ended_at": 1789434600, "end_reason": "completed", "message_count": 4, "tool_call_count": 0, "input_tokens": 12, "output_tokens": 4, "cache_read_tokens": 0, "cache_write_tokens": 0, "reasoning_tokens": 0 }],
+  "messages": [
+    { "id": 1, "session_id": "synthetic-hermes", "role": "user", "content": "A registered synthetic task", "timestamp": 1789434000 },
+    { "id": 2, "session_id": "synthetic-hermes", "role": "assistant", "content": "Registered work completed", "timestamp": 1789434060, "finish_reason": "stop" },
+    { "id": 3, "session_id": "synthetic-hermes", "role": "user", "content": "Keep this independent local request", "timestamp": 1789434300 },
+    { "id": 4, "session_id": "synthetic-hermes", "role": "assistant", "content": "Local request completed", "timestamp": 1789434600, "finish_reason": "stop" }
+  ],
+  "worker_bindings": {},
+  "ack_bindings": [{ "session_id": "synthetic-hermes", "turn_id": "synthetic-hermes:m1" }]
+}

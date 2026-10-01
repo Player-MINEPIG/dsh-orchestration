@@ -1,0 +1,169 @@
+{
+  "schema_version": 2,
+  "diagram_type": "lifecycle",
+  "meta": {
+    "title": "任务与运行生命周期 · 稳定 task_id（设计约定）",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "output": "docs/architecture/task-lifecycle/task-lifecycle.html"
+  },
+  "lanes": [
+    {
+      "id": "main",
+      "label": "同一任务 / 多次运行"
+    },
+    {
+      "id": "waiting",
+      "label": "等待与复核"
+    },
+    {
+      "id": "terminal",
+      "label": "本轮终态"
+    }
+  ],
+  "states": [
+    {
+      "id": "objective",
+      "type": "start",
+      "label": "创建任务",
+      "sublabel": "稳定工作目标",
+      "lane": "main",
+      "col": 0
+    },
+    {
+      "id": "admit",
+      "type": "decision",
+      "label": "新 run / 准入门",
+      "sublabel": "配置与 contextNotes 快照",
+      "lane": "main",
+      "col": 1
+    },
+    {
+      "id": "active",
+      "type": "active",
+      "label": "执行 attempt",
+      "sublabel": "executionId · lease / fence",
+      "lane": "main",
+      "col": 2
+    },
+    {
+      "id": "settle",
+      "type": "decision",
+      "label": "收束本轮",
+      "sublabel": "核心复核后代稳定 / 结果",
+      "lane": "main",
+      "col": 3
+    },
+    {
+      "id": "history",
+      "type": "neutral",
+      "label": "完整任务历史",
+      "sublabel": "可继续 / 可复盘",
+      "lane": "main",
+      "col": 4
+    },
+    {
+      "id": "wait",
+      "type": "waiting",
+      "label": "阻塞 / 不确定",
+      "sublabel": "显式复核后才能继续",
+      "lane": "waiting",
+      "col": 2
+    },
+    {
+      "id": "cancel",
+      "type": "failure",
+      "label": "确认取消",
+      "sublabel": "同实例 ACK · 保留证据",
+      "lane": "terminal",
+      "col": 2
+    }
+  ],
+  "transitions": [
+    {
+      "id": "objective_admit",
+      "from": "objective",
+      "to": "admit",
+      "label": "创建"
+    },
+    {
+      "id": "admit_active",
+      "from": "admit",
+      "to": "active",
+      "label": "确认 / 绑定后"
+    },
+    {
+      "id": "active_settle",
+      "from": "active",
+      "to": "settle",
+      "label": "同实例提交"
+    },
+    {
+      "id": "settle_history",
+      "from": "settle",
+      "to": "history",
+      "label": "最终门通过"
+    },
+    {
+      "id": "history_admit",
+      "from": "history",
+      "to": "admit",
+      "label": "续做 / 下次周期"
+    },
+    {
+      "id": "active_wait",
+      "from": "active",
+      "to": "wait",
+      "label": "待复核"
+    },
+    {
+      "id": "wait_admit",
+      "from": "wait",
+      "to": "admit",
+      "label": "核实后新 run"
+    },
+    {
+      "id": "active_cancel",
+      "from": "active",
+      "to": "cancel",
+      "label": "停止并 ACK"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "确认与执行实例",
+      "items": [
+        "需要确认时，run 或意图变更重置 confirmation revision；仅可信操作入口批准",
+        "模型提案不是批准；claim 检查确认门，副作用前原子绑定 executionId",
+        "renew / bind / submit / cancel ACK 校验同实例、节点与 fence"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "有界协作与核心最终门",
+      "items": [
+        "执行顺序：userImmediacy → urgency → 创建时间；容量与资源在 claim 校验",
+        "跨节点 delegate / history / wait / note / report 限自有子树且绑定 lease",
+        "fanout / depth / descendant 预算约束委派；核心 submit 校验子任务 quiet window"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "续做上下文与独立收录",
+      "items": [
+        "待处理 note 报告在新 run 事务中写入 contextNotes 并标记消费",
+        "admitted / dismissed 是可逆收录视图，不等于审批、取消或执行终态",
+        "unknown / uncertain 先复核；只重送已有结果，不自动重跑副作用"
+      ]
+    },
+    {
+      "dot": "slate",
+      "title": "此图是设计约定",
+      "items": [
+        "Template / Schedule 支持自定义周期；观察收录不能派发",
+        "sources.md 记录工作树映射；Git 来源门与真实部署 / 外部连通尚未验证"
+      ]
+    }
+  ]
+}

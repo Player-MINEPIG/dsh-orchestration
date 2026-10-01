@@ -1,0 +1,283 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "原实现 · Hermes 挂载式任务编排（历史）",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "output": "docs/architecture/original/original.html"
+  },
+  "components": [
+    {
+      "id": "old_supervisor",
+      "type": "external",
+      "label": "外部 supervisor",
+      "sublabel": "保活 Hermes 宿主",
+      "pos": [
+        380,
+        20
+      ],
+      "size": [
+        220,
+        78
+      ],
+      "sources": [
+        {
+          "path": "docs/architecture/sources.md",
+          "line": 17,
+          "label": "历史源码依据"
+        }
+      ]
+    },
+    {
+      "id": "old_host",
+      "type": "backend",
+      "label": "Hermes Gateway",
+      "sublabel": "插件与 Agent 的宿主",
+      "pos": [
+        380,
+        200
+      ],
+      "size": [
+        220,
+        78
+      ],
+      "sources": [
+        {
+          "path": "docs/architecture/sources.md",
+          "line": 9,
+          "label": "历史源码依据"
+        }
+      ]
+    },
+    {
+      "id": "old_entry",
+      "type": "external",
+      "label": "飞书 / Cron",
+      "sublabel": "对话与定时入口",
+      "pos": [
+        40,
+        200
+      ],
+      "size": [
+        220,
+        78
+      ],
+      "sources": [
+        {
+          "path": "docs/architecture/sources.md",
+          "line": 9,
+          "label": "历史源码依据"
+        }
+      ]
+    },
+    {
+      "id": "old_monitor",
+      "type": "backend",
+      "label": "hermes_monitor",
+      "sublabel": "准入 · 派发 · 对账",
+      "pos": [
+        730,
+        200
+      ],
+      "size": [
+        220,
+        78
+      ],
+      "sources": [
+        {
+          "path": "docs/architecture/sources.md",
+          "line": 9,
+          "label": "历史源码依据"
+        }
+      ]
+    },
+    {
+      "id": "old_executor",
+      "type": "backend",
+      "label": "官方 Agent 执行",
+      "sublabel": "Serve / CLI · session state.db",
+      "pos": [
+        1070,
+        200
+      ],
+      "size": [
+        220,
+        78
+      ],
+      "sources": [
+        {
+          "path": "docs/architecture/sources.md",
+          "line": 10,
+          "label": "历史源码依据"
+        }
+      ]
+    },
+    {
+      "id": "old_observer",
+      "type": "backend",
+      "label": "Observer + Outbox",
+      "sublabel": "只读观察 · ACK / 重试",
+      "pos": [
+        730,
+        20
+      ],
+      "size": [
+        220,
+        78
+      ],
+      "sources": [
+        {
+          "path": "docs/architecture/sources.md",
+          "line": 12,
+          "label": "历史源码依据"
+        }
+      ]
+    },
+    {
+      "id": "old_registry",
+      "type": "database",
+      "label": "SQLite Registry",
+      "sublabel": "最新 candidate / run 状态",
+      "pos": [
+        730,
+        440
+      ],
+      "size": [
+        220,
+        78
+      ],
+      "sources": [
+        {
+          "path": "docs/architecture/sources.md",
+          "line": 11,
+          "label": "历史源码依据"
+        }
+      ]
+    },
+    {
+      "id": "old_outputs",
+      "type": "backend",
+      "label": "报告 / Bitable 输出",
+      "sublabel": "脚本与投影消费者",
+      "pos": [
+        380,
+        440
+      ],
+      "size": [
+        220,
+        78
+      ],
+      "sources": [
+        {
+          "path": "docs/architecture/sources.md",
+          "line": 14,
+          "label": "历史源码依据"
+        }
+      ]
+    },
+    {
+      "id": "old_viewer",
+      "type": "frontend",
+      "label": "Datasette",
+      "sublabel": "独立的只读浏览服务",
+      "pos": [
+        730,
+        670
+      ],
+      "size": [
+        220,
+        78
+      ],
+      "sources": [
+        {
+          "path": "docs/architecture/sources.md",
+          "line": 15,
+          "label": "历史源码依据"
+        }
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "old_supervisor_host",
+      "from": "old_supervisor",
+      "to": "old_host",
+      "label": "保活 / 自启动"
+    },
+    {
+      "id": "old_entry_host",
+      "from": "old_entry",
+      "to": "old_host",
+      "label": "触发"
+    },
+    {
+      "id": "old_host_monitor",
+      "from": "old_host",
+      "to": "old_monitor",
+      "label": "register / hook"
+    },
+    {
+      "id": "old_monitor_executor",
+      "from": "old_monitor",
+      "to": "old_executor",
+      "label": "权限通过后派发"
+    },
+    {
+      "id": "old_monitor_registry",
+      "from": "old_monitor",
+      "to": "old_registry",
+      "label": "SQLite 读写"
+    },
+    {
+      "id": "old_observer_executor",
+      "from": "old_observer",
+      "to": "old_executor",
+      "label": "只读 state.db"
+    },
+    {
+      "id": "old_observer_monitor",
+      "from": "old_observer",
+      "to": "old_monitor",
+      "label": "HTTP intake + ACK"
+    },
+    {
+      "id": "old_outputs_registry",
+      "from": "old_outputs",
+      "to": "old_registry",
+      "label": "读取任务结果"
+    },
+    {
+      "id": "old_viewer_registry",
+      "from": "old_viewer",
+      "to": "old_registry",
+      "label": "只读 SQL"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "amber",
+      "title": "历史证据边界",
+      "items": [
+        "源码固定于 1dfacb5；旧现场观察为 2026-09-08",
+        "未重验现在的节点在线、端到端执行或通知送达"
+      ]
+    },
+    {
+      "dot": "cyan",
+      "title": "控制与读取方向",
+      "items": [
+        "core / server 是导入模块；不是额外微服务",
+        "Observer 由 monitor intake 入库；报告与浏览器主动查询"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "重构要加强的部分",
+      "items": [
+        "latest-row upsert 不等于完整多报告修订历史",
+        "旧 follow-up / occurrence 新建任务；目标改为稳定任务身份"
+      ]
+    }
+  ]
+}

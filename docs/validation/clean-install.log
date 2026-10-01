@@ -1,0 +1,535 @@
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+added 114 packages in 1s
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> dsh-task-management@0.1.0 check
+> npm run build && npm run test:unit && npm run test:native && npm run test:legacy
+
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> dsh-task-management@0.1.0 build
+> npm run build -w @dsh-task/typed-decisions && npm run build -w @dsh-task/task-system && npm run build -w @dsh-task/remote-execution && npm run build -w @dsh-task/feishu-channel
+
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> @dsh-task/typed-decisions@0.1.0 build
+> tsc -p tsconfig.json
+
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> @dsh-task/task-system@0.1.0 build
+> tsc -p tsconfig.json && node ../../scripts/build-task-pack.mjs
+
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> @dsh-task/remote-execution@0.1.0 build
+> tsc -p tsconfig.json
+
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> @dsh-task/feishu-channel@0.1.0 build
+> tsc -p tsconfig.json
+
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> dsh-task-management@0.1.0 test:unit
+> npm run test --workspaces --if-present
+
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> @dsh-task/feishu-channel@0.1.0 test
+> node --test test/*.test.mjs
+
+✔ real Cordis mounts disabled without credentials, database or transport and disposes cleanly (6.951428ms)
+✔ cross-plugin Cordis service tracing preserves consumer detach and stale-disposer ownership (2.036219ms)
+✔ official EventDispatcher awaits durable accept and rejects failed persistence before success ACK (2.812482ms)
+✔ standalone host consumer receives verified identity and sends acknowledgment plus a reply only once (4.757597ms)
+✔ no registered consumer leaves durable chat queued; attachment later works with narrative disabled (3.800468ms)
+✔ restart recovers queued messages but holds interrupted handling and sends as uncertain (4.236058ms)
+✔ standalone timeout is uncertain and never automatically resent; known rate limit uses bounded retry (4.299732ms)
+✔ actual task service commands authorize operator IDs, continue exact blocked run and reject reordered stale controls (127.760002ms)
+✔ real task outbox maps accepted delivery to sent and ambiguous provider failure to uncertain (15.752941ms)
+✔ card actions require exact chat, provider message, operator, token, run and single consumption (19.176482ms)
+✔ official SDK REST methods receive deterministic uuid, exact reply target and no hidden retry (15.561218ms)
+✔ official callback dispatcher retains event/operator/message identity and converts microsecond headers (0.362925ms)
+✔ queued ordinary messages without a consumer cannot starve task controls (21.243807ms)
+✔ historical report cards preserve original run correlation and omit newer run controls (16.375187ms)
+✔ operator reconciliation records evidence and never automatically retries a confirmed not-sent delivery (2.849207ms)
+✔ explicit authenticated confirmation commands enforce revision and never infer approval from model text (19.251433ms)
+✔ confirmation cards before any run survive restart and reject unauthorized, cross-chat and cross-message callbacks (28.662283ms)
+✔ queued-run reject card is correlated and a stale revision card cannot override another decision (23.272746ms)
+✔ trusted report renderer mount/dispose resumes pending specialized reports using authoritative data (15.930181ms)
+✔ specialized renderer validation and size failures cannot send; lost delivery remains uncertain after remount (16.768497ms)
+✔ operator dismiss/restore uses admission revision and preserves execution/report history while suppressing automatic pushes (19.145607ms)
+✔ alert dedupe, explicit operator ack/resolve and reopened-cycle stale protection preserve independent state (22.634466ms)
+✔ alert bulk controls are bounded, unique, revision-checked and atomic (16.009108ms)
+✔ real node-health reconciliation resolves the matching alert and invalidates old operator controls (12.83952ms)
+✔ taskless alert notifications render authoritative current state, coalesce pending intent and reject payload-only alert identity (14.556529ms)
+✔ unknown alert delivery and persisted alert state survive restart without another send (28.576206ms)
+✔ runtime approval commands require a verified operator, exact syntax and revision and apply once to one call (23.319875ms)
+✔ runtime approval buttons bind operator, chat, sent message and immutable call identity before consuming (21.755641ms)
+✔ runtime approval expiry, ended execution and host-only policy reject remote once while explicit denial remains usable (148.191193ms)
+✔ runtime approval durable notifications require request and task identity and retain the full safe action description (20.98145ms)
+✔ uncertain runtime approval notification is held across restart and old pending controls cannot revive its native call (143.764779ms)
+✔ explicit diagnostic delay is durable, operator-only, bounded and replay-safe even without task integration (1018.955542ms)
+✔ terminal lifecycle delivery waits for creation acknowledgment and later runs reuse the same durable thread anchor (31.98351ms)
+✔ failed or uncertain creation keeps terminal delivery pending; explicit verified receipt reconciliation survives restart (29.234717ms)
+✔ a rejected terminal reply never falls back to a new message or changes task completion (13.807345ms)
+✔ unload aborts the owned consumer wait, holds unknown effects and closes only this channel (2.842977ms)
+✔ diagnostic accepts the original one-hour upper bound without immediate sending (3.03487ms)
+✔ actual DSH runtime + model/transport stubs: two inputs create distinct requests in one durable session (157.239808ms)
+✔ actual DSH persistence resumes a completed conversation after full host restart (49.854886ms)
+✔ interrupted request is held across restart, never replayed, and operator reconciliation starts fresh history (49.162415ms)
+✔ authenticated non-operator cannot mutate task ledger despite message claims and malicious tool output (77.384921ms)
+✔ explicit operator planner policy invokes actual task tools with current request identity; reply is not task settlement (37.583411ms)
+✔ task_curate is opt-in for authenticated planner operators and never grants confirmation authority (45.126611ms)
+✔ chat plugin unload cancels only its owned agent and leaves unrelated host agent usable (23.036818ms)
+✔ thread and authenticated sender boundaries create separate native histories (38.110419ms)
+✔ native request timeout cancels owned work and holds following input without prompt replay (115.220323ms)
+✔ foreign input injected during native initialization cannot supply a reply for the owned incoming request (17.084201ms)
+✔ operator task mutations with a different request command identity are rejected (27.922003ms)
+✔ crash-window processing records recover as uncertain without starting native DSH or replaying input (31.420215ms)
+✔ unload deregisters native consumer and remount drains fresh queued input without replacing host services (29.86468ms)
+ℹ tests 50
+ℹ suites 0
+ℹ pass 50
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2142.27744
+
+> @dsh-task/remote-execution@0.1.0 test
+> node --test test/*.test.mjs
+
+✔ actual signed approval offer is replay-safe; only trusted coordinator response changes the pending decision (47.904362ms)
+✔ approval operations reject wrong node, execution, fence, session, tool policy and invalid bounds (20.605698ms)
+✔ status receipts cannot grant after lease expiry; late response fails and bound cleanup can cancel after abort (17.654631ms)
+✔ cleanup callback after abort retains the captured identity and does not allow peer self-approval (14.702404ms)
+✔ journal restart cannot reuse a retired request on a new attempt or apply a late response (23.747374ms)
+✔ actual TaskLedger opted-in 1 MiB signed worker roundtrip preserves >64 KiB report.data and >128 KiB claim response (104.848508ms)
+✔ request byte caps reject before ledger effects and before client network transmission (5.936904ms)
+✔ response caps cancel bounded chunked bodies and oversized declared lengths; outcome remains uncertain (5.861923ms)
+✔ actual TaskLedger signed scoped collaboration delegates, waits, reports, queues notes; foreign targets and identity injection fail (28.122489ms)
+✔ actual TaskLedger signed heartbeat tracks finite stale/recovery, own-only status, capacity, and preserves all grants (43.157361ms)
+✔ health wire rejects spoofed identity, arbitrary health URLs, grant fields, invalid provider flags, and stale new samples (10.94596ms)
+✔ actual TaskLedger accepts informational provider observations without granting an unknown model vendor (7.973643ms)
+✔ actual Cordis opt-in heartbeat reports native presence and actual execution count; timer drains on unload (network/native mocked) (47.522039ms)
+✔ actual loopback TLS carrier validates its certificate and signed ledger flow; no external network (112.315205ms)
+✔ actual TaskLedger signed observation: node/session isolation, bounded input, no task/run authority (19.722497ms)
+✔ actual TaskLedger committed capture recovers from lost gateway receipt after restart without recapturing (6.3211ms)
+✔ matching durable receipt required; absent or foreign receipt never causes reexecution (9.115746ms)
+✔ workspace observation forwarder sends only captured cwd under both roots; no raw path on wire (11.369104ms)
+✔ actual Cordis config bootstrap discovers and executes native route through signed planner; native/network mocked (150.783596ms)
+✔ actual TaskLedger committed settlement recovers receipt without a second submit or reopened lease (9.894567ms)
+✔ native coordinator config rejects forwarding without binding or with a second admission authority (4.10083ms)
+✔ actual TaskLedger: separate recovery stores sharing node and claim execute once; wrong owner cannot mutate lease (10.064613ms)
+✔ pure auth: Ed25519 signs canonical payload; key identity binds node and audience (5.94109ms)
+✔ pure parsing: bounded body, version, fields, depth and command vocabulary (0.97749ms)
+✔ mocked ledger: replay and reordering rejected, new authenticated retry returns stored receipt (14.806347ms)
+✔ mocked ledger: caller cannot supply a node, shell, notification or foreign attempt (2.509346ms)
+✔ mocked ledger: explicit wrong node, denied workspace, missing capability and denied operation fail closed (5.135253ms)
+✔ SQLite restart preserves replay and marks interrupted command uncertain without ledger replay (4.637389ms)
+✔ mocked ledger: unknown transaction outcome is durable uncertainty and cannot replay (2.233209ms)
+✔ pure transport: TLS or literal local loopback; no proxy header trust or URL credential (0.521769ms)
+✔ pure policy: canonical workspace root blocks symlink escape and planner execution (12.328408ms)
+✔ mocked execution: intent and session identity committed before dispatch, results before submit (4.791597ms)
+✔ mocked execution: result ACK loss and restart retry only submission, never provider (3.25229ms)
+✔ mocked execution: crash after dispatch intent becomes uncertain on restart (1.545376ms)
+✔ mocked execution: stale lease cannot dispatch and cancelled work cannot finalize (5.484937ms)
+✔ mocked HTTP transport: signed full LedgerPort flow and lost response retain exact command (18.77449ms)
+✔ actual pinned Cordis lifecycle with mocked taskSystem: executor plugin mounts and unloads owned service (17.298897ms)
+✔ mocked ledger: authenticated discovery cannot enumerate another node or excluded workspace (2.428026ms)
+✔ actual TaskLedger + crypto + SQLite connected fixture: discover, claim, execute, report, acknowledge; only provider/network mocked (75.239761ms)
+✔ mocked execution: coordinator cancellation acknowledges only after provider quiescence (2.013365ms)
+✔ mocked ledger: exact result replay reads its receipt after settlement; fresh stale command is rejected (2.119661ms)
+✔ mocked execution: task-specific node/workspace restriction and runtime budget are enforced (104.267192ms)
+✔ pure native adapter: explicit provider/model/effort allowlist forwards execution-only requests (0.618881ms)
+✔ shared workspace and cancel operation never authorize cancelling another node assignment (1.335607ms)
+✔ bounded structured report data and schema identity survive the atomic settlement protocol (1.770117ms)
+✔ signed gateway requires start owner and rejects missing or foreign owner on a bound lease (3.015871ms)
+✔ retry witness schema rejects effectful, incomplete, unknown-code, wrong-session, and invalid sequence attestations (2.890648ms)
+✔ completed-tool wire witness is a closed bounded union with exact digests and may repeat fingerprints (1.776566ms)
+✔ actual signed completed-tool continuation requires pinned tools and preserves deduplicated fingerprints through zero-tool retries (native evidence mocked) (94.401292ms)
+▶ actual signed coordinator rejects unlisted completed tools and task-excluded tools without scheduling continuation
+  ✔ default-deny (7.95101ms)
+  ✔ operator-deny (7.026509ms)
+  ✔ task-deny (6.452333ms)
+✔ actual signed coordinator rejects unlisted completed tools and task-excluded tools without scheduling continuation (22.063825ms)
+✔ signed malformed or unclosed completed-tool proofs never reach the actual coordinator transition (8.388724ms)
+▶ runtime result guard rejects unclosed, wrong-session and non-unknown completed-tool evidence before retry dispatch
+  ✔ unclosed (10.887474ms)
+  ✔ wrong-session (9.290503ms)
+  ✔ wrong-outcome (9.009439ms)
+  ✔ invalid-allowance (9.83901ms)
+✔ runtime result guard rejects unclosed, wrong-session and non-unknown completed-tool evidence before retry dispatch (39.92468ms)
+✔ actual signed TaskLedger retry waits for backoff, preserves run/session/runtime origin, and acquires a new fenced attempt (native witness mocked) (19.816445ms)
+✔ actual retry commit with lost gateway completion recovers exact receipt after journal restart, without provider replay (22.27101ms)
+✔ completed-tool retry with lost ACK restores the exact proof and fingerprints without redispatch (native evidence mocked) (22.059429ms)
+✔ retry recovery revalidates the durable runtime outcome before sending its saved transition (10.274422ms)
+✔ disabled retry budget returns a durable safe terminal failure; ordinary unknown never retries (15.409885ms)
+✔ signed retry requires current execution owner and matching session; invalid witness cannot schedule a new attempt (7.384355ms)
+✔ actual signed retry stops after the pinned maximum and never starts another provider attempt (16.749238ms)
+✔ a stricter host runtime budget can refuse retry but cannot expand coordinator policy (10.078303ms)
+ℹ tests 67
+ℹ suites 0
+ℹ pass 67
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 527.536392
+
+> @dsh-task/task-system@0.1.0 test
+> node --test test/*.test.mjs
+
+✔ alert dedupe, acknowledgment, recovery and reopen are durable distinct cycles (7.114187ms)
+✔ bulk alert controls roll back entirely on stale revisions and never rewrite unknown delivery (3.593042ms)
+✔ heartbeats are observations, never grants; stale and recovery have alert evidence (3.796131ms)
+✔ same-session safe retry uses a new fenced attempt and preserves runtime origin (7.477443ms)
+✔ invalid/gapped/effectful retry proof cannot release ownership or schedule work (4.780441ms)
+✔ safe retry cannot knowingly queue a delay beyond the original execution budget (2.155534ms)
+✔ safe retry and exhaustion preserve another live run's task projection (6.724093ms)
+✔ observed admission has a lifecycle anchor while explicit historical imports stay silent (1.676168ms)
+✔ completed-tool resume needs operator opt-in, closed evidence and retains replay fingerprints (6.717623ms)
+✔ durable acceptance and exact replay survive restart; key conflicts are rejected (8.931254ms)
+✔ same task retains equal-content reports across sessions and explicit revisions (4.967186ms)
+✔ observed activity is admitted once and cannot be redispatched (2.327047ms)
+✔ explicit targets cannot bypass capability/model/effort; wrong node cannot claim or settle (4.97039ms)
+✔ expired execution retains resource until explicit reconciliation and never automatically retries (7.469591ms)
+✔ cancel is a request until correlated acknowledgment; reports can still append without reversing it (3.38223ms)
+✔ result validation rollback preserves attempt; valid result plus notification intent is atomic (3.936308ms)
+✔ delivery crash becomes uncertain without changing task result; exact claim completion separated (2.852972ms)
+✔ custom scheduled templates share one stable task and admit each slot once across restart (26.006252ms)
+✔ source freshness is explicit imported evidence time, not repeated UI polling time (1.554189ms)
+✔ cron uses configured time zone and custom schemas reject bad task input (26.871045ms)
+✔ parent all-settled quiet window refreshes after a later child is admitted (2.934181ms)
+✔ child scopes cannot widen parent deny lists and runtime/delegation budgets (1.652454ms)
+✔ blocked continuation is atomic, preserves task identity and rejects stale cards (2.377641ms)
+✔ null child policy values cannot erase inherited node, workspace or tool constraints (1.580888ms)
+✔ run-scoped cancellation cannot cancel another node run under the same stable task (1.958484ms)
+✔ one successful run cannot hide another active run for the same stable task (3.59208ms)
+✔ multiple blocked continuations retain prior outcomes without blocking the next explicit continuation (4.41326ms)
+✔ late completion of an older run cannot regress the newest completed run projection (2.752764ms)
+✔ schedule management validates boolean state and versions without rewriting existing run snapshots (5.264304ms)
+✔ missed schedules coalesce by default and skip when configured without unbounded backlog dispatch (5.547831ms)
+✔ cancelling an old already-terminal run cannot change the task projection (1.953217ms)
+✔ custom structured report schemas validate data and preserve it beside human-readable reports (5.657493ms)
+✔ execution ownership binds atomically across connections and survives restart (3.119635ms)
+✔ pinned semantic validator fails closed and cannot be bypassed by valid JSON shape (3.93823ms)
+✔ operator confirmation persists, gates direct claims and uses revision-bound decisions (4.378629ms)
+✔ dispatch preserves configured immediacy then urgency, while importance remains descriptive (4.042763ms)
+✔ blocked continuation retains its pinned template and semantic validator (4.170252ms)
+✔ changed task intent and newly queued plans invalidate stale human approval (2.046444ms)
+✔ required resource policy cannot be omitted by automatic or remote claims (3.112123ms)
+✔ configured narrative reporting creates authoritative outbox intents and none suppresses only delivery (2.955573ms)
+✔ reversible non-task curation preserves lifecycle and later reports without re-admitting (3.542618ms)
+✔ imported run evidence stays observe-only after an explicit new task continuation (3.212191ms)
+✔ owned delegation is atomic, bounded, capacity-aware and scoped to its task tree (6.483218ms)
+✔ queue-only notes survive restart and enter exactly one subsequent run without waking work (3.430973ms)
+✔ recurring executions get independent delegation budgets and causal settlement views (9.162503ms)
+✔ known quiescent terminal receipt recovers after lease expiry without replaying execution (3.903329ms)
+✔ terminal journal recovery cannot bypass cancellation or fabricate ready/session evidence (2.311184ms)
+✔ foreign executor contract preflight validates cloned evidence without authority mutation (1.931886ms)
+✔ read-only legacy import keeps multiple reports and unresolved history without dispatching old runs (15.160368ms)
+✔ upgraded Hermes sessions, payloads and configuration remain inspectable without activation (3.716213ms)
+✔ legacy queues, schedules, decisions and notifications migrate as inert evidence (9.630193ms)
+✔ ready receipts are canonical, immutable and idempotent across reopen (8.870064ms)
+✔ staged, unflushed and mismatched terminal values never become replayable (2.422137ms)
+✔ held results remain retryable and terminal transitions survive restart (6.824851ms)
+✔ journal stores sanitized codes and verifies authoritative receipt identity (3.13685ms)
+✔ retained entry and byte limits fail closed without eviction (3.78885ms)
+✔ UTF-8 payloads, recursion, non-JSON values and getters are bounded (2.3904ms)
+✔ SQLite FULL/WAL journal uses private files and creates no log or credential files (1.676249ms)
+✔ an exclusive authority write lock cannot prevent independent ready persistence (11.691018ms)
+✔ process exit before ready creates no replayable staged result; after ready retains exact input (126.226848ms)
+✔ process exit after authority commit replays the exact receipt without duplicate report or effect (110.256739ms)
+✔ process exit after journal commit never schedules another recovery (59.565096ms)
+✔ zero-tool live retry proof retains its original closed shape (2.677384ms)
+✔ completed-tool proof requires operator allowlist and retains only canonical fingerprints (1.848483ms)
+✔ every call requires one matching successful append result and one dispatch (7.437704ms)
+✔ unmatched, duplicate, nested, cancelled or changed-argument dispatches are not resumable (3.962196ms)
+✔ proof fails closed for gaps, unfinished sessions, non-transient or mismatched terminal errors (0.916911ms)
+✔ live public session identity excludes lookalike sessions and agents (0.275546ms)
+✔ completed calls are bounded at 32 and duplicate fingerprints retain each causal call (4.640084ms)
+✔ completed results must precede the observed final request failure (0.311909ms)
+✔ fingerprints match canonical {name,arguments} and reject unsafe or oversized JSON (1.828523ms)
+✔ observer extracts bounded visible text only and excludes task-owned/subagent inherited events (2.910937ms)
+✔ bounded catch-up explicitly counts omitted entries rather than silently claiming complete history (0.39355ms)
+✔ durable observation admission is separate from capture and never schedules work (4.992943ms)
+✔ decisions persist before atomic task application and replay does not call backend or create twice (10.909897ms)
+✔ changed catalog or denied authorization cannot silently apply a model proposal (3.153444ms)
+✔ typed admission of observed work offers no executor candidates and never dispatches (3.350916ms)
+✔ physical project creation and replay preserve identity; reuse never overwrites existing content (7.55697ms)
+✔ workspace policy rejects traversal, symlinks and denied roots (2.297114ms)
+✔ artifact bytes have immutable digest and idempotent registration; equal bytes keep distinct artifact identities (3.80907ms)
+ℹ tests 80
+ℹ suites 0
+ℹ pass 80
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 550.277751
+
+> @dsh-task/typed-decisions@0.1.0 test
+> node --test test/*.test.mjs
+
+✔ strict request rejects duplicate IDs, unknown fields, NaN, infinity and unknown question variants (2.62069ms)
+✔ rules are versioned, deterministic and abstain on no match or ambiguity (5.673086ms)
+✔ simultaneous and completed replay call provider once and return the same immutable receipt (7.638099ms)
+✔ receipt capacity fails closed rather than losing replay identity (2.244906ms)
+✔ ordinary structured models do not gain calibrated confidence or probabilities (6.773616ms)
+✔ strict JSON parser rejects escaped duplicate keys and sparse JavaScript arrays (0.874968ms)
+✔ noul and score must be finite, bounded and have matching types (2.313527ms)
+✔ unsupported model/reasoning is deterministic and never calls completion (0.731187ms)
+✔ model version mismatch abstains and does not pretend an alias was the actual version (0.393991ms)
+✔ timeout aborts provider and late completion cannot replace an idempotent receipt (11.537642ms)
+✔ cancel/unload aborts accepted work, drains evaluation and rejects new requests (0.67219ms)
+✔ failure circuit bounds requests and redacts arbitrary provider exception text (0.625281ms)
+✔ Jev uses exact official URL, request/response schema, Bearer and actual model version (5.20828ms)
+✔ Jev rejects malformed distributions, extra fields, wrong scores and missing metadata (3.4083ms)
+✔ Jev limits are honest: unsupported native abstention/effort performs no network call (0.473197ms)
+✔ Jev retries 429 within attempt bound; 401 and 422 are never retried (8.618764ms)
+✔ compatible adapter requires actual readout declaration and L1/L2 calibration provenance (1.259896ms)
+✔ task consumer returns proposal only, preserves mandatory protocol/narrative reporting (1.972355ms)
+✔ task consumer refuses stale catalog, explicit route changes, ignored dispatch and bad attachment (2.473093ms)
+✔ real DSH Loader composes standalone ordinary decisions with a tool-free native call and honest version source (25.449521ms)
+✔ native output remains subject to exact JSON validation, including duplicate keys and prose fences (8.093369ms)
+✔ declared reasoning efforts cannot bypass the real DSH adapter capability check (8.035254ms)
+✔ configured pin cannot be relabeled as a provider-reported response (4.322755ms)
+✔ native stream rejects tools, truncation, missing terminal finish and data after finish (6.696643ms)
+✔ caller cancellation aborts native provider and cleans up only its owned call (15.880618ms)
+✔ native runtime limit bounds a hung provider independently of the decision engine timeout (31.968191ms)
+✔ native plugin unload aborts active streams, removes only its service and permits clean reload (11.552975ms)
+✔ explicit request, response and token budgets reject oversized input or output (5.068524ms)
+✔ native concurrency budget refuses excess work without invoking another provider call (13.715054ms)
+✔ native bridge requires explicit finite budgets and an exact configured model pin (4.043726ms)
+✔ native model defaults cannot silently expand the configured reasoning allowlist (4.146457ms)
+✔ parent cancellation during native model preparation prevents any generation (14.549999ms)
+✔ native output byte budget includes multibyte text and accepts the exact payload limit (9.574391ms)
+✔ native Cordis plugin Config loads standalone rules service and unmount removes it (11.435693ms)
+✔ native configuration rejects out-of-range retry/timeouts and invalid provider config (1.345291ms)
+✔ native structured adapter is optional, called with schema and cannot silently change effort (5.957114ms)
+ℹ tests 36
+ℹ suites 0
+ℹ pass 36
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 268.159584
+
+> @dsh-orchestration/dashboard@0.1.0 test
+> node --test tests/*.test.mjs
+
+✔ shared contract validation rejects incompatible and duplicate identities (1.034303ms)
+✔ a successful polling timestamp never refreshes old task evidence (0.17631ms)
+✔ same task retains reports across different sessions and known/unknown runs (0.314574ms)
+✔ filtering is case insensitive, stable and includes tags (1.010348ms)
+✔ external content is escaped and script/file/data URIs are never links (0.263448ms)
+✔ deep links preserve task identity and reject malformed escapes (0.236809ms)
+✔ dismissed tasks default out of lists, search and counts while lifecycle/history remain intact (0.272521ms)
+✔ new reports never readmit dismissed tasks and opt-in preserves reports across sessions (0.182129ms)
+✔ missing curation fields remain backward compatible and restoration reveals the same history (0.252812ms)
+✔ status append preserves identity/history, replays exactly, and never regresses newer task state or readmits dismissed tasks (409.710595ms)
+✔ read-only routes, no-store security headers, and static allowlist (45.530926ms)
+✔ non-root mounting serves relative assets and same-base API (13.752615ms)
+✔ DNS rebinding and absent host auth fail closed (6.467325ms)
+✔ host adapter can reuse an already authenticated user session (2.744532ms)
+✔ read projection removes operational secrets and unstructured event detail (0.945573ms)
+[dashboard] Task data source unavailable
+✔ unavailable core reports a bounded error without leaking its path (2.968192ms)
+✔ API projection retains complete curation and history for explicit viewing choices (0.260684ms)
+ℹ tests 17
+ℹ suites 0
+ℹ pass 17
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 550.735408
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> dsh-task-management@0.1.0 test:native
+> node --test tests/dsh/native-loader.test.mjs tests/dsh/remote-native.test.mjs
+
+✔ actual Loader + AgentLoop commits only the owned causal result and retains reports after unload (220.188371ms)
+✔ assistant completion text and idle become uncertain without task_settle (27.039202ms)
+✔ native transient retry requires live zero-tool evidence and resumes the exact durable session after host restart (160.347114ms)
+✔ native safe retry refuses post-tool failures and non-transient errors and respects the original host deadline (80.209826ms)
+✔ bounded native retries stop after the configured count without resetting execution time (426.493274ms)
+✔ native local heartbeat reports capability readiness without provider probes and reconciles health alerts (25.508437ms)
+✔ independent native providers cannot execute the same leased attempt twice (31.748679ms)
+✔ unowned tool calls cannot submit results and planner role blocks execution in tool guard and service (22.108169ms)
+✔ native provider disposal aborts and drains its owned agent without stopping host (24.720526ms)
+✔ real Loader unload removes tools and restart can recover durable state (16.905587ms)
+✔ native resume restores the exact persisted session bound to an unexpired attempt (48.860304ms)
+✔ provider loss unloads native capability and provider return reactivates it (12.746301ms)
+✔ durable cancellation is acknowledged after the native agent actually stops (29.953259ms)
+✔ configured timer admits a scheduled slot and native autoExecute commits explicit output (134.076728ms)
+✔ automatic native dispatch obeys maxConcurrent and leaves the next run queued (30.334837ms)
+✔ native confirmation gate cannot be bypassed by model task creation and blocks effects until trusted approval (32.628654ms)
+✔ native results enqueue only operator-configured reporting destinations and honor narrative policy (62.182095ms)
+✔ native curation is reversible, preserves history, and remains forbidden to owned execution and executor profiles (38.595924ms)
+✔ malformed structured native result immediately records unvalidated uncertainty without persisting raw errors (38.207185ms)
+✔ trusted semantic validation rejects shape-valid native success and records truthful uncertainty (38.420219ms)
+✔ maintained legacy task-pack mounts through real Loader and missing validator after unload fails closed (191.289354ms)
+✔ actual native legacy preparation creates a bound artifact then task_settle commits after quiescence (45.469676ms)
+✔ actual native configured readers bind source evidence to one attempt before game report preparation (84.736532ms)
+✔ task policy intersects configured tools and runtime timeout drains before uncertainty (142.679383ms)
+✔ executor task_schedule mutations are denied by real tool execution without writes (17.09737ms)
+✔ owned query/history/report tools cannot read or alter another task (42.502376ms)
+✔ native observer captures human session output as a candidate and never dispatches observed work (44.127679ms)
+✔ native projection catches up resumed sessions within bounds and records omitted history (48.079019ms)
+✔ native observation replay preserves historical candidates without newly inferred workspace authority (37.558475ms)
+✔ explicit delegation tools create only descendants, inherit policy, and expose all-settled review (29.987685ms)
+✔ resume cannot renew the attempt runtime budget or start effects after its deadline (136.206159ms)
+✔ optional typed planning tool loads only with its provider and records an abstaining proposal without task admission (32.128278ms)
+✔ actual DSH file tools reject traversal, outside absolute paths, symlinks and escalation; shell stays withheld (49.719676ms)
+✔ configured physical roots allow operator provisioning and reject traversal and planner work (30.639049ms)
+✔ trusted node bootstrap enables a local executor and unchanged restart preserves registration (33.007853ms)
+✔ optional automatic typed observation admission creates observe-only history once and never dispatches it (300.693431ms)
+✔ cross-plugin observation subscriptions replay durable failures and stale disposal cannot detach replacements (48.325531ms)
+✔ observation sink cancellation drains before ledger close and local automatic admission rejects forwarding (34.014024ms)
+✔ public native approval hook holds the exact call and applies trusted allow-once or deny without a model approval tool (105.458271ms)
+✔ native approval bridge fails closed on unreviewable arguments, hard policy denial, and unload of a pending closure (91.924924ms)
+✔ standard native file tools cannot read or mutate authority database, SQLite sidecars, aliases or protected operator controls (37.235129ms)
+✔ quiescent native terminal journal survives authority SQLite lock and host restart without another model invocation (5044.088699ms)
+✔ actual native daily work summary derives turn shares from configured Codex and Hermes reader receipts (50.6494ms)
+✔ reviewed completed native tools continue the same session across two restarts and exact prior writes cannot replay (274.174553ms)
+✔ signed remote discovery and worker execute through actual DSH AgentLoop; model and network are external fixtures (189.190142ms)
+✔ native observed text reaches signed planner intake within workspace scope and recovers a lost response without dispatch (71.712635ms)
+✔ two real native executor hosts delegate through the signed coordinator, enforce subtree scope, wait, and recover without replay (332.40135ms)
+✔ signed remote retry uses real native zero-tool evidence, recovers a lost transition receipt, and resumes the same session (165.254095ms)
+✔ signed native approval holds the live external call and rejects an allowed response arriving after expiry (379.75477ms)
+✔ signed external native result preflight requires this execution source preparation before remote journaling (158.136087ms)
+✔ signed completed-tool native continuation recovers its retry receipt and prevents exact prior dispatch replay (179.555233ms)
+ℹ tests 51
+ℹ suites 0
+ℹ pass 51
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 8578.530477
+npm notice
+npm notice New major version of npm available! 11.9.0 -> 12.2.0
+npm notice Changelog: https://github.com/npm/cli/releases/tag/v12.2.0
+npm notice To update run: npm install -g npm@12.2.0
+npm notice
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> dsh-task-management@0.1.0 test:legacy
+> node --test tests/legacy/readers.test.mjs tests/legacy/reporting.test.mjs tests/legacy/quota.test.mjs tests/legacy/compatibility.test.mjs tests/legacy/configured-sources.test.mjs tests/legacy/ad-hoc.test.mjs tests/legacy/diagnostics.test.mjs
+
+✔ Ad-hoc themes use included turns, span sessions, retain continued sessions and never use root task shares (21.06102ms)
+✔ Ad-hoc source closure rejects omitted/invented/repeated turns, fake completion, invalid attention and model counts (11.167218ms)
+✔ Ad-hoc rendering is outcome-first, compact evidence, conditional attention, tokens and explicit non-time shares (5.517527ms)
+✔ Ad-hoc empty and unavailable source quality remain explicit rather than invented activity (2.059373ms)
+✔ Ad-hoc preparation and trusted semantic renderer integrate with real ledger without early settlement (69.243687ms)
+✔ strict JSON imports retain hashes and are explicitly historical evidence only (7.228898ms)
+✔ mixed stdout fallback requires explicit enablement and handles malformed tool noise (3.890811ms)
+✔ multiple inconsistent report candidates are rejected instead of choosing the last (2.963164ms)
+✔ equivalent repeated reports retain each provenance location and explicit ambiguity (3.010654ms)
+✔ complete all-added diffs require a trusted literal destination and never read or write it (2.125991ms)
+✔ legacy write_file arrow diffs preserve inaccurate hunk counts as warnings (2.734127ms)
+✔ untrusted path traversal, partial hunks, removals and multi-file inconsistent candidates fail closed (2.85814ms)
+✔ invalid schemas, prose guesses and malformed historical content remain invalid (1.061774ms)
+✔ size, candidate count and depth are bounded (1.190844ms)
+✔ diff candidate bounds, standard header renames and strict JSON nesting are also checked (4.958473ms)
+✔ Configured readers derive the window from the task and return full node/game evidence (53.674079ms)
+✔ Unauthorized source IDs/model paths and oversize evidence do not become truncated success (13.319998ms)
+✔ Configured quota snapshots are read-only full evidence under the current task window (9.530137ms)
+✔ Configured lookback diagnostics derive host identity/time and settle through the real semantic gate (75.412533ms)
+✔ 26-hour diagnostics retain cross-calendar history, queue/script evidence and retry recovery without live process inference (77.835171ms)
+✔ explicit result-file mtime inclusion and host attribution do not establish authoritative task completion (6.165871ms)
+✔ missing, malformed and unsupplied exports are explicit evidence gaps, distinct from an empty supplied snapshot (4.014453ms)
+✔ bounds keep the newest history and events, support custom markers and report truncated source tails and text (14.385803ms)
+✔ scope rejects escapes and symlinks; diagnostics never follow installation paths from ScriptConfig (5.68311ms)
+✔ redaction precedes clipping and covers bearer/quoted credentials, opaque IDs, emails and private path forms (0.274264ms)
+✔ invalid windows, timezone, bounds and process-path inputs fail before scanning (4.450986ms)
+✔ on-demand CLI renders text/JSON from an explicit-root config and leaves every export byte unchanged (203.702352ms)
+✔ closed validator rejects unsupported fields, authority escalation, invented status/text and broken export provenance (14.012114ms)
+✔ quota providers remain disabled and do not consult ambient credentials or transport (4.308105ms)
+✔ DeepSeek exact decimal multi-currency metrics are the only returned provider data (1.067933ms)
+✔ Alibaba signs only the pinned read-only balance action using explicit transient credentials (1.806731ms)
+✔ explicit ECS IMDSv2 sequence is fixed, bounded and stays transient (0.973825ms)
+✔ provider reads bound timeout/bytes, reject redirects and suppress secret error bodies (12.631279ms)
+✔ private metric persistence round-trips exact decimal values and strips extra/raw secret fields (33.084169ms)
+✔ store rejects public directories and symlinked files without changing permissions (1.844927ms)
+✔ midnight collection is model-free, failure-only retries at 30s/60s, all providers required and successes deduplicated (13.088517ms)
+✔ exhausted failure alerts once, never records secret errors, and retries do not survive their finite budget (7.879115ms)
+✔ pending interrupted reads remain unknown and never silently repeat after restart (5.181121ms)
+✔ closing and reopening the private DB retains successful provider deduplication (6.934724ms)
+✔ host calls outside midnight window are inert and configured zones honor DST (9.06388ms)
+✔ disabled lifecycle installs no timers; enabled lifecycle is disposable and serializes concurrent ticks (4.840619ms)
+✔ mounted host lifecycle schedules through injected timers and cancels them on disposal (5.092831ms)
+✔ a hanging host credential/provider callback still has a finite whole-attempt timeout (16.003326ms)
+✔ summary preserves exact string decimals, missing boundaries and net movement semantics (5.347776ms)
+✔ scoped quota reader reads native and original metric formats without modifying source files (13.128427ms)
+✔ native quota plugin is disabled by default and creates no timers, store or credential reads (7.695745ms)
+✔ native planner plugin reads only named synthetic env slots and raises one sanitized durable alert (8.50395ms)
+✔ native quota success resolves only a known same-boundary alert and stays silent otherwise (7.227345ms)
+✔ executor native quota plugin rejects alert authority and supports explicit local-only monitoring (9.500593ms)
+✔ native authority drain aborts provider reads before ledger shutdown and cleanup is idempotent (5.117938ms)
+✔ native quota config rejects accidental credential values, ambiguous Alibaba modes and duplicate providers (1.419841ms)
+✔ Codex keeps continued turns, ignores injected/subagent/collector work, and excludes future completion (39.56563ms)
+✔ Codex unavailable, measured zero, and malformed partial evidence are distinct (6.801628ms)
+✔ Scope rejects path traversal, symlink escape, oversized inputs, and oversized JSONL rows (7.146235ms)
+✔ SQLite reads include uncheckpointed WAL records using a private snapshot and leave sources unchanged (11.111165ms)
+✔ Hermes ACK excludes only acknowledged turns and preserves the human remainder with partial usage (6.413226ms)
+✔ Hermes injected turns, full ACK, unknown ACK IDs, and profile restrictions do not erase unrelated work (5.917235ms)
+✔ Hermes native SQLite sessions/messages and separate ACK/worker tables are translated (8.9751ms)
+✔ SQLite row bounds reject whole input instead of silently dropping sessions (4.471986ms)
+✔ HSR main outcomes survive late screenshot noise and optional skipped training (26.984214ms)
+✔ OneDragon uses child failures despite Success!, marks only chronological suspected cascades, and respects disabled apps (7.273092ms)
+✔ MAA preserves completed main/credit tasks with subtask noise and configured manual reminders (13.02902ms)
+✔ Scheduler start without matching end is verify; unrelated later completion cannot close it (4.084506ms)
+✔ Unavailable game files remain explicit and differ from a supplied no-run inventory (5.648399ms)
+✔ Raw game windows use source offsets and midnight rollover; future success cannot cure earlier failure (6.282634ms)
+✔ Message clipping keeps evidence bounded and reports truncation (9.388789ms)
+✔ Legacy UTF-8 BOM, GB18030/CP936 and explicit UTF-16 logs decode without lossy replacement (6.392345ms)
+✔ IANA windows handle 23/25-hour Melbourne days and explicit ambiguity policies (3.206402ms)
+✔ Raw IANA timestamps cross DST without fixed-offset drift (4.988377ms)
+✔ Explicit AUTO-MAS history/config/screenshot roots merge MAA runs and preserve historical metrics (27.496419ms)
+✔ Explicit AUTO-MAS history inventory supports mtime fallback and reports missing screenshots (4.090876ms)
+✔ Policy cycles reject and chronological recovery does not turn early cleanup failure into harmless late noise (4.015044ms)
+✔ Configured tail reads are bounded and explicitly partial, with complete text lines retained (1.860881ms)
+✔ Configured untimed marker compatibility keeps exact task timestamps unknown (2.382139ms)
+✔ Legacy OneDragon failure precedence and explicit unscoped frontend fallback are available (5.097178ms)
+✔ Agent Daily builder owns IDs/counts/shares and canonical duplicate accounting (5.993228ms)
+✔ Agent Daily rejects omitted/fabricated/repeated semantics and duplicate cycles (1.75195ms)
+✔ Agent Daily validator rejects count/share/attention/quality drift (2.918949ms)
+✔ Normalization preserves report-wide attention and only hides explicitly configured policy gaps (2.116308ms)
+✔ Game business failure does not invalidate successful observation, and optional work only verifies (0.523891ms)
+✔ Game rejects null/no-run mismatch, missing evidence, wrong causal/action ownership and scheduler fiction (3.100787ms)
+✔ Configurable HSR cleanup, MAA main/substep and ZZZ suspected cascade retain distinctions (0.725809ms)
+✔ Node builder closes evidence and scopes account window; missing source stays unavailable (1.726993ms)
+✔ Root node gate refuses omitted successful evidence and records failed-node source gaps (1.419591ms)
+✔ Quota preserves decimal precision, net movement, boundary tolerance and missing-first-day uncertainty (1.244293ms)
+✔ Trusted semantic gate rejects model shape-only success before state/report/outbox mutation (57.816075ms)
+✔ Validated daily artifact settles, persists full payload, and delivery remains separate/idempotent (17.487702ms)
+✔ Missing provider/root binding/artifact and invalid report paths fail safely; failure card records failure (18.0567ms)
+✔ Specialized renderer validates authoritative payload/artifact and refuses tampered delivery (13.41636ms)
+✔ Immutable settlement replay never repairs overwritten byte evidence (12.851829ms)
+✔ Delivery refuses oversized and symbolic-link artifacts before reading bytes (21.974165ms)
+✔ Native preparation does not settle and root derived-field tampering fails despite valid shape (9.489086ms)
+✔ Node/game payloads work across executor-to-authority boundary without root-only artifact requirement (7.905804ms)
+✔ Actual ledger node results cannot be silently omitted from a finalized root (26.093953ms)
+✔ Recurring roots consume only this root run node evidence and reject the wrong node report window (38.151812ms)
+✔ Executor source preflight requires exact prepared envelope, while authority journal replay needs no ephemeral map (14.771707ms)
+ℹ tests 96
+ℹ suites 0
+ℹ pass 96
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 499.705651
+npm notice
+npm notice New major version of npm available! 11.9.0 -> 12.2.0
+npm notice Changelog: https://github.com/npm/cli/releases/tag/v12.2.0
+npm notice To update run: npm install -g npm@12.2.0
+npm notice
