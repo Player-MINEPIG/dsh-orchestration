@@ -1,0 +1,7 @@
+{
+  "name": "dsh-task-management", "version": "0.1.0", "private": true, "type": "module",
+  "description": "Configurable, host-mounted durable task management for DeepSeek Harness",
+  "workspaces": ["packages/*"], "engines": {"node": ">=24.0.0"},
+  "scripts": {"build": "npm run build --workspaces --if-present", "test": "npm run build && npm run test --workspaces --if-present", "check": "npm run build && npm run test --workspaces --if-present"},
+  "devDependencies": {"typescript": "5.9.3", "@types/node": "24.10.1"}
+}
