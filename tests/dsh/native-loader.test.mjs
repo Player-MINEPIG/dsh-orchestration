@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { after, test } from 'node:test';
-import { mkdtempSync, existsSync, rmSync, mkdirSync, writeFileSync, readFileSync, symlinkSync, linkSync } from 'node:fs';
+import { mkdtempSync, existsSync, rmSync, mkdirSync, writeFileSync, readFileSync, symlinkSync, linkSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -648,7 +648,7 @@ test('actual native legacy preparation creates a bound artifact then task_settle
     assert.equal(history.reports[0].schemaId, 'agent_daily_report.v1');
     assert.equal(history.reports[0].data.payload.summary.task_counts.total, 2);
     assert.equal(history.artifacts.length, 1);
-    assert.ok(history.artifacts[0].uri.startsWith(artifactDirectory));
+    assert.ok(history.artifacts[0].uri.startsWith(realpathSync(artifactDirectory)));
     assert.equal(createHash('sha256').update(readFileSync(history.artifacts[0].uri)).digest('hex'), history.artifacts[0].sha256);
   } finally { await h.dispose(); }
 });

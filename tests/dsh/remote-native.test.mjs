@@ -7,7 +7,7 @@ import { generateKeyPairSync } from 'node:crypto';
 import { createUserMessage, LlmError } from '@deepseek-ai/dsh-llm';
 import { SessionId } from '@deepseek-ai/dsh-session';
 import { TaskLedger } from '../../packages/task-system/dist/index.js';
-import { RemoteGateway, RemoteClient, RemoteLedgerClient, RecoveryStore, ExecutorWorker, IdentityVerifier, nativeExecutionAdapter, observationForwarder } from '../../packages/remote-execution/dist/api.js';
+import { RemoteGateway, RemoteClient, RemoteLedgerClient, RecoveryStore, ExecutorWorker, IdentityVerifier, nativeExecutionAdapter, observationForwarder } from '../../packages/task-system/dist/remote/api.js';
 import { createNativeHarness } from './native-harness.mjs';
 import * as deepseekApiKey from '@deepseek-ai/dsh-llm-deepseek-api-key';
 import { createLaunchEnvironmentSnapshot } from '@deepseek-ai/dsh-launch-environment';

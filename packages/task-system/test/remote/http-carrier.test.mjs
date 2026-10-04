@@ -7,8 +7,8 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { TaskLedger } from '../../task-system/dist/index.js';
-import { RecoveryStore, IdentityVerifier, RemoteGateway, RemoteClient, RemoteLedgerClient, httpHandler } from '../dist/api.js';
+import { TaskLedger } from '../../dist/index.js';
+import { RecoveryStore, IdentityVerifier, RemoteGateway, RemoteClient, RemoteLedgerClient, httpHandler } from '../../dist/remote/api.js';
 
 // Only this test request trusts this disposable CA; certificate verification stays enabled.
 function tlsFetch(ca) {

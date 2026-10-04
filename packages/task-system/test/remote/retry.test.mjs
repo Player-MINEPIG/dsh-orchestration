@@ -4,8 +4,8 @@ import { generateKeyPairSync } from 'node:crypto'
 import { mkdtempSync,rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { TaskLedger } from '../../task-system/dist/index.js'
-import { RecoveryStore,RemoteGateway,RemoteClient,RemoteLedgerClient,IdentityVerifier,ExecutorWorker,validateRetryWitness,signEnvelope } from '../dist/api.js'
+import { TaskLedger } from '../../dist/index.js'
+import { RecoveryStore,RemoteGateway,RemoteClient,RemoteLedgerClient,IdentityVerifier,ExecutorWorker,validateRetryWitness,signEnvelope } from '../../dist/remote/api.js'
 const key=generateKeyPairSync('ed25519') // Disposable fixture; this test mocks native evidence, not its production capture.
 const operations=['listWork','claim','markRunning','bindSession','renew','submit','getRun','getAttempt','retryBeforeEffects','receipt']
 const witness=sessionId=>({kind:'dsh-owned-zero-tools-v1',sessionId,fromSeq:1,toSeq:5,terminalSeq:4,turn:0,code:'RATE_LIMIT',toolCallCount:0,toolDispatchCount:0,complete:true,quiescent:true,persisted:true,disposed:true})

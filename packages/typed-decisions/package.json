@@ -1,6 +1,6 @@
 {
   "name": "@dsh-task/typed-decisions",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Host-mounted DSH typed decision service with rules, structured models and typed API adapters",
   "type": "module",
   "license": "MIT",
@@ -19,6 +19,10 @@
     "./dsh-completion": {
       "types": "./dist/dsh-completion.d.ts",
       "import": "./dist/dsh-completion.js"
+    },
+    "./validation": {
+      "types": "./dist/validation.d.ts",
+      "import": "./dist/validation.js"
     }
   },
   "files": [

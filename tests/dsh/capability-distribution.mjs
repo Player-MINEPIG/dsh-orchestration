@@ -73,21 +73,21 @@ try {
   stage('typed-actual-plugin-remove');
   await boot(typedProfile, 'typed', '', true);
 
-  const remote = '@dsh-task/remote-execution';
+  const remote = '@dsh-task/task-system';
   const remoteProfile = 'remote-no-decisions-acceptance';
-  dsh(['plugin', '--profile', remoteProfile, 'add', pack('task-system'), pack('remote-execution')]);
+  dsh(['plugin', '--profile', remoteProfile, 'add', pack('task-system')]);
   stage('remote-actual-plugin-add');
   const keys = generateKeyPairSync('ed25519');
   const publicKey = keys.publicKey.export({ type: 'spki', format: 'pem' });
   env.DSH_TEST_PEER_KEY = join(scratch, 'test-peer-private.pem');
   writeFileSync(env.DSH_TEST_PEER_KEY, keys.privateKey.export({ type: 'pkcs8', format: 'pem' }), { mode: 0o600 });
   env.DSH_TASK_DATABASE = join(scratch, 'remote-ledger.sqlite');
-  const remotePatch = `- id: task-system\n  config:\n    databasePath: ${JSON.stringify(env.DSH_TASK_DATABASE)}\n    role: both\n    nodeId: coordinator\n    keepAlive: true\n- id: task-remote-execution\n  config:\n    role: both\n    nodeId: coordinator\n    statePath: ${JSON.stringify(join(scratch, 'remote-recovery.sqlite'))}\n    exposeHttp: false\n    peers:\n      - keyId: probe-key\n        nodeId: probe-node\n        publicKey: ${JSON.stringify(publicKey)}\n        audience: task-coordinator\n        operations: [claim, bindSession, markRunning, submit, observe]\n        workspaces: [probe-workspace]\n        capabilities: [offline-probe]\n`;
-  assert.match(dsh(['--profile', remoteProfile, '--dump-config']), /@dsh-task\/remote-execution/);
+  const remotePatch = `- insert:\n    - id: task-remote-execution\n      name: '@dsh-task/task-system/remote'\n      config: {}\n- id: task-system\n  config:\n    databasePath: ${JSON.stringify(env.DSH_TASK_DATABASE)}\n    role: both\n    nodeId: coordinator\n    keepAlive: true\n- id: task-remote-execution\n  config:\n    role: both\n    nodeId: coordinator\n    statePath: ${JSON.stringify(join(scratch, 'remote-recovery.sqlite'))}\n    exposeHttp: false\n    peers:\n      - keyId: probe-key\n        nodeId: probe-node\n        publicKey: ${JSON.stringify(publicKey)}\n        audience: task-coordinator\n        operations: [claim, bindSession, markRunning, submit, observe]\n        workspaces: [probe-workspace]\n        capabilities: [offline-probe]\n`;
+  assert.match(dsh(['--profile', remoteProfile, '--dump-config']), /@dsh-task\/task-system/);
   JSON.parse(dsh(['--profile', remoteProfile, '--dump-config-schema']));
   await boot(remoteProfile, 'remote', remotePatch);
   dsh(['plugin', '--profile', remoteProfile, 'remove', remote]);
-  assert.doesNotMatch(dsh(['--profile', remoteProfile, '--dump-config']), /@dsh-task\/remote-execution/);
+  assert.doesNotMatch(dsh(['--profile', remoteProfile, '--dump-config']), /@dsh-task\/task-system/);
   assert.ok(existsSync(join(scratch, 'remote-recovery.sqlite')));
   stage('remote-actual-plugin-remove-retains-recovery');
   await boot(remoteProfile, 'remote', '', true);

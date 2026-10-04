@@ -44,7 +44,7 @@ export async function apply(ctx) {
     assert.ok(gateway);
     const ledger = ctx.taskSystem.ledger;
     const privateKey = createPrivateKey(readFileSync(process.env.DSH_TEST_PEER_KEY));
-    const { signEnvelope } = await import(pathToFileURL(join(process.env.DSH_TEST_PROFILE_DIR, 'node_modules/@dsh-task/remote-execution/dist/api.js')).href);
+    const { signEnvelope } = await import(pathToFileURL(join(process.env.DSH_TEST_PROFILE_DIR, 'node_modules/@dsh-task/task-system/dist/remote/api.js')).href);
     ledger.registerWorkspace('remote-probe-workspace', { workspaceId: 'probe-workspace', nodeId: 'probe-node', path: process.cwd(), label: 'Isolated protocol probe workspace', state: 'ready', createdAt: new Date().toISOString() });
     ledger.registerNode('remote-probe-node', { nodeId: 'probe-node', roles: ['executor'], capabilities: ['offline-probe'], models: [{ provider: 'fixture', model: 'protocol-only', reasoningEfforts: [] }], workspaceIds: ['probe-workspace'], enabled: true, lastSeenAt: new Date().toISOString() });
     let semanticChecks = 0;

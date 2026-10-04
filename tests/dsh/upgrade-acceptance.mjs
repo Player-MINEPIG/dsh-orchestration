@@ -1,3 +1,5 @@
+// Historical 0.1.0 to 0.1.1 four-package acceptance runner.
+// Run from the preserved 0.1 source checkout; current verification is test:distribution.
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';

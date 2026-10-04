@@ -6,9 +6,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { Context } from '@deepseek-ai/cordis'
-import { TaskLedger } from '../../task-system/dist/index.js'
-import * as plugin from '../dist/index.js'
-import { IdentityVerifier, RecoveryStore, RemoteGateway, RemoteClient, RemoteLedgerClient, ExecutorWorker, observationForwarder, signEnvelope, digest } from '../dist/api.js'
+import { TaskLedger } from '../../dist/index.js'
+import * as plugin from '../../dist/remote/index.js'
+import { IdentityVerifier, RecoveryStore, RemoteGateway, RemoteClient, RemoteLedgerClient, ExecutorWorker, observationForwarder, signEnvelope, digest } from '../../dist/remote/api.js'
 
 const keyA = generateKeyPairSync('ed25519'), keyB = generateKeyPairSync('ed25519') // disposable fixtures only
 const operations = ['observe','receipt','listWork','claim','bindSession','markRunning','renew','submit','getRun','getAttempt','acknowledgeCancellation']

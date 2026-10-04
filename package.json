@@ -1,9 +1,9 @@
 {
   "name": "dsh-task-management",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
-  "description": "Configurable, host-mounted durable task management for DeepSeek Harness",
+  "description": "DSH decisions and durable task/remote execution suite with optional channel adapters",
   "workspaces": [
     "packages/*",
     "dashboard"
@@ -12,7 +12,7 @@
     "node": ">=24.0.0"
   },
   "scripts": {
-    "build": "npm run build -w @dsh-task/typed-decisions && npm run build -w @dsh-task/task-system && npm run build -w @dsh-task/remote-execution && npm run build -w @dsh-task/feishu-channel",
+    "build": "npm run build -w @dsh-task/typed-decisions && npm run build -w @dsh-task/task-system && npm run build -w @dsh-task/feishu-channel",
     "test": "npm run build && npm run test --workspaces --if-present",
     "check": "npm run build && npm run test:unit && npm run test:native && npm run test:legacy",
     "test:unit": "npm run test --workspaces --if-present",

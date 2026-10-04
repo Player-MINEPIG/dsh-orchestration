@@ -1,6 +1,6 @@
 - insert:
     - id: task-remote-execution
-      name: '@dsh-task/remote-execution'
+      name: '@dsh-task/task-system/remote'
       config:
         role: executor
         nodeId: unconfigured

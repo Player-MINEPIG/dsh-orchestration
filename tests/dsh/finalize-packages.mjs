@@ -20,7 +20,7 @@ assert.equal(expected.get('@dsh-task/task-system'), taskProof.integrity, 'both C
 const cache = mkdtempSync(join(tmpdir(), 'dsh-final-package-cache-'));
 mkdirSync(directory, { recursive: true });
 const packages = [];
-for (const name of ['task-system', 'typed-decisions', 'remote-execution', 'feishu-channel']) {
+for (const name of ['task-system', 'typed-decisions', 'feishu-channel']) {
   const result = spawnSync('npm', ['pack', '--json', '--pack-destination', directory], { cwd: join(root, 'packages', name), env: { ...process.env, npm_config_cache: cache, npm_config_update_notifier: 'false' }, encoding: 'utf8', timeout: 60000 });
   assert.equal(result.error, undefined); assert.equal(result.status, 0, result.stderr);
   const [pack] = JSON.parse(result.stdout);

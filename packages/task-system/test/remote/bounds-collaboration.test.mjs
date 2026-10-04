@@ -4,8 +4,8 @@ import { generateKeyPairSync } from 'node:crypto'
 import { mkdtempSync,rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { TaskLedger } from '../../task-system/dist/index.js'
-import { RecoveryStore,RemoteGateway,RemoteClient,RemoteLedgerClient,IdentityVerifier,ExecutorWorker,bindCollaboration,signEnvelope,MAX_WIRE_BYTES } from '../dist/api.js'
+import { TaskLedger } from '../../dist/index.js'
+import { RecoveryStore,RemoteGateway,RemoteClient,RemoteLedgerClient,IdentityVerifier,ExecutorWorker,bindCollaboration,signEnvelope,MAX_WIRE_BYTES } from '../../dist/remote/api.js'
 const keys = generateKeyPairSync('ed25519') // disposable fixture only
 const ops = ['claim','renew','bindSession','markRunning','submit','getRun','getAttempt','listWork','delegate','taskHistory','taskWait','taskNote','taskReport','receipt']
 const peer = { keyId:'fixture-key',nodeId:'worker',audience:'planner',publicKey:keys.publicKey,operations:ops,workspaces:['workspace'],capabilities:['read'] }

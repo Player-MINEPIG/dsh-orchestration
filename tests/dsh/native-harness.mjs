@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -12,6 +12,8 @@ const project = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 export async function createNativeHarness({ config = {}, script = [], dir } = {}) {
   const ownedDirectory = !dir;
   dir ??= mkdtempSync(join(tmpdir(), 'dsh-native-fixture-'));
+  mkdirSync(dir, { recursive: true });
+  dir = realpathSync(dir);
   const ctx = new Context();
   await ctx.plugin(Loader, { baseUrl: pathToFileURL(join(project, 'package.json')).href });
   await ctx.loader.root.update([

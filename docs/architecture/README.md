@@ -1,3 +1,7 @@
+# Architecture snapshots
+
+These source-grounded diagrams preserve the 0.1.x four-package snapshot. The current 0.2 installation boundary is described in [PLUGIN-BOUNDARIES.zh-CN.md](../PLUGIN-BOUNDARIES.zh-CN.md); the implementation and diagrams retained here remain historical evidence.
+
 # 架构、任务与报告历史
 
 这里的图比较历史移交材料中的系统描述与已批准的重构设计。历史材料 mtime 为 2026-09-07 UTC，旧文档自述当地 2026-09-08。配套 sources.md 保留源码映射，但本轮图未通过 Git 对象来源门。图不代表当前生产部署、代码验证或所有外部系统已连通。

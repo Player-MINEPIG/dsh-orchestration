@@ -1,7 +1,7 @@
 import { Context, Service } from '@deepseek-ai/cordis';
 import z from '@deepseek-ai/schemastery';
 import { randomUUID } from 'node:crypto';
-import type { TaskSystemService } from '@dsh-task/task-system/plugin';
+import type { TaskChannelPort } from '@dsh-task/task-system/channels';
 import type { Alert, ApprovalRequest, Delivery, Report } from '@dsh-task/task-system/contracts';
 import type { ActionBinding, ChatConsumer, Inbound, InboxEntry, Json, Outbound, SendRequest, TaskReportRenderer } from './contracts.js';
 import { SendRejected, type FeishuTransport } from './contracts.js';
@@ -57,7 +57,7 @@ async function bounded<T>(promise: Promise<T>, ms: number, signal?: AbortSignal)
 
 /** Native service consumed by host plugins. No listener, daemon, model or credentials are created by default. */
 export class FeishuChannelService extends Service {
-  private task?: TaskSystemService;
+  private task?: TaskChannelPort;
   private taskGeneration = 0;
   private consumer?: ChatConsumer;
   private consumerGeneration = 0;
@@ -67,7 +67,7 @@ export class FeishuChannelService extends Service {
   private running?: Promise<void>;
   private lifecycle = new AbortController();
   constructor(ctx: Context, readonly config: ResolvedConfig, readonly store?: ChannelStore, readonly transport?: FeishuTransport) { super(ctx, 'feishuChannel'); }
-  attachTaskSystem(service: TaskSystemService): () => void {
+  attachTaskSystem(service: TaskChannelPort): () => void {
     const generation = ++this.taskGeneration;
     this.task = service;
     return () => { if (this.taskGeneration === generation) { this.task = undefined; this.taskGeneration++; } };
@@ -145,7 +145,7 @@ export class FeishuChannelService extends Service {
     }
     if (this.accepting) { await this.flushLocal(); await this.flushTasks(); }
   }
-  private operator(event: Inbound): TaskSystemService {
+  private operator(event: Inbound): TaskChannelPort {
     if (!this.config.taskIntegration || !this.task) throw new CommandRejected('Task integration is unavailable');
     if (!this.config.operatorUserIds.includes(event.senderId)) throw new CommandRejected('This user is not a configured task operator');
     return this.task;
@@ -526,7 +526,7 @@ async function mount(ctx: Context, input: Config, factory: TransportFactory): Pr
   let timer: ReturnType<typeof setInterval> | undefined;
   ctx.effect(() => async () => { if (timer) clearInterval(timer); await service.close(); });
   if (config.taskIntegration) ctx.inject(['taskSystem'], taskCtx => {
-    const detach = service.attachTaskSystem(taskCtx.taskSystem);
+    const detach = service.attachTaskSystem(taskCtx.get('taskSystem') as TaskChannelPort);
     taskCtx.effect(() => detach);
   });
   if (transport) {

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, readFile, readdir, stat, chmod, symlink } from 'node:fs/promises';
+import { mkdtemp, realpath, rm, readFile, readdir, stat, chmod, symlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { collectDeepSeek, collectAlibaba, readEcsRoleCredentials, QuotaError, safeFailure, openQuotaStore, createQuotaProviders, createQuotaMonitor, mountQuotaMonitor, summarizeQuotaDay, readQuotaSnapshots } from '../../examples/legacy-task-pack/quota/index.mjs';
@@ -12,7 +12,7 @@ import { TaskLedger } from '../../packages/task-system/dist/ledger.js';
 import { createQuotaPlugin, Config as QuotaConfig } from '../../examples/legacy-task-pack/quota/plugin.mjs';
 import { deepSeekFixture, alibabaFixture, metricFixture, jsonResponse } from '../../examples/legacy-task-pack/quota/synthetic-fixtures.mjs';
 
-const withStore = async fn => { const directory = await mkdtemp(join(tmpdir(), 'dsh-quota-test-')); let store = openQuotaStore({ directory }); try { await fn(store, directory); } finally { try { store.close(); } catch {} await rm(directory, { recursive: true, force: true }); } };
+const withStore = async fn => { const directory = await realpath(await mkdtemp(join(tmpdir(), 'dsh-quota-test-'))); let store = openQuotaStore({ directory }); try { await fn(store, directory); } finally { try { store.close(); } catch {} await rm(directory, { recursive: true, force: true }); } };
 const syntheticKey = 'SYNTHETIC-SECRET-MUST-NOT-PERSIST';
 const boundary = '2026-09-30T16:00:00.000Z';
 
@@ -54,7 +54,7 @@ test('private metric persistence round-trips exact decimal values and strips ext
   assert.throws(() => store.finish(id, { status: 'ok', metrics: metricFixture().metrics }), { code: 'configuration' });
 }));
 test('store rejects public directories and symlinked files without changing permissions', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'dsh-quota-private-'));
+  const directory = await realpath(await mkdtemp(join(tmpdir(), 'dsh-quota-private-')));
   try { await chmod(directory, 0o755); assert.throws(() => openQuotaStore({ directory }), { code: 'configuration' }); await chmod(directory, 0o700); await symlink(join(directory, 'elsewhere'), join(directory, 'quota_snapshots.sqlite')); assert.throws(() => openQuotaStore({ directory }), { code: 'configuration' }); } finally { await rm(directory, { recursive: true, force: true }); }
 });
 test('midnight collection is model-free, failure-only retries at 30s/60s, all providers required and successes deduplicated', async () => withStore(async (store, directory) => {
@@ -78,7 +78,7 @@ test('pending interrupted reads remain unknown and never silently repeat after r
   const result = await monitor.tick(); assert.equal(result.status, 'failed'); assert.equal(result.providers[0].status, 'pending'); assert.equal(calls, 0); assert.equal(alerts.length, 1); await monitor.tick(); assert.equal(alerts.length, 1);
 }));
 test('closing and reopening the private DB retains successful provider deduplication', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'dsh-quota-reopen-')); let store, calls = 0;
+  const directory = await realpath(await mkdtemp(join(tmpdir(), 'dsh-quota-reopen-'))); let store, calls = 0;
   try {
     store = openQuotaStore({ directory }); const provider = { id: 'deepseek', async collect() { calls++; return metricFixture(); } };
     let monitor = createQuotaMonitor({ enabled: true, store, providers: [provider], now: () => new Date(boundary) }); await monitor.tick(); await monitor.dispose(); store.close();
@@ -124,7 +124,7 @@ test('scoped quota reader reads native and original metric formats without modif
 }));
 
 async function pluginHarness(role, dependencies, input = {}) {
-  const directory = await mkdtemp(join(tmpdir(), 'dsh-quota-native-')); const ctx = new Context();
+  const directory = await realpath(await mkdtemp(join(tmpdir(), 'dsh-quota-native-'))); const ctx = new Context();
   const ledger = TaskLedger.open(join(directory, 'tasks.sqlite'), { role, nodeId: 'quota-test' });
   class TestAuthority extends Service {
     constructor() { super(ctx, 'taskSystem'); this.ledger = ledger; this.drains = new Set(); }

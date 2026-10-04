@@ -1,6 +1,6 @@
 # Remote execution inside a DSH host
 
-`@dsh-task/remote-execution` provides an authenticated task bridge and an executor worker inside an existing DSH host. Its default signed mode uses the existing host HTTP carrier. The optional trusted-network mode owns one exact-address listener inside that same host. It does not start a daemon, supervise DSH, install a model runtime, generate credentials, or expose shell execution. Version 0.1.1 targets Node 24 and DSH `0.2.0-rc.2`, pinned upstream commit `639ed015397290b3745d163aafe02ffee4aa3f84`, with Cordis `4.0.4` and Schemastery `3.18.4`.
+`@dsh-task/task-system/remote` provides an authenticated task bridge and an executor worker inside an existing DSH host. Its default signed mode uses the existing host HTTP carrier. The optional trusted-network mode owns one exact-address listener inside that same host. It does not start a daemon, supervise DSH, install a model runtime, generate credentials, or expose shell execution. Suite version 0.2.0 targets Node 24 and DSH `0.2.0-rc.2`, pinned upstream commit `639ed015397290b3745d163aafe02ffee4aa3f84`, with Cordis `4.0.4` and Schemastery `3.18.4`.
 
 ## Installation and composition
 
@@ -207,8 +207,8 @@ Recovery does not claim exactly-once execution. Persistent receipts and idempote
 From the repository root:
 
 ```sh
-npm run build --workspace @dsh-task/remote-execution
-npm run test --workspace @dsh-task/remote-execution
+npm run build --workspace @dsh-task/task-system
+npm run test --workspace @dsh-task/task-system
 ```
 
 Tests label mocked ledger/provider/HTTP boundaries. They exercise real Ed25519 and SQLite, authenticated health TTL and recovery, bounded witnessed retry transitions (with native evidence explicitly mocked in the package fixture), malicious payloads, least privilege, replay/reordering, physical symlink escape, stale leases, cancellation, intent/result crash recovery, and lost acknowledgments. One connected fixture uses the real TaskLedger, signed discovery and every execution lifecycle transition with only provider/network boundaries mocked. A separate test mounts and unloads the real pinned Cordis plugin while substituting only the ledger boundary. Trusted-network tests add real IPv4/IPv6 loopback HTTP, distinct source addresses, mode confusion, header forgery, peer and scope denial, replay/expiry, redirect refusal, authentication-bound recovery, and disconnect/lost-ACK restart coverage. An additional real loopback TLS carrier test uses a disposable certificate, rejects an untrusted certificate and spoofed forwarded headers, and carries signed commands through the actual HTTP handler and TaskLedger. Certificate verification remains enabled; the fixture CA is scoped to that test client. These tests do not establish live cross-device TLS, live model execution, Windows supervision, production credentials, or real network reliability. No public repository, production host, or live messaging destination is created or contacted.

@@ -6,9 +6,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setImmediate as immediate } from 'node:timers/promises'
 import { Context } from '@deepseek-ai/cordis'
-import { TaskLedger } from '../../task-system/dist/index.js'
-import * as plugin from '../dist/index.js'
-import { RecoveryStore,RemoteGateway,RemoteClient,RemoteLedgerClient,IdentityVerifier,signEnvelope } from '../dist/api.js'
+import { TaskLedger } from '../../dist/index.js'
+import * as plugin from '../../dist/remote/index.js'
+import { RecoveryStore,RemoteGateway,RemoteClient,RemoteLedgerClient,IdentityVerifier,signEnvelope } from '../../dist/remote/api.js'
 const key=generateKeyPairSync('ed25519') // Disposable fixture, never production key material.
 const operations=['heartbeat','nodeStatus','claim','markRunning','bindSession','renew','submit','getRun','getAttempt','receipt']
 function fixture(t,{clock=true}={}) {

@@ -1,4 +1,26 @@
-# Task System
+# DSH Task and Remote Execution Suite
+
+`@dsh-task/task-system` 0.2.0 is one installable package containing the durable
+task ledger, native execution and authenticated multi-device coordination.
+The core works without decision or channel plugins. Remote coordination is
+mounted only when explicitly configured through `@dsh-task/task-system/remote`;
+its wire protocol and lifecycle behavior are unchanged.
+
+```sh
+dsh plugin --profile <profile> add <task-system-tarball>
+# Apply packages/task-system/remote.patch.yml to enable the remote service,
+# then supply the existing node/workspace grants and authentication settings.
+```
+
+Public entrypoints: `/plugin` (task host), `/remote` (remote host), `/remote/api`
+(protocol/worker API), `/contracts`, `/planning` and `/task-policy`. Task-specific
+finite proposals live here and consume the independent typed-decision contract.
+See [remote configuration](docs/remote-execution.md) and the
+[package migration](../../docs/PACKAGE-MIGRATION.md).
+
+The optional Feishu adapter is a separate package. No channel SDK is required
+by this suite, and installing the suite never opens a Feishu connection.
+
 
 A durable task management plugin mounted inside DeepSeek Harness. One task survives session changes and contains multiple runs, reports, corrections and artifacts. Configurable task templates and schedules share the same state machine. The default plugin registers tools, keeps the DSH host alive and stores its ledger locally; it does not install a separate OS service.
 
@@ -50,3 +72,27 @@ Install the independent typed-decisions bundle to enable `task_plan`. `@dsh-task
 The WebUI consumes `snapshot()` and has no second task database. Explicit imports retain their real observation time; static published exports identify their snapshot time and do not pretend to poll live agents. `readLegacyHermes` opens a selected legacy database read-only and produces a reviewable import snapshot. It preserves task/run/submission identities and unknown provenance; running legacy work is not resumed automatically. See the root migration guide.
 
 No live Feishu/Jev/ordinary-model or cross-hardware acceptance is implied by local tests. See the exact validation records and remaining deployment checks.
+
+## Task decision policy
+
+`buildTaskDecisionRequest()` builds finite proposals for persistence, task
+attachment, executor, the complete provider/model/effort tuple, actual workspace
+reuse/create and optional narrative reporting. Its snapshot accepts only
+caller-supplied eligible catalogs, explicit requested IDs, a state hash and an
+expiry. Model/effort is selected as one tuple; the model cannot combine separately
+valid but unsupported fields. Explicit unavailable candidates fail before
+evaluation, rather than falling back.
+
+`consumeTaskDecisionReceipt()` checks complete request identity, catalog contents,
+question versions, expiry, current eligibility, cross-executor consistency and
+explicit choices. A changed catalog is rejected even if someone accidentally
+reuses its state hash. An ignored task cannot dispatch. It returns a pure
+`TaskDecisionProposal` carrying `requiresAuthorizationCheck: true`, or abstains.
+
+The caller must perform deterministic authorization, role, identity, capability,
+budget and workspace checks both before constructing candidates and immediately
+before committing any effect. These helpers do not write the ledger, grant
+permissions, create directories or dispatch work. Workspace references are
+opaque catalog IDs resolved by the real workspace manager. Every outcome keeps
+`protocolReceiptRequired: true`; mandatory failure/approval/budget reporting
+forces escalation even if the model chose no extra narrative.

@@ -1,19 +1,19 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { generateKeyPairSync } from 'node:crypto'
-import { mkdtempSync, mkdirSync, rmSync, symlinkSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, rmSync, symlinkSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
-import * as plugin from '../dist/index.js'
-import { RecoveryStore, IdentityVerifier, signEnvelope, parseEnvelope, RemoteGateway, ExecutorWorker, RemoteClient, RemoteLedgerClient, authorizedWorkspace, assertTransport, assertEndpoint, nativeExecutionAdapter } from '../dist/api.js'
+import * as plugin from '../../dist/remote/index.js'
+import { RecoveryStore, IdentityVerifier, signEnvelope, parseEnvelope, RemoteGateway, ExecutorWorker, RemoteClient, RemoteLedgerClient, authorizedWorkspace, assertTransport, assertEndpoint, nativeExecutionAdapter } from '../../dist/remote/api.js'
 
 const now = 1780000000000
 // Disposable test-only keys, never reused or written into runtime config.
 const keys = generateKeyPairSync('ed25519')
 const peer = { keyId: 'fixture-key',nodeId: 'worker',publicKey: keys.publicKey,audience: 'planner',operations: ['claim','renew','submit','cancel','receipt','bindSession','markRunning','getRun','getAttempt','acknowledgeCancellation','listWork'],workspaces: ['workspace'],capabilities: ['read'] }
 function signed(overrides = {}) { return signEnvelope({ version: 1,keyId: peer.keyId,nodeId: peer.nodeId,audience: peer.audience,commandId: 'command1',nonce: 'nonce1',sequence: 1,issuedAt: now,expiresAt: now + 60000,operation: 'claim',payload: { runId: 'run1',ttlMs: 60000 },...overrides },keys.privateKey) }
-function temp(t) { const path = mkdtempSync(join(tmpdir(),'dsh-remote-test-')); t.after(() => rmSync(path,{ recursive: true,force: true })); return path }
+function temp(t) { const path = realpathSync(mkdtempSync(join(tmpdir(),'dsh-remote-test-'))); t.after(() => rmSync(path,{ recursive: true,force: true })); return path }
 function store(t,path = ':memory:') { const value = new RecoveryStore(path); t.after(() => value.close()); return value }
 function fixtureLedger(time = () => now) {
   const task = { taskId: 'task1',title: 'Fixture',description: 'No model or external effects',workspaceId: 'workspace' }
@@ -194,7 +194,7 @@ test('mocked ledger: authenticated discovery cannot enumerate another node or ex
 })
 
 test('actual TaskLedger + crypto + SQLite connected fixture: discover, claim, execute, report, acknowledge; only provider/network mocked', async t => {
-  const { TaskLedger } = await import('../../task-system/dist/index.js')
+  const { TaskLedger } = await import('../../dist/index.js')
   const root = temp(t); const ledger = TaskLedger.open(join(root,'ledger.sqlite'),{ role: 'planner',nodeId: 'planner',now: () => now }); t.after(() => ledger.close())
   ledger.registerWorkspace('workspace',{ workspaceId: 'workspace',nodeId: 'worker',path: root,label: 'fixture',state: 'ready',createdAt: new Date(now).toISOString() })
   ledger.registerNode('node',{ nodeId: 'worker',roles: ['executor'],capabilities: ['read'],models: [{ provider: 'fixture',model: 'fixture-model',reasoningEfforts: [] }],workspaceIds: ['workspace'],enabled: true,lastSeenAt: new Date(now).toISOString() })

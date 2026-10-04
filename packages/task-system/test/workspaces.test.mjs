@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   mkdtempSync,
+  realpathSync,
   mkdirSync,
   rmSync,
   symlinkSync,
@@ -11,7 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { TaskLedger, WorkspaceManager, ArtifactStore } from "../dist/index.js";
 function setup() {
-  const dir = mkdtempSync(join(tmpdir(), "dsh-workspace-"));
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "dsh-workspace-")));
   const root = join(dir, "allowed");
   mkdirSync(root);
   const ledger = TaskLedger.open(join(dir, "db"));

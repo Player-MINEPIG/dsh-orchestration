@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import { join } from 'node:path';
 import { createNativeHarness } from './native-harness.mjs';
-import * as remotePlugin from '../../packages/remote-execution/dist/index.js';
+import * as remotePlugin from '../../packages/task-system/dist/remote/index.js';
 import * as deepseekApiKey from '@deepseek-ai/dsh-llm-deepseek-api-key';
 import { createLaunchEnvironmentSnapshot } from '@deepseek-ai/dsh-launch-environment';
 
@@ -31,9 +31,10 @@ for (const missing of ['credential','adapter']) {
       ledger.registerWorkspace('network-workspace',{workspaceId:'acceptance',nodeId:'worker',path:executor.dir,label:'Isolated exact-address fixture',state:'ready',createdAt:new Date().toISOString()});
       ledger.registerNode('network-node',{nodeId:'worker',roles:['executor'],capabilities:['acceptance'],workspaceIds:['acceptance'],models:[{...route,reasoningEfforts:[]}],enabled:true,maxConcurrent:1,lastSeenAt:new Date().toISOString()});
       const port=await unusedPort();
+      const peerAddress=process.platform==='darwin'?'127.0.0.1':'127.0.0.2';
       const operations=['listWork','claim','markRunning','bindSession','renew','submit','getRun','getAttempt','acknowledgeCancellation','taskWait','receipt','heartbeat','nodeStatus'];
-      const serverConfig=remotePlugin.Config({role:'planner',nodeId:'planner',authMode:'trusted-network',statePath:join(authority.dir,'network.sqlite'),exposeHttp:true,routePath:'/commands',audience:'planner',trustedNetwork:{listen:{address:'127.0.0.1',port},allowHttp:true,allowedAddresses:['127.0.0.1','127.0.0.2','127.0.0.3'],peers:[{address:'127.0.0.2',nodeId:'worker',role:'executor',audience:'planner',operations,workspaces:['acceptance'],capabilities:['acceptance']}]}});
-      const clientConfig=remotePlugin.Config({role:'executor',nodeId:'worker',authMode:'trusted-network',statePath:join(executor.dir,'network.sqlite'),exposeHttp:false,audience:'planner',capabilities:['acceptance'],workspaces:[{workspaceId:'acceptance',nodeId:'worker',path:executor.dir,allowedRoot:executor.dir}],pollIntervalMs:0,coordinator:{authMode:'trusted-network',endpoint:`http://127.0.0.1:${port}/commands`,audience:'planner',trustedNetwork:{address:'127.0.0.1',port,localAddress:'127.0.0.2',allowHttp:true},nativeRoutes:[{provider:route.provider,models:[{model:route.model,reasoningEfforts:[]}]}]}});
+      const serverConfig=remotePlugin.Config({role:'planner',nodeId:'planner',authMode:'trusted-network',statePath:join(authority.dir,'network.sqlite'),exposeHttp:true,routePath:'/commands',audience:'planner',trustedNetwork:{listen:{address:'127.0.0.1',port},allowHttp:true,allowedAddresses:['127.0.0.1','127.0.0.2','127.0.0.3'],peers:[{address:peerAddress,nodeId:'worker',role:'executor',audience:'planner',operations,workspaces:['acceptance'],capabilities:['acceptance']}]}});
+      const clientConfig=remotePlugin.Config({role:'executor',nodeId:'worker',authMode:'trusted-network',statePath:join(executor.dir,'network.sqlite'),exposeHttp:false,audience:'planner',capabilities:['acceptance'],workspaces:[{workspaceId:'acceptance',nodeId:'worker',path:executor.dir,allowedRoot:executor.dir}],pollIntervalMs:0,coordinator:{authMode:'trusted-network',endpoint:`http://127.0.0.1:${port}/commands`,audience:'planner',trustedNetwork:{address:'127.0.0.1',port,localAddress:peerAddress,allowHttp:true},nativeRoutes:[{provider:route.provider,models:[{model:route.model,reasoningEfforts:[]}]}]}});
       serverFiber=await authority.ctx.plugin(remotePlugin,serverConfig);await serverFiber.await();
       clientFiber=await executor.ctx.plugin(remotePlugin,clientConfig);await clientFiber.await();
       await executor.ctx.remoteExecution.heartbeatNow();

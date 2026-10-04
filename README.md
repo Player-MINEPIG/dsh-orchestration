@@ -4,15 +4,16 @@ Configurable task management mounted inside DeepSeek Harness. A stable task keep
 
 This monorepo targets **DeepSeek Harness 0.2.0-rc.2** and **Node 24+**. The TLS fixture test also uses the system OpenSSL executable. All plugins attach to a DSH host; an external supervisor may keep that host alive. The plugins do not install their own OS services or manage platform updates.
 
-## Packages
+## Core plugins and optional adapter
 
 | Package | Independent use inside DSH |
 |---|---|
-| [Task System](packages/task-system/README.md) | Single-node durable task configuration, history, execution, observation and scheduling without Feishu or remote peers |
+| [Task and Remote Execution Suite](packages/task-system/README.md) | Durable task configuration, history, execution, observation, scheduling and optional authenticated remote peers; useful without decisions or channels |
 | [Typed Decisions](packages/typed-decisions/README.md) | Bounded choice/classification/scoring for any consumer; rules, ordinary native DSH models, Jev and compatible typed APIs |
-| [Remote Execution](packages/remote-execution/README.md) | Authenticated peer coordination and an executor host with durable dispatch/result recovery |
-| [Feishu Channel](packages/feishu-channel/README.md) | Authorized chat and message delivery, optional native DSH conversation and task controls |
+| [Optional Feishu adapter](packages/feishu-channel/README.md) | Separate optional channel SDK and authorized chat/message delivery; replaceable through public consumer/delivery contracts |
 | [WebUI](dashboard/README.md) | Portable read-only consumer of the same TaskLedger, with timestamped private snapshot export |
+
+There are two core installation packages: `@dsh-task/typed-decisions` and `@dsh-task/task-system`. Remote coordination ships inside the task suite and is explicitly mounted through its `/remote` export. Feishu is an optional adapter. See the [boundary and upstream reuse assessment](docs/PLUGIN-BOUNDARIES.zh-CN.md) and [0.2 package migration](docs/PACKAGE-MIGRATION.md).
 
 Role profiles, protocol types, task templates and the WebUI are not presented as extra dependency-only runtime plugins. Plugin independence means useful installation and lifecycle within a host, not a separate daemon.
 

@@ -177,8 +177,8 @@ against that model's actual adapter metadata. Unsupported efforts abstain before
 generation. No fallback substitutes a model, provider or effort.
 
 Each judgment is one tool-free request containing only its system instructions,
-context/questions and response JSON schema. DSH does not expose a native JSON
-schema response-format switch here, so the schema is included as prompt data
+context/questions and response JSON schema. The direct `llm.prepareCall` seam does not expose a native JSON
+schema response-format switch, so the schema is included as prompt data
 and the complete returned text undergoes the existing strict JSON validator.
 Tool calls, truncated or unterminated streams, prose/fences, invalid JSON and
 out-of-contract answers fail closed. Ordinary completions cannot return
@@ -307,29 +307,13 @@ in-process JavaScript supplied by an adapter. Adapters must honor the signal and
 own cleanup of their external resources; do not attach detached side effects.
 The native HTTP provider passes that signal through fetch and response reading.
 
-## Task policy consumer
+## Domain consumers
 
-`buildTaskDecisionRequest()` builds finite proposals for persistence, task
-attachment, executor, the complete provider/model/effort tuple, actual workspace
-reuse/create and optional narrative reporting. Its snapshot accepts only
-caller-supplied eligible catalogs, explicit requested IDs, a state hash and an
-expiry. Model/effort is selected as one tuple; the model cannot combine separately
-valid but unsupported fields. Explicit unavailable candidates fail before
-evaluation, rather than falling back.
-
-`consumeTaskDecisionReceipt()` checks complete request identity, catalog contents,
-question versions, expiry, current eligibility, cross-executor consistency and
-explicit choices. A changed catalog is rejected even if someone accidentally
-reuses its state hash. An ignored task cannot dispatch. It returns a pure
-`TaskDecisionProposal` carrying `requiresAuthorizationCheck: true`, or abstains.
-
-The caller must perform deterministic authorization, role, identity, capability,
-budget and workspace checks both before constructing candidates and immediately
-before committing any effect. These helpers do not write the ledger, grant
-permissions, create directories or dispatch work. Workspace references are
-opaque catalog IDs resolved by the real workspace manager. Every outcome keeps
-`protocolReceiptRequired: true`; mandatory failure/approval/budget reporting
-forces escalation even if the model chose no extra narrative.
+Task-specific proposal helpers live in `@dsh-task/task-system/task-policy`.
+That consumer builds finite questions and checks current task/workspace policy
+before committing effects. This package has no task ledger, remote execution,
+channel or task-domain dependency. Generic protocol validators are available
+through `@dsh-task/typed-decisions/validation`.
 
 ## Verification and limits
 
@@ -347,3 +331,19 @@ No live model credentials, Jev calls, external compatible backend, calibrated
 decision-quality evaluation or production deployment is implied by these tests.
 DSH CLI Loader/profile boot and packaged install/remove are tracked by the
 monorepo integration harness separately from native Cordis unit tests.
+
+## Official structured subagents
+
+DSH 0.2.0-rc.2 also offers `ctx.subagents.start` with `outputSchema`,
+`toolFilter`, `persona`, an owning parent Agent and an AbortSignal. Consumers
+already running inside an Agent can reuse that public path and accept only a
+completed `structured` result, disposing the run afterward. Its object-rooted
+schema subset and child lifecycle are provided by DSH. A failed or uncaptured
+result must not be recovered from the last assistant text.
+
+This standalone service uses the existing DSH LLM adapter for a single bounded,
+tool-free call; rules and HTTP providers do not need an Agent or session.
+Creating a parent Agent solely to evaluate a standalone question would add a
+second ownership lifetime. The native adapter therefore remains on
+`llm.prepareCall`, and does not implement a separate Agent loop. See the
+[reuse assessment](../../docs/PLUGIN-BOUNDARIES.zh-CN.md).

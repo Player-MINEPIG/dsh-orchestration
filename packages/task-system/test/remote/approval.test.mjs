@@ -4,8 +4,8 @@ import { generateKeyPairSync } from 'node:crypto'
 import { mkdtempSync,rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { TaskLedger } from '../../task-system/dist/index.js'
-import { RecoveryStore,RemoteGateway,RemoteClient,RemoteLedgerClient,IdentityVerifier,bindCollaboration,signEnvelope,digest } from '../dist/api.js'
+import { TaskLedger } from '../../dist/index.js'
+import { RecoveryStore,RemoteGateway,RemoteClient,RemoteLedgerClient,IdentityVerifier,bindCollaboration,signEnvelope,digest } from '../../dist/remote/api.js'
 const key=generateKeyPairSync('ed25519') // Disposable fixture only; all descriptions below are fabricated public fixture text.
 const ops=['claim','markRunning','bindSession','offerApproval','approvalStatus','cancelApproval','receipt']
 function fixture(t) {

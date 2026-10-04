@@ -1,9 +1,9 @@
 {
   "name": "@dsh-task/task-system",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "type": "module",
   "license": "MIT",
-  "description": "Configurable durable tasks, multi-session report history and execution coordination inside DSH",
+  "description": "Durable task management and authenticated multi-device execution inside DSH",
   "exports": {
     ".": "./dist/index.js",
     "./plugin": "./dist/dsh-plugin.js",
@@ -15,13 +15,25 @@
     "./task-pack/quota": "./dist/task-pack/quota/index.mjs",
     "./task-pack/quota/plugin": "./dist/task-pack/quota/plugin.mjs",
     "./task-pack/compatibility": "./dist/task-pack/compatibility/index.mjs",
-    "./approval-bridge": "./dist/approval-bridge.js"
+    "./approval-bridge": "./dist/approval-bridge.js",
+    "./task-policy": "./dist/task-policy.js",
+    "./remote": {
+      "types": "./dist/remote/index.d.ts",
+      "default": "./dist/remote/index.js"
+    },
+    "./remote/api": {
+      "types": "./dist/remote/api.d.ts",
+      "default": "./dist/remote/api.js"
+    },
+    "./channels": "./dist/channels.js"
   },
   "types": "./dist/index.d.ts",
   "files": [
     "dist",
     "dsh.bundle.yml",
-    "README.md"
+    "README.md",
+    "remote.patch.yml",
+    "docs"
   ],
   "dsh": {
     "bundle": {
@@ -33,7 +45,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json && node ../../scripts/build-task-pack.mjs",
-    "test": "node --test test/*.test.mjs"
+    "test": "node --test test/*.test.mjs test/remote/*.test.mjs"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "4.0.4",
@@ -42,7 +54,7 @@
     "@deepseek-ai/dsh-agent": "0.2.0-rc.2",
     "@deepseek-ai/dsh-session": "0.2.0-rc.2",
     "@deepseek-ai/dsh-llm": "0.2.0-rc.2",
-    "@dsh-task/typed-decisions": "0.1.0",
+    "@dsh-task/typed-decisions": "0.2.0",
     "@deepseek-ai/dsh-session-projection": "0.2.0-rc.2",
     "@deepseek-ai/dsh-user-approval": "0.2.0-rc.2"
   },
@@ -53,7 +65,7 @@
     "@deepseek-ai/dsh-agent": "0.2.0-rc.2",
     "@deepseek-ai/dsh-session": "0.2.0-rc.2",
     "@deepseek-ai/dsh-llm": "0.2.0-rc.2",
-    "@dsh-task/typed-decisions": "0.1.0",
+    "@dsh-task/typed-decisions": "0.2.0",
     "@deepseek-ai/dsh-session-projection": "0.2.0-rc.2",
     "@deepseek-ai/dsh-user-approval": "0.2.0-rc.2"
   },

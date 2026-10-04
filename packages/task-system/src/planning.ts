@@ -1,12 +1,14 @@
 import {
-  buildTaskDecisionRequest,
-  consumeTaskDecisionReceipt,
   digest,
   type DecisionRequest,
   type DecisionReceipt,
+} from "@dsh-task/typed-decisions/core";
+import {
+  buildTaskDecisionRequest,
+  consumeTaskDecisionReceipt,
   type TaskDecisionSnapshot,
   type TaskDecisionProposal,
-} from "@dsh-task/typed-decisions/core";
+} from "./task-policy.js";
 import { TaskLedger, TaskError } from "./ledger.js";
 import type { ExecutionRoute, Json } from "./contracts.js";
 export interface DecisionServicePort {

@@ -6,9 +6,9 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
-import { TaskLedger } from '../../task-system/dist/index.js'
-import * as plugin from '../dist/index.js'
-import { IdentityVerifier, TrustedNetworkVerifier, RecoveryStore, RemoteGateway, RemoteClient, RemoteLedgerClient, signEnvelope, httpHandler, startTrustedNetworkCarrier } from '../dist/api.js'
+import { TaskLedger } from '../../dist/index.js'
+import * as plugin from '../../dist/remote/index.js'
+import { IdentityVerifier, TrustedNetworkVerifier, RecoveryStore, RemoteGateway, RemoteClient, RemoteLedgerClient, signEnvelope, httpHandler, startTrustedNetworkCarrier } from '../../dist/remote/api.js'
 
 const now = 1780000000000
 const operations = ['listWork','claim','markRunning','bindSession','renew','submit','getRun','getAttempt','receipt','cancel']
@@ -159,8 +159,10 @@ test('trusted network carrier rejects bad Host, Origin and proxy identity forger
   }
   const missingHost = await request(port,undefined,{ setHost: false })
   assert.ok(missingHost.status >= 400)
-  const spoofed = await request(port,undefined,{ localAddress: '127.0.0.2',headers: { 'x-forwarded-for': '127.0.0.1','x-forwarded-proto': 'https','x-forwarded-host': `127.0.0.1:${port}` } })
-  assert.ok(spoofed.status >= 400)
+  await t.test('unconfigured source IP cannot use proxy headers to gain identity', { skip: process.platform === 'darwin' ? 'macOS has no default 127.0.0.2 loopback alias; source-IP denial remains covered by verifier tests' : false }, async () => {
+    const spoofed = await request(port,undefined,{ localAddress: '127.0.0.2',headers: { 'x-forwarded-for': '127.0.0.1','x-forwarded-proto': 'https','x-forwarded-host': `127.0.0.1:${port}` } })
+    assert.ok(spoofed.status >= 400)
+  })
   for (const headers of [{ 'x-forwarded-for': '127.0.0.1' },{ 'x-forwarded-proto': 'https' },{ forwarded: 'for=127.0.0.1;proto=https' }]) {
     const result = await request(port,undefined,{ headers })
     assert.equal(result.status,403)
