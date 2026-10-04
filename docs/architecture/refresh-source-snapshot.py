@@ -27,27 +27,28 @@ def ledger(symbol):
 def document(code):
     return ref('docs/architecture/sources.md', r'^- ' + code + r' ', '设计/源码边界 ' + code)
 dsh = ref('packages/task-system/src/dsh-plugin.ts', r'^export (?:async )?function apply', 'native apply')
+native_summary = ref('packages/task-system/src/dsh-plugin.ts', r'^  private missingResultSummary\(', 'safe owned-terminal error summary')
 worker = ref('packages/remote-execution/src/worker.ts', r'^  private async executeOwned', '实例绑定先于 provider effects')
 pack = ref('examples/legacy-task-pack/index.mjs', r'^export function registerLegacyTaskPack', 'trusted semantic validators')
 prepare = ref('examples/legacy-task-pack/index.mjs', r'^export function prepareLegacyReport', 'prepare / finalized artifact')
 collab = ref('packages/remote-execution/src/collaboration.ts', r'^export function bindCollaboration', 'lease-bound scoped collaboration')
 target = {
-    'supervisor': [document('T01')], 'host_runtime': [dsh],
+    'supervisor': [document('T01')], 'host_runtime': [dsh, ref('packages/remote-execution/src/index.ts', r'^export async function apply', 'host-owned carrier lifecycle')],
     'channel_ingress': [ref('packages/feishu-channel/src/dsh-chat.ts', r'^export class FeishuChatService', 'native chat ownership'), document('N14')],
     'new_template': [ledger('fireSchedule'), ledger('pendingRuns')],
     'task_management': [dsh, ledger('respondApproval'), ledger('reconcileNodeHealth')],
-    'execution': [worker, ledger('markRunning'), collab],
+    'execution': [worker, ledger('markRunning'), ref('packages/remote-execution/src/trusted-network.ts', r'^export class TrustedNetworkVerifier', 'explicit transport-auth alternative')],
     'new_decision': [ref('packages/typed-decisions/src/dsh-completion.ts', r'^export class DshCompletionService', 'native one-shot model bridge')],
     'task_ledger': [ledger('command'), ledger('submit')],
     'new_workspace': [ref('packages/task-system/src/workspaces.ts', r'^export class WorkspaceManager', 'physical workspace provision')],
-    'task_view': [ref('dashboard/server.mjs', r'^export function createDashboardHandler', 'same-ledger query'), ledger('setTaskAdmission')],
+    'task_view': [ref('dashboard/server.mjs', r'^export function createDashboardHandler', 'same-ledger read-only query'), ref('dashboard/access.mjs', r'^export function createAccessAuthorizer', 'optional fixed owner JWT gate'), ref('dashboard/live-server.mjs', r'^export function liveConfiguration', 'loopback live origin config')],
     'new_task_pack': [pack, ref('examples/legacy-task-pack/plugin.mjs', r'^export function apply', 'native task-pack integration'), ref('examples/legacy-task-pack/quota/plugin.mjs', r'^export function createQuotaPlugin', 'optional quota host lifecycle')],
     'new_terminal_journal': [ref('packages/task-system/src/native-result-journal.ts', r'^export class NativeResultJournal', 'independent terminal journal'), ledger('recoverSettlement'), document('N22')],
 }
 task = {
     'objective': [ledger('newTask')],
     'admit': [ledger('newRun'), ledger('claim'), ledger('setTaskConfirmation')],
-    'active': [ledger('markRunning'), collab],
+    'active': [ledger('markRunning'), collab, native_summary],
     'settle': [ledger('submit'), ledger('allSettled'), ledger('executionScope')],
     'history': [ledger('history'), ledger('setTaskAdmission')],
     'wait': [ledger('recoverExpired')], 'cancel': [ledger('acknowledgeCancellation')],
@@ -57,7 +58,7 @@ task = {
     'ready': [ref('packages/task-system/src/native-result-journal.ts', r'^export class NativeResultJournal', 'independent terminal ready record'), ledger('recoverSettlement')],
 }
 report = {
-    'author': [ledger('note'), prepare], 'identity': [ledger('command')],
+    'author': [ledger('note'), prepare, native_summary], 'identity': [ledger('command')],
     'append': [ledger('appendReport'), ledger('newRun')], 'view': [ledger('snapshot')],
     'review': [ledger('history')], 'correction': [ledger('report')],
     'replay': [ledger('command')], 'conflict': [ledger('command')],
@@ -70,6 +71,11 @@ for name, mapping in [('target', target), ('task-lifecycle', task), ('report-lif
 for path in [
     'packages/task-system/src/contracts.ts', 'packages/task-system/src/planning.ts',
     'packages/task-system/src/observer-dsh.ts', 'packages/task-system/package.json',
+    'packages/feishu-channel/package.json', 'packages/remote-execution/package.json',
+    'packages/typed-decisions/package.json',
+    'packages/task-system/README.md', 'packages/remote-execution/README.md',
+    'packages/feishu-channel/README.md', 'packages/typed-decisions/README.md',
+    'packages/remote-execution/src/trusted-network.ts', 'packages/remote-execution/src/network-client.ts',
     'packages/remote-execution/src/observation.ts', 'packages/remote-execution/src/index.ts',
     'packages/remote-execution/src/store.ts', 'packages/remote-execution/src/gateway.ts',
     'packages/remote-execution/src/client.ts', 'packages/remote-execution/src/http.ts',
@@ -86,6 +92,8 @@ for path in [
     'examples/legacy-task-pack/quota/plugin.mjs', 'examples/legacy-task-pack/quota/providers.mjs',
     'examples/legacy-task-pack/quota/monitor.mjs', 'examples/legacy-task-pack/quota/store.mjs',
     'examples/legacy-task-pack/quota/reader.mjs',
+    'dashboard/access.mjs', 'dashboard/live-server.mjs', 'dashboard/public/client.js',
+    'dashboard/public/app.js', 'dashboard/public/model.js', 'dashboard/package.json', 'package-lock.json',
 ]:
     data(path)
 snapshot = {

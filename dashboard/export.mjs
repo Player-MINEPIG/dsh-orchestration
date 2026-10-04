@@ -13,7 +13,7 @@ const ledger=TaskLedger.open(ledgerPath,{readOnly:true});
 try{
  const snapshot=validateSnapshot(dashboardSnapshot(ledger.snapshot()));
  await mkdir(destination,{recursive:true});
- for(const name of ['index.html','app.js','model.js','styles.css','favicon.svg'])await cp(path.join(HERE,'public',name),path.join(destination,name));
+ for(const name of ['index.html','app.js','model.js','client.js','styles.css','favicon.svg'])await cp(path.join(HERE,'public',name),path.join(destination,name));
  await writeFile(path.join(destination,'snapshot.json'),JSON.stringify(snapshot,null,2)+'\n');
  await writeFile(path.join(destination,'config.js'),`window.DSH_DASHBOARD_CONFIG=Object.freeze(${JSON.stringify({mode:'snapshot',snapshotUrl:'./snapshot.json',apiBase:'./api',title:'DSH · 任务看板',accessLabel:'私有任务看板',accessDescription:'只读快照 · 不自动同步'})});\n`);
  await writeFile(path.join(destination,'_headers'),`/*\n  Cache-Control: no-store\n  X-Content-Type-Options: nosniff\n  Referrer-Policy: no-referrer\n  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'\n`);

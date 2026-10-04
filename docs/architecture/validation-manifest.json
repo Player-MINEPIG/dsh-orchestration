@@ -56,12 +56,12 @@
       "output": "docs/architecture/target/target.html",
       "specification": {
         "path": "docs/architecture/target/candidate.json",
-        "sha256": "580fb2096e9b281697e352c78e8bfd814ffc2824df7ba43e6ff10c58deeaf6da",
-        "bytes": 7420
+        "sha256": "2970d5bbeb3c5651fc7ae59e14e156ffe47e45c5f5879020d00a41ab0b6c7e48",
+        "bytes": 8791
       },
       "artifact": {
-        "sha256": "759af49407bd8288ab02f6afbde9018b9ee7ea6430e233857948b82b6026284a",
-        "bytes": 771587
+        "sha256": "f295f6e6fd6902a5a759235e23047b3f3491b18a83d05a3ed3e1135d970b39a0",
+        "bytes": 773420
       },
       "validation": {
         "checksPassed": 9,
@@ -81,11 +81,11 @@
         "pngCount": 4,
         "officialExport": false,
         "browserScreenshot": false,
-        "reviewRevision": "20261001-runtime-safety",
+        "reviewRevision": "20261002-optional-access-dashboard",
         "reinspectedPngs": 4
       },
-      "deliveryReceipt": "docs/architecture/target/revision-6-deliver.json",
-      "strictCheckReceipt": "docs/architecture/target/revision-6-check.json",
+      "deliveryReceipt": "docs/architecture/target/revision-8-deliver.json",
+      "strictCheckReceipt": "docs/architecture/target/revision-8-check.json",
       "browserBlocker": "Prior Chromium socket restriction remains unresolved; explicit instruction not to retry blocked browser",
       "priorBrowserEvidence": {
         "artifactSha256": "ea57dcf551632b7e1ad596a2325935904ea4aba149cfb8aeeb5b6742bcfb1968",
@@ -105,12 +105,12 @@
       "output": "docs/architecture/task-lifecycle/task-lifecycle.html",
       "specification": {
         "path": "docs/architecture/task-lifecycle/candidate.json",
-        "sha256": "2e9d9a612535dce47ac84c299daa02ea6dfd36192b477e00131245ac294f830c",
-        "bytes": 6814
+        "sha256": "e00cb8ffa060bfe3d1704321f8bce5455d877a671adb108e83cb0eac66f40834",
+        "bytes": 7043
       },
       "artifact": {
-        "sha256": "65854aef472edf894e265cbf332745a6091a1ebcfe4dafec5df58a84f082c6c3",
-        "bytes": 774163
+        "sha256": "e85b7ee10bf420e6d7296a7da08788bafdf84bc619ce4edbc11b136bae2c8efd",
+        "bytes": 774408
       },
       "validation": {
         "checksPassed": 9,
@@ -130,11 +130,11 @@
         "pngCount": 4,
         "officialExport": false,
         "browserScreenshot": false,
-        "reviewRevision": "20261001-runtime-safety",
+        "reviewRevision": "20261002-safe-errors-trusted-network",
         "reinspectedPngs": 4
       },
-      "deliveryReceipt": "docs/architecture/task-lifecycle/revision-6-deliver.json",
-      "strictCheckReceipt": "docs/architecture/task-lifecycle/revision-6-check.json",
+      "deliveryReceipt": "docs/architecture/task-lifecycle/revision-7-deliver.json",
+      "strictCheckReceipt": "docs/architecture/task-lifecycle/revision-7-check.json",
       "browserBlocker": "Prior Chromium socket restriction remains unresolved; explicit instruction not to retry blocked browser",
       "priorBrowserEvidence": {
         "artifactSha256": "377d7267d2422dfa28df652a282f7dc79ec1b131c590cd7d2c807342348f9af1",
@@ -154,12 +154,12 @@
       "output": "docs/architecture/report-lifecycle/report-lifecycle.html",
       "specification": {
         "path": "docs/architecture/report-lifecycle/candidate.json",
-        "sha256": "2e54ec15ca68bc21f455569a72377b63dd51a7e4eaad0256fd3a228d333ee9cd",
-        "bytes": 4798
+        "sha256": "0f0f9b5eb014b8f77afb546adfd62ce30dcb693e7fe0d6b9885ec071aebfc08c",
+        "bytes": 4912
       },
       "artifact": {
-        "sha256": "b8f17384c29e8aa41a57fd1b85d4828e41c60806567e2326841496ab53c1a7af",
-        "bytes": 761981
+        "sha256": "b58f0054183b8a6b8507d63453fec7f93418519f0a34e439b15d1677391d75ef",
+        "bytes": 762103
       },
       "validation": {
         "checksPassed": 9,
@@ -179,11 +179,11 @@
         "pngCount": 4,
         "officialExport": false,
         "browserScreenshot": false,
-        "reviewRevision": "20261001-runtime-safety",
+        "reviewRevision": "20261002-safe-errors-trusted-network",
         "reinspectedPngs": 4
       },
-      "deliveryReceipt": "docs/architecture/report-lifecycle/revision-6-deliver.json",
-      "strictCheckReceipt": "docs/architecture/report-lifecycle/revision-6-check.json",
+      "deliveryReceipt": "docs/architecture/report-lifecycle/revision-7-deliver.json",
+      "strictCheckReceipt": "docs/architecture/report-lifecycle/revision-7-check.json",
       "browserBlocker": "Prior Chromium socket restriction remains unresolved; explicit instruction not to retry blocked browser",
       "priorBrowserEvidence": {
         "artifactSha256": "9247431d1718c8a1e1b365da60aa0f57640a872fb9683bb42585f6cc6bc3bb4e",
@@ -200,8 +200,8 @@
   ],
   "comparison": {
     "output": "docs/architecture/comparison.html",
-    "sha256": "f9ff40d399989c8e285b5cf00e0a37da11f1e3f74d5cc18218eb21534c05c8e9",
-    "bytes": 2184889,
+    "sha256": "fe601eeb06cfec0e5fbf8cd0a9d694a563cba3610245ed14a227c148c97b224b",
+    "bytes": 2187355,
     "proofLevel": "authored",
     "validation": {
       "checksPassed": 28,
@@ -228,7 +228,9 @@
     "2026-10-01 revision uses deliver and strict check only to honor the instruction not to retry the blocked browser; prior browser receipts apply only to archived prior hashes",
     "Current source-linked drafts were rebuilt from current candidates and inspected working-tree symbols; source-snapshot.json is a local read hash record, never Git provenance",
     "Revision 5 adds confirmation/curation/priority/context-note/collaboration/final-settlement/task-pack semantics; source snapshot remains a dated local read and not Git provenance",
-    "Revision 6 adds independent native terminal durability, exact runtime approval, health/Alerts, distinct zero-tool and reviewed closed-tool bounded continuation, run-causal budgets, lifecycle anchored replies, and maintained Task Pack/source-reader/quota/diagnostics boundaries. No live runtime outcome is established by these diagrams."
+    "Revision 6 adds independent native terminal durability, exact runtime approval, health/Alerts, distinct zero-tool and reviewed closed-tool bounded continuation, run-causal budgets, lifecycle anchored replies, and maintained Task Pack/source-reader/quota/diagnostics boundaries. No live runtime outcome is established by these diagrams.",
+    "Revision 7 changes only explanatory cards plus the existing execution-node auth-mode tag. Native safe error summaries preserve unknown/not-submitted; optional exact trusted-network HTTP is a distinct explicit mode alongside default signed/TLS. No private network addresses or deployment claims are embedded.",
+    "Revision 8 changes target explanatory cards only: optional fixed-owner RS256 Cloudflare Access, loopback read-only live origin, same-origin/no-store loading, expiry data clearing, stale disconnection, and native diagnostic events. No deployment, credentials, external-service mutation or additional Task authority is claimed."
   ],
   "staticDiagramVisualInspection": {
     "status": "passed-scoped-static-inspection",
@@ -246,48 +248,61 @@
     "inspectedPngs": 16,
     "sourceHtmlUnchanged": true,
     "observations": [
-      "All 16 source-bound static PNGs were viewed individually in this revision (two themes, two graphic widths, four diagrams)",
-      "No node, label or legend clipping visible; relationship paths do not pass through unrelated opaque nodes",
-      "The target shows an independent native result journal and caller-to-store recovery read direction",
-      "Task recurrence uses the top corridor; runtime approval, default zero-tool retry, explicit reviewed-tool continuation, and durable terminal replay remain distinguishable",
-      "Report revision, exact replay and conflicting command branches remain distinct; light-theme identifiers and labels are legible",
-      "Small muted dark-theme relationship labels remain a real-browser contrast/readability item; this is not Viewer acceptance"
+      "Four target PNGs were viewed individually this revision (light/dark, 1440/2048 graphic widths)",
+      "All sixteen PNGs are byte-identical to revision 7; twelve unchanged projections retain their prior actual image inspections",
+      "No target node, label or legend clipping was visible; routes and all topology/geometry are unchanged",
+      "The new dashboard card was source-checked and verified in generated HTML text; static SVG excludes card layout",
+      "Small muted dark-theme labels and actual Viewer/card layout remain browser-review items"
     ],
     "limitations": [
       "Viewer toolbar, cards, page layout, pan/zoom, focus/search, theme toggle and exports were not rendered or tested",
       "Static font metrics, currentColor icons, node shadows and background paint may differ from a browser",
-      "Small muted relationship labels remain an actual-browser contrast/readability item"
+      "Small muted relationship labels remain an actual-browser contrast/readability item",
+      "Revision-7 safe-error and authentication cards were reviewed as text, not visually rendered; SVG projection does not include HTML cards.",
+      "Revision-8 optional Access dashboard card is text-reviewed only; its HTML layout and any live deployment have not been browser-verified by this architecture task."
     ],
     "manifest": "docs/architecture/static-inspection/derivation-manifest.json",
-    "reinspectedChangedPngs": 12,
-    "unchangedOriginalPngsPreviouslyInspected": 0,
-    "latestReviewRevision": "20261001-runtime-safety",
-    "reinspectedUnchangedOriginalPngs": 4
+    "reinspectedChangedPngs": 4,
+    "unchangedOriginalPngsPreviouslyInspected": 4,
+    "latestReviewRevision": "20261002-optional-access-dashboard",
+    "reinspectedUnchangedOriginalPngs": 0,
+    "otherUnchangedPngsPreviouslyInspected": 8,
+    "currentRevisionImageViews": 4
   },
   "revision": {
-    "id": "20261001-runtime-safety",
-    "number": 6,
-    "recordedAt": "2026-10-01T23:22:02.900570+00:00",
-    "previousArtifacts": "docs/architecture/revisions/20261001-pre-runtime-safety",
+    "id": "20261002-optional-access-dashboard",
+    "number": 8,
+    "recordedAt": "2026-10-02T07:19:41.570402+00:00",
+    "previousArtifacts": "docs/architecture/revisions/20261002-pre-access-dashboard",
     "changed": [
       "target",
-      "task-lifecycle",
-      "report-lifecycle",
       "comparison"
     ],
+    "changeScope": "target explanatory cards only; all topology, geometry and other three HTML artifacts unchanged",
     "originalHtmlUnchanged": true,
     "sourceReadSnapshot": "docs/architecture/source-snapshot.json",
-    "sourceFreeze": "Lead confirmed SOURCE FREEZE for core/remote/native functionality at 2026-10-01T23:18:25Z; parity/acceptance documentation may still change; this records local source bytes only, not Git provenance.",
-    "sourceReadObservedAt": "2026-10-01T23:22:51.767699+00:00",
-    "sourceFileCount": 46,
+    "sourceFreeze": "Lead confirmed frozen optional Access-protected dashboard source at 2026-10-02T07:13:49Z; core runtime unchanged; no live deployment claim or Git provenance.",
+    "sourceReadObservedAt": "2026-10-02T07:16:32.660598+00:00",
+    "sourceFileCount": 62,
+    "sourceIntegrityCheckedAt": "2026-10-02T07:19:41.570427+00:00",
+    "sourceDrift": [],
     "repositoryProvenance": false,
+    "packageVersions": {
+      "task-system": "0.1.1",
+      "remote-execution": "0.1.1",
+      "feishu-channel": "0.1.1",
+      "typed-decisions": "0.1.0",
+      "dashboard": "0.1.0",
+      "jose": "6.2.12"
+    },
     "localRepository": {
-      "headAtFreeze": "466ebf95221f459fb647ee802c96cb3406f6da9c",
+      "headAtFreeze": "803ffe9e85ea81458e9b78f09b9dbde52b889df5",
       "origin": null,
       "workingTreeChangesAreNotHeadEvidence": true
     },
-    "sourceIntegrityCheckedAt": "2026-10-01T23:22:51.959658+00:00",
-    "sourceDrift": []
+    "cardTextReview": "new Access card verified against source and generated HTML; card layout not browser-verified",
+    "liveDeployment": "not established; account/DNS/Tunnel/Access/deployment requirements handled separately",
+    "priorPrivateSite": "separate static snapshot; no implicit migration or new authority"
   },
   "revisionHistory": [
     {
@@ -317,6 +332,64 @@
       "sourceReadSnapshot": "docs/architecture/source-snapshot.json",
       "sourceFreeze": "not frozen; explicitly dated working-tree read only",
       "sourceReadObservedAt": "2026-10-01T22:10:28.439019+00:00"
+    },
+    {
+      "id": "20261001-runtime-safety",
+      "number": 6,
+      "recordedAt": "2026-10-01T23:22:02.900570+00:00",
+      "previousArtifacts": "docs/architecture/revisions/20261001-pre-runtime-safety",
+      "changed": [
+        "target",
+        "task-lifecycle",
+        "report-lifecycle",
+        "comparison"
+      ],
+      "originalHtmlUnchanged": true,
+      "sourceReadSnapshot": "docs/architecture/source-snapshot.json",
+      "sourceFreeze": "Lead confirmed SOURCE FREEZE for core/remote/native functionality at 2026-10-01T23:18:25Z; parity/acceptance documentation may still change; this records local source bytes only, not Git provenance.",
+      "sourceReadObservedAt": "2026-10-01T23:22:51.767699+00:00",
+      "sourceFileCount": 46,
+      "repositoryProvenance": false,
+      "localRepository": {
+        "headAtFreeze": "466ebf95221f459fb647ee802c96cb3406f6da9c",
+        "origin": null,
+        "workingTreeChangesAreNotHeadEvidence": true
+      },
+      "sourceIntegrityCheckedAt": "2026-10-01T23:22:51.959658+00:00",
+      "sourceDrift": []
+    },
+    {
+      "id": "20261002-safe-errors-trusted-network",
+      "number": 7,
+      "recordedAt": "2026-10-02T06:34:50.733602+00:00",
+      "previousArtifacts": "docs/architecture/revisions/20261002-pre-safe-error-summary",
+      "changed": [
+        "target",
+        "task-lifecycle",
+        "report-lifecycle",
+        "comparison"
+      ],
+      "changeScope": "cards and one auth-mode tag only; topology and geometry unchanged",
+      "originalHtmlUnchanged": true,
+      "sourceReadSnapshot": "docs/architecture/source-snapshot.json",
+      "sourceFreeze": "Lead confirmed SOURCE FREEZE for safe native summaries, exact trusted-network mode, and package READMEs at 2026-10-02T06:29:25Z; local source bytes only, not Git provenance.",
+      "sourceReadObservedAt": "2026-10-02T06:31:02.335749+00:00",
+      "sourceFileCount": 55,
+      "sourceIntegrityCheckedAt": "2026-10-02T06:34:50.733624+00:00",
+      "sourceDrift": [],
+      "repositoryProvenance": false,
+      "packageVersions": {
+        "task-system": "0.1.1",
+        "remote-execution": "0.1.1",
+        "feishu-channel": "0.1.1",
+        "typed-decisions": "0.1.0"
+      },
+      "localRepository": {
+        "headAtFreeze": "86d8fb014d97fbfe282fcea54d4d8a899a24bb97",
+        "origin": null,
+        "workingTreeChangesAreNotHeadEvidence": true
+      },
+      "cardTextReview": "source-grounded text reviewed and verified in generated HTML; card layout not browser-verified"
     }
   ]
 }

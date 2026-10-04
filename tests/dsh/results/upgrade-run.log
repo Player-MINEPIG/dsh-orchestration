@@ -1,0 +1,248 @@
+Passed: official-pinned-runtime
+Passed: verified-baseline-and-final-tarball-identities
+Passed: actual-add-four-baseline-packages
+Passed: boot-baseline-retains-state
+Passed: actual-upgrade-feishu-channel
+Passed: boot-feishu-channel-retains-state
+Passed: actual-upgrade-task-system
+Passed: boot-task-system-retains-state
+Passed: actual-upgrade-remote-execution
+Passed: boot-remote-execution-retains-state
+Passed: no-private-registry-resolution
+{
+  "ok": true,
+  "dshVersion": "0.2.0-rc.2",
+  "node": "v24.19.0",
+  "scratch": "/tmp/dsh-upgrade-distribution-cRDQ1G",
+  "baselinePackages": [
+    {
+      "name": "@dsh-task/task-system",
+      "filename": "dsh-task-task-system-0.1.0.tgz",
+      "integrity": "sha512-8mIw9jodYYqhoRqjx4toodONhBJwunLXLBdCfjzwFqfRcxwNvgqcf6JSLzrB4Fh3RnrNRNVnuQiCI4YSkWdyUA==",
+      "sha256": "e2df713eb2a23d666869a98aee0056d2bf8f39eb7721bc884dd63514d7a30a3a",
+      "bytes": 216468
+    },
+    {
+      "name": "@dsh-task/typed-decisions",
+      "filename": "dsh-task-typed-decisions-0.1.0.tgz",
+      "integrity": "sha512-YS2na2yLFiLp2qNn9TcyGr6P55x/Pl31RY9r5PBhhl8UdCTihf/2g9Mp/gSW4LNp8Dl+Roxx7vRzsHBk9XTd2g==",
+      "sha256": "9d0a8ea90a71cfb2753326f681f4d9d5e8ba3e6764bf97b7fed8f7c7d1098270",
+      "bytes": 38512
+    },
+    {
+      "name": "@dsh-task/remote-execution",
+      "filename": "dsh-task-remote-execution-0.1.0.tgz",
+      "integrity": "sha512-L9WcBtIDdEeetJHD63Su3nTvTIHm7gA53lR7ZJHUWNXuPg0sZsSbUFEZtb8y2Redi9IMclOnhOFfs1gOUAHOFg==",
+      "sha256": "34b60c3c4d3d3028c9a3c5a7acdc543400bd042b82cfe57d5547fadc2e1dab6d",
+      "bytes": 80897
+    },
+    {
+      "name": "@dsh-task/feishu-channel",
+      "filename": "dsh-task-feishu-channel-0.1.0.tgz",
+      "integrity": "sha512-rq/vSyczM2E1JtlQvQEc2ifrUm/BM1k8yChWY606Kcx7zn4/t3VY2u6IaeVBvI3iCOEf+twQDjP434FS0XzaSA==",
+      "sha256": "edf9dfabb30d81749d9d13bce280b92bd514489b06109fbad627411a9e2fc758",
+      "bytes": 51775
+    }
+  ],
+  "finalPackages": [
+    {
+      "name": "@dsh-task/task-system",
+      "filename": "dsh-task-task-system-0.1.1.tgz",
+      "integrity": "sha512-L5An7xrfzZZHWVU26V7OB++nkKSJ+In+s+swGg6ygmf5J3uFrnUIww8KV9YMm7HQOtfKBESmOgIFpYoGktGYbg==",
+      "sha256": "91d9f5549646c585d9ddcbb2548ccc992c6b970aac49e1a80b4842cb48d08811",
+      "bytes": 217440
+    },
+    {
+      "name": "@dsh-task/typed-decisions",
+      "filename": "dsh-task-typed-decisions-0.1.0.tgz",
+      "integrity": "sha512-YS2na2yLFiLp2qNn9TcyGr6P55x/Pl31RY9r5PBhhl8UdCTihf/2g9Mp/gSW4LNp8Dl+Roxx7vRzsHBk9XTd2g==",
+      "sha256": "9d0a8ea90a71cfb2753326f681f4d9d5e8ba3e6764bf97b7fed8f7c7d1098270",
+      "bytes": 38512
+    },
+    {
+      "name": "@dsh-task/remote-execution",
+      "filename": "dsh-task-remote-execution-0.1.1.tgz",
+      "integrity": "sha512-GGk9zDd7RruZ5bpVyI2xQhByR5t85vVUXKIp27E+tTe/w40cy6964xwBNe+vW71zLPKUyawWQXXzdop0CMF25g==",
+      "sha256": "e2a790eb4a7555b81644cc2b19f3112dde7b9dcf2db8b59c7d5f1868323e8eb4",
+      "bytes": 95924
+    },
+    {
+      "name": "@dsh-task/feishu-channel",
+      "filename": "dsh-task-feishu-channel-0.1.1.tgz",
+      "integrity": "sha512-MO+FNeeAxSsrYR6p/4r6ocI6zo+jYz4IVxhvBLFkDNlYqeqPYykNg/RjFNb0BEN5seLNnUf6XvKUjqSZVFbfVA==",
+      "sha256": "78e15135897e1953b2cfcb2296e477021ce779f35e37e48b299e63b309333292",
+      "bytes": 51778
+    }
+  ],
+  "stages": [
+    {
+      "name": "official-pinned-runtime",
+      "ok": true
+    },
+    {
+      "name": "verified-baseline-and-final-tarball-identities",
+      "ok": true
+    },
+    {
+      "name": "actual-add-four-baseline-packages",
+      "ok": true,
+      "installed": {
+        "task-system": "0.1.0",
+        "typed-decisions": "0.1.0",
+        "remote-execution": "0.1.0",
+        "feishu-channel": "0.1.0"
+      },
+      "dependencies": {
+        "@dsh-task/feishu-channel": "file:/tmp/dsh-upgrade-baseline-4jtbuf_5/final-packages/dsh-task-feishu-channel-0.1.0.tgz",
+        "@dsh-task/remote-execution": "file:/tmp/dsh-upgrade-baseline-4jtbuf_5/final-packages/dsh-task-remote-execution-0.1.0.tgz",
+        "@dsh-task/task-system": "file:/tmp/dsh-upgrade-baseline-4jtbuf_5/final-packages/dsh-task-task-system-0.1.0.tgz",
+        "@dsh-task/typed-decisions": "file:/tmp/dsh-upgrade-baseline-4jtbuf_5/final-packages/dsh-task-typed-decisions-0.1.0.tgz"
+      },
+      "bundles": [
+        "@deepseek-ai/dsh-base",
+        "@dsh-task/feishu-channel",
+        "@dsh-task/remote-execution",
+        "@dsh-task/task-system",
+        "@dsh-task/typed-decisions"
+      ]
+    },
+    {
+      "name": "boot-baseline-retains-state",
+      "ok": true,
+      "phase": "baseline",
+      "taskId": "upgrade-retained-task",
+      "runId": "52f0291a-eb7e-4203-ba76-744b437f560b",
+      "runState": "queued",
+      "reports": 1,
+      "recoveryInstanceId": "afe3721a-792f-4a1c-bac2-4918047eecb5",
+      "recoverySentinelRetained": true,
+      "fourServicesActive": true,
+      "liveModelCalls": 0,
+      "feishuEnabled": false
+    },
+    {
+      "name": "actual-upgrade-feishu-channel",
+      "ok": true,
+      "installed": {
+        "task-system": "0.1.0",
+        "typed-decisions": "0.1.0",
+        "remote-execution": "0.1.0",
+        "feishu-channel": "0.1.1"
+      },
+      "dependencies": {
+        "@dsh-task/feishu-channel": "file:/workspace/shared/dsh-orchestration/project/tests/dsh/results/final-packages/dsh-task-feishu-channel-0.1.1.tgz",
+        "@dsh-task/remote-execution": "file:/tmp/dsh-upgrade-baseline-4jtbuf_5/final-packages/dsh-task-remote-execution-0.1.0.tgz",
+        "@dsh-task/task-system": "file:/tmp/dsh-upgrade-baseline-4jtbuf_5/final-packages/dsh-task-task-system-0.1.0.tgz",
+        "@dsh-task/typed-decisions": "file:/tmp/dsh-upgrade-baseline-4jtbuf_5/final-packages/dsh-task-typed-decisions-0.1.0.tgz"
+      },
+      "bundles": [
+        "@deepseek-ai/dsh-base",
+        "@dsh-task/feishu-channel",
+        "@dsh-task/remote-execution",
+        "@dsh-task/task-system",
+        "@dsh-task/typed-decisions"
+      ]
+    },
+    {
+      "name": "boot-feishu-channel-retains-state",
+      "ok": true,
+      "phase": "feishu-channel",
+      "taskId": "upgrade-retained-task",
+      "runId": "52f0291a-eb7e-4203-ba76-744b437f560b",
+      "runState": "queued",
+      "reports": 1,
+      "recoveryInstanceId": "afe3721a-792f-4a1c-bac2-4918047eecb5",
+      "recoverySentinelRetained": true,
+      "fourServicesActive": true,
+      "liveModelCalls": 0,
+      "feishuEnabled": false
+    },
+    {
+      "name": "actual-upgrade-task-system",
+      "ok": true,
+      "installed": {
+        "task-system": "0.1.1",
+        "typed-decisions": "0.1.0",
+        "remote-execution": "0.1.0",
+        "feishu-channel": "0.1.1"
+      },
+      "dependencies": {
+        "@dsh-task/feishu-channel": "file:/workspace/shared/dsh-orchestration/project/tests/dsh/results/final-packages/dsh-task-feishu-channel-0.1.1.tgz",
+        "@dsh-task/remote-execution": "file:/tmp/dsh-upgrade-baseline-4jtbuf_5/final-packages/dsh-task-remote-execution-0.1.0.tgz",
+        "@dsh-task/task-system": "file:/workspace/shared/dsh-orchestration/project/tests/dsh/results/final-packages/dsh-task-task-system-0.1.1.tgz",
+        "@dsh-task/typed-decisions": "file:/tmp/dsh-upgrade-baseline-4jtbuf_5/final-packages/dsh-task-typed-decisions-0.1.0.tgz"
+      },
+      "bundles": [
+        "@deepseek-ai/dsh-base",
+        "@dsh-task/feishu-channel",
+        "@dsh-task/remote-execution",
+        "@dsh-task/task-system",
+        "@dsh-task/typed-decisions"
+      ]
+    },
+    {
+      "name": "boot-task-system-retains-state",
+      "ok": true,
+      "phase": "task-system",
+      "taskId": "upgrade-retained-task",
+      "runId": "52f0291a-eb7e-4203-ba76-744b437f560b",
+      "runState": "queued",
+      "reports": 1,
+      "recoveryInstanceId": "afe3721a-792f-4a1c-bac2-4918047eecb5",
+      "recoverySentinelRetained": true,
+      "fourServicesActive": true,
+      "liveModelCalls": 0,
+      "feishuEnabled": false
+    },
+    {
+      "name": "actual-upgrade-remote-execution",
+      "ok": true,
+      "installed": {
+        "task-system": "0.1.1",
+        "typed-decisions": "0.1.0",
+        "remote-execution": "0.1.1",
+        "feishu-channel": "0.1.1"
+      },
+      "dependencies": {
+        "@dsh-task/feishu-channel": "file:/workspace/shared/dsh-orchestration/project/tests/dsh/results/final-packages/dsh-task-feishu-channel-0.1.1.tgz",
+        "@dsh-task/remote-execution": "file:/workspace/shared/dsh-orchestration/project/tests/dsh/results/final-packages/dsh-task-remote-execution-0.1.1.tgz",
+        "@dsh-task/task-system": "file:/workspace/shared/dsh-orchestration/project/tests/dsh/results/final-packages/dsh-task-task-system-0.1.1.tgz",
+        "@dsh-task/typed-decisions": "file:/tmp/dsh-upgrade-baseline-4jtbuf_5/final-packages/dsh-task-typed-decisions-0.1.0.tgz"
+      },
+      "bundles": [
+        "@deepseek-ai/dsh-base",
+        "@dsh-task/feishu-channel",
+        "@dsh-task/remote-execution",
+        "@dsh-task/task-system",
+        "@dsh-task/typed-decisions"
+      ]
+    },
+    {
+      "name": "boot-remote-execution-retains-state",
+      "ok": true,
+      "phase": "remote-execution",
+      "taskId": "upgrade-retained-task",
+      "runId": "52f0291a-eb7e-4203-ba76-744b437f560b",
+      "runState": "queued",
+      "reports": 1,
+      "recoveryInstanceId": "afe3721a-792f-4a1c-bac2-4918047eecb5",
+      "recoverySentinelRetained": true,
+      "fourServicesActive": true,
+      "liveModelCalls": 0,
+      "feishuEnabled": false
+    },
+    {
+      "name": "no-private-registry-resolution",
+      "ok": true,
+      "requests": 0,
+      "isolatedRegistryTrap": true,
+      "typedDecisionsUnchanged": true,
+      "upgradeOrder": [
+        "feishu-channel@0.1.1",
+        "task-system@0.1.1",
+        "remote-execution@0.1.1"
+      ]
+    }
+  ],
+  "privateRegistryRequests": []
+}

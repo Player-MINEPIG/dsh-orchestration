@@ -5499,6 +5499,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
           <li>稳定 Task 可多次运行；parentRunId 划定每轮的 children / descendants 预算</li>
           <li>委派、资源、容量与 quiet window 在核心检查；历史周期不消耗本轮预算</li>
           <li>executionId 在副作用前原子绑定；同实例 renew / bind / submit / cancel ACK</li>
+          <li>signed TLS / 显式 trusted-network 的 peer 认证不同；lease / fence / receipt 和权限门相同</li>
         </ul>
       </div>
 
@@ -5512,6 +5513,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
           <li>可信本机日志可恢复先前已就绪的精确终态；取消或替代实例不能被逆转</li>
           <li>默认仅零工具暂态重试；显式 resumableTools 须调用/成功结果齐全、flush 与 dispose</li>
           <li>同 session 有限续跑；guard 拒绝已完成 name+参数 hash 重复；未知副作用仍须复核</li>
+          <li>无 task_settle 时以真实 owned turn/end 的允许错误码提示原因；仍为 unknown / uncertain</li>
         </ul>
       </div>
 

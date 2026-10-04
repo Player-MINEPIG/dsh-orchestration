@@ -4,7 +4,7 @@ New plugin source in this repository is licensed under MIT. Dependencies are ins
 
 ## Runtime dependencies
 
-The tested DeepSeek Harness packages (0.2.0-rc.2), DeepSeek Cordis (4.0.4), Schemastery (3.18.4), Lark SDK (1.74.0), AJV (8.17.1), cron-parser (5.4.0), and Zod (4.6.5) declare MIT licenses in their installed package metadata. The lockfile records the complete dependency graph. The new source license does not replace dependency licenses.
+The tested DeepSeek Harness packages (0.2.0-rc.2), DeepSeek Cordis (4.0.4), Schemastery (3.18.4), Lark SDK (1.74.0), AJV (8.17.1), cron-parser (5.4.0), Zod (4.6.5), and jose (6.2.12, optional live dashboard) declare MIT licenses in their installed package metadata. The lockfile records the complete dependency graph. The new source license does not replace dependency licenses.
 
 ## Generated architecture viewers
 

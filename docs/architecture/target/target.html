@@ -5126,8 +5126,8 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
         <text data-detail="context" x="555" y="286" class="t-muted" font-size="9" text-anchor="middle">确认 / 策略 · 告警 / 节点健康</text>
         </g>
 
-        <g id="node-execution" data-node-id="execution" data-node-label="执行适配 / Remote Execution" tabindex="0" role="button" aria-label="聚焦执行适配 / Remote Execution，实例 / lease · 预检 / 调用批准, 架构组件" aria-pressed="false" data-node-kind="backend" data-node-sublabel="实例 / lease · 预检 / 调用批准" data-node-context="架构组件">
-          <title>执行适配 / Remote Execution · 实例 / lease · 预检 / 调用批准 · 架构组件</title>
+        <g id="node-execution" data-node-id="execution" data-node-label="执行适配 / Remote Execution" tabindex="0" role="button" aria-label="聚焦执行适配 / Remote Execution，实例 / lease · 预检 / 调用批准, 架构组件" aria-pressed="false" data-node-kind="backend" data-node-sublabel="实例 / lease · 预检 / 调用批准" data-node-tag="signed+TLS / trusted-network" data-node-context="架构组件">
+          <title>执行适配 / Remote Execution · 实例 / lease · 预检 / 调用批准 · 架构组件 · signed+TLS / trusted-network</title>
           <rect x="820" y="230" width="250" height="84" rx="6" class="c-mask"/>
           <rect x="820" y="230" width="250" height="84" rx="6" class="c-backend" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(826 236) scale(0.6875)">
@@ -5135,6 +5135,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
           </g>
           <text data-node-label="" data-detail-anchor="" x="945" y="270" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">执行适配 / Remote Execution</text>
         <text data-detail="context" x="945" y="286" class="t-muted" font-size="9" text-anchor="middle">实例 / lease · 预检 / 调用批准</text>
+        <text data-detail="fine" x="945" y="306" class="t-backend" font-size="7" text-anchor="middle">signed+TLS / trusted-network</text>
         </g>
 
         <g id="node-new_decision" data-node-id="new_decision" data-node-label="Typed Decisions" tabindex="0" role="button" aria-label="聚焦Typed Decisions，可选 native 单次模型桥接, 架构组件" aria-pressed="false" data-node-kind="security" data-node-sublabel="可选 native 单次模型桥接" data-node-context="架构组件">
@@ -5508,6 +5509,35 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
           <li>心跳记录 runtime 状态与有效期；provider not-probed 不代表真实模型可用</li>
           <li>重试默认零工具；显式 reviewed tools 须成功闭合，同 session 有限续跑并阻止精确重复</li>
           <li>Alerts、创建锚点与本轮终态回复使用独立 outbox；外部送达不等于执行成功</li>
+          <li>native 无 task_settle 时仅回传固定公开错误码；unknown 保留，原始错误不外传</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot rose"></div>
+          <h3>两种显式认证与传输模式</h3>
+        </div>
+        <ul>
+          <li>signed+TLS 保持默认；trusted-network 须显式 allowHttp 与精确 peer IP</li>
+          <li>actual socket IP → 固定 node / role / operations / workspace / capability</li>
+          <li>专用 HTTP carrier 仍挂载宿主；strict Host / Origin、source IP 与 target IP 均校验</li>
+          <li>网络名单是运营配置快照，不动态扩大；网络可达不等于应用 peer 权限</li>
+          <li>同一来源 IP 的设备进程共享 peer 身份；需独立进程身份时使用签名模式</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot cyan"></div>
+          <h3>可选实时 dashboard · 尚未上线</h3>
+        </div>
+        <ul>
+          <li>Cloudflare Access 校验 RS256；issuer / audience / owner 固定于运营配置</li>
+          <li>live-server 仅 loopback 只读现有 TaskLedger；无第二任务数据库或执行 API</li>
+          <li>同源 / no-store；登录到期清除页面任务数据，断线保留旧记录并标非实时</li>
+          <li>MISSING_CREDENTIAL 等来自本 run 事件；事件不是成功证明或虚构报告</li>
+          <li>账号 / DNS / Tunnel / Access 与部署条件另验；旧私有 Site 快照独立保留</li>
         </ul>
       </div>
 

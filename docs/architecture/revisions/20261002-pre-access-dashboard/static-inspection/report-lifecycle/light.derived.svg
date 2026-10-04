@@ -1,0 +1,279 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1078 584" data-reader-fit="intrinsic-height" role="img" lang="zh-CN" aria-labelledby="archify-diagram-title archify-diagram-description" data-preset="classic" data-quality-profile="showcase"><style><![CDATA[svg{font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', 'Liberation Mono', 'Noto Sans Mono CJK SC', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', monospace;}
+.c-grid{ stroke: #e9edf2; fill: none; }
+.c-mask{ fill: #ffffff; stroke: none; }
+.c-frontend{ fill:rgb(34,211,238);fill-opacity:0.15;   stroke: #0891b2; }
+.c-backend{ fill:rgb(52,211,153);fill-opacity:0.18;    stroke: #059669; }
+.c-database{ fill:rgb(167,139,250);fill-opacity:0.2;   stroke: #7c3aed; }
+.c-security{ fill:rgb(251,113,133);fill-opacity:0.15;   stroke: #e11d48; }
+.c-external{ fill:rgb(148,163,184);fill-opacity:0.18;   stroke: #64748b; }
+.t-primary{ fill: #111827; }
+.t-muted{ fill: #5b6474; }
+.t-dim{ fill: #9aa3b2; }
+.t-edge-default{ fill: #94a3b8; }
+.t-edge-emphasis{ fill: #059669; }
+svg .semantic-sigil{
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 1.35;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      opacity: 0.76;
+      pointer-events: none;
+    }
+svg .semantic-sigil > *{ vector-effect: non-scaling-stroke; }
+svg .semantic-sigil .sigil-fill{ fill: currentColor; stroke: none; }
+svg .s-frontend{ color: #0891b2; }
+svg .s-backend{ color: #059669; }
+svg .s-database{ color: #7c3aed; }
+svg .s-security{ color: #e11d48; }
+svg .s-external{ color: #64748b; }
+.a-default{ stroke: #94a3b8; fill: none; }
+.a-emphasis{ stroke: #059669; fill: none; }
+.m-default{ fill: #94a3b8; }
+.m-emphasis{ fill: #059669; }
+.m-security{ fill: #e11d48; }
+.m-dashed{ fill: #7c3aed; }
+svg [data-node-id] > .c-mask{ fill-opacity: 1; }
+svg[data-preset="editorial"] .c-grid{
+      stroke-dasharray: 1 4;
+      opacity: 0.48;
+    }
+svg[data-preset="blueprint"] .c-grid{
+      stroke-dasharray: 1 3;
+      opacity: 0.78;
+    }
+.c-grid{stroke:transparent;}]]></style>
+        <title id="archify-diagram-title">报告与修订生命周期 · 追加保存（设计约定）</title>
+        <desc id="archify-diagram-description">由 Archify 生成的生命周期图。</desc>
+        <!-- Definitions -->
+        <defs>
+          <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" class="m-default" />
+          </marker>
+          <marker id="arrowhead-emphasis" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" class="m-emphasis" />
+          </marker>
+          <marker id="arrowhead-security" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" class="m-security" />
+          </marker>
+          <marker id="arrowhead-dashed" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" class="m-dashed" />
+          </marker>
+          <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+            <path d="M 40 0 L 0 0 0 40" class="c-grid" stroke-width="0.5"/>
+          </pattern>
+        </defs>
+
+        <!-- Background Grid -->
+        <rect width="100%" height="100%" fill="url(#grid)" />
+
+        <!-- Lifecycle bands -->
+        <text x="18" y="88" class="t-dim" font-size="10" font-weight="600" writing-mode="vertical-rl" text-anchor="middle">报告与版本</text>
+        <text x="18" y="272" class="t-dim" font-size="10" font-weight="600" writing-mode="vertical-rl" text-anchor="middle">追加证据</text>
+        <text x="18" y="456" class="t-dim" font-size="10" font-weight="600" writing-mode="vertical-rl" text-anchor="middle">请求处理结果</text>
+
+        <!-- Primary lifecycle rail -->
+
+
+        <!-- Transition paths -->
+        <g data-graph-role="automatic-crossover" style="--step:0">
+          <path data-graph-role="automatic-crossover-underlay" d="M 200 88 L 264 88" fill="none" stroke="#ffffff" stroke-width="5.6" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
+          <path data-edge-from="author" data-edge-to="identity" data-edge-label="提交" data-edge-key="0" data-edge-id="author_identity" data-composition-points="200,88;264,88" data-composition-crossover="halo" d="M 200 88 L 264 88" class="a-emphasis" stroke-width="1.6" marker-end="url(#arrowhead-emphasis)"/>
+        </g>
+        <g data-graph-role="automatic-crossover" style="--step:1">
+          <path data-graph-role="automatic-crossover-underlay" d="M 404 88 L 470 88" fill="none" stroke="#ffffff" stroke-width="5.6" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
+          <path data-edge-from="identity" data-edge-to="append" data-edge-label="新内容" data-edge-key="1" data-edge-id="identity_append" data-composition-points="404,88;470,88" data-composition-crossover="halo" d="M 404 88 L 470 88" class="a-emphasis" stroke-width="1.6" marker-end="url(#arrowhead-emphasis)"/>
+        </g>
+        <g data-graph-role="automatic-crossover" style="--step:2">
+          <path data-graph-role="automatic-crossover-underlay" d="M 610 88 L 674 88" fill="none" stroke="#ffffff" stroke-width="5.6" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
+          <path data-edge-from="append" data-edge-to="view" data-edge-label="投影" data-edge-key="2" data-edge-id="append_view" data-composition-points="610,88;674,88" data-composition-crossover="halo" d="M 610 88 L 674 88" class="a-emphasis" stroke-width="1.6" marker-end="url(#arrowhead-emphasis)"/>
+        </g>
+        <g data-graph-role="automatic-crossover" style="--step:3">
+          <path data-graph-role="automatic-crossover-underlay" d="M 814 88 L 878 88" fill="none" stroke="#ffffff" stroke-width="5.6" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
+          <path data-edge-from="view" data-edge-to="review" data-edge-label="查询" data-edge-key="3" data-edge-id="view_review" data-composition-points="814,88;878,88" data-composition-crossover="halo" d="M 814 88 L 878 88" class="a-emphasis" stroke-width="1.6" marker-end="url(#arrowhead-emphasis)"/>
+        </g>
+        <g data-graph-role="automatic-crossover" style="--step:4">
+          <path data-graph-role="automatic-crossover-underlay" d="M 744 120 L 744 170 Q 744 180 734 180 L 565 180 Q 555 180 555 190 L 555 240" fill="none" stroke="#ffffff" stroke-width="5.1" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
+          <path data-edge-from="view" data-edge-to="correction" data-edge-label="修正" data-edge-key="4" data-edge-id="view_correction" data-composition-points="744,120;744,180;555,180;555,240" data-composition-crossover="halo" d="M 744 120 L 744 170 Q 744 180 734 180 L 565 180 Q 555 180 555 190 L 555 240" class="a-default" stroke-width="1.1" marker-end="url(#arrowhead)"/>
+        </g>
+        <g data-graph-role="automatic-crossover" style="--step:5">
+          <path data-graph-role="automatic-crossover-underlay" d="M 525 240 L 525 120" fill="none" stroke="#ffffff" stroke-width="5.1" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
+          <path data-edge-from="correction" data-edge-to="append" data-edge-label="追加" data-edge-key="5" data-edge-id="correction_append" data-composition-points="525,240;525,120" data-composition-crossover="halo" d="M 525 240 L 525 120" class="a-default" stroke-width="1.1" marker-end="url(#arrowhead)"/>
+        </g>
+        <g data-graph-role="automatic-crossover" style="--step:6">
+          <path data-graph-role="automatic-crossover-underlay" d="M 319 120 L 319 424" fill="none" stroke="#ffffff" stroke-width="5.1" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
+          <path data-edge-from="identity" data-edge-to="replay" data-edge-label="相同重放" data-edge-key="6" data-edge-id="identity_replay" data-composition-points="319,120;319,424" data-composition-crossover="halo" d="M 319 120 L 319 424" class="a-default" stroke-width="1.1" marker-end="url(#arrowhead)"/>
+        </g>
+        <g data-graph-role="automatic-crossover" style="--step:7">
+          <path data-graph-role="automatic-crossover-underlay" d="M 349 120 L 349 354 Q 349 364 359 364 L 530 364 Q 540 364 540 374 L 540 424" fill="none" stroke="#ffffff" stroke-width="5.1" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
+          <path data-edge-from="identity" data-edge-to="conflict" data-edge-label="冲突" data-edge-key="7" data-edge-id="identity_conflict" data-composition-points="349,120;349,364;540,364;540,424" data-composition-crossover="halo" d="M 349 120 L 349 354 Q 349 364 359 364 L 530 364 Q 540 364 540 374 L 540 424" class="a-default" stroke-width="1.1" marker-end="url(#arrowhead)"/>
+        </g>
+
+        <!-- States -->
+        <g id="node-author" data-node-id="author" data-node-label="形成报告 / note" tabindex="0" role="button" aria-label="聚焦形成报告 / note，task / run / session 来源, 报告与版本" aria-pressed="false" data-node-kind="start" data-node-sublabel="task / run / session 来源" data-node-context="报告与版本">
+          <title>形成报告 / note · task / run / session 来源 · 报告与版本</title>
+          <rect x="60" y="56" width="140" height="64" rx="7" class="c-mask"/>
+          <rect x="60" y="56" width="140" height="64" rx="7" class="c-frontend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-lifecycle-initial-marker="">
+            <circle cx="38" cy="88" r="4.5" style="fill: #059669"/><path d="M 42.5 88 L 53 88" class="a-emphasis" stroke-width="1.4"/><path d="M 52 84.5 L 59 88 L 52 91.5 Z" style="fill: #059669"/>
+          </g>
+          <g aria-hidden="true" data-semantic-sigil="start" class="semantic-sigil s-frontend" transform="translate(66 62) scale(0.6875)">
+            <circle cx="8" cy="8" r="5"/>
+            <path d="m7 5.4 3.6 2.6L7 10.6Z" class="sigil-fill"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="130" y="79" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">形成报告 / note</text>
+          <text data-detail="context" x="130" y="96" class="t-muted" font-size="8" text-anchor="middle">task / run / session 来源</text>
+        </g>
+
+        <g id="node-identity" data-node-id="identity" data-node-label="检查身份 / 幂等" tabindex="0" role="button" aria-label="聚焦检查身份 / 幂等，command ID 与内容, 报告与版本" aria-pressed="false" data-node-kind="decision" data-node-sublabel="command ID 与内容" data-node-context="报告与版本">
+          <title>检查身份 / 幂等 · command ID 与内容 · 报告与版本</title>
+          <rect x="264" y="56" width="140" height="64" rx="7" class="c-mask"/>
+          <rect x="264" y="56" width="140" height="64" rx="7" class="c-database" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="neutral" class="semantic-sigil s-database" transform="translate(270 62) scale(0.6875)">
+            <rect x="3" y="3" width="10" height="10" rx="2"/>
+            <circle cx="8" cy="8" r="1.2" class="sigil-fill"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="334" y="79" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">检查身份 / 幂等</text>
+          <text data-detail="context" x="334" y="96" class="t-muted" font-size="8" text-anchor="middle">command ID 与内容</text>
+        </g>
+
+        <g id="node-append" data-node-id="append" data-node-label="追加不可变记录" tabindex="0" role="button" aria-label="聚焦追加不可变记录，来源 · revision · artifact, 报告与版本" aria-pressed="false" data-node-kind="active" data-node-sublabel="来源 · revision · artifact" data-node-context="报告与版本">
+          <title>追加不可变记录 · 来源 · revision · artifact · 报告与版本</title>
+          <rect x="470" y="56" width="140" height="64" rx="7" class="c-mask"/>
+          <rect x="470" y="56" width="140" height="64" rx="7" class="c-frontend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="active" class="semantic-sigil s-frontend" transform="translate(476 62) scale(0.6875)">
+            <path d="M2 8h3l1.5-3.5L9 12l1.6-4H14"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="540" y="79" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">追加不可变记录</text>
+          <text data-detail="context" x="540" y="96" class="t-muted" font-size="8" text-anchor="middle">来源 · revision · artifact</text>
+        </g>
+
+        <g id="node-view" data-node-id="view" data-node-label="更新当前视图" tabindex="0" role="button" aria-label="聚焦更新当前视图，历史仍完整可查, 报告与版本" aria-pressed="false" data-node-kind="neutral" data-node-sublabel="历史仍完整可查" data-node-context="报告与版本">
+          <title>更新当前视图 · 历史仍完整可查 · 报告与版本</title>
+          <rect x="674" y="56" width="140" height="64" rx="7" class="c-mask"/>
+          <rect x="674" y="56" width="140" height="64" rx="7" class="c-external" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="neutral" class="semantic-sigil s-external" transform="translate(680 62) scale(0.6875)">
+            <rect x="3" y="3" width="10" height="10" rx="2"/>
+            <circle cx="8" cy="8" r="1.2" class="sigil-fill"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="744" y="79" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">更新当前视图</text>
+          <text data-detail="context" x="744" y="96" class="t-muted" font-size="8" text-anchor="middle">历史仍完整可查</text>
+        </g>
+
+        <g id="node-review" data-node-id="review" data-node-label="复盘与追溯" tabindex="0" role="button" aria-label="聚焦复盘与追溯，跨 run / session 阅读, 报告与版本" aria-pressed="false" data-node-kind="success" data-node-sublabel="跨 run / session 阅读" data-node-context="报告与版本">
+          <title>复盘与追溯 · 跨 run / session 阅读 · 报告与版本</title>
+          <rect x="878" y="56" width="140" height="64" rx="7" class="c-mask"/>
+          <rect x="878" y="56" width="140" height="64" rx="7" class="c-backend" stroke-width="1.5"/>
+          <rect x="881" y="59" width="134" height="58" rx="4" class="c-backend" style="fill: none" stroke-width="1"/>
+          <g aria-hidden="true" data-semantic-sigil="success" class="semantic-sigil s-backend" transform="translate(884 62) scale(0.6875)">
+            <circle cx="8" cy="8" r="5.3"/>
+            <path d="m5.2 8 1.8 1.8 3.8-4"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="948" y="79" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">复盘与追溯</text>
+          <text data-detail="context" x="948" y="96" class="t-muted" font-size="8" text-anchor="middle">跨 run / session 阅读</text>
+        </g>
+
+        <g id="node-correction" data-node-id="correction" data-node-label="形成新修订" tabindex="0" role="button" aria-label="聚焦形成新修订，明确 previousReportId, 追加证据" aria-pressed="false" data-node-kind="active" data-node-sublabel="明确 previousReportId" data-node-context="追加证据">
+          <title>形成新修订 · 明确 previousReportId · 追加证据</title>
+          <rect x="470" y="240" width="140" height="64" rx="7" class="c-mask"/>
+          <rect x="470" y="240" width="140" height="64" rx="7" class="c-frontend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="active" class="semantic-sigil s-frontend" transform="translate(476 246) scale(0.6875)">
+            <path d="M2 8h3l1.5-3.5L9 12l1.6-4H14"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="540" y="263" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">形成新修订</text>
+          <text data-detail="context" x="540" y="280" class="t-muted" font-size="8" text-anchor="middle">明确 previousReportId</text>
+        </g>
+
+        <g id="node-replay" data-node-id="replay" data-node-label="返回原回执" tabindex="0" role="button" aria-label="聚焦返回原回执，精确相同请求, 请求处理结果" aria-pressed="false" data-node-kind="success" data-node-sublabel="精确相同请求" data-node-context="请求处理结果">
+          <title>返回原回执 · 精确相同请求 · 请求处理结果</title>
+          <rect x="264" y="424" width="140" height="64" rx="7" class="c-mask"/>
+          <rect x="264" y="424" width="140" height="64" rx="7" class="c-backend" stroke-width="1.5"/>
+          <rect x="267" y="427" width="134" height="58" rx="4" class="c-backend" style="fill: none" stroke-width="1"/>
+          <g aria-hidden="true" data-semantic-sigil="success" class="semantic-sigil s-backend" transform="translate(270 430) scale(0.6875)">
+            <circle cx="8" cy="8" r="5.3"/>
+            <path d="m5.2 8 1.8 1.8 3.8-4"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="334" y="447" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">返回原回执</text>
+          <text data-detail="context" x="334" y="464" class="t-muted" font-size="8" text-anchor="middle">精确相同请求</text>
+        </g>
+
+        <g id="node-conflict" data-node-id="conflict" data-node-label="拒绝冲突" tabindex="0" role="button" aria-label="聚焦拒绝冲突，同 ID 不同内容, 请求处理结果" aria-pressed="false" data-node-kind="failure" data-node-sublabel="同 ID 不同内容" data-node-context="请求处理结果">
+          <title>拒绝冲突 · 同 ID 不同内容 · 请求处理结果</title>
+          <rect x="470" y="424" width="140" height="64" rx="7" class="c-mask"/>
+          <rect x="470" y="424" width="140" height="64" rx="7" class="c-security" stroke-width="1.5"/>
+          <rect x="473" y="427" width="134" height="58" rx="4" class="c-security" style="fill: none" stroke-width="1"/>
+          <g aria-hidden="true" data-semantic-sigil="failure" class="semantic-sigil s-security" transform="translate(476 430) scale(0.6875)">
+            <circle cx="8" cy="8" r="5.3"/>
+            <path d="m5.7 5.7 4.6 4.6m0-4.6-4.6 4.6"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="540" y="447" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">拒绝冲突</text>
+          <text data-detail="context" x="540" y="464" class="t-muted" font-size="8" text-anchor="middle">同 ID 不同内容</text>
+        </g>
+
+        <!-- Transition labels -->
+        <g data-detail="context" data-edge-from="author" data-edge-to="identity" data-edge-label="提交" data-edge-key="0" data-edge-id="author_identity">
+          <rect x="216" y="67" width="32" height="16" rx="4" class="c-mask"/>
+          <text x="232" y="78" class="t-edge-emphasis" font-size="8" text-anchor="middle">提交</text>
+        </g>
+        <g data-detail="context" data-edge-from="identity" data-edge-to="append" data-edge-label="新内容" data-edge-key="1" data-edge-id="identity_append">
+          <rect x="416.3" y="67" width="41.400000000000006" height="16" rx="4" class="c-mask"/>
+          <text x="437" y="78" class="t-edge-emphasis" font-size="8" text-anchor="middle">新内容</text>
+        </g>
+        <g data-detail="context" data-edge-from="append" data-edge-to="view" data-edge-label="投影" data-edge-key="2" data-edge-id="append_view">
+          <rect x="626" y="67" width="32" height="16" rx="4" class="c-mask"/>
+          <text x="642" y="78" class="t-edge-emphasis" font-size="8" text-anchor="middle">投影</text>
+        </g>
+        <g data-detail="context" data-edge-from="view" data-edge-to="review" data-edge-label="查询" data-edge-key="3" data-edge-id="view_review">
+          <rect x="830" y="67" width="32" height="16" rx="4" class="c-mask"/>
+          <text x="846" y="78" class="t-edge-emphasis" font-size="8" text-anchor="middle">查询</text>
+        </g>
+        <g data-detail="context" data-edge-from="view" data-edge-to="correction" data-edge-label="修正" data-edge-key="4" data-edge-id="view_correction">
+          <rect x="706" y="142" width="32" height="16" rx="4" class="c-mask"/>
+          <text x="722" y="153" class="t-edge-default" font-size="8" text-anchor="middle">修正</text>
+        </g>
+        <g data-detail="context" data-edge-from="correction" data-edge-to="append" data-edge-label="追加" data-edge-key="5" data-edge-id="correction_append">
+          <rect x="487" y="172" width="32" height="16" rx="4" class="c-mask"/>
+          <text x="503" y="183" class="t-edge-default" font-size="8" text-anchor="middle">追加</text>
+        </g>
+        <g data-detail="context" data-edge-from="identity" data-edge-to="replay" data-edge-label="相同重放" data-edge-key="6" data-edge-id="identity_replay">
+          <rect x="261.79999999999995" y="264" width="51.2" height="16" rx="4" class="c-mask"/>
+          <text x="287.4" y="275" class="t-edge-default" font-size="8" text-anchor="middle">相同重放</text>
+        </g>
+        <g data-detail="context" data-edge-from="identity" data-edge-to="conflict" data-edge-label="冲突" data-edge-key="7" data-edge-id="identity_conflict">
+          <rect x="355" y="234" width="32" height="16" rx="4" class="c-mask"/>
+          <text x="371" y="245" class="t-edge-default" font-size="8" text-anchor="middle">冲突</text>
+        </g>
+
+        <!-- Legend -->
+        <g data-legend="" data-legend-bridge="">
+          <text x="40" y="528" class="t-primary" font-size="12" font-weight="650">图例</text>
+          <g data-legend-semantic-kind="start" data-legend-kind="start" data-legend-label="起点" data-legend-x="40" data-legend-baseline="548" data-legend-width="75">
+            <circle cx="44.5" cy="544.5" r="4.5" style="fill: #059669"/><path d="M 49 544.5 L 58 544.5" class="a-emphasis" stroke-width="1.4"/><path d="M 57 541 L 64 544.5 L 57 548 Z" style="fill: #059669"/>
+            <text x="74" y="548" class="t-muted" font-size="10" font-weight="500">起点</text>
+          </g>
+          <g data-legend-semantic-kind="active" data-legend-kind="active" data-legend-label="进行中" data-legend-x="137" data-legend-baseline="548" data-legend-width="73">
+            <rect x="137" y="540" width="14" height="9" rx="2" class="c-frontend" stroke-width="1"/>
+            <text x="159" y="548" class="t-muted" font-size="10" font-weight="500">进行中</text>
+          </g>
+          <g data-legend-semantic-kind="decision" data-legend-kind="decision" data-legend-label="决策" data-legend-x="232" data-legend-baseline="548" data-legend-width="63">
+            <rect x="232" y="540" width="14" height="9" rx="2" class="c-database" stroke-width="1"/>
+            <text x="254" y="548" class="t-muted" font-size="10" font-weight="500">决策</text>
+          </g>
+          <g data-legend-semantic-kind="success" data-legend-kind="success" data-legend-label="成功" data-legend-x="317" data-legend-baseline="548" data-legend-width="63">
+            <rect x="317" y="540" width="14" height="9" rx="2" class="c-backend" stroke-width="1"/>
+            <text x="339" y="548" class="t-muted" font-size="10" font-weight="500">成功</text>
+          </g>
+          <g data-legend-semantic-kind="failure" data-legend-kind="failure" data-legend-label="失败 / 退出" data-legend-x="402" data-legend-baseline="548" data-legend-width="98">
+            <rect x="402" y="540" width="14" height="9" rx="2" class="c-security" stroke-width="1"/>
+            <text x="424" y="548" class="t-muted" font-size="10" font-weight="500">失败 / 退出</text>
+          </g>
+          <g data-legend-semantic-kind="neutral" data-legend-kind="neutral" data-legend-label="中性状态" data-legend-x="522" data-legend-baseline="548" data-legend-width="83">
+            <rect x="522" y="540" width="14" height="9" rx="2" class="c-external" stroke-width="1"/>
+            <text x="544" y="548" class="t-muted" font-size="10" font-weight="500">中性状态</text>
+          </g>
+          <g data-legend-semantic-kind="final" data-legend-x="627" data-legend-baseline="548" data-legend-width="44">
+            <rect x="627" y="540" width="14" height="9" rx="2" class="c-external" stroke-width="1"/><rect x="629.5" y="542.5" width="9" height="4" rx="1" class="c-external" style="fill: none" stroke-width="0.8"/>
+            <text x="651" y="548" class="t-muted" font-size="10" font-weight="500">终态</text>
+          </g>
+        </g>
+      </svg>

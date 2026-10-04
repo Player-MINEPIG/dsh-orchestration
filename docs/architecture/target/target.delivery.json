@@ -1,17 +1,17 @@
 {
   "schemaVersion": 1,
-  "receiptId": "d4192e24-7dfa-4834-b04f-5155f584ae1a",
+  "receiptId": "c5988b9c-b842-42c4-82b5-403a92a067fd",
   "status": "current",
   "command": "deliver",
   "type": "architecture",
   "input": "/workspace/shared/dsh-orchestration/project/docs/architecture/target/candidate.json",
   "output": "/workspace/shared/dsh-orchestration/project/docs/architecture/target/target.html",
   "specification": {
-    "sha256": "580fb2096e9b281697e352c78e8bfd814ffc2824df7ba43e6ff10c58deeaf6da",
-    "bytes": 7420
+    "sha256": "2970d5bbeb3c5651fc7ae59e14e156ffe47e45c5f5879020d00a41ab0b6c7e48",
+    "bytes": 8791
   },
   "artifact": {
-    "sha256": "759af49407bd8288ab02f6afbde9018b9ee7ea6430e233857948b82b6026284a",
-    "bytes": 771587
+    "sha256": "f295f6e6fd6902a5a759235e23047b3f3491b18a83d05a3ed3e1135d970b39a0",
+    "bytes": 773420
   }
 }

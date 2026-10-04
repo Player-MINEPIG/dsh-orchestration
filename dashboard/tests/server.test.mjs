@@ -8,6 +8,19 @@ test('read-only routes, no-store security headers, and static allowlist',async t
 test('non-root mounting serves relative assets and same-base API',async t=>{const base=await serve(t,{basePath:'/dsh/tasks'});const response=await fetch(base+'/dsh/tasks/');assert.equal(response.status,200);assert.match(await response.text(),/src="\.\/app.js"/);assert.match(await (await fetch(base+'/dsh/tasks/config.js')).text(),/"apiBase":"\/dsh\/tasks\/api"/);assert.equal((await fetch(base+'/dsh/tasks/api/snapshot')).status,200);assert.equal((await fetch(base+'/api/snapshot')).status,404);});
 test('DNS rebinding and absent host auth fail closed',async t=>{const base=await serve(t);const attackStatus=await new Promise((resolve,reject)=>{const req=http.get(base+'/api/snapshot',{headers:{Host:'malicious.example'}},res=>{res.resume();resolve(res.statusCode);});req.on('error',reject);});assert.equal(attackStatus,403);const protectedBase=await serve(t,{authorize:()=>false});assert.equal((await fetch(protectedBase+'/')).status,401);});
 test('host adapter can reuse an already authenticated user session',async t=>{const base=await serve(t,{authorize:req=>req.headers['x-test-session']==='valid'});assert.equal((await fetch(base+'/api/snapshot',{headers:{'x-test-session':'valid'}})).status,200);});
+test('authentication guards every resource and failures never become cached source errors',async t=>{
+ const base=await serve(t,{authorize:()=>{throw new Error('private authentication detail');}});
+ for(const route of ['/','/config.js','/client.js','/api/health','/api/snapshot']) for(const method of ['GET','HEAD']){
+  const response=await fetch(base+route,{method});assert.equal(response.status,401);assert.equal(response.headers.get('cache-control'),'no-store');assert.equal(response.headers.get('access-control-allow-origin'),null);assert.doesNotMatch(await response.text(),/private/);
+ }
+});
+test('Access host transmits expiry only and denies missing or expired sessions',async t=>{
+ assert.throws(()=>createDashboardServer({snapshot,requireSessionExpiry:true}),/authenticated host/);
+ const expiresAt=Date.now()+60000;const base=await serve(t,{authorize:()=>({expiresAt}),requireSessionExpiry:true});
+ const response=await fetch(base+'/api/snapshot');assert.equal(response.status,200);assert.equal(response.headers.get('x-dsh-session-expires-at'),new Date(expiresAt).toISOString());
+ assert.match(await(await fetch(base+'/config.js')).text(),/"requireSessionExpiry":true/);
+ for(const session of [true,{expiresAt:Date.now()-1000}]){const denied=await serve(t,{authorize:()=>session,requireSessionExpiry:true});assert.equal((await fetch(denied+'/api/snapshot')).status,401);}
+});
 test('read projection removes operational secrets and unstructured event detail',()=>{const source=snapshot();source.tasks=[{taskId:'t',source:{label:'Visible',token:'never'}}];source.runs=[{runId:'r',taskId:'t',configuration:{apiKey:'never'}}];source.events=[{eventId:'e',type:'progress',at:'now',detail:{summary:'Visible progress',systemPrompt:'never',token:'never'}}];source.templates=[{templateId:'t',version:1,inputSchema:{type:'object',properties:{query:{type:'string'},api_key:{type:'string',default:'never'}}},defaults:{secret:'never'}}];const visible=JSON.stringify(dashboardSnapshot(source));assert.doesNotMatch(visible,/never/);assert.match(visible,/Visible progress/);});
 test('unavailable core reports a bounded error without leaking its path',async t=>{const base=await serve(t,{snapshot:()=>{throw new Error('/private/path/secret');}});const response=await fetch(base+'/api/snapshot');assert.equal(response.status,503);assert.doesNotMatch(await response.text(),/private|secret/);});
 
@@ -15,4 +28,8 @@ test('API projection retains complete curation and history for explicit viewing 
  const source=snapshot();source.tasks=[{taskId:'dismissed-task',state:'running',admissionState:'dismissed',admissionRevision:4,updatedAt:'2026-10-01T19:00:00Z'}];
  source.reports=[{reportId:'kept-report',taskId:'dismissed-task',body:'History is preserved'}];
  const view=dashboardSnapshot(source);assert.equal(view.tasks.length,1);assert.equal(view.tasks[0].admissionState,'dismissed');assert.equal(view.tasks[0].admissionRevision,4);assert.equal(view.tasks[0].state,'running');assert.equal(view.reports.length,1);assert.equal(view.source.observedAt,source.source.observedAt);assert.equal(view.tasks[0].updatedAt,source.tasks[0].updatedAt);
+});
+test('uncertain native runs retain validation and safe event summary without report fabrication',()=>{
+ const source=snapshot();source.runs=[{runId:'one',taskId:'task',state:'uncertain',outcome:'unknown',validation:'not-submitted'}];source.events=[{eventId:'event',runId:'one',type:'run.settled',detail:{summary:'MISSING_CREDENTIAL',rawError:'must not appear'}}];
+ const view=dashboardSnapshot(source);assert.equal(view.runs[0].state,'uncertain');assert.equal(view.runs[0].outcome,'unknown');assert.equal(view.runs[0].validation,'not-submitted');assert.equal(view.reports.length,0);assert.deepEqual(view.events[0].detail,{summary:'MISSING_CREDENTIAL'});
 });

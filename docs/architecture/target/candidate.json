@@ -91,7 +91,8 @@
       "size": [
         250,
         84
-      ]
+      ],
+      "tag": "signed+TLS / trusted-network"
     },
     {
       "id": "new_decision",
@@ -289,7 +290,30 @@
       "items": [
         "心跳记录 runtime 状态与有效期；provider not-probed 不代表真实模型可用",
         "重试默认零工具；显式 reviewed tools 须成功闭合，同 session 有限续跑并阻止精确重复",
-        "Alerts、创建锚点与本轮终态回复使用独立 outbox；外部送达不等于执行成功"
+        "Alerts、创建锚点与本轮终态回复使用独立 outbox；外部送达不等于执行成功",
+        "native 无 task_settle 时仅回传固定公开错误码；unknown 保留，原始错误不外传"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "两种显式认证与传输模式",
+      "items": [
+        "signed+TLS 保持默认；trusted-network 须显式 allowHttp 与精确 peer IP",
+        "actual socket IP → 固定 node / role / operations / workspace / capability",
+        "专用 HTTP carrier 仍挂载宿主；strict Host / Origin、source IP 与 target IP 均校验",
+        "网络名单是运营配置快照，不动态扩大；网络可达不等于应用 peer 权限",
+        "同一来源 IP 的设备进程共享 peer 身份；需独立进程身份时使用签名模式"
+      ]
+    },
+    {
+      "dot": "cyan",
+      "title": "可选实时 dashboard · 尚未上线",
+      "items": [
+        "Cloudflare Access 校验 RS256；issuer / audience / owner 固定于运营配置",
+        "live-server 仅 loopback 只读现有 TaskLedger；无第二任务数据库或执行 API",
+        "同源 / no-store；登录到期清除页面任务数据，断线保留旧记录并标非实时",
+        "MISSING_CREDENTIAL 等来自本 run 事件；事件不是成功证明或虚构报告",
+        "账号 / DNS / Tunnel / Access 与部署条件另验；旧私有 Site 快照独立保留"
       ]
     },
     {

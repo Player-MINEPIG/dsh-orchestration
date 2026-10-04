@@ -6,8 +6,8 @@
 
 ```sh
 node dashboard/record-status.mjs \
-  --task hermes-to-dsh-plugins \
-  --report dsh-host-validation-20261001 \
+  --task example-task \
+  --report example-progress-20261001 \
   --title '宿主验证进展' \
   --body-file .runtime/status-body.txt \
   --observed-at '2026-10-01T20:30:00Z' \

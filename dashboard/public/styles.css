@@ -27,3 +27,6 @@
 .curation-notice{display:flex;align-items:flex-start;gap:10px;border:1px solid #dce3ea;border-radius:9px;padding:13px 15px;margin-bottom:14px;background:#f3f5f7;font-size:13px;line-height:1.8;color:#53616f}
 .report-item>.curation-badge,.run-item>.curation-badge{margin-left:8px}.curation-notice .curation-badge{margin-top:2px;flex-shrink:0}
 @media(max-width:650px){.curation-control{align-items:flex-start;gap:0}.curation-control .hint{width:100%;padding-left:26px}.curation-control label{font-size:14px}.curation-notice{font-size:14px}}
+
+.run-diagnostics{margin-top:18px;padding-top:16px;border-top:1px solid var(--line)}
+.run-diagnostics h4{font-size:13px;margin:0 0 8px}.run-diagnostics .timeline{margin-top:16px}

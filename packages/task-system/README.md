@@ -12,6 +12,8 @@ Set `DSH_TASK_DATABASE` to the intended database path and use that **same path**
 
 Planner-only cannot execute local workloads. Executor-only cannot create or route task intent. Every remote operation also checks its authenticated node, operation and workspace scope; model-facing checks are not the only authorization boundary. Native `task_settle` derives identity from the exact owned agent. Text or idle alone never means success. Final commitment waits for the agent to drain and the session to flush.
 
+When an owned native session ends without `task_settle`, the outcome remains `unknown` / `not-submitted`. A terminal public DSH error contributes only its fixed safe code (for example `NO_ADAPTER` or `MISSING_CREDENTIAL`) to the returned summary; unknown codes become `RUNTIME_ERROR`. Raw messages, causes and credentials are never copied into that summary. This diagnostic does not manufacture a result report or prove that prior effects did not occur.
+
 Default workload tools are empty. Known file tools require canonical authorized paths; cwd alone is not an OS sandbox. Shell/custom tools require an explicit broader trusted configuration. Workspace roots must be owned by the operator and protected from hostile local mutation; portable path checks do not defeat a separate process racing filesystem changes.
 
 ## Durable APIs

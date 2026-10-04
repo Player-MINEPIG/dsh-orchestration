@@ -321,7 +321,30 @@ interface OwnedAttempt {
   external?: boolean;
   collaboration?: NativeCollaboration;
   retryObservation?: NativeRetryObservation;
+  terminalErrorCode?: string;
 }
+
+// Only fixed public failure classes may cross into task/remote summaries.
+// Provider messages, causes, and arbitrary adapter-defined codes stay local.
+const NATIVE_ERROR_CODES = new Set([
+  "NO_ADAPTER",
+  "MISSING_CREDENTIAL",
+  "INVALID_CREDENTIAL",
+  "AUTH",
+  "UNKNOWN_MODEL",
+  "INVALID_CATALOG",
+  "UNSUPPORTED_REASONING_EFFORT",
+  "UNSUPPORTED_OPTION",
+  "RATE_LIMIT",
+  "SERVER",
+  "TRANSPORT",
+  "TIMEOUT",
+  "QUOTA",
+  "ACCOUNT_QUOTA",
+  "CONTEXT_WINDOW_EXCEEDED",
+  "EMPTY_RESPONSE",
+  "IMAGE_OFFLOAD_REQUIRED",
+]);
 export interface NativeResult {
   sessionId: string;
   run: Run;
@@ -377,6 +400,29 @@ export class NativeExecutionProvider {
   }
   resume(claim: Claim): Promise<NativeResult> {
     return this.start(claim, true);
+  }
+  private observeTerminal(
+    ctx: Context,
+    agent: Agent,
+    owned: OwnedAttempt,
+  ): void {
+    ctx.on("session/event", (session, event) => {
+      if (session !== agent.session || event.type !== "turn/end") return;
+      const reason = event.data.reason;
+      owned.terminalErrorCode =
+        reason.kind === "error"
+          ? NATIVE_ERROR_CODES.has(reason.error.code)
+            ? reason.error.code
+            : "RUNTIME_ERROR"
+          : undefined;
+    });
+  }
+  private missingResultSummary(owned: OwnedAttempt, remote = false): string {
+    if (owned.terminalErrorCode)
+      return `Native agent ended with ${owned.terminalErrorCode} without a causal task_settle submission; reconcile before retrying.`;
+    return remote
+      ? "Remote native agent reached idle without a causal task_settle submission; reconcile before retrying."
+      : "Native agent reached idle without a causal task_settle submission; reconcile side effects before retrying.";
   }
   private workloadTools(claim: NativeClaim): string[] {
     const policyTools = claim.task.policy?.allowedTools;
@@ -705,6 +751,7 @@ export class NativeExecutionProvider {
           setup: (agentCtx: Context, agent: Agent) => {
             owned.agent = agent;
             this.bySession.set(sessionId, owned);
+            this.observeTerminal(agentCtx, agent, owned);
             if (this.owner.config.safeRetry.maxRetries > 0)
               owned.retryObservation = new NativeRetryObservation(
                 agentCtx,
@@ -792,8 +839,7 @@ export class NativeExecutionProvider {
         }
         const outcome = owned.pending?.outcome ?? {
           outcome: "unknown" as const,
-          summary:
-            "Remote native agent reached idle without a causal task_settle submission; reconcile before retrying.",
+          summary: this.missingResultSummary(owned, true),
         };
         try {
           this.validateOutcome(owned, outcome);
@@ -873,6 +919,7 @@ export class NativeExecutionProvider {
     const setup = (agentCtx: Context, agent: Agent) => {
       owned.agent = agent;
       this.bySession.set(sessionId, owned);
+      this.observeTerminal(agentCtx, agent, owned);
       if (this.owner.config.safeRetry.maxRetries > 0)
         owned.retryObservation = new NativeRetryObservation(agentCtx, agent, {
           resumableTools: this.resumableTools(claim),
@@ -1049,8 +1096,7 @@ export class NativeExecutionProvider {
           ...ref,
           ...(pending?.outcome ?? {
             outcome: "unknown" as const,
-            summary:
-              "Native agent reached idle without a causal task_settle submission; reconcile side effects before retrying.",
+            summary: this.missingResultSummary(owned),
           }),
         },
       });

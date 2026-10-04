@@ -2,11 +2,13 @@ import { randomUUID } from 'node:crypto'
 import type { KeyObject } from 'node:crypto'
 import { assertEndpoint } from './http.js'
 import { byteLimit, DEFAULT_MAX_BODY_BYTES, DEFAULT_MAX_RESPONSE_BYTES, digest, insist, isRecord, signEnvelope } from './protocol.js'
-import type { Json, Operation } from './protocol.js'
+import type { AuthMode, CommandEnvelope, Json, Operation } from './protocol.js'
+import { trustedNetworkFetch, validateNetworkTarget } from './network-client.js'
+import type { TrustedNetworkTarget } from './trusted-network.js'
 import type { CommandReceipt, RecoveryStore } from './store.js'
 import type { ApprovalOffer, ApprovalRequest, Attempt, CapturedText, Claim, DelegationInput, HeartbeatInput, NodeStatus, LedgerPort, LeaseRef, ObservationCandidate, ObservationInput, Receipt, Run, SafeRetryWitness, Settlement, SettlementView, Task, TaskHistory, TaskReportInput } from './ports.js'
 
-export interface ClientOptions { endpoint: string; audience: string; nodeId: string; keyId: string; privateKey: KeyObject; store: RecoveryStore; allowLoopbackHttp?: boolean; timeoutMs?: number; maxBodyBytes?: number; maxResponseBytes?: number; now?: () => number; fetch?: typeof fetch }
+export interface ClientOptions { endpoint: string; audience: string; nodeId: string; authMode?: AuthMode; keyId?: string; privateKey?: KeyObject; trustedNetwork?: TrustedNetworkTarget; store: RecoveryStore; allowLoopbackHttp?: boolean; timeoutMs?: number; maxBodyBytes?: number; maxResponseBytes?: number; now?: () => number; fetch?: typeof fetch }
 /** Existing key material is injected by the host. This package never generates or saves credentials. */
 export class RemoteClient {
   private options: ClientOptions
@@ -15,9 +17,23 @@ export class RemoteClient {
   private lifetime = new AbortController()
   private active = true
   private endpoint: URL
+  private readonly transportFetch: typeof fetch
+  private readonly authBinding: string
   constructor(options: ClientOptions) {
     this.options = { ...options,maxBodyBytes: byteLimit(options.maxBodyBytes,DEFAULT_MAX_BODY_BYTES),maxResponseBytes: byteLimit(options.maxResponseBytes,DEFAULT_MAX_RESPONSE_BYTES) }
-    this.endpoint = assertEndpoint(options.endpoint,options.allowLoopbackHttp)
+    insist(options.authMode === undefined || options.authMode === 'ed25519' || options.authMode === 'trusted-network','AUTH_MODE_MISMATCH')
+    if (options.authMode === 'trusted-network') {
+      insist(options.trustedNetwork && !options.keyId && !options.privateKey && !options.fetch && !options.allowLoopbackHttp,'AUTH_CONFIG_CONFLICT')
+      const checked = validateNetworkTarget(options.endpoint,options.trustedNetwork)
+      this.endpoint = checked.endpoint
+      this.transportFetch = trustedNetworkFetch(checked.target)
+      this.authBinding = digest({ authMode: 'trusted-network',version: 2,...checked.target })
+    } else {
+      insist(options.keyId && options.privateKey && !options.trustedNetwork,'SIGNING_IDENTITY_REQUIRED')
+      this.endpoint = assertEndpoint(options.endpoint,options.allowLoopbackHttp)
+      this.transportFetch = options.fetch ?? fetch
+      this.authBinding = digest({ authMode: 'ed25519',version: 1,keyId: options.keyId })
+    }
   }
   send(operation: Operation, commandId: string, payload: Record<string, Json>, options?: { signal?: AbortSignal }): Promise<CommandReceipt> {
     const request = this.tail.then(() => this.sendOwned(operation,commandId,payload,options?.signal))
@@ -31,26 +47,29 @@ export class RemoteClient {
     try {
       const { store, nodeId, keyId, privateKey, audience } = this.options
       const requestHash = digest({ operation,payload })
-      const destination = { sender: nodeId,audience,endpoint: this.endpoint.href }
+      const authMode = this.options.authMode ?? 'ed25519'
+      const destination = { sender: nodeId,audience,endpoint: this.endpoint.href,authMode,authBinding: this.authBinding }
       const existing = store.outbound(commandId)
       if (existing) {
         insist(isRecord(existing) && existing.digest === requestHash, 'COMMAND_CONFLICT', 409)
+        insist((existing.authMode ?? 'ed25519') === authMode && (existing.authBinding === undefined ? authMode === 'ed25519' : existing.authBinding === this.authBinding),'SAVED_AUTH_MISMATCH',409)
         if (existing.sender !== undefined) insist(existing.sender === nodeId && existing.audience === audience && existing.endpoint === this.endpoint.href,'SAVED_DESTINATION_MISMATCH',409)
         if (existing.state === 'done') return existing.receipt as unknown as CommandReceipt
         // Retrying this exact command is safe at the gateway: stored pending/uncertain
         // work is never dispatched again. It may only return its existing receipt.
       }
       const now = (this.options.now ?? Date.now)()
-      const envelope = signEnvelope({ version: 1,nodeId,keyId,audience,commandId,nonce: randomUUID(),sequence: store.nextSequence(nodeId),issuedAt: now,expiresAt: now + 60000,operation,payload },privateKey)
+      const common = { nodeId,audience,commandId,nonce: randomUUID(),sequence: store.nextSequence(nodeId),issuedAt: now,expiresAt: now + 60000,operation,payload }
+      const envelope: CommandEnvelope = authMode === 'trusted-network' ? { version: 2,authMode: 'trusted-network',...common } : signEnvelope({ version: 1,keyId: keyId!,...common },privateKey!)
       const body = JSON.stringify(envelope)
       insist(Buffer.byteLength(body) <= this.options.maxBodyBytes!,'BODY_LIMIT',413)
       store.saveOutbound(commandId, { ...destination,digest: requestHash,operation,payload,state: 'sending' })
       try {
-        const response = await (this.options.fetch ?? fetch)(this.endpoint, {
+        const response = await this.transportFetch(this.endpoint, {
           method: 'POST', headers: { 'content-type': 'application/json' }, body,
           redirect: 'error', credentials: 'omit', signal: AbortSignal.any([this.lifetime.signal,AbortSignal.timeout(this.options.timeoutMs ?? 15000),...(signal ? [signal] : [])]),
         })
-        insist(response.ok, 'REMOTE_REJECTED', response.status)
+        if (!response.ok) { await response.body?.cancel().catch(() => undefined); insist(false, 'REMOTE_REJECTED', response.status) }
         const length = response.headers.get('content-length')
         if (length !== null && (!/^\d+$/.test(length) || Number(length) > this.options.maxResponseBytes!)) {
           await response.body?.cancel().catch(() => undefined)
@@ -83,7 +102,7 @@ export class RemoteClient {
   async dispose(): Promise<void> { this.active = false; this.lifetime.abort(); await this.tail }
 }
 
-/** Complete bounded protocol adapter; all caller node IDs must match this signing identity. */
+/** Complete bounded protocol adapter; all caller node IDs must match this authenticated identity. */
 export class RemoteLedgerClient implements LedgerPort {
   private client: RemoteClient
   private nodeId: string

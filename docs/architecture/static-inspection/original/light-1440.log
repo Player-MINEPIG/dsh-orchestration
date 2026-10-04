@@ -1,5 +1,5 @@
 
-** (inkscape:5): WARNING **: 09:19:13.125: Failed to wrap object of type 'PangoFT2FontMap'. Hint: this error is commonly caused by failing to call a library init() function.
+** (inkscape:15): WARNING **: 17:16:45.108: Failed to wrap object of type 'PangoFT2FontMap'. Hint: this error is commonly caused by failing to call a library init() function.
 Fontconfig error: No writable cache directories
 Fontconfig error: No writable cache directories
 Fontconfig error: No writable cache directories
@@ -32,4 +32,4 @@ Fontconfig error: No writable cache directories
 Fontconfig error: No writable cache directories
 Fontconfig error: No writable cache directories
 
-** (inkscape:5): WARNING **: 09:19:13.524: Failed to wrap object of type 'GtkRecentManager'. Hint: this error is commonly caused by failing to call a library init() function.
+** (inkscape:15): WARNING **: 17:16:45.540: Failed to wrap object of type 'GtkRecentManager'. Hint: this error is commonly caused by failing to call a library init() function.

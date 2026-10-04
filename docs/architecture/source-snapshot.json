@@ -1,18 +1,48 @@
 {
   "kind": "unverified-working-tree-read-snapshot",
-  "observedAt": "2026-10-01T23:22:51.767699+00:00",
+  "observedAt": "2026-10-02T07:16:32.660598+00:00",
   "repositoryProvenance": false,
-  "sourceFreezeNote": "Lead confirmed SOURCE FREEZE for core/remote/native functionality at 2026-10-01T23:18:25Z; parity/acceptance documentation may still change; this records local source bytes only, not Git provenance.",
+  "sourceFreezeNote": "Lead confirmed frozen optional Access-protected dashboard source at 2026-10-02T07:13:49Z; core runtime unchanged; no live deployment claim or Git provenance.",
   "files": [
     {
+      "path": "dashboard/access.mjs",
+      "sha256": "5d2746a93efb3b1d80fdc7ebc472e1335b6200c07a22be5e655bc72f8df8e027",
+      "bytes": 2779
+    },
+    {
+      "path": "dashboard/live-server.mjs",
+      "sha256": "8b2509f84524a9aada2910c000b16b7711bb62fd0c23b62d2478ec9089d04d49",
+      "bytes": 2818
+    },
+    {
+      "path": "dashboard/package.json",
+      "sha256": "f07f84097a1297e799be850bcab5d4fccf99096a6fc72a47e7b5bc145c1dfc2f",
+      "bytes": 340
+    },
+    {
+      "path": "dashboard/public/app.js",
+      "sha256": "3346cfd83c6412580774da8acbb980bebdce1eb3c6076be891168db3ae737ea4",
+      "bytes": 26659
+    },
+    {
+      "path": "dashboard/public/client.js",
+      "sha256": "ea190329fad9fb7a465ba223122228c1a9c79ac0f8a83d7c6edae246a1a0ac53",
+      "bytes": 1983
+    },
+    {
+      "path": "dashboard/public/model.js",
+      "sha256": "adef4904bb3f2e0088bd0c237c6787796afa981d3d7829db5034c8227cca7072",
+      "bytes": 4802
+    },
+    {
       "path": "dashboard/server.mjs",
-      "sha256": "5e389bd7edc957efa084b26395d54306d677fa1e4aa75c1fabedb7cd6218416d",
-      "bytes": 7940
+      "sha256": "70237720bbee42f6c188899ccd25e6a63bf6658708b423efd55d9037aa95f040",
+      "bytes": 8459
     },
     {
       "path": "docs/architecture/sources.md",
-      "sha256": "e9ef62833a41d6157ba11af46a4378fa2e3b6e9793b43a032a5d1c6ec21b5378",
-      "bytes": 22771
+      "sha256": "f92a898677a4e061405f5d8339a0b7b66c9ebe26c0e98ef05f16c301fa0c54ea",
+      "bytes": 29871
     },
     {
       "path": "examples/legacy-task-pack/ad-hoc.mjs",
@@ -105,6 +135,21 @@
       "bytes": 38130
     },
     {
+      "path": "package-lock.json",
+      "sha256": "1ff467d231a121f3f81d91c786a4481c7db2b7331cdabd5b5e44d4c29fc2f978",
+      "bytes": 78152
+    },
+    {
+      "path": "packages/feishu-channel/README.md",
+      "sha256": "5f046f136ae0148a372c32d9a1e9aa6cfefdab544edb746321d75bdb6dbfebdc",
+      "bytes": 26966
+    },
+    {
+      "path": "packages/feishu-channel/package.json",
+      "sha256": "ad14920fbbaed48c44ad2ab8b9ac820380503a7bcac2062b7b1fa3234fb0a43b",
+      "bytes": 1504
+    },
+    {
       "path": "packages/feishu-channel/src/cards.ts",
       "sha256": "8be5f96001e742d25d1fca5ca3fca423cabeb99e4ae199fdd17626b61a5d3892",
       "bytes": 8119
@@ -120,9 +165,19 @@
       "bytes": 43842
     },
     {
+      "path": "packages/remote-execution/README.md",
+      "sha256": "161cd0a608c8fc073460ac4820fcf45cc5f6cad2621e6befbeb39ab4f02e5440",
+      "bytes": 34088
+    },
+    {
+      "path": "packages/remote-execution/package.json",
+      "sha256": "402b5b3a5a42729864de79654e2c8990633659bf930f93d0c94c15ad373c0f9d",
+      "bytes": 964
+    },
+    {
       "path": "packages/remote-execution/src/client.ts",
-      "sha256": "fb8dd1b733144a8726fc98a84e3c96eb2813e213fcfabddb9c3bd396c649160a",
-      "bytes": 13917
+      "sha256": "8ca945a785b72596bc1254964ec459c12f86ed63e37e81c1039c86cebefd1622",
+      "bytes": 15635
     },
     {
       "path": "packages/remote-execution/src/collaboration.ts",
@@ -131,18 +186,23 @@
     },
     {
       "path": "packages/remote-execution/src/gateway.ts",
-      "sha256": "b1714f258f4a3ba8641ce154b603fd034180672ed8445458fd5ca5b0140e152f",
-      "bytes": 23787
+      "sha256": "8ac1c73e13b7a66d447d7a1a01fe72019f519a9d9e23908bcc786abb80d12bf5",
+      "bytes": 24049
     },
     {
       "path": "packages/remote-execution/src/http.ts",
-      "sha256": "023e414f1a32e88257a5e9f5bff7e699dab02de434633a930f88d3a7b3123e49",
-      "bytes": 3340
+      "sha256": "2df24a75bb1806576faf040b4e6b79fc8f40acc8eaff8374313dee7304c32d75",
+      "bytes": 6026
     },
     {
       "path": "packages/remote-execution/src/index.ts",
-      "sha256": "34a107aafadf24f30765ca4c1d4a33ece02b0ab8212576e924f39b44aa50f1bc",
-      "bytes": 14275
+      "sha256": "4b06e8de5673864f5f1e4ced17d5c4e05935d9db0552a866b5e34bdeb1e332f7",
+      "bytes": 18256
+    },
+    {
+      "path": "packages/remote-execution/src/network-client.ts",
+      "sha256": "a21844f6640be94fda7a08bd0ee822a0ab2b001ba8019e44b62771d04cbeff84",
+      "bytes": 3757
     },
     {
       "path": "packages/remote-execution/src/observation.ts",
@@ -156,8 +216,8 @@
     },
     {
       "path": "packages/remote-execution/src/protocol.ts",
-      "sha256": "5bd19d86110728a6085b37793d8564bec713b2bb23995a6a50bd497ef618934c",
-      "bytes": 7115
+      "sha256": "28300d2a9c39997a779735aeb8ad3f515b8852c23e6f2eb8f67ac55ff4888f47",
+      "bytes": 8514
     },
     {
       "path": "packages/remote-execution/src/retry.ts",
@@ -166,8 +226,13 @@
     },
     {
       "path": "packages/remote-execution/src/store.ts",
-      "sha256": "6d903231e86fba059899239ed01a81e243678484f45fa82834d3280fb863a8be",
-      "bytes": 9785
+      "sha256": "0a782802ff8bc499a466dc0b9f31512fb1663e334868c2169e6a066e5bf7e48a",
+      "bytes": 9799
+    },
+    {
+      "path": "packages/remote-execution/src/trusted-network.ts",
+      "sha256": "cae426d9c5848a1bd19f5ad5908aba51fa47421e55d4ea41bddd24174936d029",
+      "bytes": 5710
     },
     {
       "path": "packages/remote-execution/src/worker.ts",
@@ -175,8 +240,13 @@
       "bytes": 14395
     },
     {
+      "path": "packages/task-system/README.md",
+      "sha256": "1758c568f11d056f162f9f583c9b09bf8c26beaef1928fc43dc45be92097b052",
+      "bytes": 7530
+    },
+    {
       "path": "packages/task-system/package.json",
-      "sha256": "077a52e3fd9f69dd8567690e5974cc79b94274edbda0d8d4601ea77efdf1d1cc",
+      "sha256": "7cf058ab2d937ef090de13a68c2fce1ce57c04f7a2028524a111610f8e3cfaf5",
       "bytes": 2370
     },
     {
@@ -191,8 +261,8 @@
     },
     {
       "path": "packages/task-system/src/dsh-plugin.ts",
-      "sha256": "bdeba92b7469fb0cca614d37e5be3b8e7cb66896e91ba05c065f0cbc86e81695",
-      "bytes": 89907
+      "sha256": "1fcb093b54b4859a17a3ca74829014c92303d9a66ffb78e0f05da14763dc9ec7",
+      "bytes": 91387
     },
     {
       "path": "packages/task-system/src/ledger.ts",
@@ -223,6 +293,16 @@
       "path": "packages/task-system/src/workspaces.ts",
       "sha256": "361f37658a6ede4863384dd2603e2aca9407373cbbf2bf81a47aa6ccfa19ea40",
       "bytes": 6580
+    },
+    {
+      "path": "packages/typed-decisions/README.md",
+      "sha256": "10ebb585855ab62262f9e3705e0e6ed6f421837683c5c609334b491a73df1474",
+      "bytes": 17822
+    },
+    {
+      "path": "packages/typed-decisions/package.json",
+      "sha256": "241454efcbe5b684ea38f6db7b23e09373c16da0416081b9834c8730b978f1f4",
+      "bytes": 1205
     },
     {
       "path": "packages/typed-decisions/src/dsh-completion.ts",

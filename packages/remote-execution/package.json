@@ -1,14 +1,44 @@
 {
   "name": "@dsh-task/remote-execution",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Host-mounted authenticated task execution bridge with fenced leases and durable result recovery",
   "type": "module",
-  "engines": { "node": ">=24.0.0" },
-  "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" }, "./api": { "types": "./dist/api.d.ts", "default": "./dist/api.js" }, "./package.json": "./package.json" },
-  "files": ["dist", "src", "cordis.patch.yml", "README.md"],
-  "scripts": { "build": "tsc -p tsconfig.json", "test": "node --test test/*.test.mjs" },
-  "peerDependencies": { "@deepseek-ai/cordis": "4.0.4", "@deepseek-ai/schemastery": "3.18.4" },
-  "devDependencies": { "@deepseek-ai/cordis": "4.0.4", "@deepseek-ai/schemastery": "3.18.4" },
-  "dsh": { "bundle": { "patch": "cordis.patch.yml" } },
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./api": {
+      "types": "./dist/api.d.ts",
+      "default": "./dist/api.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "src",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "node --test test/*.test.mjs"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "4.0.4",
+    "@deepseek-ai/schemastery": "3.18.4"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "4.0.4",
+    "@deepseek-ai/schemastery": "3.18.4"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "cordis.patch.yml"
+    }
+  },
   "license": "MIT"
 }

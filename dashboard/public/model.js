@@ -42,6 +42,7 @@ export function filteredTasks(snapshot,filter='all',query='',{includeDismissed=f
 export function taskRecords(snapshot,taskId){
   return {runs:newestFirst(snapshot.runs.filter(x=>x.taskId===taskId)),reports:newestFirst(snapshot.reports.filter(x=>x.taskId===taskId)),artifacts:newestFirst(snapshot.artifacts.filter(x=>x.taskId===taskId)),events:newestFirst(snapshot.events.filter(x=>x.taskId===taskId),'at')};
 }
+export const runEvents = (snapshot,runId) => newestFirst(snapshot.events.filter(event=>event.runId===runId),'at');
 export function taskStats(snapshot,{includeDismissed=false}={}){
   const tasks=visibleTasks(snapshot,{includeDismissed});
   return {total:tasks.length,active:tasks.filter(t=>!TERMINAL_TASK_STATES.has(t.state)).length,attention:tasks.filter(t=>ATTENTION_TASK_STATES.has(t.state)).length,completed:tasks.filter(t=>t.state==='completed').length,reports:visibleRecords(snapshot,'reports',{includeDismissed}).length,runs:visibleRecords(snapshot,'runs',{includeDismissed}).length,dismissed:snapshot.tasks.filter(isDismissed).length,allTotal:snapshot.tasks.length};

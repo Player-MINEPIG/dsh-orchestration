@@ -1,0 +1,26 @@
+{
+  "baseCommit": "803ffe9e85ea81458e9b78f09b9dbde52b889df5",
+  "aggregatePassed": 443,
+  "failed": 0,
+  "skipped": 0,
+  "suiteCounts": [
+    50,
+    87,
+    80,
+    36,
+    32,
+    62,
+    96
+  ],
+  "log": "docs/validation/live-webui-check.log",
+  "sha256": "8bee485028fb6f2bc9f1b602620192f5d712c5ebf1853c0da2f1a92aa7d4db0a",
+  "dashboardTests": 32,
+  "domChecks": {
+    "curation": 12,
+    "authenticationConnectionDiagnostics": 21
+  },
+  "visualBrowserAcceptance": false,
+  "cloudflareResourcesConfigured": false,
+  "privateLedgerModified": false,
+  "scope": "Loopback read-only live origin, configured owner Access JWT verification, same-origin query, expiring authenticated display and explicit stale handling; independent of execution RPC."
+}

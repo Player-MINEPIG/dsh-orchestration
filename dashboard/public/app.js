@@ -1,9 +1,10 @@
-import {STATE_LABELS,REPORT_LABELS,escapeHtml as e,safeUri,newestFirst,sourceIsStale,taskIsStale,validateSnapshot,filteredTasks,taskRecords,taskStats,parseRoute,isDismissed,visibleRecords} from './model.js';
+import {STATE_LABELS,REPORT_LABELS,escapeHtml as e,safeUri,newestFirst,sourceIsStale,taskIsStale,filteredTasks,taskRecords,taskStats,parseRoute,isDismissed,visibleRecords,runEvents} from './model.js';
+import {loadSnapshot} from './client.js';
 const config={apiBase:'./api',refreshIntervalMs:15000,...window.DSH_DASHBOARD_CONFIG};
 const API=new URL(config.apiBase.replace(/\/$/,'')+'/',location.href.split('#')[0]);
 const main=document.querySelector('#main');
 const SNAPSHOT_MODE=config.mode==='snapshot';
-let data=null,loadError=null,isLoading=false,filter='all',query='',listQuery='',showDismissed=false,requestNumber=0,lastFetchedAt=null;
+let data=null,loadError=null,authExpired=false,isLoading=false,filter='all',query='',listQuery='',showDismissed=false,requestNumber=0,lastFetchedAt=null,sessionExpiresAt=null,expiryTimer=null;
 const icons={info:'<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><circle cx="10" cy="10" r="7.3"/><path d="M10 9v5m0-8v1"/></svg>',search:'<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5"/><path d="m13 13 4 4"/></svg>',folder:'<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" aria-hidden="true"><path d="M2 4h5l1 2h6v7H2z"/></svg>',run:'<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" aria-hidden="true"><path d="m5 3 7 5-7 5z"/></svg>',report:'<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" aria-hidden="true"><path d="M4 2h8v12H4zM6 5h4M6 8h4M6 11h3"/></svg>',lock:'<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="2"/><path d="M5 7V5a3 3 0 0 1 6 0v2"/></svg>'};
 const time=value=>{if(!value||!Number.isFinite(Date.parse(value)))return '未记录';return new Intl.DateTimeFormat('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false,timeZone:'UTC'}).format(new Date(value))+' UTC';};
 const relative=value=>{const elapsed=Math.max(0,Date.now()-Date.parse(value));if(!Number.isFinite(elapsed))return '未记录';if(elapsed<60000)return '刚刚';if(elapsed<3600000)return `${Math.floor(elapsed/60000)} 分钟前`;if(elapsed<86400000)return `${Math.floor(elapsed/3600000)} 小时前`;return `${Math.floor(elapsed/86400000)} 天前`;};
@@ -17,7 +18,7 @@ const reportLabel=kind=>REPORT_LABELS[kind]||'报告';
 const empty=(title,body,symbol='◫')=>`<div class="empty-state"><div class="empty-symbol" aria-hidden="true">${symbol}</div><h2>${e(title)}</h2><p>${e(body)}</p></div>`;
 const readOnly=`<span class="view-tag">${icons.lock}${SNAPSHOT_MODE?'只读快照':'只读视图'}</span>`;
 function sourceNotice(){if(SNAPSHOT_MODE)return `<div class="source-notice snapshot-notice">${icons.info}<div><strong>只读快照 · 截至 ${e(time(data.source.observedAt))}</strong><br>这是从同一 Task System 导出的记录，不会自动跟随执行端更新。页面刷新也只会读取当前发布的快照。</div></div>`;return `<div class="source-notice">${icons.info}<div><strong>${data.source.kind==='explicit-import'?'显式同步的任务记录':'来自 DSH 任务系统'}</strong> · ${e(data.source.label)}<br>页面每 ${Math.round(Math.max(5000,config.refreshIntervalMs)/1000)} 秒读取记录；读取成功不代表执行端刚刚上报。仅显示已接入的任务，较旧状态会标注“待刷新”。</div></div>`;}
-function errorBanner(){return loadError?`<div class="error-banner" role="alert">${e(loadError)}${data?'，当前保留上一次成功读取的记录。':''}<button class="text-button" data-action="refresh">重试连接</button></div>`:'';}
+function errorBanner(){return loadError?`<div class="error-banner" role="alert"><div>${e(loadError)}${data?`。连接中断 · 当前非实时，保留截至 ${e(time(lastFetchedAt))} 读取的记录；任务确认时间不变。`:''}</div><button class="text-button" data-action="${authExpired?'login':'refresh'}">${authExpired?'重新登录':'重试连接'}</button></div>`:'';}
 function pageIntro(eyebrow,title,description){return `<div class="page-intro"><div><div class="eyebrow">${e(eyebrow)}</div><h1>${e(title)}</h1><p>${e(description)}</p></div>${readOnly}</div>`;}
 function searchField(value,placeholder='搜索任务名称、编号或标签',id='task-search'){return `<label class="search-field">${icons.search}<input id="${id}" type="search" value="${e(value)}" placeholder="${e(placeholder)}" aria-label="${e(placeholder)}" autocomplete="off"></label>`;}
 function taskCard(task){
@@ -40,8 +41,8 @@ function reportCard(report,{taskLink=false}={}){
  return `<article class="report-item" id="report-${e(report.reportId)}"><div class="report-topline"><h3>${e(report.title)}</h3><span class="report-label">${e(reportLabel(report.kind))} · v${e(report.revision)}</span></div>${taskLink?`<a class="text-button" href="${linkToTask(report.taskId,'reports')}">${e(taskName(report.taskId))} ↗</a>${curationBadge(taskById(report.taskId))}`:''}<p class="report-content">${e(report.body)}</p><div class="report-metadata"><span>报告时间 ${e(time(report.createdAt))}</span><span>执行 ${e(run?.runId||'未记录')}</span><span>Session ${e(report.sessionId||'未记录')}</span></div><details><summary>查看来源与版本</summary><dl class="key-value"><dt>报告 ID</dt><dd>${e(report.reportId)}</dd><dt>入库时间</dt><dd>${e(time(report.recordedAt))}</dd><dt>产物关联</dt><dd>${report.artifactIds?.length||0} 份</dd><dt>上一份报告</dt><dd>${e(report.previousReportId||'无修订关联')}</dd></dl>${prior?`<div class="revision"><div class="hint">前一版本 · ${e(prior.title)} · ${e(time(prior.createdAt))}</div><p>${e(prior.body)}</p></div>`:''}</details></article>`;
 }
 function runCard(run,{taskLink=false}={}){
- const taskReports=data.reports.filter(x=>x.runId===run.runId),route=run.route||{};
- return `<article class="run-item"><div class="run-header"><h3>${e(run.runId)}</h3>${status(run.state)}</div>${taskLink?`<a class="text-button" href="${linkToTask(run.taskId,'runs')}">${e(taskName(run.taskId))} ↗</a>${curationBadge(taskById(run.taskId))}`:''}<div class="run-grid"><div>开始记录<strong>${e(time(run.createdAt))}</strong></div><div>最后更新<strong>${e(time(run.updatedAt))}</strong></div><div>执行端<strong>${e(route.nodeId||'未记录')}</strong></div><div>模型<strong>${e(route.model&&route.model!=='unknown'?route.model:'未记录')}</strong></div><div>Session<strong>${e(run.sessionIds?.length?run.sessionIds.join(' · '):'未记录')}</strong></div><div>报告<strong>${taskReports.length} 份${run.outcome?` · ${e({success:'成功',partial:'部分完成',failure:'失败',blocked:'受阻',unknown:'结果待确认'}[run.outcome]||run.outcome)}`:''}</strong></div></div></article>`;
+ const taskReports=data.reports.filter(x=>x.runId===run.runId),route=run.route||{},events=runEvents(data,run.runId);
+ return `<article class="run-item"><div class="run-header"><h3>${e(run.runId)}</h3>${status(run.state)}</div>${taskLink?`<a class="text-button" href="${linkToTask(run.taskId,'runs')}">${e(taskName(run.taskId))} ↗</a>${curationBadge(taskById(run.taskId))}`:''}<div class="run-grid"><div>开始记录<strong>${e(time(run.createdAt))}</strong></div><div>最后更新<strong>${e(time(run.updatedAt))}</strong></div><div>执行端<strong>${e(route.nodeId||'未记录')}</strong></div><div>模型<strong>${e(route.model&&route.model!=='unknown'?route.model:'未记录')}</strong></div><div>Session<strong>${e(run.sessionIds?.length?run.sessionIds.join(' · '):'未记录')}</strong></div><div>报告<strong>${taskReports.length} 份${run.outcome?` · ${e({success:'成功',partial:'部分完成',failure:'失败',blocked:'受阻',unknown:'结果待确认'}[run.outcome]||run.outcome)}`:''}</strong></div><div>结果验证<strong>${e({valid:'已验证', 'not-submitted':'未提交'}[run.validation]||'未记录')}</strong></div></div>${events.length?`<section class="run-diagnostics" aria-label="执行诊断"><h4>执行事件与诊断</h4><p class="hint">来自此 Run 的事件；事件不等于结果报告。</p>${timeline(events)}</section>`:''}</article>`;
 }
 function artifactList(artifacts){return artifacts.length?artifacts.map(item=>{
  const uri=safeUri(item.uri),name=uri?`<a href="${e(uri)}" rel="noopener noreferrer" target="_blank">${e(item.name)} ↗</a>`:e(item.name);
@@ -79,28 +80,31 @@ function render({preserveFocus=true}={}){
  document.querySelectorAll('[data-nav]').forEach(a=>{const match=a.dataset.nav===(route.view==='task'?'tasks':route.view);a.classList.toggle('active',match);match?a.setAttribute('aria-current','page'):a.removeAttribute('aria-current');});
  const labels={tasks:'任务看板',runs:'执行历史',reports:'报告历史',configuration:'配置与模板',task:'任务详情'};
  document.querySelector('#breadcrumb').innerHTML=route.view==='task'?`<a href="#tasks">任务看板</a><span>/</span><span>任务详情</span>`:e(labels[route.view]||'任务看板');
- if(!data){if(loadError)main.innerHTML=errorBanner()+empty('暂时无法读取任务','确认云电脑上的任务服务仍在运行，然后重试。你的任务记录没有被修改。');return;}
+ if(!data){if(loadError){document.querySelector('#task-count').textContent='—';document.querySelector('#footer-source').textContent=`${authExpired?'登录待恢复':'数据待恢复'} · 上次成功读取 ${time(lastFetchedAt)}`;main.innerHTML=errorBanner()+empty(authExpired?'请重新验证身份':'暂时无法读取任务',authExpired?'本页已隐藏任务内容。重新登录后会读取最新记录。':'确认任务服务仍在运行，然后重试。这不代表任务列表为空。');}return;}
  document.querySelector('#task-count').textContent=taskStats(data,{includeDismissed:showDismissed}).total;
- const footer=document.querySelector('#footer-source');footer.textContent=SNAPSHOT_MODE?`只读快照 · 截至 ${time(data.source.observedAt)} · 来源：${data.source.label}`:`来源：${data.source.label} · 最近读取 ${time(lastFetchedAt)}`;
+ const footer=document.querySelector('#footer-source');footer.textContent=SNAPSHOT_MODE?`只读快照 · 截至 ${time(data.source.observedAt)} · 来源：${data.source.label}`:`来源：${data.source.label} · 来源确认 ${time(data.source.observedAt)} · 本次读取 ${time(lastFetchedAt)}`;
  const page=route.view==='tasks'?tasksPage():route.view==='task'?taskDetail(route):route.view==='runs'?allRuns():route.view==='reports'?allReports():route.view==='configuration'?configurationPage():empty('未找到页面','请返回任务列表。');
  main.innerHTML=errorBanner()+(SNAPSHOT_MODE&&route.view!=='tasks'?sourceNotice():'')+page;
  if(focus){const input=document.getElementById(focus.id);if(input){input.focus({preventScroll:true});if(typeof input.setSelectionRange==='function'&&focus.start!==null)input.setSelectionRange(focus.start,focus.end);}}
 }
-function setConnection(online){document.querySelector('#connection-dot').className=`dot ${online?'online':'offline'}`;document.querySelector('#connection-status').textContent=online?(SNAPSHOT_MODE?'只读快照':'数据源已连接'):'连接待恢复';document.querySelector('#refresh-button').disabled=isLoading;}
+function setConnection(online){document.querySelector('#connection-dot').className=`dot ${online?'online':'offline'}`;document.querySelector('#connection-status').textContent=online?(SNAPSHOT_MODE?'只读快照':'数据源已连接'):authExpired?'登录待恢复':'连接中断 · 非实时';document.querySelector('#refresh-button').disabled=isLoading;}
+function expireSession(){authExpired=true;data=null;requestNumber++;isLoading=false;loadError='登录已到期，请重新验证身份';setConnection(false);render();}
+function checkSession(){if(sessionExpiresAt!==null&&sessionExpiresAt<=Date.now()){expireSession();return false;}return !authExpired;}
+function scheduleSessionExpiry(expiresAt){clearTimeout(expiryTimer);sessionExpiresAt=expiresAt;if(expiresAt!==null)expiryTimer=setTimeout(()=>{if(checkSession())scheduleSessionExpiry(expiresAt);},Math.max(0,Math.min(2147483647,expiresAt-Date.now())));}
 async function refresh({manual=false}={}){
- if(isLoading)return;
+ if(isLoading||!checkSession())return;
  isLoading=true;setConnection(!loadError&&Boolean(data));const serial=++requestNumber;
  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),10000);
  try{
-  const response=await fetch((SNAPSHOT_MODE?new URL(config.snapshotUrl||'./snapshot.json',location.href.split('#')[0]):new URL('snapshot',API)),{headers:{Accept:'application/json'},credentials:'same-origin',cache:'no-store',signal:controller.signal});
-  if(!response.ok)throw new Error(response.status===401||response.status===403?'需要通过宿主身份验证':`读取失败（HTTP ${response.status}）`);
-  const next=validateSnapshot(await response.json());if(serial!==requestNumber)return;
-  data=next;lastFetchedAt=new Date().toISOString();loadError=null;
+  const next=await loadSnapshot(SNAPSHOT_MODE?new URL(config.snapshotUrl||'./snapshot.json',location.href.split('#')[0]):new URL('snapshot',API),{origin:new URL(location.href).origin,signal:controller.signal,requireSessionExpiry:Boolean(config.requireSessionExpiry)});if(serial!==requestNumber)return;
+  if(next.expiresAt!==null&&next.expiresAt<=Date.now()){expireSession();return;}
+  data=next.snapshot;scheduleSessionExpiry(next.expiresAt);lastFetchedAt=new Date().toISOString();loadError=null;
   if(manual){const toast=document.querySelector('#toast');toast.textContent=SNAPSHOT_MODE?'已重新读取当前发布的快照':'已重新读取任务记录';toast.hidden=false;setTimeout(()=>{toast.hidden=true;},2200);}
- }catch(error){if(serial!==requestNumber)return;loadError=error.name==='AbortError'?'任务数据源连接超时':error.message==='Failed to fetch'?'暂时无法连接任务数据源':`任务数据暂不可用：${error.message}`;}
+ }catch(error){if(serial!==requestNumber)return;loadError=error.message;if(error.kind==='authentication'){authExpired=true;data=null;}}
  finally{clearTimeout(timer);isLoading=false;setConnection(!loadError);render();}
 }
 document.addEventListener('click',event=>{
+ if(event.target.closest('[data-action="login"]')||(authExpired&&event.target.closest('#refresh-button'))){location.reload();return;}
  const button=event.target.closest('[data-filter]');if(button){filter=button.dataset.filter;render({preserveFocus:false});return;}
  if(event.target.closest('[data-action="refresh"],#refresh-button'))refresh({manual:true});
 });
@@ -115,4 +119,5 @@ window.addEventListener('hashchange',()=>{listQuery='';render({preserveFocus:fal
 document.title=config.title||'DSH · 任务看板';
 const access=document.querySelector('.sidebar-footer>div');access.innerHTML=`${e(config.accessLabel||'宿主任务视图')}<small>${e(config.accessDescription||'只读视图')}</small>`;
 refresh();if(!SNAPSHOT_MODE)setInterval(()=>{if(!document.hidden)refresh();},Math.max(5000,Number(config.refreshIntervalMs)||15000));
-document.addEventListener('visibilitychange',()=>{if(!document.hidden&&!SNAPSHOT_MODE)refresh();});
+document.addEventListener('visibilitychange',()=>{if(!document.hidden&&checkSession()&&!SNAPSHOT_MODE)refresh();});
+window.addEventListener('pageshow',()=>{if(checkSession()&&!SNAPSHOT_MODE)refresh();});

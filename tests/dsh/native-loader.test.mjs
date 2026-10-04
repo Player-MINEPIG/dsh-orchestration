@@ -11,6 +11,8 @@ import { ToolCallId, createUserMessage, LlmError } from '@deepseek-ai/dsh-llm';
 import { defineTool } from '@deepseek-ai/dsh-tools';
 import { SessionId } from '@deepseek-ai/dsh-session';
 import { ScriptedModel } from './scripted-model.mjs';
+import * as deepseekApiKey from '@deepseek-ai/dsh-llm-deepseek-api-key';
+import { createLaunchEnvironmentSnapshot } from '@deepseek-ai/dsh-launch-environment';
 
 const scratch = mkdtempSync(join(tmpdir(), 'dsh-task-native-'));
 after(() => rmSync(scratch, { recursive: true, force: true }));
@@ -41,13 +43,13 @@ async function harness({ role = 'both', script = [], dir, native = true, config 
   ctx.llm.registerAdapter(['test-offline'], adapter);
   return { ctx, dir, adapter, ledger: ctx.taskSystem.ledger, dispose: () => ctx.fiber.dispose() };
 }
-function seed(h, suffix = '', taskOptions = {}) {
+function seed(h, suffix = '', taskOptions = {}, modelRoute = { provider: 'test-offline', model: 'script' }) {
   const ledger = h.ledger;
   ledger.registerNode(`node${suffix}`, {
-    nodeId: 'local', roles: ['both'], capabilities: [], models: [{ provider: 'test-offline', model: 'script', reasoningEfforts: [] }], workspaceIds: taskOptions.workspaceId ? [taskOptions.workspaceId] : [], enabled: true, lastSeenAt: new Date().toISOString(),
+    nodeId: 'local', roles: ['both'], capabilities: [], models: [{ ...modelRoute, reasoningEfforts: [] }], workspaceIds: taskOptions.workspaceId ? [taskOptions.workspaceId] : [], enabled: true, lastSeenAt: new Date().toISOString(),
   });
   const task = ledger.createTask(`create${suffix}`, { title: `Offline native attempt ${suffix}`, ...taskOptions }).value;
-  const run = ledger.createRun(`run${suffix}`, { taskId: task.taskId, route: { nodeId: 'local', provider: 'test-offline', model: 'script', requiredCapabilities: [], ...(taskOptions.workspaceId ? { workspaceId: taskOptions.workspaceId } : {}) } }).value;
+  const run = ledger.createRun(`run${suffix}`, { taskId: task.taskId, route: { nodeId: 'local', ...modelRoute, requiredCapabilities: [], ...(taskOptions.workspaceId ? { workspaceId: taskOptions.workspaceId } : {}) } }).value;
   const claim = ledger.claim(`claim${suffix}`, { runId: run.runId, nodeId: 'local', ttlMs: 10000 }).value;
   return { task, run, claim };
 }
@@ -94,6 +96,112 @@ test('assistant completion text and idle become uncertain without task_settle', 
     assert.equal(result.run.state, 'uncertain');
     assert.equal(result.run.retry, undefined, 'plain idle is never classified as a transient request failure');
     assert.notEqual(h.ledger.getTask(task.taskId).state, 'completed');
+  } finally { await h.dispose(); }
+});
+
+for (const code of ['NO_ADAPTER', 'MISSING_CREDENTIAL']) {
+  test(`native ${code} publishes only its canonical code without inventing a result or retry`, async () => {
+    const h = await harness({ config: { safeRetry: { maxRetries: 2 } } });
+    const terminals = [];
+    h.ctx.on('session/event', (_session, event) => { if (event.type === 'turn/end') terminals.push(event); });
+    try {
+      if (code === 'MISSING_CREDENTIAL') {
+        h.ctx.provide('launchEnvironment', createLaunchEnvironmentSnapshot([{ source: 'process', values: { DSH_TASK_TEST_EMPTY_KEY: '' } }]));
+        await h.ctx.plugin(deepseekApiKey, { apiKeyEnv: 'DSH_TASK_TEST_EMPTY_KEY', baseURL: 'https://must-not-request.invalid/anthropic' });
+      }
+      const route = code === 'NO_ADAPTER' ? { provider: 'intentionally-unconfigured', model: 'test-model' } : { provider: 'deepseek-official', model: 'deepseek-flash' };
+      const { task, claim } = seed(h, '', {}, route);
+      const result = await h.ctx.taskSystem.native.execute(claim);
+      assert.equal(result.run.state, 'uncertain');
+      assert.equal(result.run.outcome, 'unknown');
+      assert.equal(result.run.validation, 'not-submitted');
+      assert.equal(result.submitted, false);
+      assert.equal(result.run.retry, undefined);
+      assert.equal(h.adapter.requests.length, 0);
+      const history = h.ledger.history(task.taskId);
+      assert.equal(history.reports.length, 0);
+      assert.equal(terminals.at(-1).data.reason.error.code, code);
+      const summary = history.events.find(event => event.type === 'run.settled').detail.summary;
+      assert.match(summary, new RegExp(`ended with ${code} without`));
+      assert.ok(!summary.includes('DSH_TASK_TEST_EMPTY_KEY'));
+      assert.ok(!summary.includes('must-not-request'));
+      assert.equal(h.ledger.pendingRuns('local').length, 0);
+    } finally { await h.dispose(); }
+  });
+}
+
+test('native summaries redact raw diagnostics and arbitrary error codes', async () => {
+  for (const [code, canonical] of [['AUTH', 'AUTH'], ['INVALID_CREDENTIAL', 'INVALID_CREDENTIAL'], ['TOKEN_SECRET_SENTINEL_123', 'RUNTIME_ERROR']]) {
+    const h = await harness({ config: { safeRetry: { maxRetries: 2 } }, script: [() => { throw new LlmError('Bearer raw-secret-sentinel', code, { cause: new Error('nested-secret-sentinel'), headers: { authorization: 'header-secret-sentinel' } }); }] });
+    try {
+      const { task, claim } = seed(h);
+      const result = await h.ctx.taskSystem.native.execute(claim);
+      const history = h.ledger.history(task.taskId);
+      assert.equal(result.run.outcome, 'unknown');
+      assert.equal(result.run.retry, undefined);
+      assert.equal(result.run.validation, 'not-submitted');
+      assert.match(history.events.find(event => event.type === 'run.settled').detail.summary, new RegExp(`ended with ${canonical} without`));
+      assert.doesNotMatch(JSON.stringify(history), /raw-secret-sentinel|nested-secret-sentinel|header-secret-sentinel|TOKEN_SECRET_SENTINEL_123/);
+      assert.equal(h.adapter.requests.length, 1);
+    } finally { await h.dispose(); }
+  }
+});
+
+test('native terminal observation ignores foreign sessions and clears prior errors when this invocation completes', async () => {
+  const h = await harness({ script: [() => { throw new LlmError('earlier private error', 'AUTH'); }, 'Recovered without a settlement'] });
+  let foreign;
+  let queued = false;
+  let foreignTerminals = 0;
+  try {
+    foreign = await h.ctx.agents.create({ sessionId: SessionId('foreign-terminal-fixture'), agentOptions: { provider: 'test-offline', model: 'script' } });
+    const { task, claim } = seed(h);
+    const ownedSessionId = `task-${claim.attempt.attemptId}`;
+    h.ctx.on('agent/status', ({ agent, status }) => {
+      if (agent.id !== ownedSessionId || status !== 'idle' || queued) return;
+      queued = true;
+      agent.followup(createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'Complete the same invocation' }] }));
+    });
+    // Register after owned setup, then emit a foreign terminal after its final
+    // completion. An unscoped observer would overwrite the owned outcome.
+    h.adapter.script[1] = () => {
+      h.ctx.on('session/event', (session, event) => {
+        if (session.id === ownedSessionId && event.type === 'turn/end' && event.data.reason.kind === 'completed') {
+          foreign.agent.session.append('turn/end', { turn: 1, reason: { kind: 'error', error: { code: 'MISSING_CREDENTIAL', message: 'foreign-secret-sentinel' } } });
+          foreignTerminals++;
+        }
+      });
+      return 'Recovered without a settlement';
+    };
+    const result = await h.ctx.taskSystem.native.execute(claim);
+    const history = h.ledger.history(task.taskId);
+    assert.equal(queued, true);
+    assert.equal(h.adapter.requests.length, 2);
+    assert.equal(foreignTerminals, 1);
+    assert.equal(result.run.outcome, 'unknown');
+    const summary = history.events.find(event => event.type === 'run.settled').detail.summary;
+    assert.match(summary, /reached idle without/);
+    assert.doesNotMatch(summary, /AUTH|MISSING_CREDENTIAL|foreign-secret/);
+  } finally { await foreign?.dispose(); await h.dispose(); }
+});
+
+test('causal task_settle takes precedence over a later native terminal error', async () => {
+  const h = await harness({ script: [{ name: 'task_settle', args: { outcome: 'success', summary: 'Verified causal result', reportBody: 'Explicit task outcome remains authoritative.' } }] });
+  const terminalCodes = [];
+  h.ctx.on('session/event', (_session, event) => { if (event.type === 'turn/end') terminalCodes.push(event.data.reason.error?.code); });
+  try {
+    const { task, claim } = seed(h);
+    h.ctx.on('agent/turn-stopping', ({ agent }) => {
+      if (agent.id === `task-${claim.attempt.attemptId}`) throw new LlmError('late-secret-sentinel', 'AUTH');
+    });
+    const result = await h.ctx.taskSystem.native.execute(claim);
+    assert.equal(terminalCodes.at(-1), 'AUTH');
+    assert.equal(result.submitted, true);
+    assert.equal(result.run.outcome, 'success');
+    assert.equal(result.run.validation, 'valid');
+    const history = h.ledger.history(task.taskId);
+    assert.equal(history.reports.length, 1);
+    assert.equal(history.events.find(event => event.type === 'run.settled').detail.summary, 'Verified causal result');
+    assert.doesNotMatch(JSON.stringify(history), /late-secret-sentinel|ended with AUTH/);
   } finally { await h.dispose(); }
 });
 

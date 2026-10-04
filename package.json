@@ -1,6 +1,6 @@
 {
   "name": "dsh-task-management",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "description": "Configurable, host-mounted durable task management for DeepSeek Harness",
@@ -16,23 +16,24 @@
     "test": "npm run build && npm run test --workspaces --if-present",
     "check": "npm run build && npm run test:unit && npm run test:native && npm run test:legacy",
     "test:unit": "npm run test --workspaces --if-present",
-    "test:native": "node --test tests/dsh/native-loader.test.mjs tests/dsh/remote-native.test.mjs",
+    "test:native": "node --test tests/dsh/native-loader.test.mjs tests/dsh/remote-native.test.mjs tests/dsh/trusted-network-native.test.mjs",
     "test:distribution": "node tests/dsh/distribution-acceptance.mjs && node tests/dsh/capability-distribution.mjs",
     "format:check": "prettier --check packages/task-system/src/*.ts",
     "test:legacy": "node --test tests/legacy/readers.test.mjs tests/legacy/reporting.test.mjs tests/legacy/quota.test.mjs tests/legacy/compatibility.test.mjs tests/legacy/configured-sources.test.mjs tests/legacy/ad-hoc.test.mjs tests/legacy/diagnostics.test.mjs",
     "test:legacy-reference": "node --test tests/legacy/differential-reference.test.mjs"
   },
   "devDependencies": {
-    "typescript": "5.9.3",
-    "@types/node": "24.10.1",
     "@deepseek-ai/cordis-plugin-loader": "1.0.5",
     "@deepseek-ai/dsh-agent-loop": "0.2.0-rc.2",
-    "@deepseek-ai/dsh-system-prompt": "0.2.0-rc.2",
-    "@deepseek-ai/dsh-session-projection": "0.2.0-rc.2",
-    "@deepseek-ai/dsh-session-persistence-jsonl": "0.2.0-rc.2",
-    "pnpm": "11.7.0",
     "@deepseek-ai/dsh-fs-local": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-llm-deepseek-api-key": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-session-persistence-jsonl": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-session-projection": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-system-prompt": "0.2.0-rc.2",
     "@deepseek-ai/dsh-tool-fs": "0.2.0-rc.2",
-    "prettier": "3.6.2"
+    "@types/node": "24.10.1",
+    "pnpm": "11.7.0",
+    "prettier": "3.6.2",
+    "typescript": "5.9.3"
   }
 }

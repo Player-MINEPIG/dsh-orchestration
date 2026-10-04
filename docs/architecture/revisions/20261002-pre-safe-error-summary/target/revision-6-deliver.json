@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "d4192e24-7dfa-4834-b04f-5155f584ae1a",
+  "ok": true,
+  "command": "deliver",
+  "type": "architecture",
+  "input": "/workspace/shared/dsh-orchestration/project/docs/architecture/target/candidate.json",
+  "output": "/workspace/shared/dsh-orchestration/project/docs/architecture/target/target.html",
+  "specification": {
+    "sha256": "580fb2096e9b281697e352c78e8bfd814ffc2824df7ba43e6ff10c58deeaf6da",
+    "bytes": 7420
+  },
+  "artifact": {
+    "sha256": "759af49407bd8288ab02f6afbde9018b9ee7ea6430e233857948b82b6026284a",
+    "bytes": 771587
+  },
+  "validation": {
+    "checksPassed": 9,
+    "checkCount": 9,
+    "compositionProfile": "showcase",
+    "compositionStatus": "pass",
+    "errors": 0,
+    "warnings": 0
+  },
+  "update": {
+    "status": "unavailable",
+    "installedVersion": null,
+    "availableVersion": null,
+    "releaseNotes": null,
+    "checkedAt": null,
+    "source": null,
+    "noticeRequired": false,
+    "noticeText": null,
+    "reason": "cache-valid"
+  }
+}

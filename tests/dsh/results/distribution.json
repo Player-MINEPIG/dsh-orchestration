@@ -3,7 +3,7 @@
   "dshVersion": "0.2.0-rc.2",
   "upstreamCommit": "639ed015397290b3745d163aafe02ffee4aa3f84",
   "node": "v24.19.0",
-  "scratch": "/tmp/dsh-task-distribution-MWBNA7",
+  "scratch": "/tmp/dsh-task-distribution-VGvjFB",
   "stages": [
     {
       "name": "official-pinned-runtime",
@@ -12,8 +12,8 @@
     {
       "name": "built-tarball",
       "ok": true,
-      "filename": "dsh-task-task-system-0.1.0.tgz",
-      "integrity": "sha512-8mIw9jodYYqhoRqjx4toodONhBJwunLXLBdCfjzwFqfRcxwNvgqcf6JSLzrB4Fh3RnrNRNVnuQiCI4YSkWdyUA=="
+      "filename": "dsh-task-task-system-0.1.1.tgz",
+      "integrity": "sha512-L5An7xrfzZZHWVU26V7OB++nkKSJ+In+s+swGg6ygmf5J3uFrnUIww8KV9YMm7HQOtfKBESmOgIFpYoGktGYbg=="
     },
     {
       "name": "actual-plugin-add",

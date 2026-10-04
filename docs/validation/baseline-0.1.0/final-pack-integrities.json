@@ -1,0 +1,40 @@
+{
+  "ok": true,
+  "checkedAt": "2026-10-01T23:23:14.697Z",
+  "dshVersion": "0.2.0-rc.2",
+  "directory": "tests/dsh/results/final-packages",
+  "comparedReceipts": [
+    "distribution.json",
+    "capabilities.json"
+  ],
+  "packages": [
+    {
+      "name": "@dsh-task/task-system",
+      "filename": "dsh-task-task-system-0.1.0.tgz",
+      "integrity": "sha512-8mIw9jodYYqhoRqjx4toodONhBJwunLXLBdCfjzwFqfRcxwNvgqcf6JSLzrB4Fh3RnrNRNVnuQiCI4YSkWdyUA==",
+      "sha256": "e2df713eb2a23d666869a98aee0056d2bf8f39eb7721bc884dd63514d7a30a3a",
+      "bytes": 216468
+    },
+    {
+      "name": "@dsh-task/typed-decisions",
+      "filename": "dsh-task-typed-decisions-0.1.0.tgz",
+      "integrity": "sha512-YS2na2yLFiLp2qNn9TcyGr6P55x/Pl31RY9r5PBhhl8UdCTihf/2g9Mp/gSW4LNp8Dl+Roxx7vRzsHBk9XTd2g==",
+      "sha256": "9d0a8ea90a71cfb2753326f681f4d9d5e8ba3e6764bf97b7fed8f7c7d1098270",
+      "bytes": 38512
+    },
+    {
+      "name": "@dsh-task/remote-execution",
+      "filename": "dsh-task-remote-execution-0.1.0.tgz",
+      "integrity": "sha512-L9WcBtIDdEeetJHD63Su3nTvTIHm7gA53lR7ZJHUWNXuPg0sZsSbUFEZtb8y2Redi9IMclOnhOFfs1gOUAHOFg==",
+      "sha256": "34b60c3c4d3d3028c9a3c5a7acdc543400bd042b82cfe57d5547fadc2e1dab6d",
+      "bytes": 80897
+    },
+    {
+      "name": "@dsh-task/feishu-channel",
+      "filename": "dsh-task-feishu-channel-0.1.0.tgz",
+      "integrity": "sha512-rq/vSyczM2E1JtlQvQEc2ifrUm/BM1k8yChWY606Kcx7zn4/t3VY2u6IaeVBvI3iCOEf+twQDjP434FS0XzaSA==",
+      "sha256": "edf9dfabb30d81749d9d13bce280b92bd514489b06109fbad627411a9e2fc758",
+      "bytes": 51775
+    }
+  ]
+}

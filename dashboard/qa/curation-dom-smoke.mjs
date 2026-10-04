@@ -10,7 +10,7 @@ const makeReport=(reportId,taskId,sessionId)=>({reportId,taskId,sessionId,title:
 const snapshot={schemaVersion:'1',generatedAt:at,source:{kind:'explicit-import',label:'Synthetic test fixture only',observedAt:at,staleAfterMs:900000},tasks:[makeTask('visible','admitted'),makeTask('hidden','dismissed')],runs:[{runId:'hidden-run',taskId:'hidden',state:'running',createdAt:at,updatedAt:at,sessionIds:['one']}],reports:[makeReport('visible-report','visible','one'),makeReport('hidden-report','hidden','two')],artifacts:[],events:[],templates:[],schedules:[{scheduleId:'hidden-schedule',taskId:'hidden',enabled:true,templateId:'test',templateVersion:1,intervalMs:60000,nextDueAt:at}]};
 window.DSH_DASHBOARD_CONFIG={mode:'snapshot',snapshotUrl:'./snapshot.json'};window.scrollTo=()=>{};
 const location={href:'http://test.invalid/',hash:'#tasks'};
-Object.assign(globalThis,{window,document,location,fetch:async()=>({ok:true,json:async()=>structuredClone(snapshot)})});
+Object.assign(globalThis,{window,document,location,fetch:async()=>({ok:true,status:200,headers:new Headers({'content-type':'application/json'}),json:async()=>structuredClone(snapshot)})});
 await import('../public/app.js');
 const tick=()=>new Promise(resolve=>setTimeout(resolve,10));await tick();
 let passed=0;const check=(name,fn)=>{fn();passed++;console.log(`PASS ${name}`);};

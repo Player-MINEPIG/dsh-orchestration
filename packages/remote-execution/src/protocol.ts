@@ -35,6 +35,16 @@ export interface Peer {
   workspaces: readonly string[]
   capabilities: readonly string[]
 }
+export type AuthMode = 'ed25519' | 'trusted-network'
+/** Network identity is supplied by the transport, never by these wire fields. */
+export type TrustedNetworkEnvelope = Omit<Envelope, 'version' | 'keyId' | 'signature'> & { version: 2; authMode: 'trusted-network' }
+export type CommandEnvelope = Envelope | TrustedNetworkEnvelope
+export type AuthorizedPeer = Pick<Peer, 'nodeId' | 'audience' | 'operations' | 'workspaces' | 'capabilities'>
+export interface TransportIdentity { remoteAddress?: string; localAddress?: string; localPort?: number }
+export interface RequestVerifier {
+  readonly authMode: AuthMode
+  verify(envelope: CommandEnvelope, now?: number, transport?: TransportIdentity): AuthorizedPeer
+}
 export class ProtocolError extends Error {
   code: string
   status: number
@@ -69,23 +79,29 @@ export function signEnvelope(envelope: Omit<Envelope, 'signature'>, privateKey: 
   return { ...envelope, signature: sign(null, signingBytes(envelope), privateKey).toString('base64url') }
 }
 export function parseEnvelope(body: Uint8Array | string, maxBodyBytes = DEFAULT_MAX_BODY_BYTES): Envelope {
+  return parseCommandEnvelope(body, 'ed25519', maxBodyBytes) as Envelope
+}
+export function parseCommandEnvelope(body: Uint8Array | string, authMode: AuthMode, maxBodyBytes = DEFAULT_MAX_BODY_BYTES): CommandEnvelope {
+  insist(authMode === 'ed25519' || authMode === 'trusted-network','AUTH_MODE_MISMATCH',401)
   insist(Buffer.byteLength(body) <= byteLimit(maxBodyBytes,DEFAULT_MAX_BODY_BYTES), 'BODY_LIMIT', 413)
   let e: unknown
   try { e = JSON.parse(typeof body === 'string' ? body : new TextDecoder('utf-8', { fatal: true }).decode(body)) } catch { throw new ProtocolError('INVALID_JSON') }
   insist(isRecord(e), 'INVALID_ENVELOPE')
-  const required = ['version','keyId','nodeId','audience','commandId','nonce','sequence','issuedAt','expiresAt','operation','payload','signature']
+  const required = ['version','nodeId','audience','commandId','nonce','sequence','issuedAt','expiresAt','operation','payload',...(authMode === 'ed25519' ? ['keyId','signature'] : ['authMode'])]
   insist(Object.keys(e).length === required.length && required.every(k => Object.hasOwn(e, k)), 'ENVELOPE_FIELDS')
-  insist(e.version === 1, 'UNSUPPORTED_VERSION')
-  for (const key of ['keyId', 'nodeId', 'audience', 'commandId', 'nonce']) insist(identifier(e[key]), `INVALID_${key}`)
+  if (authMode === 'ed25519') insist(e.version === 1, 'UNSUPPORTED_VERSION')
+  else insist(e.version === 2 && e.authMode === 'trusted-network', 'AUTH_MODE_MISMATCH', 401)
+  for (const key of ['nodeId', 'audience', 'commandId', 'nonce',...(authMode === 'ed25519' ? ['keyId'] : [])]) insist(identifier(e[key]), `INVALID_${key}`)
   insist(Number.isSafeInteger(e.sequence) && Number(e.sequence) > 0, 'INVALID_SEQUENCE')
   insist(Number.isSafeInteger(e.issuedAt) && Number.isSafeInteger(e.expiresAt), 'INVALID_TIME')
   insist(['claim','renew','submit','cancel','receipt','bindSession','markRunning','getRun','getAttempt','acknowledgeCancellation','listWork','observe','delegate','taskHistory','taskWait','taskNote','taskReport','heartbeat','nodeStatus','retryBeforeEffects','offerApproval','approvalStatus','cancelApproval'].includes(String(e.operation)), 'UNKNOWN_OPERATION')
   insist(isRecord(e.payload), 'INVALID_PAYLOAD')
-  insist(typeof e.signature === 'string' && /^[A-Za-z0-9_-]{86}$/.test(e.signature), 'INVALID_SIGNATURE', 401)
+  if (authMode === 'ed25519') insist(typeof e.signature === 'string' && /^[A-Za-z0-9_-]{86}$/.test(e.signature), 'INVALID_SIGNATURE', 401)
   canonical(e)
-  return e as unknown as Envelope
+  return e as unknown as CommandEnvelope
 }
 export class IdentityVerifier {
+  readonly authMode = 'ed25519' as const
   private peers: Map<string, Peer & { key: KeyObject }>
   audience: string
   maxAgeMs: number
@@ -102,7 +118,8 @@ export class IdentityVerifier {
       this.peers.set(peer.keyId, { ...peer, operations: [...peer.operations], workspaces: [...peer.workspaces], capabilities: [...peer.capabilities], key })
     }
   }
-  verify(envelope: Envelope, now = Date.now()): Peer {
+  verify(envelope: CommandEnvelope, now = Date.now()): Peer {
+    insist(envelope.version === 1 && !('authMode' in envelope), 'AUTH_MODE_MISMATCH', 401)
     const peer = this.peers.get(envelope.keyId)
     insist(peer, 'UNKNOWN_KEY', 401)
     insist(peer.nodeId === envelope.nodeId, 'WRONG_NODE', 403)

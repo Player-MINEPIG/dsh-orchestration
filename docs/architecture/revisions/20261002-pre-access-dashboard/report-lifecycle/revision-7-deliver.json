@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "53209351-4f35-417f-a923-782cb3140909",
+  "ok": true,
+  "command": "deliver",
+  "type": "lifecycle",
+  "input": "/workspace/shared/dsh-orchestration/project/docs/architecture/report-lifecycle/candidate.json",
+  "output": "/workspace/shared/dsh-orchestration/project/docs/architecture/report-lifecycle/report-lifecycle.html",
+  "specification": {
+    "sha256": "0f0f9b5eb014b8f77afb546adfd62ce30dcb693e7fe0d6b9885ec071aebfc08c",
+    "bytes": 4912
+  },
+  "artifact": {
+    "sha256": "b58f0054183b8a6b8507d63453fec7f93418519f0a34e439b15d1677391d75ef",
+    "bytes": 762103
+  },
+  "validation": {
+    "checksPassed": 9,
+    "checkCount": 9,
+    "compositionProfile": "showcase",
+    "compositionStatus": "pass",
+    "errors": 0,
+    "warnings": 0
+  },
+  "update": {
+    "status": "unavailable",
+    "installedVersion": null,
+    "availableVersion": null,
+    "releaseNotes": null,
+    "checkedAt": null,
+    "source": null,
+    "noticeRequired": false,
+    "noticeText": null,
+    "reason": "cache-unavailable"
+  }
+}

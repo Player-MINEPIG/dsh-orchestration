@@ -1,0 +1,184 @@
+{
+  "ok": true,
+  "file": "/workspace/shared/dsh-orchestration/project/docs/architecture/target/target.html",
+  "artifact": {
+    "sha256": "12229c19042ac95319d47648885703784947877d6d331f30389d3ac52604252a",
+    "bytes": 767617
+  },
+  "checks": [
+    {
+      "name": "single_svg",
+      "ok": true,
+      "details": [
+        "found 1 <svg> block(s)"
+      ]
+    },
+    {
+      "name": "finite_svg",
+      "ok": true,
+      "details": []
+    },
+    {
+      "name": "orthogonal_arrows",
+      "ok": true,
+      "details": []
+    },
+    {
+      "name": "label_route_clearance",
+      "ok": true,
+      "details": []
+    },
+    {
+      "name": "relationship_crossings",
+      "ok": true,
+      "details": []
+    },
+    {
+      "name": "relationship_corridors",
+      "ok": true,
+      "details": []
+    },
+    {
+      "name": "container_border_runs",
+      "ok": true,
+      "details": []
+    },
+    {
+      "name": "route_rhythm",
+      "ok": true,
+      "details": []
+    },
+    {
+      "name": "legend_clearance",
+      "ok": true,
+      "details": []
+    }
+  ],
+  "composition": {
+    "schemaVersion": 1,
+    "profile": "showcase",
+    "status": "pass",
+    "summary": {
+      "errors": 0,
+      "warnings": 0
+    },
+    "metrics": {
+      "properCrossings": 0,
+      "resolvedCrossovers": 1,
+      "ambiguousCorridors": 0,
+      "arrowheadCollisions": 0,
+      "containerBorderRuns": 0,
+      "labelRouteClearanceIssues": 0,
+      "labelCanvasOverflowIssues": 0,
+      "minLabelRouteClearance": 5,
+      "desktopReadabilityIssues": 0,
+      "viewportHeightIssues": 0,
+      "minProjectedNodeTextPx": 7.5,
+      "maxBends": 3,
+      "routesOverSuggestedBends": 2,
+      "maxStretch": 1,
+      "routesOverSuggestedStretch": 0,
+      "minSegmentPx": 24,
+      "minInteriorSegmentPx": 117,
+      "shortSegmentCount": 0,
+      "shortEndpointSegmentCount": 0,
+      "shortInteriorSegmentCount": 0,
+      "microSegmentCount": 0
+    },
+    "suggestedLimits": {
+      "bendsPerRelationship": 2,
+      "stretch": 1.35,
+      "segmentPx": 16,
+      "microSegmentPx": 8
+    },
+    "routeReview": {
+      "crossings": [
+        {
+          "left": {
+            "id": "new_template_task",
+            "from": "new_template",
+            "to": "task_management",
+            "label": "版本化配置",
+            "collectionIndex": 3,
+            "artifactIndex": 4
+          },
+          "right": {
+            "id": "new_task_decision",
+            "from": "task_management",
+            "to": "new_decision",
+            "label": "可选提案回执",
+            "collectionIndex": 5,
+            "artifactIndex": 6
+          },
+          "point": [
+            555,
+            179
+          ],
+          "sharedNode": "task_management"
+        }
+      ],
+      "detours": [
+        {
+          "relationship": {
+            "id": "new_task_decision",
+            "from": "task_management",
+            "to": "new_decision",
+            "label": "可选提案回执",
+            "collectionIndex": 5,
+            "artifactIndex": 6
+          },
+          "bends": 3,
+          "stretch": 1
+        },
+        {
+          "relationship": {
+            "id": "new_pack_registration",
+            "from": "new_task_pack",
+            "to": "task_management",
+            "label": "受信扩展注册",
+            "collectionIndex": 9,
+            "artifactIndex": 10
+          },
+          "bends": 3,
+          "stretch": 1
+        }
+      ]
+    },
+    "leadingSpace": {
+      "measured": true,
+      "emptyTopPx": 20,
+      "emptyTopRatio": 0.024,
+      "occupiedTop": 20,
+      "viewBoxTop": 0,
+      "canvasHeight": 842,
+      "typicalNodeHeight": 84,
+      "reviewSuggested": false
+    },
+    "desktopReadability": {
+      "budgetBasis": "recognized-declared-wide",
+      "readerContract": "declared-wide-v1",
+      "availableDiagramWidth": 1265.625,
+      "actualBudgetPx": 1265.625,
+      "actualReaderWidth": 1295.625,
+      "desiredReaderWidth": 1295.625,
+      "viewportCap": 1376,
+      "limit": "source-size",
+      "requestedTargetPx": 7.5,
+      "requestedTargetMet": true,
+      "hardFloorPx": 6,
+      "hardFloorMet": true,
+      "minimumOwner": {
+        "kind": "edge",
+        "id": "host-supervision",
+        "from": "supervisor",
+        "to": "host_runtime"
+      },
+      "minimumSourceTextPx": 8,
+      "minimumProjectedTextPx": 7.5,
+      "semanticTextCount": 32
+    },
+    "issues": []
+  },
+  "provenance": "current",
+  "deliveryReceiptId": "81e54aa2-0fb3-45e1-901d-4ac6af0b496f"
+}

@@ -2,7 +2,7 @@
 
 这里的图比较历史移交材料中的系统描述与已批准的重构设计。历史材料 mtime 为 2026-09-07 UTC，旧文档自述当地 2026-09-08。配套 sources.md 保留源码映射，但本轮图未通过 Git 对象来源门。图不代表当前生产部署、代码验证或所有外部系统已连通。
 
-四份独立 HTML 的 deterministic 9/9 检查通过；原版真实浏览器门因环境限制失败；本轮新版遵照要求未重试，尚无浏览器截图或 Viewer 验收；revision 6 已重新逐张检查 16 张明确标记的静态 SVG 衍生 PNG。详见 [验证记录](VALIDATION.md)。
+四份独立 HTML 的 deterministic 9/9 检查通过；原版真实浏览器门因环境限制失败；本轮新版遵照要求未重试，尚无浏览器截图或 Viewer 验收；revision 8 已逐张检查目标图 4 张静态 SVG 衍生 PNG；全部 16 张图形像素不变，其余 12 张沿用既有检查。详见 [验证记录](VALIDATION.md)。
 
 - [交互式 Before / Delta / After 比较](comparison.html)
 - [历史系统描述](original/original.html) · [JSON](original/candidate.json)
@@ -26,6 +26,11 @@
 10. 维护中 Task Pack 提供显式 readers、可信语义校验、native prepare/artifact、executor preflight 和 renderer；日报/游戏/ad-hoc/diagnostics/quota 是扩展配置。
 11. 有限续跑区分默认零工具与显式 reviewed closed-tools；成功结果闭合、同 session、flush/dispose 与防重复 guard 必须齐全。默认 retry=0、resumableTools=[]。
 12. Alerts / heartbeat 记录来源与 freshness；provider not-probed 不代表真实模型可用。创建锚点与各 run 终态回复使用独立投递回执，外部访问默认不开启。
+
+13. 无 task_settle 的 native 摘要只保留固定公开错误码或 RUNTIME_ERROR，仍为 unknown / uncertain，不复制原始错误。
+14. 默认 signed+TLS 与显式 trusted-network HTTP 是两种认证模式；后者绑定实际来源 IP 与固定 peer 权限，依赖运营方可信网络，同机进程共享身份。
+
+15. 可选 Access 实时 dashboard 已准备代码：固定 owner 的 RS256 JWT、loopback 只读已有账本、同源/no-store、登录过期清除页面数据与断线非实时提示。尚未部署，旧私有 Site 快照独立保留。
 
 ## Archify 版本与门禁
 
@@ -60,4 +65,4 @@ node "$ARCHIFY_BIN" finalize lifecycle docs/architecture/report-lifecycle/candid
 
 本轮更新说明与精确旧字节见 [VALIDATION.md](VALIDATION.md#本轮变更与精确旧字节)。执行实例更新使用官方 `deliver` → `check --require-provenance --json`，跳过仍被环境阻止且已明确要求不重试的浏览器步骤。复现中的完整 finalize 命令用于将来具备可运行 Chromium 的环境；本轮没有整体 finalize 成功声明。
 
-最近一次图形更新为 revision 6；当前回执是各图的 revision-6-deliver.json / revision-6-check.json。SOURCE FREEZE 后的 46 文件读取快照、两种有限续跑、独立终态日志和精确旧字节索引见 [验证记录](VALIDATION.md#本轮运行安全与维护中-task-pack-更新revision-6)。
+最近一次图形更新为 revision 8；target 使用 revision-8-deliver.json / revision-8-check.json，未改的 task/report lifecycle 仍使用 revision-7 回执。62 文件冻结读取快照、可选 Access 只读 dashboard 与旧字节索引见 [验证记录](VALIDATION.md#可选-access-实时只读-dashboardrevision-8)。

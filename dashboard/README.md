@@ -81,3 +81,6 @@ npm test --workspace @dsh-orchestration/dashboard
 测试覆盖共享模型、报告跨 Session 保留、过期证据不被轮询刷新、过滤、XSS/URL处理、只读 HTTP、静态文件白名单、DNS rebinding 防护、宿主鉴权、非根路径、敏感运行配置剔除和数据源故障。浏览器/移动视觉测试的结果另记，不把接口通过当作视觉通过。
 
 可选 DOM 交互检查（不等于视觉验收）：设置 `DSH_DOM_TEST_MODULE` 为已安装的 `linkedom` 模块路径，运行 `node dashboard/qa/curation-dom-smoke.mjs`。该检查只使用合成测试数据。
+# Private VPS live deployment
+
+For a prepared Cloudflare Access origin, see [deployment handoff](deploy/README.md) and the [real browser acceptance checklist](qa/live-browser-checklist.md). `live-server.mjs` adds signed owner authentication while staying loopback-only. It reads the same existing TaskLedger and does not create a new data store. `server.mjs` remains the local preview entrypoint.

@@ -1,0 +1,194 @@
+{
+  "ok": true,
+  "file": "/workspace/shared/dsh-orchestration/project/docs/architecture/task-lifecycle/task-lifecycle.html",
+  "artifact": {
+    "sha256": "be36ad2edadc73b476e91280e35a5ac303216144774d1b74441defcd7001c566",
+    "bytes": 760933
+  },
+  "checks": [
+    {
+      "name": "single_svg",
+      "ok": true,
+      "details": [
+        "found 1 <svg> block(s)"
+      ]
+    },
+    {
+      "name": "finite_svg",
+      "ok": true,
+      "details": []
+    },
+    {
+      "name": "orthogonal_arrows",
+      "ok": true,
+      "details": []
+    },
+    {
+      "name": "label_route_clearance",
+      "ok": true,
+      "details": []
+    },
+    {
+      "name": "relationship_crossings",
+      "ok": true,
+      "details": []
+    },
+    {
+      "name": "relationship_corridors",
+      "ok": true,
+      "details": []
+    },
+    {
+      "name": "container_border_runs",
+      "ok": true,
+      "details": []
+    },
+    {
+      "name": "route_rhythm",
+      "ok": true,
+      "details": []
+    },
+    {
+      "name": "legend_clearance",
+      "ok": true,
+      "details": []
+    }
+  ],
+  "composition": {
+    "schemaVersion": 1,
+    "profile": "showcase",
+    "status": "pass",
+    "summary": {
+      "errors": 0,
+      "warnings": 0
+    },
+    "metrics": {
+      "properCrossings": 0,
+      "resolvedCrossovers": 2,
+      "ambiguousCorridors": 0,
+      "arrowheadCollisions": 0,
+      "containerBorderRuns": 0,
+      "labelRouteClearanceIssues": 0,
+      "labelCanvasOverflowIssues": 0,
+      "minLabelRouteClearance": 4,
+      "desktopReadabilityIssues": 0,
+      "viewportHeightIssues": 0,
+      "minProjectedNodeTextPx": 6.4471403812824954,
+      "maxBends": 4,
+      "routesOverSuggestedBends": 1,
+      "maxStretch": 1.611,
+      "routesOverSuggestedStretch": 1,
+      "minSegmentPx": 24,
+      "minInteriorSegmentPx": 30,
+      "shortSegmentCount": 0,
+      "shortEndpointSegmentCount": 0,
+      "shortInteriorSegmentCount": 0,
+      "microSegmentCount": 0
+    },
+    "suggestedLimits": {
+      "bendsPerRelationship": 2,
+      "stretch": 1.35,
+      "segmentPx": 16,
+      "microSegmentPx": 8
+    },
+    "routeReview": {
+      "crossings": [
+        {
+          "left": {
+            "id": "history_admit",
+            "from": "history",
+            "to": "admit",
+            "label": "续做 / 下次周期",
+            "collectionIndex": 4,
+            "artifactIndex": 5
+          },
+          "right": {
+            "id": "active_wait",
+            "from": "active",
+            "to": "wait",
+            "label": "待复核",
+            "collectionIndex": 5,
+            "artifactIndex": 6
+          },
+          "point": [
+            559,
+            144
+          ]
+        },
+        {
+          "left": {
+            "id": "history_admit",
+            "from": "history",
+            "to": "admit",
+            "label": "续做 / 下次周期",
+            "collectionIndex": 4,
+            "artifactIndex": 5
+          },
+          "right": {
+            "id": "active_cancel",
+            "from": "active",
+            "to": "cancel",
+            "label": "停止并 ACK",
+            "collectionIndex": 7,
+            "artifactIndex": 8
+          },
+          "point": [
+            589,
+            144
+          ]
+        }
+      ],
+      "detours": [
+        {
+          "relationship": {
+            "id": "active_cancel",
+            "from": "active",
+            "to": "cancel",
+            "label": "停止并 ACK",
+            "collectionIndex": 7,
+            "artifactIndex": 8
+          },
+          "bends": 4,
+          "stretch": 1.611,
+          "directCorridorBlockers": [
+            {
+              "id": "wait",
+              "label": "阻塞 / 不确定",
+              "box": [
+                504,
+                240,
+                140,
+                64
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "leadingSpace": {
+      "measured": false,
+      "reviewSuggested": false
+    },
+    "desktopReadability": {
+      "budgetBasis": "legacy-930",
+      "readerContract": "declared-wide-v1",
+      "availableDiagramWidth": 930,
+      "actualBudgetPx": 930,
+      "limit": "legacy",
+      "requestedTargetPx": null,
+      "requestedTargetMet": null,
+      "hardFloorPx": 6,
+      "hardFloorMet": true,
+      "minimumOwner": {
+        "kind": "node",
+        "id": "objective"
+      },
+      "minimumSourceTextPx": 8,
+      "minimumProjectedTextPx": 6.4471403812824954,
+      "semanticTextCount": 22
+    },
+    "issues": []
+  },
+  "provenance": "current",
+  "deliveryReceiptId": "2032f2f4-c48c-4051-a5d6-6c89f61bde8d"
+}

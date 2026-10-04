@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "runtimeCommit": "25b12aa897bb4e8cfa1657cf5def490caea117ed",
+  "previousRuntimeCommit": "86d8fb014d97fbfe282fcea54d4d8a899a24bb97",
+  "dshVersion": "0.2.0-rc.2",
+  "nodeVersion": "v24.19.0",
+  "check": {
+    "passed": 428,
+    "failed": 0,
+    "skipped": 0,
+    "suites": {
+      "task-system": 80,
+      "remote-execution": 87,
+      "feishu-channel": 50,
+      "typed-decisions": 36,
+      "dashboard": 17,
+      "actual-dsh-native": 62,
+      "legacy-task-pack": 96
+    },
+    "log": "docs/validation/0.1.1-check.log",
+    "sha256": "7704decd8753dea6424c498bcc6df087dc5800746f20ec315857af2f8554927c"
+  },
+  "distribution": {
+    "taskSystemStages": 10,
+    "capabilityStages": 13,
+    "upgradeStages": 11,
+    "oldPackages": "four 0.1.0 packages",
+    "newPackages": "Task System, Remote Execution, Feishu Channel 0.1.1; Typed Decisions unchanged 0.1.0",
+    "upgradeOrder": [
+      "feishu-channel",
+      "task-system",
+      "remote-execution"
+    ],
+    "statePreserved": true,
+    "privateRegistryRequests": 0,
+    "receipts": [
+      "tests/dsh/results/distribution.json",
+      "tests/dsh/results/capabilities.json",
+      "tests/dsh/results/upgrade.json"
+    ],
+    "finalByteManifest": "tests/dsh/results/final-pack-integrities.json"
+  },
+  "scope": [
+    "Exact-IP allowlist and scoped peer permissions are opt-in; Ed25519/TLS default stays available",
+    "Native official MISSING_CREDENTIAL and NO_ADAPTER safely reach authority summary",
+    "Actual loopback TCP and DSH services tested without signing keys in selected mode",
+    "No user devices, provider credentials, live API, Tailscale ACL or Serve touched by cloud support"
+  ],
+  "liveAcceptance": "Authorized MBP/VPS deployment is a separate task; no live pass inferred here.",
+  "architecture": "Revision 7; structural/provenance checks and static images recorded separately; real browser/Git source gates remain unverified."
+}

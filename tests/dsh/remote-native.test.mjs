@@ -9,6 +9,62 @@ import { SessionId } from '@deepseek-ai/dsh-session';
 import { TaskLedger } from '../../packages/task-system/dist/index.js';
 import { RemoteGateway, RemoteClient, RemoteLedgerClient, RecoveryStore, ExecutorWorker, IdentityVerifier, nativeExecutionAdapter, observationForwarder } from '../../packages/remote-execution/dist/api.js';
 import { createNativeHarness } from './native-harness.mjs';
+import * as deepseekApiKey from '@deepseek-ai/dsh-llm-deepseek-api-key';
+import { createLaunchEnvironmentSnapshot } from '@deepseek-ai/dsh-launch-environment';
+
+for (const code of ['NO_ADAPTER', 'MISSING_CREDENTIAL', 'AUTH', 'TOKEN_SECRET_SENTINEL']) {
+  test(`signed remote native ${code} returns a safe canonical code to authority without a result report or retry`, { timeout: 20000 }, async () => {
+    const h = await createNativeHarness({ config: { role: 'executor', nodeId: 'worker', safeRetry: { maxRetries: 2 } }, script: [() => { throw new LlmError('raw-secret-sentinel', code, { cause: new Error('nested-secret-sentinel') }); }] });
+    const ledger = TaskLedger.open(join(h.dir, 'coordinator.sqlite'), { role: 'planner', nodeId: 'planner' });
+    const stores = ['server', 'client', 'worker'].map(name => new RecoveryStore(join(h.dir, `${name}.sqlite`)));
+    let gateway, worker;
+    const terminalCodes = [];
+    h.ctx.on('session/event', (_session, event) => { if (event.type === 'turn/end') terminalCodes.push(event.data.reason.error?.code); });
+    try {
+      if (code === 'MISSING_CREDENTIAL') {
+        h.ctx.provide('launchEnvironment', createLaunchEnvironmentSnapshot([{ source: 'process', values: { DSH_TASK_TEST_EMPTY_KEY: '' } }]));
+        await h.ctx.plugin(deepseekApiKey, { apiKeyEnv: 'DSH_TASK_TEST_EMPTY_KEY', baseURL: 'https://must-not-request.invalid/anthropic' });
+      }
+      const routeModel = code === 'NO_ADAPTER' ? { provider: 'intentionally-unconfigured', model: 'test-model' } : code === 'MISSING_CREDENTIAL' ? { provider: 'deepseek-official', model: 'deepseek-flash' } : { provider: 'test-offline', model: 'script' };
+      const keys = generateKeyPairSync('ed25519');
+      const peer = { keyId: 'offline-key', nodeId: 'worker', publicKey: keys.publicKey, audience: 'planner', operations: ['claim', 'renew', 'submit', 'receipt', 'bindSession', 'markRunning', 'getRun', 'getAttempt', 'listWork', 'taskWait'], workspaces: ['workspace'], capabilities: ['native-offline'] };
+      ledger.registerWorkspace('workspace', { workspaceId: 'workspace', nodeId: 'worker', path: h.dir, label: 'Isolated error workspace', state: 'ready', createdAt: new Date().toISOString() });
+      ledger.registerNode('node', { nodeId: 'worker', roles: ['executor'], capabilities: ['native-offline'], models: [{ ...routeModel, reasoningEfforts: [] }], workspaceIds: ['workspace'], enabled: true, lastSeenAt: new Date().toISOString() });
+      const task = ledger.createTask('task', { title: 'Native remote missing-provider diagnostics', workspaceId: 'workspace', policy: { allowedTools: [], maxRuntimeMs: 10000 } }).value;
+      const run = ledger.createRun('run', { taskId: task.taskId, route: { nodeId: 'worker', ...routeModel, requiredCapabilities: ['native-offline'], workspaceId: 'workspace' } }).value;
+      gateway = new RemoteGateway({ role: 'planner', nodeId: 'planner', ledger, store: stores[0], verifier: new IdentityVerifier({ audience: 'planner', peers: [peer] }) });
+      const client = new RemoteClient({ endpoint: 'https://offline-fixture.invalid/commands', nodeId: 'worker', keyId: peer.keyId, audience: 'planner', privateKey: keys.privateKey, store: stores[1], fetch: async (_url, options) => new Response(JSON.stringify(await gateway.handle(options.body))) });
+      const remote = new RemoteLedgerClient(client, 'worker');
+      const provider = nativeExecutionAdapter(h.ctx.taskSystem.native, { provider: routeModel.provider, models: [{ model: routeModel.model, reasoningEfforts: [] }], capabilities: ['native-offline'] });
+      worker = new ExecutorWorker({ ledger: remote, provider, store: stores[2], policy: { role: 'executor', nodeId: 'worker', capabilities: ['native-offline'], workspaces: [{ workspaceId: 'workspace', nodeId: 'worker', path: h.dir, allowedRoot: h.dir }] } });
+      const results = await worker.pollOnce(1);
+      assert.equal(results.length, 1);
+      assert.equal(results[0].status, 'fulfilled');
+      const dispatch = results[0].value;
+      assert.equal(dispatch.state, 'acknowledged');
+      assert.equal(dispatch.result.outcome, 'unknown');
+      assert.equal(dispatch.result.retryWitness, undefined);
+      const canonical = code === 'TOKEN_SECRET_SENTINEL' ? 'RUNTIME_ERROR' : code;
+      assert.match(dispatch.result.summary, new RegExp(`ended with ${canonical} without`));
+      const authority = ledger.getRun(run.runId);
+      assert.equal(authority.state, 'uncertain');
+      assert.equal(authority.outcome, 'unknown');
+      assert.equal(authority.validation, 'not-submitted');
+      assert.equal(authority.retry, undefined);
+      const history = ledger.history(task.taskId);
+      assert.equal(history.reports.length, 0);
+      assert.equal(history.events.find(event => event.type === 'run.settled').detail.summary, dispatch.result.summary);
+      assert.doesNotMatch(JSON.stringify(history), /raw-secret-sentinel|nested-secret-sentinel|TOKEN_SECRET_SENTINEL|DSH_TASK_TEST_EMPTY_KEY|must-not-request/);
+      assert.equal(terminalCodes.at(-1), code);
+      assert.equal(h.adapter.requests.length, ['NO_ADAPTER', 'MISSING_CREDENTIAL'].includes(code) ? 0 : 1);
+      assert.equal((await worker.pollOnce()).length, 0);
+    } finally {
+      await worker?.dispose(); await gateway?.dispose();
+      for (const store of stores) store.close();
+      ledger.close(); await h.dispose();
+    }
+  });
+}
 
 test('signed remote discovery and worker execute through actual DSH AgentLoop; model and network are external fixtures', { timeout: 20000 }, async () => {
   const h = await createNativeHarness({ config: { role: 'executor', nodeId: 'worker' }, script: [{ name: 'task_settle', args: { outcome: 'success', summary: 'Native remote task verified', reportTitle: 'Native remote result', reportBody: 'Generated by the actual owned DSH agent with a scripted external model.' } }] });

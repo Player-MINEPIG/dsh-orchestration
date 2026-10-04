@@ -2,7 +2,7 @@
 
 ## 当前结果
 
-四份独立 HTML 的当前字节均通过 9/9 showcase 检查，0 error、0 warning，并通过 strict artifact provenance 检查。本轮更新的 target、task-lifecycle、report-lifecycle 仅运行官方 deliver 与 strict check，两阶段均退出 0；按明确要求，没有重试被环境阻止的浏览器。它们的当前 browserEvidence 是 not-run-current-revision，不能宣称 finalize 整体通过。
+四份独立 HTML 的当前字节均通过 9/9 showcase 检查，0 error、0 warning，并通过 strict artifact provenance 检查。revision 8 只更新 target 并运行官方 deliver 与 strict check，两阶段均退出 0；task-lifecycle / report-lifecycle 保持已通过的 revision 7 字节；按明确要求，没有重试被环境阻止的浏览器。它们的当前 browserEvidence 是 not-run-current-revision，不能宣称 finalize 整体通过。
 
 历史 original HTML 保持原字节；其最新 finalize 退出 1，因本机 Chromium 在 browser-check 阶段遇到 socket() Operation not permitted。此前另外三图的 browser 失败回执属于旧 HTML hash，已保留为历史证据，不能套用为新版浏览器检查。
 
@@ -24,12 +24,12 @@ Before / Delta / After 对比 HTML 的 compare 命令成功，28/28 检查通过
 
 | 图 | Specification SHA-256 | HTML SHA-256 | 当前 receipt |
 | --- | --- | --- | --- |
-| original | `4a26d33bbdb23ea4c45571e8b59eba69f244e9914cceb6ffa245f6ec8da7917a` | `f7e72035189ff28601ebc70df00f50b5bad4acdd929ba14eaa47c82f9b0cba3d` | `original/review-3/original.finalize.json` |
-| target | `580fb2096e9b281697e352c78e8bfd814ffc2824df7ba43e6ff10c58deeaf6da` | `759af49407bd8288ab02f6afbde9018b9ee7ea6430e233857948b82b6026284a` | `target/revision-6-deliver.json` |
-| task-lifecycle | `2e9d9a612535dce47ac84c299daa02ea6dfd36192b477e00131245ac294f830c` | `65854aef472edf894e265cbf332745a6091a1ebcfe4dafec5df58a84f082c6c3` | `task-lifecycle/revision-6-deliver.json` |
-| report-lifecycle | `2e54ec15ca68bc21f455569a72377b63dd51a7e4eaad0256fd3a228d333ee9cd` | `b8f17384c29e8aa41a57fd1b85d4828e41c60806567e2326841496ab53c1a7af` | `report-lifecycle/revision-6-deliver.json` |
+| original | `4a26d33bbdb23ea4c45571e8b59eba69f244e9914cceb6ffa245f6ec8da7917a` | `f7e72035189ff28601ebc70df00f50b5bad4acdd929ba14eaa47c82f9b0cba3d` | `original/revision-6-check.json` |
+| target | `2970d5bbeb3c5651fc7ae59e14e156ffe47e45c5f5879020d00a41ab0b6c7e48` | `f295f6e6fd6902a5a759235e23047b3f3491b18a83d05a3ed3e1135d970b39a0` | `target/revision-8-deliver.json` |
+| task-lifecycle | `e00cb8ffa060bfe3d1704321f8bce5455d877a671adb108e83cb0eac66f40834` | `e85b7ee10bf420e6d7296a7da08788bafdf84bc619ce4edbc11b136bae2c8efd` | `task-lifecycle/revision-7-deliver.json` |
+| report-lifecycle | `0f0f9b5eb014b8f77afb546adfd62ce30dcb693e7fe0d6b9885ec071aebfc08c` | `b58f0054183b8a6b8507d63453fec7f93418519f0a34e439b15d1677391d75ef` | `report-lifecycle/revision-7-deliver.json` |
 
-comparison.html SHA-256：`f9ff40d399989c8e285b5cf00e0a37da11f1e3f74d5cc18218eb21534c05c8e9`，2184889 bytes。
+comparison.html SHA-256：`fe601eeb06cfec0e5fbf8cd0a9d694a563cba3610245ed14a227c148c97b224b`，2187355 bytes。
 
 完整字节数、gate 结果与环境尝试见 [validation-manifest.json](validation-manifest.json)。
 
@@ -87,3 +87,33 @@ comparison.html SHA-256：`f9ff40d399989c8e285b5cf00e0a37da11f1e3f74d5cc18218eb2
 浏览器步骤遵照要求未重试：三个新版 browserEvidence=not-run-current-revision；original 的旧 browser-check 仍因 socket() Operation not permitted 失败。没有整体 finalize 成功、真实 Viewer、部署连通、模型质量或完整业务等价声明。Git 无 origin；本地提交或文件哈希均未被伪装成远端/固定 blob 来源证明。运行能力与 live pending 仍应查阅项目 PARITY.md 和对应真实测试回执。
 
 源码读取时刻：`2026-10-01T23:22:51.767699+00:00`；本地文件数：46。冻结说明：core/remote/native 功能代码由负责人在 `2026-10-01T23:18:25Z` 确认 SOURCE FREEZE，之后独立检查所列源文件哈希是否改变；验收文档仍可补充。source-snapshot 不包含当前仍在整理的 PARITY.md，避免把文档编辑冒充功能源码漂移。
+
+
+## 安全错误摘要与可选网络认证（revision 7）
+
+2026-10-02 的最小修订只更改三图说明卡片，并在原 execution 节点加入 signed+TLS / trusted-network 标签；节点 ID、关系、坐标和生命周期转换均未改。revision 6 的 candidate、HTML、回执、manifest 和静态投影保存在 [revisions/20261002-pre-safe-error-summary](revisions/20261002-pre-safe-error-summary/)，原历史图与旧回执保留。
+
+无因果 task_settle 的 native local/external 结果只从真实 owned session 的公开 turn/end 提取固定 allowlist 错误码，其它码归 RUNTIME_ERROR；不外传原 message/cause/headers/credentials，不制造报告，仍保持 unknown/not-submitted（对应 uncertain）。该说明不授予新增重试权，也不把 provider 错误变成成功。
+
+默认 ed25519 签名+TLS 保留。可选 trusted-network v2 需显式 allowHttp，按真实 socket 来源精确 IP 映射固定 node/role/operations/workspace/capability；网络允许列表与应用 peer grant 分开。专用 HTTP carrier 属于宿主生命周期，限制精确 listen/Host，拒绝 Origin 和代理身份头；client 绑定 source 并核对实际 target。nonce/sequence/receipt/lease/fence 与最终授权继续适用。该模式依赖运营方可信网络，同来源 IP 上的进程共享应用身份；不调用 Tailscale WhoIs，不动态扩展名单，不内置私人 IP，不提供独立进程/密钥身份。
+
+本轮官方 revision-7-deliver.json / revision-7-check.json 全部退出 0：三图各 9/9 showcase、0 error、0 warning，artifact provenance=current；comparison 28/28 authored。已逐张查看更新三图的 12 张 PNG（light/dark × 1440/2048 图形宽度），新增认证标签未裁切，节点、关系与图例保持清楚。task/report 的图形投影与 revision 6 像素相同；原图四张 PNG 字节相同并沿用既有实际检查。卡片文字已经与源码核对，并确认存在于生成 HTML；静态 SVG 不包含卡片，不能据此宣称卡片排版或 Viewer 已经视觉验收。
+
+SOURCE FREEZE 由负责人于 `2026-10-02T06:29:25Z` 确认；读取时刻为 `2026-10-02T06:31:02.335749+00:00`，共 55 个源码/包说明文件，结束前逐文件哈希核对无漂移。包版本为 Task System / Remote Execution / Feishu 0.1.1，Typed Decisions 0.1.0。源读取时本地 HEAD 为 `86d8fb014d97fbfe282fcea54d4d8a899a24bb97`，仍无 origin；未提交源码哈希不被冒充成该 commit blob 或已推送远端证明。运行测试和现场安装结论属于独立项目回执，架构图不关闭其验收项。
+
+真实 browser-check / Viewer 本轮仍未运行，遵照既有不重试受阻浏览器的要求；没有整体 finalize、Git-object 来源、生产网络或模型连通通过声明。原浏览器失败回执只属于其原 HTML hash。许可证与第三方 notice 保留。
+
+
+## 可选 Access 实时只读 dashboard（revision 8）
+
+本轮只在 target 的现有 dashboard 说明中增加一张卡片，不新增或改变节点、关系、标签、坐标和状态转换；task-lifecycle、report-lifecycle 与 original 的候选/HTML 保持原字节。revision 7 精确字节与回执归档于 [revisions/20261002-pre-access-dashboard](revisions/20261002-pre-access-dashboard/)。
+
+卡片和 sources N33–N36 说明：可选 Cloudflare Access 适配器使用 jose 6.2.12，仅 RS256，并固定运营配置的 issuer/audience/owner；live-server 仅 loopback 读取已有 TaskLedger，所有入口鉴权且只读，没有第二本任务数据库或执行 API。客户端 same-origin/no-store，登录到期清除本页任务数据，断线保留有效会话中的上次记录并标非实时。MISSING_CREDENTIAL 等 Run 事件可显示，但不制造报告、不改 unknown/uncertain/not-submitted 或执行权限。
+
+这条新部署尚未 live：账户、DNS、Tunnel、Access policy、杭州部署与 ICP 条件由另项工作核验授权；旧 owner-private Site 保持独立静态快照。图形检查不能替代上述部署、认证或业务验收。未读取凭据，未变更外部服务或 runtime 包。
+
+官方 target revision-8-deliver/check 均退出 0，9/9 showcase、0 error、0 warning，artifact provenance=current；comparison 重新生成并通过 28/28 authored。目标图 4 张 PNG（light/dark × 1440/2048 图形宽度）已实际逐张查看，无新裁切或遮挡；16 张静态 PNG 全部与 revision 7 像素相同，余 12 张沿用其原字节的实际检查。新增卡片文字已按源码逐项核对并确认出现在生成 HTML；SVG 不包含卡片，未把它当作卡片排版/Viewer 浏览器验收。
+
+冻结源码读取时间 `2026-10-02T07:16:32.660598+00:00`，共 62 文件，包含 dashboard 新模块、既有 server、public client/app/model、dashboard/package.json 和根 package-lock.json；结束前复核无哈希漂移。核心包版本不变（task/remote/Feishu 0.1.1、typed 0.1.0），dashboard 0.1.0 / jose 6.2.12。冻结读取时本地 HEAD 为 `803ffe9e85ea81458e9b78f09b9dbde52b889df5`，无 origin；工作树文件哈希仍不是该提交 blob、推送或 Git 来源门证明。
+
+真实 browser-check 未重试，卡片视觉布局与完整 Viewer 未验；没有整体 finalize 成功声明。旧 browser 失败证据仅对应其原 HTML hash。许可证/notice 与旧回执继续保留。

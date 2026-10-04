@@ -14,7 +14,7 @@ Passed: feishu-boot-after-remove
 {
   "ok": true,
   "dshVersion": "0.2.0-rc.2",
-  "scratch": "/tmp/dsh-capability-distribution-oWluBa",
+  "scratch": "/tmp/dsh-capability-distribution-Ss7sep",
   "packages": [
     {
       "name": "@dsh-task/typed-decisions",
@@ -23,18 +23,18 @@ Passed: feishu-boot-after-remove
     },
     {
       "name": "@dsh-task/task-system",
-      "filename": "dsh-task-task-system-0.1.0.tgz",
-      "integrity": "sha512-8mIw9jodYYqhoRqjx4toodONhBJwunLXLBdCfjzwFqfRcxwNvgqcf6JSLzrB4Fh3RnrNRNVnuQiCI4YSkWdyUA=="
+      "filename": "dsh-task-task-system-0.1.1.tgz",
+      "integrity": "sha512-L5An7xrfzZZHWVU26V7OB++nkKSJ+In+s+swGg6ygmf5J3uFrnUIww8KV9YMm7HQOtfKBESmOgIFpYoGktGYbg=="
     },
     {
       "name": "@dsh-task/remote-execution",
-      "filename": "dsh-task-remote-execution-0.1.0.tgz",
-      "integrity": "sha512-L9WcBtIDdEeetJHD63Su3nTvTIHm7gA53lR7ZJHUWNXuPg0sZsSbUFEZtb8y2Redi9IMclOnhOFfs1gOUAHOFg=="
+      "filename": "dsh-task-remote-execution-0.1.1.tgz",
+      "integrity": "sha512-GGk9zDd7RruZ5bpVyI2xQhByR5t85vVUXKIp27E+tTe/w40cy6964xwBNe+vW71zLPKUyawWQXXzdop0CMF25g=="
     },
     {
       "name": "@dsh-task/feishu-channel",
-      "filename": "dsh-task-feishu-channel-0.1.0.tgz",
-      "integrity": "sha512-rq/vSyczM2E1JtlQvQEc2ifrUm/BM1k8yChWY606Kcx7zn4/t3VY2u6IaeVBvI3iCOEf+twQDjP434FS0XzaSA=="
+      "filename": "dsh-task-feishu-channel-0.1.1.tgz",
+      "integrity": "sha512-MO+FNeeAxSsrYR6p/4r6ocI6zo+jYz4IVxhvBLFkDNlYqeqPYykNg/RjFNb0BEN5seLNnUf6XvKUjqSZVFbfVA=="
     }
   ],
   "stages": [

@@ -15,9 +15,9 @@
   },
   "head": {
     "title": "设计约定 · DSH 宿主内的任务配置与历史",
-    "rawSha256": "580fb2096e9b281697e352c78e8bfd814ffc2824df7ba43e6ff10c58deeaf6da",
-    "semanticSha256": "b9f7541f239fe7ee7ad6e875502a0e9dad785898c5ea55cb8f6b5e5d5459de23",
-    "bytes": 7420
+    "rawSha256": "2970d5bbeb3c5651fc7ae59e14e156ffe47e45c5f5879020d00a41ab0b6c7e48",
+    "semanticSha256": "9142ecd2cec8741bfc48a265c7a2d5e694cc37d6ec699eec4a774581e728109e",
+    "bytes": 8791
   },
   "summary": {
     "components": {
@@ -75,7 +75,8 @@
           "/label",
           "/pos",
           "/size",
-          "/sublabel"
+          "/sublabel",
+          "/tag"
         ]
       },
       {
@@ -455,8 +456,8 @@
     "Boundary identity is conservatively derived from kind + label."
   ],
   "artifact": {
-    "sha256": "f9ff40d399989c8e285b5cf00e0a37da11f1e3f74d5cc18218eb21534c05c8e9",
-    "bytes": 2184889
+    "sha256": "fe601eeb06cfec0e5fbf8cd0a9d694a563cba3610245ed14a227c148c97b224b",
+    "bytes": 2187355
   },
   "validation": {
     "checksPassed": 28,

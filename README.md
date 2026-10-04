@@ -31,6 +31,8 @@ For a runnable offline native example, see [the DSH integration guide](docs/dsh-
 
 Pack each built plugin directory with `npm pack` and install the tarball using `dsh plugin --profile <profile> add <tarball>`. The native task profile is base-backed and persistent; the shipped headless runner is a different, one-shot composition. Follow package setup for real model adapters, existing credentials, node scopes and optional channels.
 
+The optional trusted-network mode supports an explicit exact-IP snapshot and scoped peer permissions without separate signing keys. It is disabled by default; see the remote plugin configuration and security model.
+
 ## One ledger and explicit evidence
 
 Point both `DSH_TASK_DATABASE` and the WebUI `--ledger` setting at the intended database. The private development instance uses `.runtime/tasks.sqlite`, excluded from Git and package artifacts. Static exports carry their observation cutoff and stale status; they do not claim to synchronize all internal agents automatically.
@@ -48,7 +50,7 @@ Cancelling a run does not cancel other runs of the same task. Cancellation resou
 ## Review material
 
 - [中文评阅入口](docs/RELEASE-REVIEW.zh-CN.md)
-- [Recorded local checks and explicit limits](docs/validation/local-checks.json)
+- [Current 0.1.1 checks and explicit limits](docs/validation/0.1.1-checks.json)
 - [Security boundaries](docs/SECURITY.md)
 - [Migration](docs/MIGRATION.md)
 - [Requirement correspondence](docs/PARITY.md)

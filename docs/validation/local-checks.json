@@ -78,10 +78,10 @@
     "independentCapabilityStages": 13,
     "status": "passed",
     "receipts": [
-      "tests/dsh/results/distribution.json",
-      "tests/dsh/results/capabilities.json"
+      "docs/validation/baseline-0.1.0/distribution.json",
+      "docs/validation/baseline-0.1.0/capabilities.json"
     ],
-    "packageIntegrityManifest": "tests/dsh/results/final-pack-integrities.json",
+    "packageIntegrityManifest": "docs/validation/baseline-0.1.0/final-pack-integrities.json",
     "packageBytesRepackedAndMatched": true
   },
   "architecture": {
@@ -92,5 +92,6 @@
     "sourceFilesHashed": 46,
     "browserVerified": false,
     "gitSourceGateVerified": false
-  }
+  },
+  "baselineCommit": "86d8fb014d97fbfe282fcea54d4d8a899a24bb97"
 }

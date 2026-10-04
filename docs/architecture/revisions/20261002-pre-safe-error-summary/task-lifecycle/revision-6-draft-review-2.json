@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "ok": false,
+  "command": "validate",
+  "stage": "render",
+  "type": "lifecycle",
+  "input": "/workspace/shared/dsh-orchestration/project/docs/architecture/task-lifecycle/candidate.json",
+  "error": "Lifecycle layout validation failed:\n- Label \"请求批准\" overlaps state \"active\" — adjust labelDx/labelDy/labelSegment or set labelAt.\n  label rect: [548, 99, 51, 16]\n  state \"active\" rect: [504, 56, 140, 64]\n  Suggested fix: set labelAt [574, 135] or set labelDy 25 (below); or set labelAt [574, 47] or set labelDy -63 (above)",
+  "diagnostics": [
+    {
+      "code": "layout/constraint",
+      "severity": "error",
+      "message": "Label \"请求批准\" overlaps state \"active\" — adjust labelDx/labelDy/labelSegment or set labelAt.\n  label rect: [548, 99, 51, 16]\n  state \"active\" rect: [504, 56, 140, 64]\n  Suggested fix: set labelAt [574, 135] or set labelDy 25 (below); or set labelAt [574, 47] or set labelDy -63 (above)",
+      "subject": {
+        "diagramType": "lifecycle"
+      },
+      "evidence": {},
+      "supportedFixes": []
+    }
+  ]
+}

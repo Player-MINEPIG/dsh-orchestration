@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { dirname } from 'node:path'
 import { closeSync, mkdirSync, openSync } from 'node:fs'
 import { byteLimit, canonical, DEFAULT_MAX_RESPONSE_BYTES, digest, insist, ProtocolError } from './protocol.js'
-import type { Envelope, Json } from './protocol.js'
+import type { CommandEnvelope, Json } from './protocol.js'
 import type { Claim, ExecutionResult, LeaseRef, Receipt } from './ports.js'
 
 export interface CommandReceipt { commandId: string; state: 'pending' | 'done' | 'uncertain'; result?: Json }
@@ -41,7 +41,7 @@ export class RecoveryStore {
     try { const result = fn(); this.db.exec('COMMIT'); return result } catch (error) { this.db.exec('ROLLBACK'); throw error }
   }
   /** Authenticated replay rejection and admission are committed together. */
-  admit(envelope: Envelope, now: number): CommandReceipt | undefined {
+  admit(envelope: CommandEnvelope, now: number): CommandReceipt | undefined {
     return this.transaction(() => {
       const { nodeId: node, nonce, sequence, commandId: id } = envelope
       this.db.prepare('DELETE FROM nonces WHERE expires < ?').run(now)

@@ -1,5 +1,5 @@
-import { byteLimit, canonical, DEFAULT_MAX_BODY_BYTES, DEFAULT_MAX_RESPONSE_BYTES, digest, identifier, insist, isRecord, parseEnvelope, ProtocolError } from './protocol.js'
-import type { Envelope, IdentityVerifier, Json, Peer, Role } from './protocol.js'
+import { byteLimit, canonical, DEFAULT_MAX_BODY_BYTES, DEFAULT_MAX_RESPONSE_BYTES, digest, identifier, insist, isRecord, parseCommandEnvelope, ProtocolError } from './protocol.js'
+import type { CommandEnvelope, RequestVerifier, Json, AuthorizedPeer, Role, TransportIdentity } from './protocol.js'
 import type { ApprovalOffer, DelegationInput, LedgerPort, LeaseRef, SafeRetryWitness, Settlement, TaskReportInput } from './ports.js'
 import type { CommandReceipt, RecoveryStore } from './store.js'
 import { validateRetryWitness } from './retry.js'
@@ -45,7 +45,7 @@ function delegation(input: Record<string,Json>): void {
     for (const key of ['maxChildren','maxDescendants','settlementQuietMs']) if (policy[key] !== undefined) insist(Number.isSafeInteger(policy[key]) && Number(policy[key]) >= 0 && Number(policy[key]) <= 300000,'INVALID_DELEGATION_BOUNDS')
   }
 }
-export function validatePayload(envelope: Envelope): void {
+export function validatePayload(envelope: CommandEnvelope): void {
   const p = envelope.payload
   switch (envelope.operation) {
     case 'claim': fields(p, ['runId','ttlMs']); id(p,'runId'); ttl(p); break
@@ -121,12 +121,13 @@ export function validatePayload(envelope: Envelope): void {
     }
   }
 }
-export interface GatewayOptions { role: Role; nodeId: string; verifier: IdentityVerifier; ledger: LedgerPort; store: RecoveryStore; now?: () => number; maxBodyBytes?: number; maxResponseBytes?: number }
+export interface GatewayOptions { role: Role; nodeId: string; verifier: RequestVerifier; ledger: LedgerPort; store: RecoveryStore; now?: () => number; maxBodyBytes?: number; maxResponseBytes?: number }
 /** Coordinator entrypoint. Authenticated payloads contain no command, shell, cwd or actor override. */
 export class RemoteGateway {
   private options: GatewayOptions
   private active = true
   private pending = new Set<Promise<unknown>>()
+  get authMode(): RequestVerifier['authMode'] { return this.options.verifier.authMode }
   constructor(options: GatewayOptions) {
     this.options = { ...options,maxBodyBytes: byteLimit(options.maxBodyBytes,DEFAULT_MAX_BODY_BYTES),maxResponseBytes: byteLimit(options.maxResponseBytes,DEFAULT_MAX_RESPONSE_BYTES) }
     insist(options.role !== 'executor', 'PLANNER_ROLE_REQUIRED', 403)
@@ -135,16 +136,16 @@ export class RemoteGateway {
     insist(Buffer.byteLength(canonical(receipt)) <= this.options.maxResponseBytes!,'RESPONSE_LIMIT',413)
     return receipt
   }
-  async handle(body: Uint8Array | string): Promise<CommandReceipt> {
+  async handle(body: Uint8Array | string, transport?: TransportIdentity): Promise<CommandReceipt> {
     insist(this.active, 'DRAINING', 503)
-    const promise = this.handleOwned(body); this.pending.add(promise)
+    const promise = this.handleOwned(body,transport); this.pending.add(promise)
     try { return this.bounded(await promise) } finally { this.pending.delete(promise) }
   }
-  private async handleOwned(body: Uint8Array | string): Promise<CommandReceipt> {
+  private async handleOwned(body: Uint8Array | string, transport?: TransportIdentity): Promise<CommandReceipt> {
     const { verifier, ledger, store } = this.options
     const now = (this.options.now ?? Date.now)()
-    const envelope = parseEnvelope(body, this.options.maxBodyBytes)
-    const peer = verifier.verify(envelope, now)
+    const envelope = parseCommandEnvelope(body, verifier.authMode, this.options.maxBodyBytes)
+    const peer = verifier.verify(envelope, now, transport)
     validatePayload(envelope)
     // An authenticated exact command retry may read its receipt after the lease
     // settled or expired. Mutable lease checks apply only to new commands.
@@ -237,7 +238,7 @@ export class RemoteGateway {
       return durable ? this.options.store.resolve(nodeId,receipt.commandId,durable,this.options.maxResponseBytes) : receipt
     } catch { return receipt } // Missing or mismatched proof cannot authorize a retry.
   }
-  private async authorize(e: Envelope, peer: Peer, requireLive: boolean): Promise<void> {
+  private async authorize(e: CommandEnvelope, peer: AuthorizedPeer, requireLive: boolean): Promise<void> {
     if (e.operation === 'receipt' || e.operation === 'listWork') return
     if (e.operation === 'heartbeat' || e.operation === 'nodeStatus') {
       insist(this.options.ledger.nodeStatuses,'NODE_STATUS_UNSUPPORTED',503)

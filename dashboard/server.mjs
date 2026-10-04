@@ -5,7 +5,7 @@ import path from 'node:path';
 
 const HERE=path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC=path.join(HERE,'public');
-const STATIC=new Map([['','index.html'],['index.html','index.html'],['app.js','app.js'],['model.js','model.js'],['styles.css','styles.css'],['favicon.svg','favicon.svg']]);
+const STATIC=new Map([['','index.html'],['index.html','index.html'],['app.js','app.js'],['model.js','model.js'],['client.js','client.js'],['styles.css','styles.css'],['favicon.svg','favicon.svg']]);
 const TYPES={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.svg':'image/svg+xml'};
 const LOOPBACK=new Set(['127.0.0.1','::1','::ffff:127.0.0.1']);
 const PRIVATE_KEYS=/password|passwd|secret|token|api.?key|authorization|cookie|system.?prompt|chain.?of.?thought|private.?notes/i;
@@ -18,7 +18,7 @@ export function dashboardSnapshot(source){
     schemaVersion:source.schemaVersion,generatedAt:source.generatedAt,
     source:pick(source.source,['kind','label','observedAt','staleAfterMs']),
     tasks:(source.tasks||[]).map(x=>({...pick(x,['taskId','title','description','state','kind','createdAt','updatedAt','parentTaskId','workspaceId','tags','admissionState','admissionRevision']),...(x.source?{source:pick(x.source,['observedAt','importedAt','originalCreatedAt','label'])}:{})})),
-    runs:(source.runs||[]).map(x=>({...pick(x,['runId','taskId','state','createdAt','updatedAt','sessionIds','outcome','occurrenceId','cancellationRequested']),...(x.route?{route:pick(x.route,['nodeId','provider','model','reasoningEffort','workspaceId','requiredCapabilities'])}:{}),configuration:{}})),
+    runs:(source.runs||[]).map(x=>({...pick(x,['runId','taskId','state','createdAt','updatedAt','sessionIds','outcome','validation','reviewStatus','occurrenceId','cancellationRequested']),...(x.route?{route:pick(x.route,['nodeId','provider','model','reasoningEffort','workspaceId','requiredCapabilities'])}:{}),configuration:{}})),
     reports:(source.reports||[]).map(x=>pick(x,['reportId','taskId','runId','attemptId','sessionId','revision','previousReportId','title','body','createdAt','recordedAt','artifactIds','kind'])),
     artifacts:(source.artifacts||[]).map(x=>pick(x,['artifactId','taskId','reportId','name','mediaType','uri','sha256','bytes','createdAt','finalized'])),
     templates:(source.templates||[]).map(x=>({...pick(x,['templateId','version','name','description']),inputSchema:redact(x.inputSchema),defaults:{},resultContract:{}})),
@@ -38,13 +38,18 @@ function send(res,code,body,type='text/plain; charset=utf-8',method='GET'){res.w
  * authorize(req) must validate the host's existing session before returning true.
  * No token creation, credential persistence, mutation, or database of its own.
  */
-export function createDashboardHandler({snapshot,basePath='/',authorize,accessLabel='云电脑本地视图',accessDescription='只读 · 不对公网开放',refreshIntervalMs=15000}={}){
+export function createDashboardHandler({snapshot,basePath='/',authorize,requireSessionExpiry=false,accessLabel='云电脑本地视图',accessDescription='只读 · 不对公网开放',refreshIntervalMs=15000}={}){
  if(typeof snapshot!=='function')throw new Error('snapshot callback is required');
+ if(requireSessionExpiry&&typeof authorize!=='function')throw new Error('Session expiry requires an authenticated host adapter');
  const base=normalBase(basePath);
  return async(req,res)=>{
   securityHeaders(res);
   try{
-   if(authorize){if(!(await authorize(req))){send(res,401,'Authentication required');return;}}
+   if(authorize){
+    let session;try{session=await authorize(req);}catch{session=false;}
+    if(!session||(requireSessionExpiry&&(!Number.isFinite(session.expiresAt)||session.expiresAt<=Date.now()))){send(res,401,'Authentication required');return;}
+    if(Number.isFinite(session.expiresAt))res.setHeader('X-DSH-Session-Expires-At',new Date(session.expiresAt).toISOString());
+   }
    else{
     const hostname=(req.headers.host||'').toLowerCase().replace(/:\d+$/,'');
     if(!LOOPBACK.has(req.socket.remoteAddress)||!['127.0.0.1','localhost','[::1]'].includes(hostname)){send(res,403,'Local access only');return;}
@@ -58,7 +63,7 @@ export function createDashboardHandler({snapshot,basePath='/',authorize,accessLa
    if(relative==='api/health'){send(res,200,JSON.stringify({ok:true,readOnly:true}),'application/json; charset=utf-8',req.method);return;}
    if(relative==='api/snapshot'){send(res,200,JSON.stringify(dashboardSnapshot(await snapshot())),'application/json; charset=utf-8',req.method);return;}
    if(relative==='config.js'){
-    const config={apiBase:base+'api',refreshIntervalMs,title:'DSH · 任务看板',accessLabel,accessDescription};
+    const config={apiBase:base+'api',refreshIntervalMs,requireSessionExpiry,title:'DSH · 任务看板',accessLabel,accessDescription};
     send(res,200,`window.DSH_DASHBOARD_CONFIG=Object.freeze(${JSON.stringify(config).replace(/</g,'\\u003c')});`,'text/javascript; charset=utf-8',req.method);return;
    }
    const asset=STATIC.get(relative);if(!asset){send(res,404,'Not found');return;}

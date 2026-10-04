@@ -1,0 +1,322 @@
+{
+  "schemaVersion": 1,
+  "scope": "Historical handoff system description compared with approved design contract; not current deployment or Git-object proof",
+  "archify": {
+    "packageVersion": "3.0.1",
+    "skillDocumentVersion": "3.0",
+    "revision": "d5a1333d7447c866a765adac7d4d062f2f02e4d2",
+    "origin": "https://github.com/tt-a1i/archify.git",
+    "node": "v24.19.0",
+    "installedUserSkillChanged": false
+  },
+  "diagrams": [
+    {
+      "diagram": "original",
+      "type": "architecture",
+      "output": "docs/architecture/original/original.html",
+      "specification": {
+        "path": "docs/architecture/original/candidate.json",
+        "sha256": "4a26d33bbdb23ea4c45571e8b59eba69f244e9914cceb6ffa245f6ec8da7917a",
+        "bytes": 4738
+      },
+      "artifact": {
+        "sha256": "f7e72035189ff28601ebc70df00f50b5bad4acdd929ba14eaa47c82f9b0cba3d",
+        "bytes": 761373
+      },
+      "validation": {
+        "checksPassed": 9,
+        "checkCount": 9,
+        "compositionProfile": "showcase",
+        "compositionStatus": "pass",
+        "errors": 0,
+        "warnings": 0
+      },
+      "artifactProvenance": "current",
+      "repositoryProvenance": "unverified; system-description scope",
+      "browserEvidence": "failed",
+      "browserFailure": "viewer/browser-check-runtime: Chromium socket() Operation not permitted",
+      "visualReview": "browser/Viewer review not performed; separate static SVG projection inspected",
+      "screenshots": [],
+      "finalizeReceipt": "docs/architecture/original/review-3/original.finalize.json",
+      "finalizeExitCode": 1,
+      "staticDiagramVisualInspection": {
+        "status": "passed-scoped-static-inspection",
+        "pngCount": 4,
+        "officialExport": false,
+        "browserScreenshot": false,
+        "reviewRevision": "20261001-runtime-safety",
+        "reinspectedPngs": 4
+      },
+      "strictCheckReceipt": "docs/architecture/original/revision-6-check.json",
+      "strictCheckExitCode": 0
+    },
+    {
+      "diagram": "target",
+      "type": "architecture",
+      "output": "docs/architecture/target/target.html",
+      "specification": {
+        "path": "docs/architecture/target/candidate.json",
+        "sha256": "580fb2096e9b281697e352c78e8bfd814ffc2824df7ba43e6ff10c58deeaf6da",
+        "bytes": 7420
+      },
+      "artifact": {
+        "sha256": "759af49407bd8288ab02f6afbde9018b9ee7ea6430e233857948b82b6026284a",
+        "bytes": 771587
+      },
+      "validation": {
+        "checksPassed": 9,
+        "checkCount": 9,
+        "compositionProfile": "showcase",
+        "compositionStatus": "pass",
+        "errors": 0,
+        "warnings": 0
+      },
+      "artifactProvenance": "current",
+      "repositoryProvenance": "unverified; system-description scope",
+      "browserEvidence": "not-run-current-revision",
+      "visualReview": "browser/Viewer review not performed; separate static SVG projection inspected",
+      "screenshots": [],
+      "staticDiagramVisualInspection": {
+        "status": "passed-scoped-static-inspection",
+        "pngCount": 4,
+        "officialExport": false,
+        "browserScreenshot": false,
+        "reviewRevision": "20261001-runtime-safety",
+        "reinspectedPngs": 4
+      },
+      "deliveryReceipt": "docs/architecture/target/revision-6-deliver.json",
+      "strictCheckReceipt": "docs/architecture/target/revision-6-check.json",
+      "browserBlocker": "Prior Chromium socket restriction remains unresolved; explicit instruction not to retry blocked browser",
+      "priorBrowserEvidence": {
+        "artifactSha256": "ea57dcf551632b7e1ad596a2325935904ea4aba149cfb8aeeb5b6742bcfb1968",
+        "status": "failed",
+        "receipt": "docs/architecture/target/review-3/target.finalize.json",
+        "finalizeExitCode": 1,
+        "failure": "viewer/browser-check-runtime: Chromium socket() Operation not permitted",
+        "archivedArtifact": "docs/architecture/revisions/20261001-pre-instance-binding/target/target.html"
+      },
+      "finalizeStatus": "not-run-current-revision; official deliver and strict check only",
+      "deliveryExitCode": 0,
+      "strictCheckExitCode": 0
+    },
+    {
+      "diagram": "task-lifecycle",
+      "type": "lifecycle",
+      "output": "docs/architecture/task-lifecycle/task-lifecycle.html",
+      "specification": {
+        "path": "docs/architecture/task-lifecycle/candidate.json",
+        "sha256": "2e9d9a612535dce47ac84c299daa02ea6dfd36192b477e00131245ac294f830c",
+        "bytes": 6814
+      },
+      "artifact": {
+        "sha256": "65854aef472edf894e265cbf332745a6091a1ebcfe4dafec5df58a84f082c6c3",
+        "bytes": 774163
+      },
+      "validation": {
+        "checksPassed": 9,
+        "checkCount": 9,
+        "compositionProfile": "showcase",
+        "compositionStatus": "pass",
+        "errors": 0,
+        "warnings": 0
+      },
+      "artifactProvenance": "current",
+      "repositoryProvenance": "unverified; system-description scope",
+      "browserEvidence": "not-run-current-revision",
+      "visualReview": "browser/Viewer review not performed; separate static SVG projection inspected",
+      "screenshots": [],
+      "staticDiagramVisualInspection": {
+        "status": "passed-scoped-static-inspection",
+        "pngCount": 4,
+        "officialExport": false,
+        "browserScreenshot": false,
+        "reviewRevision": "20261001-runtime-safety",
+        "reinspectedPngs": 4
+      },
+      "deliveryReceipt": "docs/architecture/task-lifecycle/revision-6-deliver.json",
+      "strictCheckReceipt": "docs/architecture/task-lifecycle/revision-6-check.json",
+      "browserBlocker": "Prior Chromium socket restriction remains unresolved; explicit instruction not to retry blocked browser",
+      "priorBrowserEvidence": {
+        "artifactSha256": "377d7267d2422dfa28df652a282f7dc79ec1b131c590cd7d2c807342348f9af1",
+        "status": "failed",
+        "receipt": "docs/architecture/task-lifecycle/task-lifecycle.finalize.json",
+        "finalizeExitCode": 1,
+        "failure": "viewer/browser-check-runtime: Chromium socket() Operation not permitted",
+        "archivedArtifact": "docs/architecture/revisions/20261001-pre-instance-binding/task-lifecycle/task-lifecycle.html"
+      },
+      "finalizeStatus": "not-run-current-revision; official deliver and strict check only",
+      "deliveryExitCode": 0,
+      "strictCheckExitCode": 0
+    },
+    {
+      "diagram": "report-lifecycle",
+      "type": "lifecycle",
+      "output": "docs/architecture/report-lifecycle/report-lifecycle.html",
+      "specification": {
+        "path": "docs/architecture/report-lifecycle/candidate.json",
+        "sha256": "2e54ec15ca68bc21f455569a72377b63dd51a7e4eaad0256fd3a228d333ee9cd",
+        "bytes": 4798
+      },
+      "artifact": {
+        "sha256": "b8f17384c29e8aa41a57fd1b85d4828e41c60806567e2326841496ab53c1a7af",
+        "bytes": 761981
+      },
+      "validation": {
+        "checksPassed": 9,
+        "checkCount": 9,
+        "compositionProfile": "showcase",
+        "compositionStatus": "pass",
+        "errors": 0,
+        "warnings": 0
+      },
+      "artifactProvenance": "current",
+      "repositoryProvenance": "unverified; system-description scope",
+      "browserEvidence": "not-run-current-revision",
+      "visualReview": "browser/Viewer review not performed; separate static SVG projection inspected",
+      "screenshots": [],
+      "staticDiagramVisualInspection": {
+        "status": "passed-scoped-static-inspection",
+        "pngCount": 4,
+        "officialExport": false,
+        "browserScreenshot": false,
+        "reviewRevision": "20261001-runtime-safety",
+        "reinspectedPngs": 4
+      },
+      "deliveryReceipt": "docs/architecture/report-lifecycle/revision-6-deliver.json",
+      "strictCheckReceipt": "docs/architecture/report-lifecycle/revision-6-check.json",
+      "browserBlocker": "Prior Chromium socket restriction remains unresolved; explicit instruction not to retry blocked browser",
+      "priorBrowserEvidence": {
+        "artifactSha256": "9247431d1718c8a1e1b365da60aa0f57640a872fb9683bb42585f6cc6bc3bb4e",
+        "status": "failed",
+        "receipt": "docs/architecture/report-lifecycle/report-lifecycle.finalize.json",
+        "finalizeExitCode": 1,
+        "failure": "viewer/browser-check-runtime: Chromium socket() Operation not permitted",
+        "archivedArtifact": "docs/architecture/revisions/20261001-pre-instance-binding/report-lifecycle/report-lifecycle.html"
+      },
+      "finalizeStatus": "not-run-current-revision; official deliver and strict check only",
+      "deliveryExitCode": 0,
+      "strictCheckExitCode": 0
+    }
+  ],
+  "comparison": {
+    "output": "docs/architecture/comparison.html",
+    "sha256": "f9ff40d399989c8e285b5cf00e0a37da11f1e3f74d5cc18218eb21534c05c8e9",
+    "bytes": 2184889,
+    "proofLevel": "authored",
+    "validation": {
+      "checksPassed": 28,
+      "checkCount": 28,
+      "baseComposition": "pass",
+      "headComposition": "pass"
+    },
+    "receipt": "docs/architecture/comparison.receipt.json",
+    "browserEvidence": "not measured",
+    "visualReview": "not performed",
+    "exitCode": 0
+  },
+  "environmentAttempts": [
+    "Official finalize browser-check failed at Chromium ProcessSingleton local socket; sanctioned escalated retry same failure",
+    "Official visual-check against the previous target artifact failed; zero captures produced",
+    "Cloud Chrome rejects file: scheme; loopback HTTP navigation ERR_BLOCKED_BY_CLIENT",
+    "Public upstream clone required unavailable GitHub authentication; no fabricated origin or source proof"
+  ],
+  "notes": [
+    "Shared comparison component IDs identify logical responsibilities, not the same implementation/process or proven migrated identities",
+    "Design artifact provenance binds generated bytes only; it does not prove repository source",
+    "*.repository-draft.json retain source references for later verification and are not finalized diagrams",
+    "No renderer/test internals inspected, no full npm scripts run, no installed skill update",
+    "2026-10-01 revision uses deliver and strict check only to honor the instruction not to retry the blocked browser; prior browser receipts apply only to archived prior hashes",
+    "Current source-linked drafts were rebuilt from current candidates and inspected working-tree symbols; source-snapshot.json is a local read hash record, never Git provenance",
+    "Revision 5 adds confirmation/curation/priority/context-note/collaboration/final-settlement/task-pack semantics; source snapshot remains a dated local read and not Git provenance",
+    "Revision 6 adds independent native terminal durability, exact runtime approval, health/Alerts, distinct zero-tool and reviewed closed-tool bounded continuation, run-causal budgets, lifecycle anchored replies, and maintained Task Pack/source-reader/quota/diagnostics boundaries. No live runtime outcome is established by these diagrams."
+  ],
+  "staticDiagramVisualInspection": {
+    "status": "passed-scoped-static-inspection",
+    "method": "Exact generated inline SVG extracted without changing HTML; source semantic CSS variables resolved; rgba fill/stroke normalized to SVG rgb+opacity; Inkscape 1.4 rasterization; image-capable review",
+    "officialExport": false,
+    "browserScreenshot": false,
+    "widths": [
+      1440,
+      2048
+    ],
+    "themes": [
+      "light",
+      "dark"
+    ],
+    "inspectedPngs": 16,
+    "sourceHtmlUnchanged": true,
+    "observations": [
+      "All 16 source-bound static PNGs were viewed individually in this revision (two themes, two graphic widths, four diagrams)",
+      "No node, label or legend clipping visible; relationship paths do not pass through unrelated opaque nodes",
+      "The target shows an independent native result journal and caller-to-store recovery read direction",
+      "Task recurrence uses the top corridor; runtime approval, default zero-tool retry, explicit reviewed-tool continuation, and durable terminal replay remain distinguishable",
+      "Report revision, exact replay and conflicting command branches remain distinct; light-theme identifiers and labels are legible",
+      "Small muted dark-theme relationship labels remain a real-browser contrast/readability item; this is not Viewer acceptance"
+    ],
+    "limitations": [
+      "Viewer toolbar, cards, page layout, pan/zoom, focus/search, theme toggle and exports were not rendered or tested",
+      "Static font metrics, currentColor icons, node shadows and background paint may differ from a browser",
+      "Small muted relationship labels remain an actual-browser contrast/readability item"
+    ],
+    "manifest": "docs/architecture/static-inspection/derivation-manifest.json",
+    "reinspectedChangedPngs": 12,
+    "unchangedOriginalPngsPreviouslyInspected": 0,
+    "latestReviewRevision": "20261001-runtime-safety",
+    "reinspectedUnchangedOriginalPngs": 4
+  },
+  "revision": {
+    "id": "20261001-runtime-safety",
+    "number": 6,
+    "recordedAt": "2026-10-01T23:22:02.900570+00:00",
+    "previousArtifacts": "docs/architecture/revisions/20261001-pre-runtime-safety",
+    "changed": [
+      "target",
+      "task-lifecycle",
+      "report-lifecycle",
+      "comparison"
+    ],
+    "originalHtmlUnchanged": true,
+    "sourceReadSnapshot": "docs/architecture/source-snapshot.json",
+    "sourceFreeze": "Lead confirmed SOURCE FREEZE for core/remote/native functionality at 2026-10-01T23:18:25Z; parity/acceptance documentation may still change; this records local source bytes only, not Git provenance.",
+    "sourceReadObservedAt": "2026-10-01T23:22:51.767699+00:00",
+    "sourceFileCount": 46,
+    "repositoryProvenance": false,
+    "localRepository": {
+      "headAtFreeze": "466ebf95221f459fb647ee802c96cb3406f6da9c",
+      "origin": null,
+      "workingTreeChangesAreNotHeadEvidence": true
+    },
+    "sourceIntegrityCheckedAt": "2026-10-01T23:22:51.959658+00:00",
+    "sourceDrift": []
+  },
+  "revisionHistory": [
+    {
+      "id": "20261001-execution-instance",
+      "recordedAt": "2026-10-01T21:25:37.040010+00:00",
+      "previousArtifacts": "docs/architecture/revisions/20261001-pre-instance-binding",
+      "changed": [
+        "target",
+        "task-lifecycle",
+        "report-lifecycle",
+        "comparison"
+      ],
+      "originalHtmlUnchanged": true,
+      "sourceReadSnapshot": "docs/architecture/source-snapshot.json"
+    },
+    {
+      "id": "20261001-policy-taskpack",
+      "recordedAt": "2026-10-01T22:11:32.465169+00:00",
+      "previousArtifacts": "docs/architecture/revisions/20261001-pre-policy-taskpack",
+      "changed": [
+        "target",
+        "task-lifecycle",
+        "report-lifecycle",
+        "comparison"
+      ],
+      "originalHtmlUnchanged": true,
+      "sourceReadSnapshot": "docs/architecture/source-snapshot.json",
+      "sourceFreeze": "not frozen; explicitly dated working-tree read only",
+      "sourceReadObservedAt": "2026-10-01T22:10:28.439019+00:00"
+    }
+  ]
+}

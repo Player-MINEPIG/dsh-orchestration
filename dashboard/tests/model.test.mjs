@@ -35,3 +35,8 @@ test('missing curation fields remain backward compatible and restoration reveals
  s.schedules=[{scheduleId:'schedule-a',taskId:'task-a'}];s.tasks[0].admissionState='dismissed';
  assert.equal(visibleRecords(s,'schedules').length,0);assert.equal(visibleRecords(s,'schedules',{includeDismissed:true}).length,1);
 });
+test('run diagnostics remain linked by runId without invented reports or lifecycle changes',async()=>{
+ const {runEvents}=await import('../public/model.js');
+ const source={runs:[{runId:'one',state:'uncertain',outcome:'unknown',validation:'not-submitted'}],reports:[],events:[{eventId:'new',runId:'one',type:'run.settled',at:'2026-10-02T01:00:00Z',detail:{summary:'MISSING_CREDENTIAL'}},{eventId:'other',runId:'two',at:'2026-10-02T02:00:00Z',detail:{summary:'NO_ADAPTER'}}]};
+ const before=JSON.stringify(source);assert.deepEqual(runEvents(source,'one').map(event=>event.detail.summary),['MISSING_CREDENTIAL']);assert.equal(JSON.stringify(source),before);assert.equal(source.reports.length,0);
+});

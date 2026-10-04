@@ -39,6 +39,11 @@
           "path": "examples/legacy-task-pack/index.mjs",
           "line": 179,
           "label": "prepare / finalized artifact；本地源码，未通过 Git 来源门"
+        },
+        {
+          "path": "packages/task-system/src/dsh-plugin.ts",
+          "line": 420,
+          "label": "safe owned-terminal error summary；本地源码，未通过 Git 来源门"
         }
       ]
     },
@@ -218,7 +223,8 @@
       "items": [
         "native executor 预检 schema / 语义；task_settle 先暂存，idle 不等于任务成功",
         "静止终态写独立 FULL / WAL 日志；核心按同实例与本 run 后代最终复核",
-        "任意迟到证据不能改写终态；可信日志恢复的是先前已就绪的精确结果"
+        "任意迟到证据不能改写终态；可信日志恢复的是先前已就绪的精确结果",
+        "无 task_settle 的摘要仅加允许公开错误码，其他为 RUNTIME_ERROR；不复制原始错误"
       ]
     },
     {

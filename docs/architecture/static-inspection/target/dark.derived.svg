@@ -9,6 +9,7 @@
 .t-primary{ fill: #ffffff; }
 .t-muted{ fill: #94a3b8; }
 .t-frontend{ fill: #22d3ee; }
+.t-backend{ fill: #34d399; }
 .t-edge-default{ fill: #64748b; }
 .t-edge-dashed{ fill: #a78bfa; }
 svg .semantic-sigil{
@@ -181,8 +182,8 @@ svg[data-preset="blueprint"] .c-grid{
         <text data-detail="context" x="555" y="286" class="t-muted" font-size="9" text-anchor="middle">确认 / 策略 · 告警 / 节点健康</text>
         </g>
 
-        <g id="node-execution" data-node-id="execution" data-node-label="执行适配 / Remote Execution" tabindex="0" role="button" aria-label="聚焦执行适配 / Remote Execution，实例 / lease · 预检 / 调用批准, 架构组件" aria-pressed="false" data-node-kind="backend" data-node-sublabel="实例 / lease · 预检 / 调用批准" data-node-context="架构组件">
-          <title>执行适配 / Remote Execution · 实例 / lease · 预检 / 调用批准 · 架构组件</title>
+        <g id="node-execution" data-node-id="execution" data-node-label="执行适配 / Remote Execution" tabindex="0" role="button" aria-label="聚焦执行适配 / Remote Execution，实例 / lease · 预检 / 调用批准, 架构组件" aria-pressed="false" data-node-kind="backend" data-node-sublabel="实例 / lease · 预检 / 调用批准" data-node-tag="signed+TLS / trusted-network" data-node-context="架构组件">
+          <title>执行适配 / Remote Execution · 实例 / lease · 预检 / 调用批准 · 架构组件 · signed+TLS / trusted-network</title>
           <rect x="820" y="230" width="250" height="84" rx="6" class="c-mask"/>
           <rect x="820" y="230" width="250" height="84" rx="6" class="c-backend" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(826 236) scale(0.6875)">
@@ -190,6 +191,7 @@ svg[data-preset="blueprint"] .c-grid{
           </g>
           <text data-node-label="" data-detail-anchor="" x="945" y="270" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">执行适配 / Remote Execution</text>
         <text data-detail="context" x="945" y="286" class="t-muted" font-size="9" text-anchor="middle">实例 / lease · 预检 / 调用批准</text>
+        <text data-detail="fine" x="945" y="306" class="t-backend" font-size="7" text-anchor="middle">signed+TLS / trusted-network</text>
         </g>
 
         <g id="node-new_decision" data-node-id="new_decision" data-node-label="Typed Decisions" tabindex="0" role="button" aria-label="聚焦Typed Decisions，可选 native 单次模型桥接, 架构组件" aria-pressed="false" data-node-kind="security" data-node-sublabel="可选 native 单次模型桥接" data-node-context="架构组件">

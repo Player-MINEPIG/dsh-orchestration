@@ -31,3 +31,17 @@ original 的旧 browser-check 仍然失败；新版 browser-check 未运行，�
 本轮 16 张 PNG 均通过 view_image 实际逐张查看。新版目标图的独立终态日志、Task Pack 注册与恢复读取走独立通道；任务图区分默认零工具重试、显式已审查闭合工具续跑、runtime once/deny、未知副作用复核、取消与终态日志提交。未发现节点/标签/图例裁切或线路穿过无关不透明节点；任务循环的返回线移至主路径上方。报告图的修订、精确重放和冲突分支仍可辨认。
 
 深色关系标签较弱，保留真实浏览器复核项。所有宽度仍仅是图形像素；不代表 Viewer viewport、工具栏、卡片、交互或浏览器截图。derivation-manifest.json 的当前 HTML 哈希已核对；正式 HTML 未手改。旧图与旧 PNG 精确字节在 ../revisions/20261001-pre-runtime-safety/。
+
+
+## Revision 7：安全错误摘要与可选 trusted-network
+
+更新三图的 12 张 PNG 已逐张通过 view_image 查看：新增 signed+TLS / trusted-network 标签未裁切，节点、关系与图例无新遮挡。只有 target 的节点标签改变；task/report 图形像素与 revision 6 相同。原图四张 PNG 字节相同，沿用此前真实检查。
+
+安全错误摘要和两种认证的卡片正文已按冻结源码核对，并确认写入当前 HTML。卡片不属于这些 SVG 投影，因此此项不能证明卡片布局、完整页面或浏览器已验收。原 HTML 未手工修改；当前 derivation-manifest 重新绑定 HTML 哈希。旧 revision-6 HTML、回执和图像在 ../revisions/20261002-pre-safe-error-summary/，browser/Git 来源门仍分别保留未通过状态。
+
+
+## Revision 8：可选 Access dashboard 说明
+
+目标图四张 PNG 已实际逐张查看，无新增裁切或遮挡。所有 16 张图形投影与 revision 7 字节相同；本轮只改 target 卡片正文，不改 SVG 拓扑或几何。其它 12 张沿用此前实际图像检查。
+
+新增 Access/loopback 只读/过期清空/断线非实时/Run 事件说明已经按源码核对，并确认写入生成 HTML。此静态 SVG 检查不覆盖说明卡片的浏览器布局，不代表新 dashboard 已部署、Access 实际认证已通过或旧私有 Site 已迁移。当前 derivation-manifest 绑定新 HTML；旧回执和字节保存在 ../revisions/20261002-pre-access-dashboard/。

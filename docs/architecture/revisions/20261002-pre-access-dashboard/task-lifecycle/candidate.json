@@ -1,0 +1,264 @@
+{
+  "schema_version": 2,
+  "diagram_type": "lifecycle",
+  "meta": {
+    "title": "任务与运行生命周期 · 稳定 task_id（设计约定）",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "output": "docs/architecture/task-lifecycle/task-lifecycle.html"
+  },
+  "lanes": [
+    {
+      "id": "main",
+      "label": "同一任务 / 多次运行"
+    },
+    {
+      "id": "approval",
+      "label": "调用批准 / 显式续跑"
+    },
+    {
+      "id": "waiting",
+      "label": "等待与复核"
+    },
+    {
+      "id": "terminal",
+      "label": "本轮终态"
+    }
+  ],
+  "states": [
+    {
+      "id": "objective",
+      "type": "start",
+      "label": "创建任务",
+      "sublabel": "稳定工作目标",
+      "lane": "main",
+      "col": 0
+    },
+    {
+      "id": "admit",
+      "type": "decision",
+      "label": "新 run / 准入门",
+      "sublabel": "配置与 contextNotes 快照",
+      "lane": "main",
+      "col": 1
+    },
+    {
+      "id": "active",
+      "type": "active",
+      "label": "执行 attempt",
+      "sublabel": "executionId · lease / fence",
+      "lane": "main",
+      "col": 2
+    },
+    {
+      "id": "settle",
+      "type": "decision",
+      "label": "权威收束本轮",
+      "sublabel": "本 run 后代 / 结果复核",
+      "lane": "main",
+      "col": 3
+    },
+    {
+      "id": "history",
+      "type": "neutral",
+      "label": "完整任务历史",
+      "sublabel": "可继续 / 可复盘",
+      "lane": "main",
+      "col": 4
+    },
+    {
+      "id": "wait",
+      "type": "waiting",
+      "label": "阻塞 / 不确定",
+      "sublabel": "未知副作用须复核",
+      "lane": "waiting",
+      "col": 2
+    },
+    {
+      "id": "cancel",
+      "type": "failure",
+      "label": "确认取消",
+      "sublabel": "同实例 ACK · 保留证据",
+      "lane": "terminal",
+      "col": 2
+    },
+    {
+      "id": "approval",
+      "type": "waiting",
+      "label": "具体调用待批",
+      "sublabel": "身份 / 参数摘要 / 过期",
+      "lane": "approval",
+      "col": 2
+    },
+    {
+      "id": "safe_retry",
+      "type": "waiting",
+      "label": "零工具有限重试",
+      "sublabel": "连续暂态证据 / 预算",
+      "lane": "waiting",
+      "col": 1
+    },
+    {
+      "id": "ready",
+      "type": "active",
+      "label": "独立终态日志",
+      "sublabel": "静止 / 持久化 / 预检",
+      "lane": "waiting",
+      "col": 3
+    },
+    {
+      "id": "closed_retry",
+      "type": "waiting",
+      "label": "已审查工具续跑",
+      "sublabel": "成功闭合 · 同 session",
+      "lane": "approval",
+      "col": 1
+    }
+  ],
+  "transitions": [
+    {
+      "id": "objective_admit",
+      "from": "objective",
+      "to": "admit",
+      "label": "创建"
+    },
+    {
+      "id": "admit_active",
+      "from": "admit",
+      "to": "active",
+      "label": "确认 / 绑定后"
+    },
+    {
+      "id": "settle_history",
+      "from": "settle",
+      "to": "history",
+      "label": "最终门通过"
+    },
+    {
+      "id": "history_admit",
+      "from": "history",
+      "to": "admit",
+      "label": "续做 / 下次周期",
+      "route": "top-channel",
+      "fromSide": "top",
+      "toSide": "top",
+      "channelY": 20
+    },
+    {
+      "id": "active_wait",
+      "from": "active",
+      "to": "wait",
+      "label": "待复核"
+    },
+    {
+      "id": "wait_admit",
+      "from": "wait",
+      "to": "admit",
+      "label": "核实后新 run"
+    },
+    {
+      "id": "active_cancel",
+      "from": "active",
+      "to": "cancel",
+      "label": "停止并 ACK"
+    },
+    {
+      "id": "active_approval",
+      "from": "active",
+      "to": "approval",
+      "variant": "security"
+    },
+    {
+      "id": "approval_active",
+      "from": "approval",
+      "to": "active",
+      "label": "一次 / 拒绝"
+    },
+    {
+      "id": "active_retry",
+      "from": "active",
+      "to": "safe_retry",
+      "label": "零工具暂态"
+    },
+    {
+      "id": "retry_active",
+      "from": "safe_retry",
+      "to": "active",
+      "label": "退避 / 再 claim"
+    },
+    {
+      "id": "active_ready",
+      "from": "active",
+      "to": "ready",
+      "label": "静止终态"
+    },
+    {
+      "id": "ready_settle",
+      "from": "ready",
+      "to": "settle",
+      "label": "精确重放"
+    },
+    {
+      "id": "active_closed_retry",
+      "from": "active",
+      "to": "closed_retry",
+      "label": "显式 allowlist"
+    },
+    {
+      "id": "closed_retry_active",
+      "from": "closed_retry",
+      "to": "active",
+      "label": "防重复 / 再 claim"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "任务确认与运行时批准分开",
+      "items": [
+        "confirmation revision 只由可信入口批准；新 run / 意图变更重新检查",
+        "运行时 once / deny 绑定 executionId / session / call / 参数摘要与过期时间",
+        "过期、lease 丢失或闭包结束拒绝重用批准；拒绝仅拒绝该次工具调用"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "本轮因果范围与最终门",
+      "items": [
+        "稳定 Task 可多次运行；parentRunId 划定每轮的 children / descendants 预算",
+        "委派、资源、容量与 quiet window 在核心检查；历史周期不消耗本轮预算",
+        "executionId 在副作用前原子绑定；同实例 renew / bind / submit / cancel ACK",
+        "signed TLS / 显式 trusted-network 的 peer 认证不同；lease / fence / receipt 和权限门相同"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "恢复与有限自动重试",
+      "items": [
+        "native idle、flush、dispose 与结果预检之后，独立 FULL / WAL 日志保留终态",
+        "可信本机日志可恢复先前已就绪的精确终态；取消或替代实例不能被逆转",
+        "默认仅零工具暂态重试；显式 resumableTools 须调用/成功结果齐全、flush 与 dispose",
+        "同 session 有限续跑；guard 拒绝已完成 name+参数 hash 重复；未知副作用仍须复核",
+        "无 task_settle 时以真实 owned turn/end 的允许错误码提示原因；仍为 unknown / uncertain"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "历史、备注与生命周期通知",
+      "items": [
+        "排队 note 在新 run 事务中进入 contextNotes；admitted / dismissed 独立管理收录",
+        "创建消息是 task 级锚点，各 run 终态依赖锚点成功后回复；未知送达保持 uncertain",
+        "心跳 / Alerts 表示观测与告警；不证明远端模型或生产系统已连通"
+      ]
+    },
+    {
+      "dot": "slate",
+      "title": "设计约定与证据边界",
+      "items": [
+        "运行时批准和重试分支表达执行内阶段，不是另造 TaskLedger run 状态",
+        "sources.md / PARITY.md 独立记录实现与验收；Git 来源门与浏览器未通过",
+        "safeRetry 缺省零次，resumableTools 缺省空；不保证任意 shell exactly-once"
+      ]
+    }
+  ]
+}

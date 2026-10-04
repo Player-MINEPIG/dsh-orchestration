@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "af7d7371-4a38-430a-b144-35fa9e5af588",
+  "ok": true,
+  "command": "deliver",
+  "type": "lifecycle",
+  "input": "/workspace/shared/dsh-orchestration/project/docs/architecture/task-lifecycle/candidate.json",
+  "output": "/workspace/shared/dsh-orchestration/project/docs/architecture/task-lifecycle/task-lifecycle.html",
+  "specification": {
+    "sha256": "e00cb8ffa060bfe3d1704321f8bce5455d877a671adb108e83cb0eac66f40834",
+    "bytes": 7043
+  },
+  "artifact": {
+    "sha256": "e85b7ee10bf420e6d7296a7da08788bafdf84bc619ce4edbc11b136bae2c8efd",
+    "bytes": 774408
+  },
+  "validation": {
+    "checksPassed": 9,
+    "checkCount": 9,
+    "compositionProfile": "showcase",
+    "compositionStatus": "pass",
+    "errors": 0,
+    "warnings": 0
+  },
+  "update": {
+    "status": "unavailable",
+    "installedVersion": null,
+    "availableVersion": null,
+    "releaseNotes": null,
+    "checkedAt": null,
+    "source": null,
+    "noticeRequired": false,
+    "noticeText": null,
+    "reason": "cache-unavailable"
+  }
+}

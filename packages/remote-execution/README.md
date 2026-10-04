@@ -1,6 +1,6 @@
 # Remote execution inside a DSH host
 
-`@dsh-task/remote-execution` provides an authenticated task bridge and an executor worker inside an existing DSH host. It does not start a daemon, bind a listening socket, supervise DSH, install a model runtime, generate credentials, or expose shell execution. Version 0.1.0 targets Node 24 and DSH `0.2.0-rc.2`, pinned upstream commit `639ed015397290b3745d163aafe02ffee4aa3f84`, with Cordis `4.0.4` and Schemastery `3.18.4`.
+`@dsh-task/remote-execution` provides an authenticated task bridge and an executor worker inside an existing DSH host. Its default signed mode uses the existing host HTTP carrier. The optional trusted-network mode owns one exact-address listener inside that same host. It does not start a daemon, supervise DSH, install a model runtime, generate credentials, or expose shell execution. Version 0.1.1 targets Node 24 and DSH `0.2.0-rc.2`, pinned upstream commit `639ed015397290b3745d163aafe02ffee4aa3f84`, with Cordis `4.0.4` and Schemastery `3.18.4`.
 
 ## Installation and composition
 
@@ -10,9 +10,9 @@ The package includes built ESM and declarations, a `dsh.bundle.patch`, and nativ
 - `executor`: exposes `remoteExecution.createWorker(provider)`; cannot mount the coordinator HTTP route
 - `both`: exposes both paths, using the same durable lease lifecycle
 
-`exposeHttp` defaults to false. When enabled for a planner/both host, the plugin separately injects `webServer` and registers one exact POST route, `/dsh-task/v1/commands` by default. This uses the existing host HTTP carrier. Provider removal detaches the route; plugin unload stops admission, drains owned requests and workers, then closes its recovery store. Records survive unload and reinstall.
+`exposeHttp` defaults to false. In default `authMode: ed25519`, when enabled for a planner/both host, the plugin separately injects `webServer` and registers one exact POST route, `/dsh-task/v1/commands` by default. This uses the existing host HTTP carrier. Provider removal detaches the route; plugin unload stops admission, drains owned requests and workers, then closes its recovery store. Records survive unload and reinstall.
 
-Native schema configuration: `role`, `nodeId`, `statePath`, `audience`, `peers`, `capabilities`, `workspaces`, `leaseTtlMs`, `exposeHttp`, `routePath`, `allowLoopbackHttp`, `maxBodyBytes`, `maxResponseBytes`, `pollIntervalMs`, `concurrency`, optional `coordinator`, and optional `observationForwarding`. Empty capabilities/workspaces/peers grant no authority. Each peer names an existing Ed25519 public key, a key ID, a node ID, one audience, permitted operations, workspace IDs, and capabilities. The host either injects an existing private `KeyObject` into `RemoteClient` or sets `coordinator.privateKeyEnv` to the name of an existing PEM environment variable. The package reads that variable only when opted in, does not generate or persist it, and never exposes its value in configuration or receipts.
+Native schema configuration: `authMode`, optional `trustedNetwork`, `role`, `nodeId`, `statePath`, `audience`, `peers`, `capabilities`, `workspaces`, `leaseTtlMs`, `exposeHttp`, `routePath`, `allowLoopbackHttp`, `maxBodyBytes`, `maxResponseBytes`, `pollIntervalMs`, `concurrency`, optional `coordinator`, and optional `observationForwarding`. Empty capabilities/workspaces/peers grant no authority. In signed mode each peer names an existing Ed25519 public key, a key ID, a node ID, one audience, permitted operations, workspace IDs, and capabilities. The host either injects an existing private `KeyObject` into `RemoteClient` or sets `coordinator.privateKeyEnv` to the name of an existing PEM environment variable. The package reads that variable only when opted in, does not generate or persist it, and never exposes its value in configuration or receipts.
 
 The bundle intentionally does not invent peer credentials, workspace roots, or a workload provider. Configure those existing resources explicitly before allowing work. `createWorker(provider)` mounts one `ExecutionProvider` implementing the exported host-owned interface per recovery store. A remote executor can give its worker a `RemoteLedgerClient`; a local executor can give it a directly injected transactional ledger. A provider that already owns its own ledger settlement, such as task-system's native execution controller, should use the gateway/client seam directly rather than be wrapped as a second settling worker.
 
@@ -29,6 +29,75 @@ Requests default to 64 KiB and responses to 128 KiB. Both are explicitly configu
 Large node/game reports can use bounded inline `report.data` without remote artifact uploads. The human-readable report body remains limited to 32 KiB, summary to 5000 bytes, JSON depth to 16, arrays to 256 elements, records to 64 keys, and request lifetime to 60 seconds by default. Declared Content-Length and actual streamed bytes are both checked. Oversized requests stop before ledger effects; oversized or interrupted responses yield uncertainty because a ledger action may already have committed. Response readers are cancelled at the limit. Unknown fields/operations/versions, expired/future timestamps, malformed keys, wrong nodes/audiences, payload tampering, repeated nonces, reordered sequence numbers, and changed payloads under an existing command ID are rejected. Nonce/sequence admission and the command receipt commit together in SQLite WAL/FULL mode. Replay state survives restart. A sender must retain its sequence database; deleting it is not a supported identity reset.
 
 TLS is required by default. Explicit `allowLoopbackHttp` permits HTTP only on literal loopback endpoints and only when both the accepted socket's local and remote addresses are loopback. Forwarded headers do not establish trust. The package neither adds TLS nor verifies a reverse proxy's deployment: configure the host/operator TLS boundary separately. Outbound requests reject redirects and URL credentials, use timeouts, and bound response bytes.
+
+## Optional trusted-network authentication
+
+The default remains `authMode: ed25519`: signed v1 envelopes over TLS, with the existing explicit loopback exception. `authMode: trusted-network` is a separate, explicit v2 protocol for an operator-supplied trusted network. It uses no application signing key and does not fall back when signature verification fails. Both peers must opt in; an unsigned v2 command is rejected by a signed gateway and a signed v1 command is rejected by a network gateway.
+
+This mode is useful when an existing encrypted network, such as a Tailscale tailnet, already authenticates and encrypts the path. The package itself neither encrypts HTTP nor proves Tailscale membership: it checks actual connection addresses against the operator's fixed exact-IP snapshot. It does not discover devices, refresh the list, accept CIDRs, change Tailscale/ACL/firewall/Serve settings, enroll devices, or create credentials. Configure only network paths whose address ownership and ingress are trusted. Programs sharing an authorized source machine share its network identity. An application key offers a separate process identity when its secret is isolated; choose signed mode if that boundary is needed.
+
+A network coordinator uses this shape (documentation addresses are placeholders, not deployable defaults):
+
+```json
+{
+  "role": "planner",
+  "nodeId": "planner",
+  "audience": "planner",
+  "authMode": "trusted-network",
+  "exposeHttp": true,
+  "routePath": "/dsh-task/v1/commands",
+  "trustedNetwork": {
+    "listen": { "address": "192.0.2.10", "port": 18440 },
+    "allowHttp": true,
+    "allowedAddresses": ["192.0.2.11", "192.0.2.12"],
+    "peers": [{
+      "address": "192.0.2.11",
+      "nodeId": "worker",
+      "role": "executor",
+      "audience": "planner",
+      "operations": ["listWork", "claim", "markRunning", "bindSession", "renew", "submit", "getRun", "getAttempt", "receipt", "acknowledgeCancellation"],
+      "workspaces": ["workspace"],
+      "capabilities": ["read"]
+    }]
+  }
+}
+```
+
+`allowedAddresses` controls the network admission boundary; `peers` grants application authority separately. The second example address is admitted by the network list but has no peer entry and therefore cannot invoke any command. No addresses are enabled by default. One canonical source address maps to one node; duplicate addresses or node mappings are rejected. This protocol contains executor-scoped operations only: a peer configured as `planner` cannot invoke it, while `executor` and `both` can invoke their explicitly permitted operations. Workspace, capability, assigned-run, execution owner, lease, fence, approval and subtree restrictions are unchanged. A request's claimed `nodeId` must equal the address-mapped identity and never creates its own authority.
+
+The executor must opt in both at plugin level and on its coordinator:
+
+```json
+{
+  "role": "executor",
+  "nodeId": "worker",
+  "authMode": "trusted-network",
+  "coordinator": {
+    "authMode": "trusted-network",
+    "endpoint": "http://192.0.2.10:18440/dsh-task/v1/commands",
+    "audience": "planner",
+    "trustedNetwork": {
+      "address": "192.0.2.10",
+      "port": 18440,
+      "localAddress": "192.0.2.11",
+      "allowHttp": true
+    },
+    "nativeRoutes": []
+  }
+}
+```
+
+Supply the existing native routes, workspace bindings, capabilities and polling settings separately as required by the execution policy. Omit `keyId`, `privateKeyEnv`, signed `peers`, and `allowLoopbackHttp` in network mode. An executor does not need the server-side `trustedNetwork` listener policy. Network mode must be explicitly selected on `RemoteClient` too; its `trustedNetwork` target is the same object as `coordinator.trustedNetwork`, with no `privateKey` or injected `fetch`.
+
+The dedicated listener binds only the configured literal IPv4 or IPv6 address and exact port (1–65535). It does not use DSH's `0.0.0.0` carrier, expose any other DSH route, or change the default carrier. Plugin activation awaits a successful bind; bind failure fails activation. Disposal closes admission and owned connections, drains gateway/worker/client work, and closes the store; pending listener startup is also owned by disposal.
+
+Both accepted socket addresses and the local port must match the policy. IPv4-mapped IPv6 socket addresses normalize to IPv4. HTTP requires one exact `Host` matching the listener's literal address and port, with brackets for IPv6; every `Origin`, `Forwarded`, and `X-Forwarded-*` header is rejected. Only exact-path POST with `application/json` is accepted; no CORS permission is granted. Host validation prevents DNS-rebinding browser traffic; rejecting Origins avoids treating browser ambient network identity as permission to run commands. A proxy is not a supported network-mode intermediary.
+
+The native Node HTTP client binds `localAddress`, rejects DNS hosts, implicit/mismatched targets, userinfo, queries, fragments and redirects, and verifies its actual connected peer/local addresses and peer port before writing the request body. It does not use environment proxy settings or follow redirects. IP ownership and the network path remain the operator's responsibility.
+
+Network envelopes contain `version: 2`, `authMode: trusted-network`, node/audience, command ID, nonce, monotonic sequence, issuance/expiry, operation and payload; `keyId` and `signature` are forbidden. The durable journal records the original sender, audience, URL and authentication binding. A retry cannot silently switch auth mode, source address or target; legacy journal records without auth metadata are accepted only as signed v1 records. Keep the same command ID to reconcile an unknown result and never invent a new command to bypass an auth-binding mismatch. Nonce/sequence admission, receipt recovery and execution-owner fencing remain identical in both modes.
+
+Authentication is a replaceable `RequestVerifier` seam returning an `AuthorizedPeer`; the core task ledger has no Tailscale dependency. A future optional Tailscale LocalAPI adapter can add verified node identity and app-capability mapping at that boundary. Exact-IP mode does not claim to perform that identity lookup.
 
 ## Execution, restart, and uncertainty
 
@@ -142,6 +211,6 @@ npm run build --workspace @dsh-task/remote-execution
 npm run test --workspace @dsh-task/remote-execution
 ```
 
-Tests label mocked ledger/provider/HTTP boundaries. They exercise real Ed25519 and SQLite, authenticated health TTL and recovery, bounded witnessed retry transitions (with native evidence explicitly mocked in the package fixture), malicious payloads, least privilege, replay/reordering, physical symlink escape, stale leases, cancellation, intent/result crash recovery, and lost acknowledgments. One connected fixture uses the real TaskLedger, signed discovery and every execution lifecycle transition with only provider/network boundaries mocked. A separate test mounts and unloads the real pinned Cordis plugin while substituting only the ledger boundary. An additional real loopback TLS carrier test uses a disposable certificate, rejects an untrusted certificate and spoofed forwarded headers, and carries signed commands through the actual HTTP handler and TaskLedger. Certificate verification remains enabled; the fixture CA is scoped to that test client. These tests do not establish live cross-device TLS, live model execution, Windows supervision, production credentials, or real network reliability. No public repository, production host, or live messaging destination is created or contacted.
+Tests label mocked ledger/provider/HTTP boundaries. They exercise real Ed25519 and SQLite, authenticated health TTL and recovery, bounded witnessed retry transitions (with native evidence explicitly mocked in the package fixture), malicious payloads, least privilege, replay/reordering, physical symlink escape, stale leases, cancellation, intent/result crash recovery, and lost acknowledgments. One connected fixture uses the real TaskLedger, signed discovery and every execution lifecycle transition with only provider/network boundaries mocked. A separate test mounts and unloads the real pinned Cordis plugin while substituting only the ledger boundary. Trusted-network tests add real IPv4/IPv6 loopback HTTP, distinct source addresses, mode confusion, header forgery, peer and scope denial, replay/expiry, redirect refusal, authentication-bound recovery, and disconnect/lost-ACK restart coverage. An additional real loopback TLS carrier test uses a disposable certificate, rejects an untrusted certificate and spoofed forwarded headers, and carries signed commands through the actual HTTP handler and TaskLedger. Certificate verification remains enabled; the fixture CA is scoped to that test client. These tests do not establish live cross-device TLS, live model execution, Windows supervision, production credentials, or real network reliability. No public repository, production host, or live messaging destination is created or contacted.
 
 The TaskLedger command bound is additionally 2,000,000 canonical JSON characters per operation. The 16 MiB transport ceiling is not a guarantee that an equally large task command can commit; apply both limits and split large historical imports.

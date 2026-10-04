@@ -1,0 +1,467 @@
+{
+  "schemaVersion": 1,
+  "ok": true,
+  "command": "compare",
+  "type": "architecture",
+  "comparatorVersion": 1,
+  "canonicalVersion": 1,
+  "completeness": "complete",
+  "proofLevel": "authored",
+  "base": {
+    "title": "历史移交材料 · Hermes 系统描述",
+    "rawSha256": "4a26d33bbdb23ea4c45571e8b59eba69f244e9914cceb6ffa245f6ec8da7917a",
+    "semanticSha256": "238e870ba7c8584359cc1dcb9fcd3180463c375e81cd54808132fef42b8d2414",
+    "bytes": 4738
+  },
+  "head": {
+    "title": "设计约定 · DSH 宿主内的任务配置与历史",
+    "rawSha256": "580fb2096e9b281697e352c78e8bfd814ffc2824df7ba43e6ff10c58deeaf6da",
+    "semanticSha256": "b9f7541f239fe7ee7ad6e875502a0e9dad785898c5ea55cb8f6b5e5d5459de23",
+    "bytes": 7420
+  },
+  "summary": {
+    "components": {
+      "added": 5,
+      "changed": 7,
+      "evidenceChanged": 0,
+      "removed": 2,
+      "moved": 0
+    },
+    "connections": {
+      "added": 6,
+      "changed": 5,
+      "removed": 3,
+      "rerouted": 0
+    },
+    "boundaries": {
+      "added": 0,
+      "changed": 0,
+      "removed": 0,
+      "geometryChanged": 0
+    },
+    "presentationChanged": true,
+    "provenanceChanged": false
+  },
+  "changes": {
+    "components": [
+      {
+        "id": "channel_ingress",
+        "baseLabel": "飞书 / Cron",
+        "headLabel": "Feishu / native chat",
+        "status": "changed",
+        "classifications": [
+          "geometry",
+          "semantic"
+        ],
+        "changedFields": [
+          "/label",
+          "/pos",
+          "/size",
+          "/sublabel",
+          "/tag",
+          "/type"
+        ]
+      },
+      {
+        "id": "execution",
+        "baseLabel": "官方 Agent 执行",
+        "headLabel": "执行适配 / Remote Execution",
+        "status": "changed",
+        "classifications": [
+          "geometry",
+          "semantic"
+        ],
+        "changedFields": [
+          "/label",
+          "/pos",
+          "/size",
+          "/sublabel"
+        ]
+      },
+      {
+        "id": "host_runtime",
+        "baseLabel": "Hermes Gateway",
+        "headLabel": "长驻 DSH host",
+        "status": "changed",
+        "classifications": [
+          "geometry",
+          "semantic"
+        ],
+        "changedFields": [
+          "/label",
+          "/pos",
+          "/size",
+          "/sublabel"
+        ]
+      },
+      {
+        "id": "new_decision",
+        "headLabel": "Typed Decisions",
+        "status": "added",
+        "classifications": [
+          "semantic"
+        ],
+        "changedFields": []
+      },
+      {
+        "id": "new_task_pack",
+        "headLabel": "可选 Task Pack",
+        "status": "added",
+        "classifications": [
+          "semantic"
+        ],
+        "changedFields": []
+      },
+      {
+        "id": "new_template",
+        "headLabel": "Template / Schedule",
+        "status": "added",
+        "classifications": [
+          "semantic"
+        ],
+        "changedFields": []
+      },
+      {
+        "id": "new_terminal_journal",
+        "headLabel": "本机 native 终态日志",
+        "status": "added",
+        "classifications": [
+          "semantic"
+        ],
+        "changedFields": []
+      },
+      {
+        "id": "new_workspace",
+        "headLabel": "实际 Workspace",
+        "status": "added",
+        "classifications": [
+          "semantic"
+        ],
+        "changedFields": []
+      },
+      {
+        "id": "old_observer",
+        "baseLabel": "Observer + Outbox",
+        "status": "removed",
+        "classifications": [
+          "semantic"
+        ],
+        "changedFields": []
+      },
+      {
+        "id": "old_outputs",
+        "baseLabel": "报告 / Bitable 输出",
+        "status": "removed",
+        "classifications": [
+          "semantic"
+        ],
+        "changedFields": []
+      },
+      {
+        "id": "supervisor",
+        "baseLabel": "外部 supervisor",
+        "headLabel": "外部 supervisor",
+        "status": "changed",
+        "classifications": [
+          "geometry",
+          "semantic"
+        ],
+        "changedFields": [
+          "/pos",
+          "/size",
+          "/sublabel"
+        ]
+      },
+      {
+        "id": "task_ledger",
+        "baseLabel": "SQLite Registry",
+        "headLabel": "唯一 TaskLedger / SQLite",
+        "status": "changed",
+        "classifications": [
+          "geometry",
+          "semantic"
+        ],
+        "changedFields": [
+          "/label",
+          "/pos",
+          "/size",
+          "/sublabel"
+        ]
+      },
+      {
+        "id": "task_management",
+        "baseLabel": "hermes_monitor",
+        "headLabel": "Task System",
+        "status": "changed",
+        "classifications": [
+          "geometry",
+          "semantic"
+        ],
+        "changedFields": [
+          "/label",
+          "/pos",
+          "/size",
+          "/sublabel"
+        ]
+      },
+      {
+        "id": "task_view",
+        "baseLabel": "Datasette",
+        "headLabel": "私有任务 dashboard",
+        "status": "changed",
+        "classifications": [
+          "geometry",
+          "semantic"
+        ],
+        "changedFields": [
+          "/label",
+          "/pos",
+          "/size",
+          "/sublabel"
+        ]
+      }
+    ],
+    "connections": [
+      {
+        "id": "channel-ingress",
+        "base": {
+          "from": "channel_ingress",
+          "to": "host_runtime",
+          "label": "触发"
+        },
+        "head": {
+          "from": "channel_ingress",
+          "to": "host_runtime",
+          "label": "鉴权后对话"
+        },
+        "status": "changed",
+        "classifications": [
+          "semantic"
+        ],
+        "changedFields": [
+          "/label"
+        ]
+      },
+      {
+        "id": "dispatch-execution",
+        "base": {
+          "from": "task_management",
+          "to": "execution",
+          "label": "权限通过后派发"
+        },
+        "head": {
+          "from": "task_management",
+          "to": "execution",
+          "label": "确认 / 策略 / 实例门"
+        },
+        "status": "changed",
+        "classifications": [
+          "semantic"
+        ],
+        "changedFields": [
+          "/label"
+        ]
+      },
+      {
+        "id": "ledger-ownership",
+        "base": {
+          "from": "task_management",
+          "to": "task_ledger",
+          "label": "SQLite 读写"
+        },
+        "head": {
+          "from": "task_management",
+          "to": "task_ledger",
+          "label": "事务读写"
+        },
+        "status": "changed",
+        "classifications": [
+          "semantic"
+        ],
+        "changedFields": [
+          "/label"
+        ]
+      },
+      {
+        "id": "mount-task-management",
+        "base": {
+          "from": "host_runtime",
+          "to": "task_management",
+          "label": "register / hook"
+        },
+        "head": {
+          "from": "host_runtime",
+          "to": "task_management",
+          "label": "挂载 / 卸载"
+        },
+        "status": "changed",
+        "classifications": [
+          "semantic"
+        ],
+        "changedFields": [
+          "/label"
+        ]
+      },
+      {
+        "id": "new_execution_workspace",
+        "head": {
+          "from": "execution",
+          "to": "new_workspace",
+          "label": "范围校验"
+        },
+        "status": "added",
+        "classifications": [
+          "topology"
+        ],
+        "changedFields": []
+      },
+      {
+        "id": "new_native_ready",
+        "head": {
+          "from": "execution",
+          "to": "new_terminal_journal",
+          "label": "静止终态先落盘"
+        },
+        "status": "added",
+        "classifications": [
+          "topology"
+        ],
+        "changedFields": []
+      },
+      {
+        "id": "new_native_recovery",
+        "head": {
+          "from": "task_management",
+          "to": "new_terminal_journal",
+          "label": "精确恢复读取"
+        },
+        "status": "added",
+        "classifications": [
+          "topology"
+        ],
+        "changedFields": []
+      },
+      {
+        "id": "new_pack_registration",
+        "head": {
+          "from": "new_task_pack",
+          "to": "task_management",
+          "label": "受信扩展注册"
+        },
+        "status": "added",
+        "classifications": [
+          "topology"
+        ],
+        "changedFields": []
+      },
+      {
+        "id": "new_task_decision",
+        "head": {
+          "from": "task_management",
+          "to": "new_decision",
+          "label": "可选提案回执"
+        },
+        "status": "added",
+        "classifications": [
+          "topology"
+        ],
+        "changedFields": []
+      },
+      {
+        "id": "new_template_task",
+        "head": {
+          "from": "new_template",
+          "to": "task_management",
+          "label": "版本化配置"
+        },
+        "status": "added",
+        "classifications": [
+          "topology"
+        ],
+        "changedFields": []
+      },
+      {
+        "id": "old_observer_executor",
+        "base": {
+          "from": "old_observer",
+          "to": "execution",
+          "label": "只读 state.db"
+        },
+        "status": "removed",
+        "classifications": [
+          "topology"
+        ],
+        "changedFields": []
+      },
+      {
+        "id": "old_observer_monitor",
+        "base": {
+          "from": "old_observer",
+          "to": "task_management",
+          "label": "HTTP intake + ACK"
+        },
+        "status": "removed",
+        "classifications": [
+          "topology"
+        ],
+        "changedFields": []
+      },
+      {
+        "id": "old_outputs_registry",
+        "base": {
+          "from": "old_outputs",
+          "to": "task_ledger",
+          "label": "读取任务结果"
+        },
+        "status": "removed",
+        "classifications": [
+          "topology"
+        ],
+        "changedFields": []
+      },
+      {
+        "id": "read-task-view",
+        "base": {
+          "from": "task_view",
+          "to": "task_ledger",
+          "label": "只读 SQL"
+        },
+        "head": {
+          "from": "task_view",
+          "to": "task_ledger",
+          "label": "同源只读 query"
+        },
+        "status": "changed",
+        "classifications": [
+          "semantic"
+        ],
+        "changedFields": [
+          "/label"
+        ]
+      }
+    ],
+    "boundaries": []
+  },
+  "identity": {
+    "components": "components[].id",
+    "connections": "connections[].id (required)",
+    "boundaries": "boundaries[].kind + boundaries[].label (derived)"
+  },
+  "view": {
+    "visualPreset": "classic"
+  },
+  "limitations": [
+    "Authored Architecture IR only; no runtime impact, causality, risk, or mergeability is inferred.",
+    "Boundary identity is conservatively derived from kind + label."
+  ],
+  "artifact": {
+    "sha256": "f9ff40d399989c8e285b5cf00e0a37da11f1e3f74d5cc18218eb21534c05c8e9",
+    "bytes": 2184889
+  },
+  "validation": {
+    "checksPassed": 28,
+    "checkCount": 28,
+    "baseComposition": "pass",
+    "headComposition": "pass"
+  }
+}
