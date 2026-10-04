@@ -9,3 +9,4 @@ node_modules/
 coverage/
 *.tgz
 .DS_Store
+DEPLOYMENT-HANDOFF.json

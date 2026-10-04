@@ -1,4 +1,4 @@
-# DSH Task Management
+# DSH Orchestration
 
 Configurable task management mounted inside DeepSeek Harness. A stable task keeps multiple runs, sessions, reports, revisions and artifacts. User-defined templates and schedules use the same ledger and lifecycle. Planner, executor and combined roles compose through explicit permissions and authenticated peer protocols.
 
@@ -51,7 +51,7 @@ Cancelling a run does not cancel other runs of the same task. Cancellation resou
 ## Review material
 
 - [中文评阅入口](docs/RELEASE-REVIEW.zh-CN.md)
-- [Current 0.1.1 checks and explicit limits](docs/validation/0.1.1-checks.json)
+- [Current 0.2.0 validation](docs/validation/0.2.0-checks.json)
 - [Security boundaries](docs/SECURITY.md)
 - [Migration](docs/MIGRATION.md)
 - [Requirement correspondence](docs/PARITY.md)

@@ -1,0 +1,78 @@
+{
+  "ok": true,
+  "checkedAt": "2026-10-04T09:00:04.204070+00:00",
+  "node": "26.5.1",
+  "dshVersion": "0.2.0-rc.2",
+  "corePackages": [
+    "@dsh-task/typed-decisions@0.2.0",
+    "@dsh-task/task-system@0.2.0"
+  ],
+  "optionalAdapter": "@dsh-task/feishu-channel@0.1.1",
+  "commands": [
+    "npm run build",
+    "npm run test:unit (workspace phase of check)",
+    "npm run test:native",
+    "npm run test:legacy",
+    "npm run test:distribution",
+    "node tests/dsh/finalize-packages.mjs"
+  ],
+  "groups": [
+    {
+      "group": "workspaces",
+      "tests": 50,
+      "passed": 50,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "group": "workspaces",
+      "tests": 170,
+      "passed": 169,
+      "failed": 0,
+      "skipped": 1
+    },
+    {
+      "group": "workspaces",
+      "tests": 34,
+      "passed": 34,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "group": "workspaces",
+      "tests": 32,
+      "passed": 32,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "group": "native",
+      "tests": 62,
+      "passed": 62,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "group": "legacy",
+      "tests": 96,
+      "passed": 96,
+      "failed": 0,
+      "skipped": 0
+    }
+  ],
+  "totals": {
+    "tests": 444,
+    "passed": 443,
+    "failed": 0,
+    "skipped": 1
+  },
+  "skipReason": "One unconfigured-source-IP socket subtest needs the absent macOS 127.0.0.2 loopback alias; verifier source-IP denial and proxy-header denial still pass. Linux runs this socket case.",
+  "fixtures": "Synthetic models, temporary Ed25519 test keys, temporary databases and isolated DSH profiles; no live model or channel calls.",
+  "distributionReceipts": [
+    "../../tests/dsh/results/distribution.json",
+    "../../tests/dsh/results/capabilities.json",
+    "../../tests/dsh/results/final-pack-integrities.json"
+  ],
+  "upstreamDecisionReuse": "Existing DSH llm.prepareCall for standalone bounded calls; existing Agent/AgentLoop for task execution. Official structured subagents assessed, no artificial parent Agent added.",
+  "codeChanges": "Remote implementation relocated into task suite; task-domain policy moved out of general decisions; optional channel consumes public structural port. Task/Run/Attempt/Report, wire version and database schemas unchanged."
+}
