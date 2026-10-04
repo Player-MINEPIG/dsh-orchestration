@@ -148,6 +148,8 @@ test('task_curate is opt-in for authenticated planner operators and never grants
   ] });
   try {
     h.ctx.taskSystem.ledger.createTask('curate-fixture-create', { taskId: 'curate-fixture', title: 'Curation fixture', requiresConfirmation: true });
+    const oldTask = {...h.ctx.taskSystem.ledger.getTask('curate-fixture'), admissionState:'admitted', admissionRevision:1};
+    h.ctx.taskSystem.ledger.managementDatabase().prepare("UPDATE entities SET data=? WHERE kind='task' AND id=?").run(JSON.stringify(oldTask),'curate-fixture');
     h.transport.receive(operator); await h.channel.tick();
     assert.equal(h.ctx.taskSystem.ledger.getTask('curate-fixture').admissionState, 'dismissed');
     assert.equal(h.ctx.taskSystem.ledger.getTask('curate-fixture').confirmation.state, 'pending');

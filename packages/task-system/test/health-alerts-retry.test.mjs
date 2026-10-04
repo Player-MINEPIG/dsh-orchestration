@@ -285,7 +285,7 @@ test("same-session safe retry uses a new fenced attempt and preserves runtime or
       witness: { ...witness, fromSeq: 8, toSeq: 15, terminalSeq: 14, turn: 2 },
     }).value;
     assert.equal(terminal.state, "failed");
-    assert.equal(terminal.validation, "not-submitted");
+    assert.equal(terminal.validation, undefined);
     assert.equal(
       f.ledger.deliveries()[0].runId,
       run.runId,
@@ -329,7 +329,7 @@ test("invalid/gapped/effectful retry proof cannot release ownership or schedule 
       allowRetry: false,
     }).value;
     assert.equal(stopped.state, "failed");
-    assert.equal(stopped.validation, "not-submitted");
+    assert.equal(stopped.validation, undefined);
   } finally {
     f.close();
   }

@@ -121,3 +121,5 @@ const access=document.querySelector('.sidebar-footer>div');access.innerHTML=`${e
 refresh();if(!SNAPSHOT_MODE)setInterval(()=>{if(!document.hidden)refresh();},Math.max(5000,Number(config.refreshIntervalMs)||15000));
 document.addEventListener('visibilitychange',()=>{if(!document.hidden&&checkSession()&&!SNAPSHOT_MODE)refresh();});
 window.addEventListener('pageshow',()=>{if(checkSession()&&!SNAPSHOT_MODE)refresh();});
+
+const managementLink=document.querySelector('[data-management-link]');if(managementLink)managementLink.hidden=!config.managementEnabled;

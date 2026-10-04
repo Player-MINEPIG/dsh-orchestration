@@ -1,4 +1,5 @@
-import { byteLimit, canonical, digest, insist, isRecord } from './protocol.js'
+import { byteLimit, canonical, canonicalData, digest, insist, isRecord, validatePreDispatchFailure } from './protocol.js'
+import { resolvedClaimContext } from './context.js'
 import { authorizedWorkspace } from './policy.js'
 import { bindCollaboration } from './collaboration.js'
 import { validateRetryWitness } from './retry.js'
@@ -38,7 +39,7 @@ export class ExecutorWorker {
     const { policy,provider } = this.options
     const candidates = pending.filter(run => {
       const route = run.route
-      return !run.observationOnly && (!run.retry || Date.parse(run.retry.notBefore) <= this.now()) && run.state === 'queued' && route?.nodeId === policy.nodeId && provider.supports(route)
+      return !run.historyOnly && !run.observationOnly && (!run.retry || Date.parse(run.retry.notBefore) <= this.now()) && run.state === 'queued' && route?.nodeId === policy.nodeId && provider.supports(route)
         && route.requiredCapabilities.every(cap => policy.capabilities.includes(cap) && provider.capabilities.includes(cap))
         && policy.workspaces.some(workspace => workspace.nodeId === policy.nodeId && workspace.workspaceId === route.workspaceId)
         && !this.runs.has(run.runId)
@@ -64,7 +65,8 @@ export class ExecutorWorker {
   private async executeOwned(runId: string, commandId: string, abort: AbortController): Promise<DispatchRecord> {
     const { ledger, provider, store, policy } = this.options
     const claim = (await ledger.claim(commandId, { runId, nodeId: policy.nodeId, ttlMs: this.options.ttlMs ?? 60000 })).value
-    insist(!claim.run.observationOnly,'OBSERVE_ONLY',403)
+    insist(!claim.run.historyOnly && !claim.run.observationOnly,'OBSERVE_ONLY',403)
+    claim.executionContext = resolvedClaimContext(claim)
     const existing = store.dispatch(claim.attempt.attemptId)
     if (existing) return existing.state === 'result' ? await this.deliver(existing) : existing.state === 'retry_pending' ? await this.requestRetry(existing) : existing
     const workspacePath = await authorizedWorkspace(claim,policy,provider)
@@ -205,10 +207,15 @@ export class ExecutorWorker {
 }
 function validateResult(result: ExecutionResult,maxBytes: number): void {
   insist(isRecord(result),'INVALID_EXECUTION_RESULT')
+  if (result.preDispatchFailure !== undefined) {
+    validatePreDispatchFailure(result.preDispatchFailure)
+    insist(result.outcome === 'blocked' && result.report === undefined && result.retryWitness === undefined && !Object.hasOwn(result,'notifications'), 'INVALID_PRE_DISPATCH_FAILURE')
+  }
   if (result.retryAllowed !== undefined) insist(typeof result.retryAllowed === 'boolean' && result.retryWitness !== undefined,'INVALID_RETRY_ALLOWANCE')
   if (result.retryWitness !== undefined) { insist(result.outcome === 'unknown','RETRY_REQUIRES_UNKNOWN_OUTCOME'); validateRetryWitness(result.retryWitness) }
   insist(Buffer.byteLength(canonical(result)) <= maxBytes,'EXECUTION_RESULT_LIMIT')
   insist(result && ['success','partial','failure','blocked','unknown'].includes(result.outcome) && typeof result.summary === 'string' && result.summary.length > 0 && Buffer.byteLength(result.summary) <= 5000, 'INVALID_EXECUTION_RESULT')
   if (result.report) insist(typeof result.report.title === 'string' && result.report.title.length > 0 && Buffer.byteLength(result.report.title) <= 500 && typeof result.report.body === 'string' && result.report.body.length > 0 && Buffer.byteLength(result.report.body) <= 32768, 'INVALID_EXECUTION_REPORT')
+  if (result.report?.data !== undefined) canonicalData(result.report.data)
   if (result.report?.schemaId !== undefined) insist(typeof result.report.schemaId === 'string' && result.report.schemaId.length > 0 && Buffer.byteLength(result.report.schemaId) <= 200,'INVALID_REPORT_SCHEMA')
 }

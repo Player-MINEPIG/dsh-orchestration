@@ -121,7 +121,7 @@ export class RemoteLedgerClient implements LedgerPort {
     return this.command('claim',commandId,{ runId: input.runId,ttlMs: input.ttlMs })
   }
   renew(commandId: string,input: LeaseRef & { ttlMs: number }): Promise<Receipt<Attempt>> { return this.command('renew',commandId,{ ...this.scoped(input),ttlMs: input.ttlMs }) }
-  submit(commandId: string,input: Settlement): Promise<Receipt<Run>> { return this.command('submit',commandId,{ ...this.scoped(input),outcome: input.outcome,summary: input.summary,...(input.report ? { report: input.report as unknown as Json } : {}) }) }
+  submit(commandId: string,input: Settlement): Promise<Receipt<Run>> { return this.command('submit',commandId,{ ...this.scoped(input),outcome: input.outcome,summary: input.summary,...(input.report ? { report: input.report as unknown as Json } : {}),...(input.preDispatchFailure ? { preDispatchFailure: input.preDispatchFailure as unknown as Json } : {}) }) }
   async cancel(commandId: string,input: { taskId: string; runId?: string; reason: string }): Promise<Receipt<Task>> {
     insist(input.runId,'RUN_SCOPED_CANCEL_REQUIRED')
     const run = await this.getRun(input.runId)

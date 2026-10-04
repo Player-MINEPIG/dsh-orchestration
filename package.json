@@ -14,13 +14,14 @@
   "scripts": {
     "build": "npm run build -w @dsh-task/typed-decisions && npm run build -w @dsh-task/task-system && npm run build -w @dsh-task/feishu-channel",
     "test": "npm run build && npm run test --workspaces --if-present",
-    "check": "npm run build && npm run test:unit && npm run test:native && npm run test:legacy",
+    "check": "npm run build && npm run test:unit && npm run test:native && npm run test:legacy && npm run test:management",
     "test:unit": "npm run test --workspaces --if-present",
-    "test:native": "node --test tests/dsh/native-loader.test.mjs tests/dsh/remote-native.test.mjs tests/dsh/trusted-network-native.test.mjs",
+    "test:native": "node --test tests/dsh/native-loader.test.mjs tests/dsh/remote-native.test.mjs tests/dsh/trusted-network-native.test.mjs tests/dsh/context-contract.test.mjs tests/dsh/pre-dispatch.test.mjs",
     "test:distribution": "node tests/dsh/distribution-acceptance.mjs && node tests/dsh/capability-distribution.mjs",
     "format:check": "prettier --check packages/task-system/src/*.ts",
-    "test:legacy": "node --test tests/legacy/readers.test.mjs tests/legacy/reporting.test.mjs tests/legacy/quota.test.mjs tests/legacy/compatibility.test.mjs tests/legacy/configured-sources.test.mjs tests/legacy/ad-hoc.test.mjs tests/legacy/diagnostics.test.mjs",
-    "test:legacy-reference": "node --test tests/legacy/differential-reference.test.mjs"
+    "test:legacy": "node --test tests/legacy/readers.test.mjs tests/legacy/reporting.test.mjs tests/legacy/quota.test.mjs tests/legacy/compatibility.test.mjs tests/legacy/configured-sources.test.mjs tests/legacy/ad-hoc.test.mjs tests/legacy/diagnostics.test.mjs tests/legacy/context-contract.test.mjs",
+    "test:legacy-reference": "node --test tests/legacy/differential-reference.test.mjs",
+    "test:management": "node --test tests/management/*.test.mjs"
   },
   "devDependencies": {
     "@deepseek-ai/cordis-plugin-loader": "1.0.5",

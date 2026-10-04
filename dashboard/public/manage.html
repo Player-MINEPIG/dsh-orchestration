@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="theme-color" content="#122b28" />
+    <title>DSH · 任务管理</title>
+    <link rel="icon" href="./favicon.svg" />
+    <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./management.css" />
+    <script src="./config.js"></script>
+    <script type="module" src="./management-app.js"></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#management-main">跳到内容</a>
+    <div class="management-shell">
+      <header class="management-header">
+        <a class="management-brand" href="#projects"
+          >DSH <span>任务管理</span></a
+        >
+        <nav aria-label="工作台导航">
+          <a href="#projects">项目与需求</a
+          ><a href="./index.html#tasks">原任务看板 ↗</a
+          ><button id="management-refresh" type="button">刷新</button>
+        </nav>
+      </header>
+      <section class="database-banner" aria-label="当前数据库">
+        <strong id="database-label">读取数据库身份…</strong
+        ><span id="database-identity"></span
+        ><small id="management-access"></small>
+      </section>
+      <div id="management-notice" role="status" aria-live="polite"></div>
+      <main id="management-main" tabindex="-1">
+        <div class="initial-state">
+          <h1>读取管理记录</h1>
+          <p>
+            Domain → Project → Backlog → Task → Run / Attempt → Report /
+            Artifact
+          </p>
+        </div>
+      </main>
+      <footer class="management-footer">
+        执行状态由执行协议维护 · 内容管理与执行所有权分开<span
+          id="management-freshness"
+        ></span>
+      </footer>
+    </div>
+    <dialog id="management-dialog" aria-labelledby="form-title">
+      <form id="management-form">
+        <div class="form-heading">
+          <h2 id="form-title"></h2>
+          <button type="button" data-close aria-label="关闭表单">×</button>
+        </div>
+        <div id="form-fields"></div>
+        <p id="form-error" class="form-error" role="alert"></p>
+        <div class="form-actions">
+          <button type="button" data-close>取消</button
+          ><button id="form-save" type="submit" class="primary-button">
+            保存
+          </button>
+        </div>
+      </form>
+    </dialog>
+  </body>
+</html>

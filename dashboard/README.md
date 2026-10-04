@@ -1,6 +1,6 @@
 # DSH 任务 WebUI
 
-同一套 `TaskLedger.snapshot()` 查询的可移植、只读界面。前端无框架依赖，可在 DSH、普通 Node 宿主或私有静态托管使用；不建立第二个任务数据库。
+同一套 `TaskLedger.snapshot()` 查询的可移植界面；原看板默认只读，新增可选私有管理页。前端无框架依赖，可在 DSH、普通 Node 宿主或私有静态托管使用；不建立第二个任务数据库。
 
 ## 本地实时查询模式
 
@@ -48,7 +48,7 @@ Sites 是可选交付适配器，不是框架依赖。私有站源码位于 mono
 
 ## 显式接入现有任务
 
-操作员可调用核心导入接口；WebUI 没有写入口：
+操作员可调用核心导入接口；原只读看板没有导入写入口：
 
 ```sh
 node dashboard/import.mjs --source path/to/explicit-import.json \
@@ -84,3 +84,63 @@ npm test --workspace @dsh-orchestration/dashboard
 # Private VPS live deployment
 
 For a prepared Cloudflare Access origin, see [deployment handoff](deploy/README.md) and the [real browser acceptance checklist](qa/live-browser-checklist.md). `live-server.mjs` adds signed owner authentication while staying loopback-only. It reads the same existing TaskLedger and does not create a new data store. `server.mjs` remains the local preview entrypoint.
+
+
+## 私有任务管理页（独立验收库）
+
+新页面是 `manage.html`，原 `index.html`、静态导出和 live-server 默认继续只读。管理页面读取 `/api/workbench`，使用同一个 TaskLedger SQLite 与 Workbench 的管理表，不创建第二套执行账本。隔离验收启动方式见根目录的验收脚本说明；浏览器顶部必须能看到 **databaseId、label、数据库绝对路径**，不能把 VPS 8443 原看板当作此库的执行证据。
+
+管理能力：
+
+- 新建和按 revision 编辑 Domain、Project、需求侧 Backlog、Task
+- Domain–Project、Backlog–Task 多对多关联和解除关联；跨项目任务按 taskId 去重
+- 明确 Task override / 关联需求最高优先级 / normal 的来源，不保存派生优先级
+- 按 Task 查看 Run、实际 Attempt 节点 / executionId / sessionId / fence、结果报告、失败事件和材料引用
+- Run.route 显示计划归属；实际归属仅来自 Attempt；Session 列使用 ledger 从 Attempt 和显式上下文关系派生的结果
+- 显示 partial、固定模板引用、轻量意图快照、报告结构化 data/schemaId；不在新视图暴露 admissionState / admissionRevision、Run.outcome / validation
+- 完成条件可用 JSON 数组编辑，例如 `[{"description":"核实真实运行结果","kind":"manual_check"}]`；条件观察只读，空条件不会完成，内容保存不表示人工验收
+
+管理页不提供执行路由、Run 状态、租约、权限、凭据、调度开关或人工确认伪造入口。真实派活仍由既有 DSH 执行协议处理。
+
+### 同源宿主接入
+
+```js
+import {TaskLedger, Workbench} from '../packages/task-system/dist/index.js';
+import {createDashboardServer} from './server.mjs';
+import {managementAdapter} from './management.mjs';
+
+const ledger = TaskLedger.open(explicitIsolatedDatabasePath);
+const server = createDashboardServer({
+  snapshot: () => ledger.snapshot(),
+  management: managementAdapter(ledger, new Workbench(ledger)),
+  databaseIdentity: {
+    databaseId: existingAcceptanceIdentity.databaseId,
+    label: existingAcceptanceIdentity.label,
+    path: explicitIsolatedDatabasePath
+  },
+  localRole: 'manager', // Explicit loopback operator capability, not a verified human identity
+  accessLabel: '隔离验收库',
+  accessDescription: '仅本机 · 私有任务管理'
+});
+server.listen(4317, '127.0.0.1');
+```
+
+需要挂到已有认证宿主时，`authorize(req)` 必须验证现有会话后由**服务端**返回 `{role:'manager', expiresAt}`；未授予 manager 的有效会话只能读。必须同时设置固定的 `managementOrigin`（如既有私人宿主的 HTTPS origin），并沿用 `requireSessionExpiry:true`。原 Cloudflare Access 适配器只返回期限，默认不会因此获得管理能力；不要从请求头、payload actor/role 或同名节点推断管理权限。此工作没有创建账号、登录系统或凭据，也没有改原 live-server 部署。
+
+`POST /api/manage` 的 body 为 `{commandId,operation,data}`。服务检查 manager role、精确 Origin、同源 Fetch Metadata、`X-DSH-Management:1`、JSON Content-Type 和 256 KiB 上限；没有 CORS 放行。管理操作只在明确 allowlist 内，Task 表单不能写 policy、路由和执行状态。命令沿用持久幂等回执；更新用 expectedRevision，过期修订返回 409。客户端重复点击禁用保存，连接中断保留原 commandId 供同一表单重试；取消后不会隐式写入。
+
+### 验证边界与本机 UI 验收
+
+自动测试：`node --test dashboard/tests/*.test.mjs`（需先 build 核心）。管理 HTTP 测试创建独立临时文件 SQLite，验证 CRUD、关联、重启读取、幂等、并发冲突、角色/CSRF、真实 ledger 失败结算与 Attempt/Report 投影。它们是合成自动回归，不能代替 VPS → MBP 的真实执行验收。
+
+云浏览器无法访问当前 shell 的 loopback，未进行渲染/真实交互验收。交给已授权本机执行线检查：
+
+1. 启动指定独立验收库，打开 `/manage.html`，核对顶部 DB 身份；宽屏与手机宽度下查看内容和表单
+2. 新建领域 → 项目 → 一项需求 → Task；建立多对多关联，编辑并刷新，关闭/重启服务后核对仍存在
+3. 明确 override、清除 override、多个需求最高优先级；同一 Task 跨项目不重复成新任务
+4. 两标签页编辑同一修订，后提交者收到冲突；保存期间重复点击、网络中断后重试不产生重复记录
+5. Close / Cancel / Escape 不写入；前进/后退不重新提交；刷新/自动轮询不覆盖打开表单；会话到期隐藏记录
+6. 从真实 VPS → MBP 运行找到对应 Task，核对 Run.route 与 Attempt.nodeId / executionId / sessionId、失败报告和数据来源；缺脚本必须显示真实失败
+7. viewer 没有写按钮，直接调用 POST 也被拒绝；现有只读看板仍能访问
+
+原生适配器的启动前失败：仅在持久事件 `run.pre_dispatch_failed` 明确记录 `origin=native-adapter`、`phase=before-agent-start`、`code=NO_ADAPTER`，且与该 Run 的实际 Attempt、节点和计划 provider/model 对应时，管理页显示“模型调用与工作尚未开始”，采用事件 summary 说明原因。该路径允许 Run=blocked 且没有模型结果 Report；预先保留的内部 sessionId 只显示为预留引用，不证明 native session 已创建。开始后的未知失败、MISSING_CREDENTIAL 或缺少报告本身都不能推出“尚未开始”。

@@ -42,20 +42,20 @@ for (const code of ['NO_ADAPTER', 'MISSING_CREDENTIAL', 'AUTH', 'TOKEN_SECRET_SE
       assert.equal(results[0].status, 'fulfilled');
       const dispatch = results[0].value;
       assert.equal(dispatch.state, 'acknowledged');
-      assert.equal(dispatch.result.outcome, 'unknown');
+      assert.equal(dispatch.result.outcome, code === 'NO_ADAPTER' ? 'blocked' : 'unknown');
       assert.equal(dispatch.result.retryWitness, undefined);
       const canonical = code === 'TOKEN_SECRET_SENTINEL' ? 'RUNTIME_ERROR' : code;
-      assert.match(dispatch.result.summary, new RegExp(`ended with ${canonical} without`));
+      assert.match(dispatch.result.summary, code === 'NO_ADAPTER' ? /blocked before dispatch: NO_ADAPTER/ : new RegExp(`ended with ${canonical} without`));
       const authority = ledger.getRun(run.runId);
-      assert.equal(authority.state, 'uncertain');
-      assert.equal(authority.outcome, 'unknown');
-      assert.equal(authority.validation, 'not-submitted');
+      assert.equal(authority.state, code === 'NO_ADAPTER' ? 'blocked' : 'uncertain');
+      assert.equal(authority.validation, undefined);
       assert.equal(authority.retry, undefined);
       const history = ledger.history(task.taskId);
       assert.equal(history.reports.length, 0);
       assert.equal(history.events.find(event => event.type === 'run.settled').detail.summary, dispatch.result.summary);
       assert.doesNotMatch(JSON.stringify(history), /raw-secret-sentinel|nested-secret-sentinel|TOKEN_SECRET_SENTINEL|DSH_TASK_TEST_EMPTY_KEY|must-not-request/);
-      assert.equal(terminalCodes.at(-1), code);
+      if (code === 'NO_ADAPTER') { assert.equal(terminalCodes.length, 0); assert.equal(history.events.find(e=>e.type==='run.pre_dispatch_failed').detail.code, code); }
+      else assert.equal(terminalCodes.at(-1), code);
       assert.equal(h.adapter.requests.length, ['NO_ADAPTER', 'MISSING_CREDENTIAL'].includes(code) ? 0 : 1);
       assert.equal((await worker.pollOnce()).length, 0);
     } finally {
@@ -247,8 +247,8 @@ test('two real native executor hosts delegate through the signed coordinator, en
     assert.equal(a.adapter.requests.length, 0, 'restarting completed owner never replays model work');
     const followup = ledger.createRun('child-next-run', { taskId: child.task.taskId, route: route(1) }).value;
     assert.equal(followup.contextNotes.length, 1);
-    assert.equal(followup.contextNotes[0].body, 'Only a future child run may consume this note.');
-    assert.ok(followup.contextNotes[0].reportId);
+    assert.equal(ledger.executionContext(followup.runId).reports[0].body, 'Only a future child run may consume this note.');
+    assert.equal(typeof followup.contextNotes[0], 'string');
   } finally {
     await Promise.allSettled(workers.map(worker => worker?.dispose()));
     await Promise.allSettled(clients.map(client => client?.dispose()));
@@ -407,7 +407,7 @@ test('signed external native result preflight requires this execution source pre
     h.adapter.script.push({ name: 'task_settle', args: { outcome: 'success', summary: prepared.summary, reportTitle: copied.title, reportBody: copied.body, reportData: copied.data, reportSchemaId: copied.schemaId } });
     assert.equal((await worker.pollOnce(1))[0].status, 'fulfilled');
     assert.equal(ledger.getRun(second.run.runId).state, 'uncertain');
-    assert.equal(ledger.getRun(second.run.runId).validation, 'not-submitted');
+    assert.equal(ledger.getRun(second.run.runId).validation, undefined);
     assert.equal(ledger.history(second.task.taskId).reports.length, 0);
     assert.equal(h.adapter.requests.length, 4);
     assert.equal(h.ledger.snapshot().tasks.length, 0);

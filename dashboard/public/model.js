@@ -1,5 +1,5 @@
 /* Read-only projections of packages/task-system/src/contracts.ts. No second ledger. */
-export const STATE_LABELS = Object.freeze({inbox:'待整理',ready:'待执行',running:'进行中',waiting:'等待中',completed:'已完成',failed:'失败',cancelled:'已取消',archived:'已归档',queued:'排队中',blocked:'受阻',succeeded:'成功',uncertain:'结果待确认'});
+export const STATE_LABELS = Object.freeze({candidate:'候选',partial:'部分完成',inbox:'待整理',ready:'待执行',running:'进行中',waiting:'等待中',completed:'已完成',failed:'失败',cancelled:'已取消',archived:'已归档',queued:'排队中',blocked:'受阻',succeeded:'成功',uncertain:'结果待确认'});
 export const REPORT_LABELS = Object.freeze({progress:'进展',result:'结果',review:'复盘',observation:'状态记录'});
 export const TERMINAL_TASK_STATES = new Set(['completed','cancelled','archived']);
 export const ATTENTION_TASK_STATES = new Set(['waiting','failed']);

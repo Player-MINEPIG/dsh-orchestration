@@ -282,7 +282,10 @@ export function validateNodeEvidenceGate(builderInput, nodes, expectedNodeIds) {
   unique(nodes.map(n => n.nodeId), 'node identities');
   for (const nodeId of expectedNodeIds) {
     const node = references.get(nodeId); const missing = builderInput.data_quality.missing_devices.includes(nodeId);
-    if (!node || node.outcome !== 'success' || node.validation !== 'valid') { insist(missing && builderInput.report_context.source_data_status === 'partial', `Missing/failed node ${nodeId} must be declared`); continue; }
+    const succeeded = node?.state !== undefined
+      ? node.state === 'succeeded' && node.settlement?.type === 'run.settled' && node.settlement.detail?.outcome === 'success'
+      : node?.outcome === 'success' && node.validation === 'valid';
+    if (!succeeded) { insist(missing && builderInput.report_context.source_data_status === 'partial', `Missing/failed node ${nodeId} must be declared`); continue; }
     insist(!missing, `Successful node ${nodeId} cannot be labeled missing`); insist(node.rootTaskId === builderInput.report_context.root_task_id, 'Node belongs to wrong root');
     const report = validateNodeReport(node.report, { nodeIds: expectedNodeIds }); insist(report.device_id === nodeId, 'Wrong node payload');
     if (node.rootRunId) insist(node.rootRunId === builderInput.report_context.root_run_id, 'Node belongs to wrong root run');

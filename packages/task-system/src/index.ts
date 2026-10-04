@@ -3,3 +3,5 @@ export * from "./ledger.js";
 export * from "./workspaces.js";
 export * from "./observation.js";
 export * from "./legacy-import.js";
+export * from "./workbench-contracts.js";
+export * from "./workbench.js";

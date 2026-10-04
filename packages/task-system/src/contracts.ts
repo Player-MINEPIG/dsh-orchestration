@@ -1,3 +1,4 @@
+import type { Criterion } from "./workbench-contracts.js";
 /** Shared, versioned contract used by plugins and the read-only dashboard. */
 export const SCHEMA_VERSION = "1" as const;
 export type Json =
@@ -7,7 +8,9 @@ export type Json =
   | string
   | Json[]
   | { [key: string]: Json };
+export type TaskPriority = "low" | "normal" | "high" | "urgent";
 export type TaskState =
+  | "candidate"
   | "inbox"
   | "ready"
   | "running"
@@ -21,6 +24,7 @@ export type RunState =
   | "running"
   | "blocked"
   | "succeeded"
+  | "partial"
   | "failed"
   | "cancelled"
   | "uncertain";
@@ -48,6 +52,14 @@ export interface Task {
   taskId: string;
   title: string;
   description: string;
+  goal?: string;
+  acceptanceCriteria?: Criterion[];
+  revision?: number;
+  intentRevision?: number;
+  /** Derived. Explicit override wins, otherwise the highest linked Backlog. */
+  priority?: TaskPriority;
+  priorityOverride?: TaskPriority;
+  targetAt?: string;
   state: TaskState;
   kind: "ad_hoc" | "scheduled" | "observed";
   createdAt: string;
@@ -56,6 +68,7 @@ export interface Task {
   parentRunId?: string;
   workspaceId?: string;
   tags: string[];
+  /** Legacy imported/compatibility data only; new tasks use state=candidate. */
   admissionState?: "admitted" | "dismissed";
   admissionRevision?: number;
   policy?: TaskPolicy;
@@ -92,7 +105,16 @@ export interface Run {
   state: RunState;
   createdAt: string;
   updatedAt: string;
+  /** Read-only derived from Attempt and explicit context session relations. */
   sessionIds: string[];
+  intentSnapshot?: {
+    title: string;
+    description: string;
+    goal?: string;
+    acceptanceCriteria: Criterion[];
+    intentRevision?: number;
+  };
+  /** Legacy historical fields, never written for new runs. */
   outcome?: Outcome;
   reviewStatus?: "pending_user" | "accepted" | "rejected";
   validation?: "valid" | "not-submitted";
@@ -102,8 +124,10 @@ export interface Run {
   currentAttemptId?: string;
   cancellationRequested?: boolean;
   /** Historical observation may never become dispatchable when its task is continued. */
+  historyOnly?: boolean;
+  /** Legacy import compatibility. New runs use historyOnly. */
   observationOnly?: boolean;
-  contextNotes?: { reportId: string; body: string; actor: string }[];
+  contextNotes?: string[] | { reportId: string; body: string; actor: string }[];
   executionStartedAt?: string;
   retryPolicy?: {
     maxRetries: number;
@@ -335,6 +359,7 @@ export interface Snapshot {
   source: Source;
   tasks: Task[];
   runs: Run[];
+  attempts?: Attempt[];
   reports: Report[];
   artifacts: Artifact[];
   templates: Template[];
@@ -345,7 +370,13 @@ export interface Snapshot {
   nodeStatuses?: NodeStatus[];
   approvals?: ApprovalRequest[];
 }
+export interface ExecutionContext {
+  template?: Template;
+  reports: { reportId: string; body: string; actor: string }[];
+}
 export interface Claim {
+  /** Resolved authority-owned transport context, not another persisted Run copy. */
+  executionContext?: ExecutionContext;
   attempt: Attempt;
   run: Run;
   task: Task;
@@ -358,7 +389,17 @@ export interface LeaseRef {
   /** Required to start execution and for every write after ownership is bound. */
   executionId?: string;
 }
+export const NATIVE_PROVIDER_UNAVAILABLE_SUMMARY =
+  "Native execution blocked before dispatch: NO_ADAPTER. No adapter is registered for the configured provider; no model request or workload was started.";
+export interface NativePreDispatchFailure {
+  kind: "native-provider-unavailable-v1";
+  code: "NO_ADAPTER";
+  provider: string;
+  model: string;
+}
 export interface Settlement extends LeaseRef {
+  /** Trusted native host attestation only. Never exposed in the model settlement tool. */
+  preDispatchFailure?: NativePreDispatchFailure;
   outcome: Outcome;
   summary: string;
   report?: {

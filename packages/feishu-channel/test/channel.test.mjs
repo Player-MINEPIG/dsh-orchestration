@@ -35,6 +35,10 @@ async function host({ dir = join(scratch, `host-${++serial}`), task = false, tas
   await ctx.plugin(plugin.withTransport(() => transport), { enabled: true, databasePath: join(dir, 'feishu.sqlite'), allowedChatIds: ['oc-test'], allowedUserIds: ['ou-operator', 'ou-reader'], operatorUserIds: ['ou-operator'], taskIntegration: task, pollIntervalMs: 60000, requestTimeoutMs: 100, ...config }).await();
   return { ctx, transport, dir, channel: ctx.feishuChannel, ledger: ctx.taskSystem?.ledger, dispose: () => ctx.fiber.dispose() };
 }
+function legacyAdmission(ledger, taskId) {
+  const task={...ledger.getTask(taskId),admissionState:'admitted',admissionRevision:1};
+  ledger.managementDatabase().prepare("UPDATE entities SET data=? WHERE kind='task' AND id=?").run(JSON.stringify(task),taskId);
+}
 function seed(h, suffix = '') {
   const ledger = h.ledger;
   ledger.registerNode(`node:${suffix}`, { nodeId: 'local', roles: ['both'], capabilities: [], models: [{ provider: 'mock', model: 'offline', reasoningEfforts: [] }], workspaceIds: [], enabled: true, lastSeenAt: new Date().toISOString() });
@@ -156,7 +160,7 @@ test('actual task service commands authorize operator IDs, continue exact blocke
   h.transport.receive(event); h.transport.receive(event); await h.channel.tick();
   assert.equal(h.ledger.history(task.taskId).runs.length, 2);
   const current = h.ledger.history(task.taskId).runs.at(-1);
-  assert.equal(current.configuration.continuationOf, run.runId);
+  assert.equal(h.ledger.history(task.taskId).events.find(e=>e.type==='run.continued' && e.runId===current.runId).detail.previousRunId, run.runId);
   h.transport.receive(message(`/task cancel ${task.taskId} ${run.runId}`)); await h.channel.tick();
   assert.equal(h.ledger.getRun(current.runId).state, 'queued');
   h.transport.receive(message(`/task cancel ${task.taskId} ${current.runId}`)); await h.channel.tick();
@@ -378,7 +382,7 @@ test('specialized renderer validation and size failures cannot send; lost delive
 });
 
 test('operator dismiss/restore uses admission revision and preserves execution/report history while suppressing automatic pushes', async () => {
-  const h = await host({ task: true }), { task, run, ref } = seed(h, 'admission');
+  const h = await host({ task: true }), { task, run, ref } = seed(h, 'admission'); legacyAdmission(h.ledger,task.taskId);
   h.ledger.submit('admission-result', { ...ref, outcome: 'success', summary: 'Completed evidence', report: { title: 'Evidence', body: 'Keep this report' }, notifications: [{ destination: 'feishu:chat:oc-test', kind: 'report', payload: null }] });
   const initial = h.ledger.getTask(task.taskId);
   h.transport.receive(message(`/task dismiss ${task.taskId} 1`, { senderId: 'ou-reader' }));
@@ -610,6 +614,7 @@ test('runtime approval durable notifications require request and task identity a
   const source = offerApproval(h, 'delivered-runtime', { description });
   const pending = h.ledger.deliveries().filter(row => row.kind === 'approval');
   assert.equal(pending.length, 1); assert.equal(pending[0].approvalId, source.request.requestId); assert.equal(pending[0].taskId, source.task.taskId);
+  legacyAdmission(h.ledger,source.task.taskId);
   h.ledger.setTaskAdmission('dismiss-running-approval-task', { taskId: source.task.taskId, state: 'dismissed', expectedRevision: 1, actor: 'test-operator', reason: 'Visibility must not hide a live permission request' });
   await h.channel.tick();
   assert.equal(h.transport.calls.length, 1, 'mandatory runtime controls are independent of task visibility');

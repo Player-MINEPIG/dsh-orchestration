@@ -1,0 +1,444 @@
+.management-shell {
+  max-width: 1450px;
+  margin: auto;
+  padding: 0 36px;
+  color: var(--ink);
+}
+.management-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  min-height: 86px;
+  border-bottom: 1px solid var(--line);
+}
+.management-brand {
+  font-weight: 750;
+  font-size: 25px;
+  letter-spacing: 0.02em;
+}
+.management-brand span {
+  font-size: 17px;
+  margin-left: 12px;
+  color: var(--muted);
+  font-weight: 450;
+}
+.management-header nav,
+.management-actions,
+.form-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.management-header nav a {
+  font-size: 14px;
+  margin-right: 10px;
+}
+.management-shell button,
+dialog button {
+  border: 1px solid #cbd6c4;
+  border-radius: 7px;
+  background: white;
+  min-height: 42px;
+  padding: 9px 15px;
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+  font-size: 14px;
+}
+.management-shell button:hover,
+dialog button:hover {
+  background: #edf4e9;
+}
+.management-shell button:disabled,
+dialog button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.management-shell .primary-button,
+dialog .primary-button {
+  background: #254d3d;
+  color: white;
+  border-color: #254d3d;
+}
+.database-banner {
+  margin: 22px 0 0;
+  padding: 14px 18px;
+  border: 1px solid #d6dabe;
+  background: #f7f8ec;
+  border-radius: 9px;
+  display: grid;
+  gap: 6px;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+.database-banner strong {
+  font-size: 15px;
+}
+.database-banner small {
+  font-size: 12px;
+  color: #617048;
+}
+#management-main {
+  padding: 30px 0;
+  max-width: none;
+  min-height: 50vh;
+}
+.management-footer {
+  border-top: 1px solid var(--line);
+  padding: 18px 0 30px;
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--muted);
+}
+.management-page-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+.management-page-title h1 {
+  font-size: 29px;
+  line-height: 1.35;
+}
+.management-page-title p {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.8;
+}
+.management-section {
+  margin: 0 0 26px;
+}
+.management-section-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+.management-section-heading h2 {
+  font-size: 18px;
+}
+.management-projects {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+.management-card {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: white;
+  padding: 20px;
+  min-width: 0;
+}
+.management-card h3 {
+  font-size: 18px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.management-card p {
+  font-size: 14px;
+  line-height: 1.8;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin: 9px 0;
+  color: var(--muted);
+}
+.management-card a,
+.management-link {
+  color: #285c46;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.management-meta {
+  display: flex;
+  gap: 8px 14px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  line-height: 1.8;
+  color: var(--muted);
+  margin-top: 12px;
+  overflow-wrap: anywhere;
+}
+.management-card-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.management-empty {
+  padding: 26px;
+  border: 1px dashed #d0d8c9;
+  border-radius: 10px;
+  color: var(--muted);
+  line-height: 1.9;
+  font-size: 14px;
+}
+.management-task-list {
+  display: grid;
+  gap: 12px;
+}
+.management-task {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+.management-task .management-card-title {
+  font-size: 16px;
+  font-weight: 600;
+}
+.management-task p {
+  margin: 8px 0 0;
+  font-size: 14px;
+  white-space: pre-wrap;
+  line-height: 1.7;
+}
+.management-subtitle {
+  font-size: 13px;
+  color: var(--muted);
+  margin: 10px 0 15px;
+  line-height: 1.8;
+}
+.priority-pill {
+  padding: 3px 8px;
+  border-radius: 5px;
+  background: #edf1e8;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.priority-urgent {
+  background: #fae6df;
+  color: #a3402c;
+}
+.priority-high {
+  background: #f7efd8;
+  color: #936e23;
+}
+.management-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 22px;
+}
+.management-record {
+  border: 1px solid var(--line);
+  background: white;
+  border-radius: 10px;
+  padding: 20px;
+  margin-bottom: 14px;
+  overflow-wrap: anywhere;
+}
+.management-record h3 {
+  font-size: 16px;
+}
+.management-record pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+  background: #f7f8f3;
+  padding: 12px;
+  border-radius: 6px;
+  max-height: 450px;
+  overflow: auto;
+}
+.management-record p {
+  font-size: 14px;
+  line-height: 1.9;
+  white-space: pre-wrap;
+}
+.management-run-failure {
+  padding: 12px 14px;
+  background: #fff2e7;
+  border-left: 3px solid #bc7550;
+  margin: 16px 0;
+  font-size: 14px;
+  white-space: pre-wrap;
+  line-height: 1.8;
+}
+.management-attempt {
+  padding: 12px 0;
+  border-top: 1px solid var(--line);
+  font-size: 13px;
+  line-height: 1.8;
+}
+.management-record details {
+  margin-top: 15px;
+}
+.management-record summary {
+  cursor: pointer;
+  min-height: 40px;
+  color: #315c46;
+  font-size: 14px;
+}
+.management-criteria {
+  padding-left: 23px;
+  font-size: 14px;
+  line-height: 1.8;
+}
+.management-criteria li {
+  margin: 7px 0;
+}
+.management-notice {
+  padding: 12px 16px;
+  border: 1px solid #d7dfcf;
+  border-radius: 8px;
+  margin-top: 18px;
+  font-size: 14px;
+  line-height: 1.8;
+}
+.management-notice.error {
+  background: #fff3ef;
+  color: #8c3d2d;
+}
+.management-notice.success {
+  background: #eef5e9;
+  color: #365c30;
+}
+dialog {
+  width: min(610px, calc(100% - 30px));
+  max-height: 90vh;
+  padding: 24px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  color: var(--ink);
+  box-shadow: 0 22px 80px #162b2630;
+}
+dialog::backdrop {
+  background: #122b2855;
+}
+.form-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 16px;
+}
+.form-heading h2 {
+  font-size: 21px;
+}
+.form-heading button {
+  font-size: 24px;
+  padding: 3px 12px;
+}
+.form-field {
+  display: grid;
+  gap: 7px;
+  margin-bottom: 15px;
+  font-size: 14px;
+}
+.form-field input,
+.form-field textarea,
+.form-field select {
+  width: 100%;
+  border: 1px solid #c4cebf;
+  border-radius: 6px;
+  padding: 10px 11px;
+  color: var(--ink);
+  background: white;
+  font: inherit;
+  min-height: 44px;
+}
+.form-field textarea {
+  min-height: 94px;
+  resize: vertical;
+}
+.form-field small {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.7;
+}
+.form-actions {
+  justify-content: flex-end;
+  border-top: 1px solid var(--line);
+  padding-top: 17px;
+  margin-top: 20px;
+}
+.form-error {
+  color: #a7442a;
+  font-size: 14px;
+  line-height: 1.7;
+}
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+summary:focus-visible {
+  outline: 3px solid #a6bd78;
+  outline-offset: 3px;
+}
+.management-link-button {
+  background: transparent !important;
+  border: 0 !important;
+  padding: 0 4px !important;
+  color: #315c46 !important;
+  text-decoration: underline;
+}
+.state-partial {
+  color: #90610f;
+  background: #fcf2d8;
+}
+@media (max-width: 1050px) {
+  .management-projects {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .management-columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (max-width: 640px) {
+  .management-shell {
+    padding: 0 18px;
+  }
+  .management-header {
+    align-items: flex-start;
+    flex-direction: column;
+    padding: 20px 0 14px;
+    gap: 14px;
+  }
+  .management-brand {
+    font-size: 22px;
+  }
+  .management-header nav {
+    gap: 6px;
+  }
+  .management-header nav a {
+    font-size: 13px;
+  }
+  .management-projects {
+    grid-template-columns: 1fr;
+  }
+  .management-page-title {
+    flex-direction: column;
+  }
+  .management-page-title h1 {
+    font-size: 25px;
+  }
+  .management-section-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .management-card {
+    padding: 16px;
+  }
+  .management-task {
+    flex-direction: column;
+  }
+  .database-banner {
+    font-size: 12px;
+    padding: 12px;
+  }
+  .management-actions {
+    gap: 7px;
+  }
+  .management-actions button {
+    padding: 8px 11px;
+    font-size: 13px;
+  }
+}

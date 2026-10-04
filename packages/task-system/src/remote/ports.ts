@@ -1,14 +1,15 @@
-import type { Json, Role } from './protocol.js'
+import type { Json, Role, PreDispatchFailure } from './protocol.js'
+import type { Claim as CoreClaim, Run as CoreRun } from '../contracts.js'
 
 export interface Receipt<T = unknown> { commandId: string; acceptedAt: string; value: T }
 export interface Route { nodeId: string; provider: string; model: string; reasoningEffort?: string; workspaceId?: string; requiredCapabilities: string[] }
 export interface TaskPolicy { allowedNodeIds?: string[]; allowedWorkspaceIds?: string[]; allowedTools?: string[]; maxRuntimeMs?: number; maxDepth?: number; requiredResources?: string[]; maxChildren?: number; maxDescendants?: number; settlementQuietMs?: number }
 export interface Task { taskId: string; title: string; description: string; workspaceId?: string; policy?: TaskPolicy }
-export interface Run { runId: string; taskId: string; state: string; route?: Route; configuration: Json; cancellationRequested?: boolean; observationOnly?: boolean; contextNotes?: { reportId: string; body: string; actor: string }[]; executionStartedAt?: string; retryPolicy?: { maxRetries: number; baseDelayMs: number; maxDelayMs: number; resumableTools?: string[] }; retry?: { count: number; notBefore: string; sessionId: string; previousAttemptId: string; reasonCode: string; completedTools?: CompletedToolFingerprint[] } }
+export interface Run { runId: string; taskId: string; state: string; route?: Route; configuration: Json; cancellationRequested?: boolean; historyOnly?: boolean; observationOnly?: boolean; intentSnapshot?: CoreRun['intentSnapshot']; contextNotes?: CoreRun['contextNotes']; executionStartedAt?: string; retryPolicy?: { maxRetries: number; baseDelayMs: number; maxDelayMs: number; resumableTools?: string[] }; retry?: { count: number; notBefore: string; sessionId: string; previousAttemptId: string; reasonCode: string; completedTools?: CompletedToolFingerprint[] } }
 export interface Attempt { attemptId: string; taskId: string; runId: string; nodeId: string; fence: number; leaseExpiresAt: string; state: string; sessionId?: string; executionId?: string }
-export interface Claim { attempt: Attempt; run: Run; task: Task }
+export interface Claim { attempt: Attempt; run: Run; task: Task; executionContext?: CoreClaim['executionContext'] }
 export interface LeaseRef { runId: string; attemptId: string; nodeId: string; fence: number; executionId?: string }
-export interface Settlement extends LeaseRef { outcome: 'success' | 'partial' | 'failure' | 'blocked' | 'unknown'; summary: string; report?: { title: string; body: string; artifactIds?: string[]; data?: Json; schemaId?: string } }
+export interface Settlement extends LeaseRef { preDispatchFailure?: PreDispatchFailure; outcome: 'success' | 'partial' | 'failure' | 'blocked' | 'unknown'; summary: string; report?: { title: string; body: string; artifactIds?: string[]; data?: Json; schemaId?: string } }
 export interface ObservationInput { workspaceId: string; sessionId: string; sourceRevision: string; title: string; body: string; observedAt: string; truncated: boolean }
 /** Structural compatibility with the core's bounded native observation fold. */
 export interface CapturedText { seq: number; sessionId: string; sourceId: string; sourceRevision: string; title: string; body: string; observedAt: string; truncated: boolean; cwd?: string }
@@ -42,7 +43,8 @@ export interface ExecutionCollaboration {
 type MaybePromise<T> = T | Promise<T>
 /** An adapter must preserve the ledger's transaction, idempotency, lease and fencing guarantees. */
 export interface LedgerPort {
-  claim(commandId: string, input: { runId: string; nodeId: string; ttlMs: number }): MaybePromise<Receipt<Claim>>
+  /** maxClaimBytes is a host transport budget, never a peer-supplied command field. */
+  claim(commandId: string, input: { runId: string; nodeId: string; ttlMs: number; maxClaimBytes?: number }): MaybePromise<Receipt<Claim>>
   renew(commandId: string, input: LeaseRef & { ttlMs: number }): MaybePromise<Receipt<Attempt>>
   submit(commandId: string, input: Settlement): MaybePromise<Receipt<Run>>
   cancel(commandId: string, input: { taskId: string; runId?: string; reason: string }): MaybePromise<Receipt<Task>>
@@ -68,7 +70,7 @@ export interface LedgerPort {
   appendScopedReport?(commandId: string,input: LeaseRef & { taskId?: string } & Omit<TaskReportInput,'targetTaskId'>,options?: { signal?: AbortSignal }): MaybePromise<Receipt<unknown>>
 }
 export interface ExecutionRequest { claim: Claim; sessionId: string; workspacePath: string; signal: AbortSignal; collaboration?: ExecutionCollaboration }
-export type ExecutionResult = Pick<Settlement, 'outcome' | 'summary' | 'report'> & { retryWitness?: SafeRetryWitness; retryAllowed?: boolean }
+export type ExecutionResult = Pick<Settlement, 'outcome' | 'summary' | 'report' | 'preDispatchFailure'> & { retryWitness?: SafeRetryWitness; retryAllowed?: boolean }
 /** Host-owned implementation. Must enforce declared capabilities and await abort quiescence. */
 export interface ExecutionProvider {
   readonly id: string

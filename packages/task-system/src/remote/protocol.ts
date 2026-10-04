@@ -1,12 +1,27 @@
 import { createHash, createPublicKey, sign, verify } from 'node:crypto'
 import type { KeyObject } from 'node:crypto'
 
+/** Produced by a trusted native host before agent/model/workload dispatch. */
+export interface PreDispatchFailure { kind: 'native-provider-unavailable-v1'; code: 'NO_ADAPTER'; provider: string; model: string }
+export function validatePreDispatchFailure(value: unknown): asserts value is PreDispatchFailure {
+  insist(isRecord(value), 'INVALID_PRE_DISPATCH_FAILURE')
+  const fields = ['kind','code','provider','model']
+  insist(Object.keys(value).length === fields.length && fields.every(key => Object.hasOwn(value,key)), 'INVALID_PRE_DISPATCH_FAILURE')
+  insist(value.kind === 'native-provider-unavailable-v1' && value.code === 'NO_ADAPTER', 'INVALID_PRE_DISPATCH_FAILURE')
+  for (const [key,max] of [['provider',100],['model',200]] as const) insist(typeof value[key] === 'string' && value[key].length > 0 && Buffer.byteLength(value[key]) <= max, 'INVALID_PRE_DISPATCH_FAILURE')
+}
+
 export type Role = 'planner' | 'executor' | 'both'
 export type Operation = 'claim' | 'renew' | 'submit' | 'cancel' | 'receipt' | 'bindSession' | 'markRunning' | 'getRun' | 'getAttempt' | 'acknowledgeCancellation' | 'listWork' | 'observe' | 'delegate' | 'taskHistory' | 'taskWait' | 'taskNote' | 'taskReport' | 'heartbeat' | 'nodeStatus' | 'retryBeforeEffects' | 'offerApproval' | 'approvalStatus' | 'cancelApproval'
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json }
 export const DEFAULT_MAX_BODY_BYTES = 64 * 1024
 export const DEFAULT_MAX_RESPONSE_BYTES = 128 * 1024
 export const MAX_WIRE_BYTES = 16 * 1024 * 1024
+// Content and its protocol/storage wrappers have distinct bounded budgets.
+// A schema can contain properties/items/allOf layers that are not workload data.
+export const MAX_DATA_JSON_DEPTH = 16
+export const MAX_TEMPLATE_SCHEMA_DEPTH = 24
+export const MAX_PROTOCOL_JSON_DEPTH = 32 // schema budget + at most 8 envelope/receipt/storage layers
 export function byteLimit(value: number | undefined, fallback: number): number {
   const limit = value ?? fallback
   insist(Number.isSafeInteger(limit) && limit >= 1024 && limit <= MAX_WIRE_BYTES,'INVALID_BYTE_LIMIT')
@@ -59,16 +74,22 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
 export function identifier(value: unknown): value is string {
   return typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(value)
 }
-export function canonical(value: unknown, depth = 0): string {
-  insist(depth <= 16, 'MAX_DEPTH')
+function encodeCanonical(value: unknown, depth: number, maxDepth: number): string {
+  insist(depth <= maxDepth, 'MAX_DEPTH')
   if (value === null || typeof value === 'boolean' || typeof value === 'string') return JSON.stringify(value)
   if (typeof value === 'number') { insist(Number.isFinite(value), 'INVALID_NUMBER'); return JSON.stringify(value) }
-  if (Array.isArray(value)) { insist(value.length <= 256, 'ARRAY_LIMIT'); return `[${value.map(v => canonical(v, depth + 1)).join(',')}]` }
+  if (Array.isArray(value)) { insist(value.length <= 256, 'ARRAY_LIMIT'); return `[${value.map(v => encodeCanonical(v, depth + 1, maxDepth)).join(',')}]` }
   insist(isRecord(value), 'INVALID_JSON')
   const keys = Object.keys(value).sort()
   insist(keys.length <= 64 && !keys.some(k => ['__proto__', 'prototype', 'constructor'].includes(k)), 'INVALID_KEYS')
-  return `{${keys.map(k => `${JSON.stringify(k)}:${canonical(value[k], depth + 1)}`).join(',')}}`
+  return `{${keys.map(k => `${JSON.stringify(k)}:${encodeCanonical(value[k], depth + 1, maxDepth)}`).join(',')}}`
 }
+/** Common transport/storage encoding. Ordering/signing bytes are unchanged. */
+export function canonical(value: unknown, depth = 0): string { insist(Number.isInteger(depth) && depth >= 0 && depth <= MAX_PROTOCOL_JSON_DEPTH,'MAX_DEPTH'); return encodeCanonical(value, depth, MAX_PROTOCOL_JSON_DEPTH) }
+/** Ordinary user/model JSON retains the original 16-level content limit. */
+export function canonicalData(value: unknown): string { return encodeCanonical(value, 0, MAX_DATA_JSON_DEPTH) }
+/** Schema-only content budget; this does not grant a larger workload payload. */
+export function canonicalSchema(value: unknown): string { return encodeCanonical(value, 0, MAX_TEMPLATE_SCHEMA_DEPTH) }
 export function digest(value: unknown): string { return createHash('sha256').update(canonical(value)).digest('hex') }
 export function signingBytes(envelope: Omit<Envelope, 'signature'> | Envelope): Buffer {
   const { signature: _signature, ...unsigned } = envelope as Envelope

@@ -1,4 +1,4 @@
-import { byteLimit, canonical, DEFAULT_MAX_BODY_BYTES, DEFAULT_MAX_RESPONSE_BYTES, digest, identifier, insist, isRecord, parseCommandEnvelope, ProtocolError } from './protocol.js'
+import { byteLimit, canonical, canonicalData, canonicalSchema, DEFAULT_MAX_BODY_BYTES, DEFAULT_MAX_RESPONSE_BYTES, digest, identifier, insist, isRecord, parseCommandEnvelope, ProtocolError, validatePreDispatchFailure } from './protocol.js'
 import type { CommandEnvelope, RequestVerifier, Json, AuthorizedPeer, Role, TransportIdentity } from './protocol.js'
 import type { ApprovalOffer, DelegationInput, LedgerPort, LeaseRef, SafeRetryWitness, Settlement, TaskReportInput } from './ports.js'
 import type { CommandReceipt, RecoveryStore } from './store.js'
@@ -21,12 +21,25 @@ function reportFields(report: Record<string,Json>): void {
   text(report,'title',500); text(report,'body',32768)
   if (report.artifactIds !== undefined) insist(Array.isArray(report.artifactIds) && report.artifactIds.length <= 32 && report.artifactIds.every(identifier),'INVALID_ARTIFACTS')
   if (report.schemaId !== undefined) text(report,'schemaId',200)
-  if (report.data !== undefined) canonical(report.data)
+  if (report.data !== undefined) canonicalData(report.data)
 }
 function delegation(input: Record<string,Json>): void {
   text(input,'title',500)
   if (input.description !== undefined) insist(typeof input.description === 'string' && Buffer.byteLength(input.description) <= 32768,'INVALID_DESCRIPTION')
-  if (input.configuration !== undefined) canonical(input.configuration)
+  if (input.configuration !== undefined) {
+    canonical(input.configuration)
+    if (isRecord(input.configuration)) {
+      const config = input.configuration
+      if (config.input !== undefined) canonicalData(config.input)
+      if (config.trigger !== undefined) canonicalData(config.trigger)
+      if (config.template !== undefined) {
+        insist(isRecord(config.template),'INVALID_TEMPLATE_SNAPSHOT')
+        canonicalSchema(config.template.inputSchema)
+        canonicalSchema(config.template.resultContract)
+        canonicalData(config.template.defaults)
+      }
+    }
+  }
   if (input.route !== undefined) {
     insist(isRecord(input.route),'INVALID_ROUTE')
     const route = input.route as Record<string,Json>
@@ -73,7 +86,7 @@ export function validatePayload(envelope: CommandEnvelope): void {
           insist(!providers.has(name) && states.includes(String(provider.state)),'INVALID_PROVIDER_STATE')
           providers.add(name)
         }
-        insist(Buffer.byteLength(canonical(status)) <= 8192,'PROVIDER_STATUS_LIMIT')
+        insist(Buffer.byteLength(canonicalData(status)) <= 8192,'PROVIDER_STATUS_LIMIT')
       }
       break
     }
@@ -110,9 +123,13 @@ export function validatePayload(envelope: CommandEnvelope): void {
     case 'taskNote': fields(p,[...ownedFields,'body'],['targetTaskId']); lease(p,envelope.nodeId); text(p,'body',32768); if (p.targetTaskId !== undefined) id(p,'targetTaskId'); break
     case 'taskReport': fields(p,[...ownedFields,'title','body'],['targetTaskId','data','schemaId','artifactIds']); lease(p,envelope.nodeId); reportFields(p); if (p.targetTaskId !== undefined) id(p,'targetTaskId'); break
     case 'submit': {
-      fields(p,['runId','attemptId','fence','outcome','summary'],['report','executionId']); lease(p,envelope.nodeId)
+      fields(p,['runId','attemptId','fence','outcome','summary'],['report','executionId','preDispatchFailure']); lease(p,envelope.nodeId)
       insist(['success','partial','failure','blocked','unknown'].includes(String(p.outcome)), 'INVALID_OUTCOME')
       text(p,'summary',5000)
+      if (p.preDispatchFailure !== undefined) {
+        validatePreDispatchFailure(p.preDispatchFailure)
+        insist(p.outcome === 'blocked' && p.report === undefined, 'INVALID_PRE_DISPATCH_FAILURE')
+      }
       if (p.report !== undefined) {
         insist(isRecord(p.report), 'INVALID_REPORT')
         const report = p.report as Record<string, Json>
@@ -167,9 +184,11 @@ export class RemoteGateway {
           const status = (await ledger.nodeStatuses()).find(node => node.nodeId === peer.nodeId)
           insist(status,'REGISTERED_NODE_REQUIRED',403); result = status; break
         }
-        case 'claim': result = await ledger.claim(commandId, { runId: id(p,'runId'), nodeId: peer.nodeId, ttlMs: ttl(p) }); break
+        // Leave room for receipt/envelope metadata; the ledger rejects an oversized
+        // claim before committing its lease. Payload validation forbids peer overrides.
+        case 'claim': result = await ledger.claim(commandId, { runId: id(p,'runId'), nodeId: peer.nodeId, ttlMs: ttl(p), maxClaimBytes: Math.max(1024,this.options.maxResponseBytes! - 4096) }); break
         case 'renew': result = await ledger.renew(commandId, { ...lease(p,peer.nodeId), ttlMs: ttl(p) }); break
-        case 'submit': result = await ledger.submit(commandId, { ...lease(p,peer.nodeId), outcome: p.outcome as Settlement['outcome'], summary: String(p.summary), ...(p.report ? { report: p.report as unknown as Settlement['report'] } : {}) }); break
+        case 'submit': result = await ledger.submit(commandId, { ...lease(p,peer.nodeId), outcome: p.outcome as Settlement['outcome'], summary: String(p.summary), ...(p.report ? { report: p.report as unknown as Settlement['report'] } : {}), ...(p.preDispatchFailure ? { preDispatchFailure: p.preDispatchFailure as unknown as Settlement['preDispatchFailure'] } : {}) }); break
         case 'cancel': {
           const run = await ledger.getRun(id(p,'runId')); insist(run, 'RUN_NOT_FOUND', 404)
           result = await ledger.cancel(commandId, { taskId: run.taskId, runId: run.runId, reason: String(p.reason) }); break
@@ -207,7 +226,7 @@ export class RemoteGateway {
         }
         case 'listWork': {
           const runs = await ledger.pendingRuns(peer.nodeId)
-          result = runs.filter(run => !run.observationOnly && run.route?.nodeId === peer.nodeId && run.route.workspaceId && peer.workspaces.includes(run.route.workspaceId) && run.route.requiredCapabilities.every(cap => peer.capabilities.includes(cap))).slice(0,32)
+          result = runs.filter(run => !run.historyOnly && !run.observationOnly && run.route?.nodeId === peer.nodeId && run.route.workspaceId && peer.workspaces.includes(run.route.workspaceId) && run.route.requiredCapabilities.every(cap => peer.capabilities.includes(cap))).slice(0,32)
           break
         }
         case 'observe': {
@@ -267,7 +286,7 @@ export class RemoteGateway {
     if (e.operation === 'getAttempt') insist(inspectedAttempt?.nodeId === peer.nodeId,'ATTEMPT_DENIED',403)
     const run = await this.options.ledger.getRun(inspectedAttempt?.runId ?? String(e.payload.runId))
     insist(run?.route, 'ROUTED_RUN_REQUIRED', 404)
-    if (['claim','renew','bindSession','markRunning','submit','acknowledgeCancellation','cancel','retryBeforeEffects',...collaborationOps].includes(e.operation)) insist(!run.observationOnly,'OBSERVE_ONLY',403)
+    if (['claim','renew','bindSession','markRunning','submit','acknowledgeCancellation','cancel','retryBeforeEffects',...collaborationOps].includes(e.operation)) insist(!run.historyOnly && !run.observationOnly,'OBSERVE_ONLY',403)
     // Peer cancellation is scoped to that peer's own assigned node. Coordinator
     // operator cancellation uses the trusted ledger API, never a peer role claim.
     insist(run.route.nodeId === peer.nodeId, 'NODE_ROUTE_DENIED', 403)

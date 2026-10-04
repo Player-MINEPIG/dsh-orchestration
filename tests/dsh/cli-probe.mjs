@@ -57,7 +57,8 @@ export async function apply(ctx) {
     const claim = ledger.claim('cli-native-claim', { runId: run.runId, nodeId: service.config.nodeId, ttlMs: 10000 }).value;
     const result = await service.native.execute(claim);
     assert.equal(result.run.state, 'succeeded');
-    assert.equal(result.run.validation, 'valid');
+    assert.equal(result.run.validation, undefined);
+    assert.equal(result.run.outcome, undefined);
     assert.equal(ledger.history(task.taskId).artifacts.length, 1);
     assert.equal(adapter.requests.length, 2);
     preparedArtifact = true;

@@ -28,10 +28,10 @@ function envelope(payload,operation='submit') {const now=Date.now();return signE
 test('actual TaskLedger opted-in 1 MiB signed worker roundtrip preserves >64 KiB report.data and >128 KiB claim response',async t=>{
   const f=fixture(t,1024*1024),blob='d'.repeat(200*1024)
   const task=f.ledger.createTask('task',{title:'Large daily node report',workspaceId:'workspace',policy:{requiredResources:['daily-node'],settlementQuietMs:0}}).value
-  const run=f.ledger.createRun('run',{taskId:task.taskId,route:f.route,configuration:{largeInput:blob}}).value
+  const run=f.ledger.createRun('run',{taskId:task.taskId,route:f.route,configuration:{input:{largeInput:blob}}}).value
   const store=new RecoveryStore(join(f.root,'worker.sqlite'));f.resources.push(store)
   const worker=new ExecutorWorker({ledger:f.remote,store,maxResultBytes:1024*1024,policy:{role:'executor',nodeId:'worker',capabilities:['read'],workspaces:[{workspaceId:'workspace',nodeId:'worker',path:f.root,allowedRoot:f.root}]},provider:{id:'fixture',capabilities:['read'],supports:()=>true,execute:async request=>{
-    assert.equal(request.claim.run.configuration.largeInput,blob)
+    assert.equal(request.claim.run.configuration.input.largeInput,blob)
     assert.deepEqual(request.claim.task.policy.requiredResources,['daily-node'])
     return {outcome:'success',summary:'Daily structured result',report:{title:'Daily',body:'Human-readable summary',schemaId:'daily.fixture.v1',data:{nodeReport:blob,games:[{name:'fixture',result:'ok'}]}}}
   }}});f.resources.push(worker)
@@ -72,7 +72,7 @@ test('actual TaskLedger signed scoped collaboration delegates, waits, reports, q
   const ref={runId:parentRun.runId,attemptId:claim.attempt.attemptId,nodeId:'worker',fence:claim.attempt.fence,executionId:'parent-owner'}
   await f.remote.markRunning('parent-start',ref)
   const controller=new AbortController(), collaboration=bindCollaboration(f.remote,ref,parent.taskId,controller.signal)
-  const child=(await collaboration.delegate('child',{title:'Child',configuration:{work:'read-only'},parentTaskId:unrelated.taskId,nodeId:'other'})).value
+  const child=(await collaboration.delegate('child',{title:'Child',configuration:{input:{work:'read-only'}},parentTaskId:unrelated.taskId,nodeId:'other'})).value
   assert.equal(f.ledger.getTask(child.task.taskId).parentTaskId,parent.taskId)
   assert.equal((await collaboration.history(child.task.taskId)).task.taskId,child.task.taskId)
   assert.equal((await collaboration.wait(undefined,0)).settled,false)
@@ -86,7 +86,20 @@ test('actual TaskLedger signed scoped collaboration delegates, waits, reports, q
   await f.remote.markRunning('child-start',childRef);await f.remote.submit('child-result',{...childRef,outcome:'success',summary:'done'})
   assert.equal((await collaboration.wait(undefined,0)).settled,true)
   const next=f.ledger.createRun('next-child',{taskId:child.task.taskId,route:f.route}).value
-  assert.equal(next.contextNotes[0].body,'Use this in a later run')
+  assert.equal(typeof next.contextNotes[0],'string')
+  assert.equal(f.ledger.executionContext(next.runId).reports[0].body,'Use this in a later run')
   controller.abort();await assert.rejects(collaboration.report('late',{title:'Late',body:'Must not run'}),/EXECUTION_ABORTED/)
   await assert.rejects(f.gateway.handle(JSON.stringify(envelope({...ref,title:'Injected',parentTaskId:unrelated.taskId},'delegate'))),/PAYLOAD_FIELDS/)
+})
+
+
+test('host response budget bounds claim atomically and cannot be expanded by a peer payload',async t=>{
+  const f=fixture(t),blob='c'.repeat(200*1024)
+  const task=f.ledger.createTask('bounded-task',{title:'Claim must fit configured transport',workspaceId:'workspace'}).value
+  const run=f.ledger.createRun('bounded-run',{taskId:task.taskId,route:f.route,configuration:{input:{largeInput:blob}}}).value
+  await assert.rejects(f.remote.claim('bounded-claim',{runId:run.runId,nodeId:'worker',ttlMs:60000}),/REMOTE_OUTCOME_UNCERTAIN/)
+  assert.equal(f.ledger.getRun(run.runId).state,'queued','oversized claim rolls back instead of stranding a lease')
+  assert.equal(f.ledger.snapshot().attempts.length,0)
+  await assert.rejects(f.gateway.handle(JSON.stringify(envelope({runId:run.runId,ttlMs:60000,maxClaimBytes:1024*1024},'claim'))),/PAYLOAD_FIELDS/)
+  assert.equal(f.ledger.getRun(run.runId).state,'queued')
 })

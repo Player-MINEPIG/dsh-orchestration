@@ -30,3 +30,6 @@
 
 .run-diagnostics{margin-top:18px;padding-top:16px;border-top:1px solid var(--line)}
 .run-diagnostics h4{font-size:13px;margin:0 0 8px}.run-diagnostics .timeline{margin-top:16px}
+
+/* Management entry is absent on unconfigured/read-only static exports. */
+[data-management-link][hidden]{display:none!important}

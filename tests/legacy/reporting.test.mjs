@@ -221,7 +221,7 @@ test('Executor source preflight requires exact prepared envelope, while authorit
     const payload = gameReport(); payload.report_meta.device_id = 'worker';
     const prepared = prepareLegacyReport(f.ledger, 'prepare-source', { kind: 'game_daily', lease: f.lease, payload });
     const submission = { ...f.lease, outcome: 'success', summary: prepared.summary, report: prepared.report };
-    const context = { task: f.ledger.getTask('task-daily'), run: f.ledger.getRun('run-daily'), attempt: f.ledger.getAttempt(f.lease.attemptId), submission, phase: 'executor-preflight' };
+    const context = { executionContext: f.ledger.executionContext('run-daily'), task: f.ledger.getTask('task-daily'), run: f.ledger.getRun('run-daily'), attempt: f.ledger.getAttempt(f.lease.attemptId), submission, phase: 'executor-preflight' };
     assert.throws(() => f.ledger.validateResultContract(context), e => e.code === 'RESULT_VALIDATION');
     expected = canonicalJson(prepared.report.data); preparedLive = true;
     assert.doesNotThrow(() => f.ledger.validateResultContract(context));

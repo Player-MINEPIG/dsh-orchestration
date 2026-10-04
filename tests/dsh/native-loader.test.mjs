@@ -112,17 +112,17 @@ for (const code of ['NO_ADAPTER', 'MISSING_CREDENTIAL']) {
       const route = code === 'NO_ADAPTER' ? { provider: 'intentionally-unconfigured', model: 'test-model' } : { provider: 'deepseek-official', model: 'deepseek-flash' };
       const { task, claim } = seed(h, '', {}, route);
       const result = await h.ctx.taskSystem.native.execute(claim);
-      assert.equal(result.run.state, 'uncertain');
-      assert.equal(result.run.outcome, 'unknown');
-      assert.equal(result.run.validation, 'not-submitted');
+      assert.equal(result.run.state, code === 'NO_ADAPTER' ? 'blocked' : 'uncertain');
+      assert.equal(result.run.validation, undefined);
       assert.equal(result.submitted, false);
       assert.equal(result.run.retry, undefined);
       assert.equal(h.adapter.requests.length, 0);
       const history = h.ledger.history(task.taskId);
       assert.equal(history.reports.length, 0);
-      assert.equal(terminals.at(-1).data.reason.error.code, code);
+      if (code === 'NO_ADAPTER') { assert.equal(terminals.length, 0); assert.equal(result.sessionId, undefined); assert.equal(history.events.find(e=>e.type==='run.pre_dispatch_failed').detail.code, code); }
+      else assert.equal(terminals.at(-1).data.reason.error.code, code);
       const summary = history.events.find(event => event.type === 'run.settled').detail.summary;
-      assert.match(summary, new RegExp(`ended with ${code} without`));
+      assert.match(summary, code === 'NO_ADAPTER' ? /blocked before dispatch: NO_ADAPTER/ : new RegExp(`ended with ${code} without`));
       assert.ok(!summary.includes('DSH_TASK_TEST_EMPTY_KEY'));
       assert.ok(!summary.includes('must-not-request'));
       assert.equal(h.ledger.pendingRuns('local').length, 0);
@@ -137,9 +137,9 @@ test('native summaries redact raw diagnostics and arbitrary error codes', async 
       const { task, claim } = seed(h);
       const result = await h.ctx.taskSystem.native.execute(claim);
       const history = h.ledger.history(task.taskId);
-      assert.equal(result.run.outcome, 'unknown');
+      assert.equal(result.run.state, 'uncertain');
       assert.equal(result.run.retry, undefined);
-      assert.equal(result.run.validation, 'not-submitted');
+      assert.equal(result.run.validation, undefined);
       assert.match(history.events.find(event => event.type === 'run.settled').detail.summary, new RegExp(`ended with ${canonical} without`));
       assert.doesNotMatch(JSON.stringify(history), /raw-secret-sentinel|nested-secret-sentinel|header-secret-sentinel|TOKEN_SECRET_SENTINEL_123/);
       assert.equal(h.adapter.requests.length, 1);
@@ -177,7 +177,7 @@ test('native terminal observation ignores foreign sessions and clears prior erro
     assert.equal(queued, true);
     assert.equal(h.adapter.requests.length, 2);
     assert.equal(foreignTerminals, 1);
-    assert.equal(result.run.outcome, 'unknown');
+    assert.equal(result.run.state, 'uncertain');
     const summary = history.events.find(event => event.type === 'run.settled').detail.summary;
     assert.match(summary, /reached idle without/);
     assert.doesNotMatch(summary, /AUTH|MISSING_CREDENTIAL|foreign-secret/);
@@ -196,8 +196,8 @@ test('causal task_settle takes precedence over a later native terminal error', a
     const result = await h.ctx.taskSystem.native.execute(claim);
     assert.equal(terminalCodes.at(-1), 'AUTH');
     assert.equal(result.submitted, true);
-    assert.equal(result.run.outcome, 'success');
-    assert.equal(result.run.validation, 'valid');
+    assert.equal(result.run.state, 'succeeded');
+    assert.equal(result.run.validation, undefined);
     const history = h.ledger.history(task.taskId);
     assert.equal(history.reports.length, 1);
     assert.equal(history.events.find(event => event.type === 'run.settled').detail.summary, 'Verified causal result');
@@ -256,7 +256,7 @@ test('native safe retry refuses post-tool failures and non-transient errors and 
   const expired = await harness({ config: { safeRetry: retry, executionTimeoutMs: 100 }, script: [() => { throw new LlmError('Synthetic transient', 'RATE_LIMIT', { status: 429 }); }] });
   try {
     const { claim } = seed(expired); const result = await expired.ctx.taskSystem.native.execute(claim);
-    assert.equal(result.run.state, 'failed'); assert.equal(result.run.validation, 'not-submitted'); assert.equal(result.run.retry, undefined);
+    assert.equal(result.run.state, 'failed'); assert.equal(result.run.validation, undefined); assert.equal(result.run.retry, undefined);
     assert.equal(expired.ledger.getAttempt(claim.attempt.attemptId).retryEvidence.toolCallCount, 0);
   } finally { await expired.dispose(); }
 });
@@ -276,7 +276,7 @@ test('bounded native retries stop after the configured count without resetting e
     assert.equal(new Set(attempts.map(attempt => attempt.sessionId)).size, 1);
     assert.equal(h.adapter.requests.length, 3);
     assert.equal(h.ledger.getRun(claim.run.runId).executionStartedAt, first.run.executionStartedAt);
-    assert.equal(h.ledger.getRun(claim.run.runId).validation, 'not-submitted');
+    assert.equal(h.ledger.getRun(claim.run.runId).validation, undefined);
     assert.ok(attempts.every(attempt => attempt.retryEvidence.toolCallCount === 0));
   } finally { await h.dispose(); }
 });
@@ -434,7 +434,7 @@ test('configured timer admits a scheduled slot and native autoExecute commits ex
     assert.equal(progress.isError, false);
     assert.deepEqual(progress.value.value.data, { reviewed: true });
     assert.equal(progress.value.value.schemaId, 'review-v1');
-    assert.equal(history.runs[0].configuration.template.templateId, 'custom-report');
+    assert.equal(history.runs[0].configuration.templateRef.templateId, 'custom-report');
   } finally { await h.dispose(); }
 });
 
@@ -460,12 +460,12 @@ test('native confirmation gate cannot be bypassed by model task creation and blo
   const h = await harness({ config: { requireConfirmation: true, autoExecute: true }, script: [{ name: 'task_settle', args: { outcome: 'success', summary: 'Ran after operator approval' } }] });
   try {
     h.ledger.registerNode('approval-node', { nodeId: 'local', roles: ['both'], capabilities: [], models: [{ provider: 'test-offline', model: 'script', reasoningEfforts: [] }], workspaceIds: [], enabled: true, lastSeenAt: new Date().toISOString() });
-    const created = await tool(h.ctx, 'task_create', { commandId: 'approval-task', title: 'Gated task', requiresConfirmation: false, userImmediacy: 80, importance: 75, urgency: 90 });
+    const created = await tool(h.ctx, 'task_create', { commandId: 'approval-task', title: 'Gated task', requiresConfirmation: false, priorityOverride: 'high' });
     assert.equal(created.isError, false);
     const task = created.value.value;
     assert.equal(task.confirmation.required, true, 'configured global gate overrides model request');
     assert.equal(task.confirmation.state, 'pending');
-    assert.deepEqual([task.userImmediacy, task.importance, task.urgency], [80, 75, 90]);
+    assert.equal(task.priority, 'high'); assert.equal(task.userImmediacy, undefined);
     const run = h.ledger.createRun('approval-run', { taskId: task.taskId, route: { nodeId: 'local', provider: 'test-offline', model: 'script', requiredCapabilities: [] } }).value;
     h.ctx.taskSystem.tick();
     const denied = await tool(h.ctx, 'task_execute', { commandId: 'approval-execute-denied', runId: run.runId });
@@ -506,7 +506,8 @@ test('native results enqueue only operator-configured reporting destinations and
 test('native curation is reversible, preserves history, and remains forbidden to owned execution and executor profiles', async () => {
   const h = await harness({ config: { executionTools: ['task_curate'], trustedUnconfinedTools: true }, script: ['hang'] });
   try {
-    const task = h.ledger.createTask('curated-task', { title: 'Reviewable task admission' }).value;
+    const task = h.ledger.createTask('curated-task', { title: 'Reviewable legacy task admission' }).value;
+    task.admissionState = 'admitted'; task.admissionRevision = 1; h.ledger.managementDatabase().prepare("UPDATE entities SET data=? WHERE kind='task' AND id=?").run(JSON.stringify(task),task.taskId);
     const dismissed = await tool(h.ctx, 'task_curate', { commandId: 'dismiss-task', taskId: task.taskId, state: 'dismissed', expectedRevision: task.admissionRevision, reason: 'Not currently an actionable task' });
     assert.equal(dismissed.isError, false);
     assert.equal(h.ledger.getTask(task.taskId).state, task.state, 'curation does not rewrite lifecycle state');
@@ -525,7 +526,7 @@ test('native curation is reversible, preserves history, and remains forbidden to
     const agent = h.ctx.agents.get(`task-${claim.attempt.attemptId}`);
     const denied = await tool(h.ctx, 'task_curate', { commandId: 'owned-curation', taskId: claim.task.taskId, state: 'dismissed', expectedRevision: h.ledger.getTask(claim.task.taskId).admissionRevision, reason: 'Forbidden self-curation' }, agent);
     assert.equal(denied.isError, true);
-    assert.equal(h.ledger.getTask(claim.task.taskId).admissionState, 'admitted');
+    assert.equal(h.ledger.getTask(claim.task.taskId).admissionState, undefined);
   } finally { await h.dispose(); }
   const executor = await harness({ role: 'executor' });
   try { assert.equal(executor.ctx.tools.get('task_curate'), undefined); }
@@ -544,7 +545,7 @@ test('malformed structured native result immediately records unvalidated uncerta
     await assert.rejects(h.ctx.taskSystem.native.execute(claim));
     const settled = h.ledger.getRun(run.runId);
     assert.equal(settled.state, 'uncertain');
-    assert.equal(settled.validation, 'not-submitted');
+    assert.equal(settled.validation, undefined);
     const history = h.ledger.history(task.taskId);
     assert.equal(history.reports.length, 0);
     const settlement = history.events.find(event => event.type === 'run.settled');
@@ -571,7 +572,7 @@ test('trusted semantic validation rejects shape-valid native success and records
     await assert.rejects(h.ctx.taskSystem.native.execute(claim), { code: 'RESULT_VALIDATION' });
     assert.equal(checked, 1, 'valid JSON shape alone does not establish semantic success');
     assert.equal(h.ledger.getRun(run.runId).state, 'uncertain');
-    assert.equal(h.ledger.getRun(run.runId).validation, 'not-submitted');
+    assert.equal(h.ledger.getRun(run.runId).validation, undefined);
     assert.equal(h.ledger.history(task.taskId).reports.length, 0);
     assert.equal(h.adapter.requests.length, 1);
     dispose();
@@ -601,7 +602,7 @@ test('maintained legacy task-pack mounts through real Loader and missing validat
     const mounted = invoke('mounted');
     const first = await h.ctx.taskSystem.native.execute(mounted);
     assert.equal(first.run.state, 'blocked');
-    assert.equal(first.run.validation, 'valid');
+    assert.equal(first.run.validation, undefined);
     assert.equal(h.ledger.history(mounted.task.taskId).reports[0].schemaId, 'legacy_task_pack_error.v1');
     await h.ctx.loader.resolve('legacy-task-pack').fiber.dispose();
     await h.ctx.loader.await();
@@ -609,7 +610,7 @@ test('maintained legacy task-pack mounts through real Loader and missing validat
     const unmounted = invoke('unmounted');
     await assert.rejects(h.ctx.taskSystem.native.execute(unmounted), { code: 'VALIDATOR_UNAVAILABLE' });
     assert.equal(h.ledger.getRun(unmounted.run.runId).state, 'uncertain');
-    assert.equal(h.ledger.getRun(unmounted.run.runId).validation, 'not-submitted');
+    assert.equal(h.ledger.getRun(unmounted.run.runId).validation, undefined);
     assert.equal(h.ledger.history(unmounted.task.taskId).reports.length, 0);
   } finally { await h.dispose(); }
 });
@@ -642,7 +643,7 @@ test('actual native legacy preparation creates a bound artifact then task_settle
     const claim = h.ledger.claim('native-legacy-claim', { runId: run.runId, nodeId: 'local', ttlMs: 10000 }).value;
     const result = await h.ctx.taskSystem.native.execute(claim);
     assert.equal(result.run.state, 'succeeded');
-    assert.equal(result.run.validation, 'valid');
+    assert.equal(result.run.validation, undefined);
     assert.equal(h.ctx.agents.get(result.sessionId), undefined);
     const history = h.ledger.history(task.taskId);
     assert.equal(history.reports[0].schemaId, 'agent_daily_report.v1');
@@ -1212,7 +1213,7 @@ test('actual native daily work summary derives turn shares from configured Codex
     );
     const claim = h.ledger.claim('native-daily-work-claim', { runId: run.runId, nodeId: 'local', ttlMs: 10000 }).value;
     const result = await h.ctx.taskSystem.native.execute(claim);
-    assert.equal(result.run.state, 'succeeded'); assert.equal(result.run.validation, 'valid');
+    assert.equal(result.run.state, 'succeeded'); assert.equal(result.run.validation, undefined);
     const report = h.ledger.history(task.taskId).reports[0];
     assert.equal(report.schemaId, 'daily_work_summary.v1');
     assert.equal(report.data.payload.summary.user_turns.total, 2);

@@ -104,9 +104,19 @@ export function registerLegacyTaskPack(ledger, config = {}) {
             return false;
           };
           for (const childId of state.taskIds) {
-            const history = ledger.history(childId); const latest = history.runs.filter(candidate => !candidate.observationOnly && belongsToRootRun(candidate, history.task)).at(-1);
-            const accepted = history.reports.filter(r => r.runId === latest?.runId && r.schemaId === SCHEMAS.agent_daily_node).at(-1);
-            if (accepted) nodes.push({ nodeId: accepted.data.payload.device_id, rootTaskId: task.taskId, rootRunId: run.runId, outcome: latest.outcome, validation: latest.validation, report: accepted.data.payload });
+            const history = ledger.history(childId); const latest = history.runs.filter(candidate => !candidate.historyOnly && !candidate.observationOnly && belongsToRootRun(candidate, history.task)).at(-1);
+            const accepted = history.reports.filter(r => r.runId === latest?.runId && r.kind === 'result' && r.schemaId === SCHEMAS.agent_daily_node).at(-1);
+            if (accepted) {
+              // New Runs provide their actual state and terminal evidence,
+              // never a fabricated validation field. An arbitrary appended
+              // result alone cannot establish successful submitted evidence.
+              const appended = history.events.findIndex(event => event.type === 'report.appended' && event.runId === latest.runId && event.detail.reportId === accepted.reportId);
+              const settled = history.events.findIndex(event => event.type === 'run.settled' && event.runId === latest.runId && event.detail.attemptId === accepted.attemptId);
+              const execution = latest.intentSnapshot
+                ? { state: latest.state, ...(appended >= 0 && settled > appended ? { settlement: history.events[settled] } : {}) }
+                : { outcome: latest.outcome, validation: latest.validation };
+              nodes.push({ nodeId: accepted.data.payload.device_id, rootTaskId: task.taskId, rootRunId: run.runId, ...execution, report: accepted.data.payload });
+            }
           }
           validateNodeEvidenceGate(envelope.builder_input, nodes, expectedNodeIds);
         }

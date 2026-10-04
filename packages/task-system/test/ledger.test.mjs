@@ -26,6 +26,11 @@ function fixture(options = {}) {
     },
   };
 }
+function legacyAdmission(l, task) {
+  const old = {...l.getTask(task.taskId), admissionState:'admitted', admissionRevision:1};
+  l.managementDatabase().prepare("UPDATE entities SET data=? WHERE kind='task' AND id=?").run(JSON.stringify(old),task.taskId);
+  return old;
+}
 function prepare(l, nodeId = "worker") {
   l.registerNode("node-" + nodeId, {
     nodeId,
@@ -291,8 +296,7 @@ test("result validation rollback preserves attempt; valid result plus notificati
     const final = f.l.submit("final", settlement);
     f.reopen();
     assert.deepEqual(f.l.submit("final", settlement), final);
-    assert.equal(f.l.getRun(run.runId).state, "succeeded");
-    assert.equal(f.l.getRun(run.runId).outcome, "partial");
+    assert.equal(f.l.getRun(run.runId).state, "partial");
     assert.equal(f.l.deliveries().length, 1);
     assert.equal(f.l.history(task.taskId).reports.length, 1);
   } finally {
@@ -383,7 +387,7 @@ test("custom scheduled templates share one stable task and admit each slot once 
     assert.notEqual(first.runId, second.runId);
     assert.equal(f.l.snapshot().tasks.length, 1);
     assert.equal(f.l.snapshot().runs.length, 2);
-    assert.equal(f.l.snapshot().runs[0].configuration.template.version, 1);
+    assert.equal(f.l.snapshot().runs[0].configuration.templateRef.version, 1);
   } finally {
     f.close();
   }
@@ -571,7 +575,7 @@ test("blocked continuation is atomic, preserves task identity and rejects stale 
       runId: run.runId,
     });
     assert.equal(next.value.taskId, task.taskId);
-    assert.equal(next.value.configuration.continuationOf, run.runId);
+    assert.equal(f.l.history(task.taskId).events.find(e=>e.type==='run.continued' && e.runId===next.value.runId).detail.previousRunId, run.runId);
     assert.deepEqual(
       f.l.continueRun("continue", { taskId: task.taskId, runId: run.runId }),
       next,
@@ -691,7 +695,7 @@ test("one successful run cannot hide another active run for the same stable task
       outcome: "partial",
       summary: "Partial result",
     });
-    assert.equal(f.l.getTask(task.taskId).state, "completed");
+    assert.equal(f.l.getTask(task.taskId).state, "waiting");
     assert.equal(f.l.getRun(other.runId).reviewStatus, "pending_user");
   } finally {
     f.close();
@@ -720,7 +724,7 @@ test("multiple blocked continuations retain prior outcomes without blocking the 
     }
     assert.equal(f.l.history(task.taskId).runs.length, 4);
     assert.equal(
-      f.l.history(task.taskId).runs.filter((r) => r.outcome === "blocked")
+      f.l.history(task.taskId).runs.filter((r) => r.state === "blocked")
         .length,
       3,
     );
@@ -757,7 +761,7 @@ test("late completion of an older run cannot regress the newest completed run pr
       summary: "Earlier run failure",
     });
     assert.equal(f.l.getTask(task.taskId).state, "completed");
-    assert.equal(f.l.history(task.taskId).runs[0].outcome, "failure");
+    assert.equal(f.l.history(task.taskId).runs[0].state, "failed");
   } finally {
     f.close();
   }
@@ -1198,13 +1202,14 @@ test("operator confirmation persists, gates direct claims and uses revision-boun
   }
 });
 
-test("dispatch preserves configured immediacy then urgency, while importance remains descriptive", () => {
+test("dispatch uses enum priority and ignores legacy numeric scores", () => {
   const f = fixture();
   try {
     const base = prepare(f.l);
-    const add = (key, urgency, immediacy, importance) => {
+    const add = (key, urgency, immediacy, importance, priorityOverride) => {
       const task = f.l.createTask(key, {
         title: key,
+        priorityOverride,
         userImmediacy: immediacy,
         urgency,
         importance,
@@ -1214,18 +1219,18 @@ test("dispatch preserves configured immediacy then urgency, while importance rem
         route: base.run.route,
       }).value;
     };
-    const low = add("low", 100, 20, 100),
-      urgent = add("urgent", 90, 60, 0),
-      same = add("same", 10, 60, 100),
-      immediate = add("immediate", 0, 100, 0);
+    const low = add("low", 100, 20, 100, "low"),
+      urgent = add("urgent", 90, 60, 0, "high"),
+      same = add("same", 10, 60, 100, "high"),
+      immediate = add("immediate", 0, 100, 0, "urgent");
     assert.deepEqual(
       f.l.pendingRuns("worker").map((r) => r.runId),
       [immediate.runId, urgent.runId, same.runId, base.run.runId, low.runId],
     );
     f.l.updateTask("raise", {
       taskId: low.taskId,
-      userImmediacy: 100,
-      urgency: 100,
+      expectedRevision: f.l.getTask(low.taskId).revision,
+      priorityOverride: "urgent",
     });
     assert.equal(f.l.pendingRuns("worker")[0].runId, low.runId);
     assert.throws(
@@ -1286,7 +1291,7 @@ test("blocked continuation retains its pinned template and semantic validator", 
       taskId: run.taskId,
       runId: run.runId,
     }).value;
-    assert.equal(next.configuration.template.resultValidator, "retained-v1");
+    assert.equal(f.l.executionContext(next.runId).template.resultValidator, "retained-v1");
     assert.deepEqual(next.configuration.input, { source: "fixture" });
     const nextClaim = f.l.claim("next-contract-claim", {
       runId: next.runId,
@@ -1318,6 +1323,7 @@ test("changed task intent and newly queued plans invalidate stale human approval
     const revision = task.confirmation.revision;
     f.l.updateTask("changed-intent", {
       taskId: task.taskId,
+      expectedRevision: task.revision,
       title: "Changed scope",
     });
     assert.throws(
@@ -1471,6 +1477,7 @@ test("reversible non-task curation preserves lifecycle and later reports without
   const f = fixture({ reportDestinations: ["feishu:chat:fixture"] });
   try {
     const { task, run } = prepare(f.l);
+    legacyAdmission(f.l, task);
     f.l.setTaskAdmission("dismiss", {
       taskId: task.taskId,
       state: "dismissed",
@@ -1532,6 +1539,8 @@ test("imported run evidence stays observe-only after an explicit new task contin
     const base = prepare(f.l);
     const importedTask = {
       ...base.task,
+      admissionState: "admitted",
+      admissionRevision: 1,
       taskId: "historical-task",
       kind: "observed",
       state: "ready",
@@ -1559,7 +1568,7 @@ test("imported run evidence stays observe-only after an explicit new task contin
       templates: [],
     };
     f.l.importSnapshot("import-history", snapshot);
-    assert.equal(f.l.getRun(importedRun.runId).observationOnly, true);
+    assert.equal(f.l.getRun(importedRun.runId).historyOnly, true);
     assert.ok(
       !f.l.pendingRuns("worker").some((r) => r.runId === importedRun.runId),
     );
@@ -1786,7 +1795,7 @@ test("queue-only notes survive restart and enter exactly one subsequent run with
       route: base.run.route,
     }).value;
     assert.deepEqual(next.contextNotes, [
-      { reportId: note.reportId, body: note.body, actor: "operator-fixture" },
+      note.reportId,
     ]);
     const later = f.l.createRun("later-note", {
       taskId: base.task.taskId,

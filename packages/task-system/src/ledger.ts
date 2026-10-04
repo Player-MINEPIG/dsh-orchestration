@@ -1,3 +1,11 @@
+import {
+  canonical as wireCanonical,
+  canonicalData,
+  canonicalSchema,
+} from "./remote/protocol.js";
+import { NATIVE_PROVIDER_UNAVAILABLE_SUMMARY } from "./contracts.js";
+import { validateCriteria } from "./workbench-contracts.js";
+import type { Criterion, VersionRef } from "./workbench-contracts.js";
 import type { ObservationCandidate, CapturedText } from "./observation.js";
 import { Ajv } from "ajv";
 import { CronExpressionParser } from "cron-parser";
@@ -20,6 +28,8 @@ import type {
   Delivery,
   Event,
   ExecutionRoute,
+  ExecutionContext,
+  TaskPriority,
   Json,
   LeaseRef,
   NodeCapability,
@@ -89,6 +99,16 @@ function text(value: string, label: string, max = 1_000_000): string {
     fail("INVALID", `Invalid ${label}`);
   return value;
 }
+function optionalText(value: unknown, label: string, max = 1_000_000): string {
+  if (typeof value !== "string" || value.length > max)
+    return fail("INVALID", `Invalid ${label}`);
+  return value;
+}
+function taskTags(value: unknown): string[] {
+  if (!Array.isArray(value) || value.length > 128)
+    return fail("INVALID", "Task tags must be an array of at most 128 strings");
+  return value.map((tag) => text(tag, "task tag", 200));
+}
 function finite(value: number, min: number, max: number, label: string) {
   if (!Number.isFinite(value) || value < min || value > max)
     fail("INVALID", `Invalid ${label}`);
@@ -114,6 +134,7 @@ function validateSchema(schema: Json, value: Json, label: string) {
 }
 const TERMINAL = new Set<Run["state"]>([
   "succeeded",
+  "partial",
   "failed",
   "cancelled",
   "uncertain",
@@ -145,6 +166,7 @@ export interface ResultValidationContext {
   run: Run;
   attempt: Attempt;
   submission: Settlement;
+  executionContext?: ExecutionContext;
 }
 export type ResultValidator = (context: ResultValidationContext) => {
   valid: boolean;
@@ -153,6 +175,10 @@ export interface TaskInput {
   taskId?: string;
   title: string;
   description?: string;
+  goal?: string;
+  acceptanceCriteria?: Criterion[];
+  priorityOverride?: TaskPriority;
+  targetAt?: string;
   kind?: Task["kind"];
   parentTaskId?: string;
   parentRunId?: string;
@@ -285,6 +311,7 @@ export class TaskLedger {
       CREATE TABLE IF NOT EXISTS commands(id TEXT PRIMARY KEY,digest TEXT NOT NULL,receipt TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS events(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT UNIQUE NOT NULL,task_id TEXT,run_id TEXT,data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS resources(resource TEXT PRIMARY KEY,attempt_id TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS run_context_sessions(run_id TEXT NOT NULL,session_id TEXT NOT NULL,PRIMARY KEY(run_id,session_id));
     `);
     }
     const schema = this.db.prepare("SELECT version FROM schema_meta").get() as
@@ -321,6 +348,17 @@ export class TaskLedger {
         this.resultValidators.delete(validatorId);
     };
   }
+  /** Trusted in-process management adapter only; never expose the connection remotely. */
+  managementDatabase() {
+    return this.db;
+  }
+  assertManagementWritable() {
+    this.planner();
+    if (this.options.readOnly) fail("READ_ONLY", "Read-only ledger");
+  }
+  managementNow() {
+    return this.now();
+  }
   private now() {
     return new Date(this.clock()).toISOString();
   }
@@ -328,7 +366,7 @@ export class TaskLedger {
     const row = this.db
       .prepare("SELECT data FROM entities WHERE kind=? AND id=?")
       .get(kind, key) as { data: string } | undefined;
-    return row ? (JSON.parse(row.data) as T) : undefined;
+    return row ? this.projectEntity<T>(kind, JSON.parse(row.data)) : undefined;
   }
   private need<T>(kind: string, key: string): T {
     return this.get<T>(kind, id(key)) ?? fail("NOT_FOUND", `${kind} not found`);
@@ -358,7 +396,89 @@ export class TaskLedger {
             )
             .all(kind, parent)
     ) as { data: string }[];
-    return rows.map((x) => JSON.parse(x.data) as T);
+    return rows.map((x) => this.projectEntity<T>(kind, JSON.parse(x.data)));
+  }
+  private projectEntity<T>(kind: string, value: any): T {
+    if (kind === "task") value.priority = this.priorityFor(value);
+    if (kind === "run") {
+      const sessions = this.list<Attempt>("attempt", value.runId).flatMap(
+        (a) => (a.sessionId ? [a.sessionId] : []),
+      );
+      const table = this.db
+        .prepare(
+          "SELECT 1 FROM sqlite_master WHERE type='table' AND name='run_context_sessions'",
+        )
+        .get();
+      const inherited = table
+        ? (
+            this.db
+              .prepare(
+                "SELECT session_id FROM run_context_sessions WHERE run_id=? ORDER BY session_id",
+              )
+              .all(value.runId) as { session_id: string }[]
+          ).map((x) => x.session_id)
+        : [];
+      value.sessionIds = [
+        ...new Set([...(value.sessionIds ?? []), ...sessions, ...inherited]),
+      ];
+      const occurrence = this.list<{ occurrenceId: string; runId?: string }>(
+        "occurrence",
+      ).find((x) => x.runId === value.runId);
+      if (occurrence) value.occurrenceId = occurrence.occurrenceId;
+    }
+    return value as T;
+  }
+  private priorityFor(task: Task): TaskPriority {
+    if (task.priorityOverride) return task.priorityOverride;
+    if (
+      !this.db
+        .prepare(
+          "SELECT 1 FROM sqlite_master WHERE type='table' AND name='wb_backlog_tasks'",
+        )
+        .get()
+    )
+      return "normal";
+    const rows = this.db
+      .prepare(
+        "SELECT b.priority FROM wb_backlogs b JOIN wb_backlog_tasks bt USING(backlog_id) WHERE bt.task_id=?",
+      )
+      .all(task.taskId) as { priority: TaskPriority }[];
+    const order: TaskPriority[] = ["low", "normal", "high", "urgent"];
+    return rows.length
+      ? rows.reduce(
+          (a, b) =>
+            order.indexOf(a) > order.indexOf(b.priority) ? a : b.priority,
+          "low" as TaskPriority,
+        )
+      : "normal";
+  }
+  effectivePriority(taskId: string): TaskPriority {
+    return this.getTask(taskId).priority!;
+  }
+  private criteria(value: unknown): Criterion[] {
+    return validateCriteria(value, (ref: VersionRef) => {
+      if (ref.type === "task") {
+        const task = this.getTask(ref.id);
+        if (ref.revision !== undefined && ref.revision !== task.intentRevision)
+          fail("CONFLICT", "Task criterion intent revision differs");
+      } else if (ref.type === "report") this.need<Report>("report", ref.id);
+      else if (ref.type === "artifact" || ref.type === "milestone") {
+        const table =
+          ref.type === "artifact" ? "wb_artifacts" : "wb_milestones";
+        const column = ref.type === "artifact" ? "artifact_id" : "milestone_id";
+        if (
+          !this.db
+            .prepare(
+              "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+            )
+            .get(table) ||
+          !this.db
+            .prepare(`SELECT 1 FROM ${table} WHERE ${column}=?`)
+            .get(ref.id)
+        )
+          fail("NOT_FOUND", "Criterion target not found");
+      }
+    });
   }
   private planner() {
     if (this.role === "executor")
@@ -416,10 +536,24 @@ export class TaskLedger {
     }
   }
   private saveTask(task: Task) {
-    this.put("task", task.taskId, task, task.parentTaskId ?? null, task.state);
+    const { priority, ...stored } = task;
+    this.put(
+      "task",
+      task.taskId,
+      stored,
+      task.parentTaskId ?? null,
+      task.state,
+    );
   }
   private saveRun(run: Run) {
-    this.put("run", run.runId, run, run.taskId, run.state);
+    const { sessionIds, occurrenceId, ...stored } = run;
+    this.put(
+      "run",
+      run.runId,
+      run.intentSnapshot && !run.historyOnly ? stored : run,
+      run.taskId,
+      run.state,
+    );
   }
   private saveAttempt(attempt: Attempt) {
     this.put(
@@ -705,9 +839,14 @@ export class TaskLedger {
       }
       if (
         run &&
-        ["succeeded", "failed", "cancelled", "blocked", "uncertain"].includes(
-          run.state,
-        )
+        [
+          "succeeded",
+          "partial",
+          "failed",
+          "cancelled",
+          "blocked",
+          "uncertain",
+        ].includes(run.state)
       ) {
         const terminalKey = hash([
           task.taskId,
@@ -1043,7 +1182,7 @@ export class TaskLedger {
       }>("heartbeat", node.nodeId);
       const activeClaims = this.list<Run>("run").filter(
         (r) =>
-          !r.observationOnly &&
+          !(r.historyOnly || r.observationOnly) &&
           r.route?.nodeId === node.nodeId &&
           ["running", "uncertain"].includes(r.state),
       ).length;
@@ -1278,17 +1417,36 @@ export class TaskLedger {
     const task: Task = {
       taskId: key,
       title: text(input.title, "title", 500),
-      description: input.description ?? "",
+      description: optionalText(
+        input.description === undefined ? "" : input.description,
+        "description",
+      ),
       kind,
       state: kind === "observed" ? "waiting" : required ? "waiting" : "ready",
       createdAt: this.now(),
       updatedAt: this.now(),
-      tags: input.tags ?? [],
-      admissionState: "admitted",
-      admissionRevision: 1,
-      userImmediacy: priority(input.userImmediacy, parent?.userImmediacy ?? 50),
-      importance: priority(input.importance, parent?.importance ?? 50),
-      urgency: priority(input.urgency, parent?.urgency ?? 40),
+      tags: taskTags(input.tags === undefined ? [] : input.tags),
+      revision: 1,
+      intentRevision: 1,
+      acceptanceCriteria: this.criteria(input.acceptanceCriteria ?? []),
+      ...(input.goal !== undefined
+        ? { goal: input.goal === "" ? "" : text(input.goal, "goal", 10000) }
+        : {}),
+      ...(input.priorityOverride !== undefined
+        ? { priorityOverride: this.validatePriority(input.priorityOverride) }
+        : {}),
+      ...(input.targetAt !== undefined
+        ? { targetAt: this.validateTargetAt(input.targetAt) }
+        : {}),
+      ...(input.userImmediacy !== undefined
+        ? { userImmediacy: priority(input.userImmediacy, 50) }
+        : {}),
+      ...(input.importance !== undefined
+        ? { importance: priority(input.importance, 50) }
+        : {}),
+      ...(input.urgency !== undefined
+        ? { urgency: priority(input.urgency, 40) }
+        : {}),
       confirmation: {
         required,
         state: required ? "pending" : "not_required",
@@ -1302,7 +1460,21 @@ export class TaskLedger {
     this.saveTask(task);
     this.event("task.created", { kind }, key);
     this.lifecycleDelivery(task);
-    return task;
+    return this.getTask(task.taskId);
+  }
+  private validatePriority(value: TaskPriority): TaskPriority {
+    if (!["low", "normal", "high", "urgent"].includes(value))
+      fail("INVALID", "Invalid priority");
+    return value;
+  }
+  private validateTargetAt(value: string): string {
+    if (
+      typeof value !== "string" ||
+      !/^\d{4}-\d{2}-\d{2}T/.test(value) ||
+      !Number.isFinite(Date.parse(value))
+    )
+      fail("INVALID", "Invalid targetAt timestamp");
+    return new Date(value).toISOString();
   }
   createTask(commandId: string, input: TaskInput) {
     this.planner();
@@ -1317,7 +1489,12 @@ export class TaskLedger {
       title?: string;
       description?: string;
       tags?: string[];
-      state?: "ready" | "waiting" | "archived";
+      state?: "candidate" | "ready" | "waiting" | "archived";
+      expectedRevision?: number;
+      goal?: string;
+      acceptanceCriteria?: Criterion[];
+      priorityOverride?: TaskPriority | null;
+      targetAt?: string | null;
       userImmediacy?: number;
       importance?: number;
       urgency?: number;
@@ -1326,7 +1503,16 @@ export class TaskLedger {
     this.planner();
     return this.command(commandId, "updateTask", input, () => {
       const t = this.getTask(input.taskId);
+      if (
+        (t.revision !== undefined || input.expectedRevision !== undefined) &&
+        input.expectedRevision !== (t.revision ?? 1)
+      )
+        fail("CONFLICT", "Task revision changed");
       const intentChanged =
+        (input.goal !== undefined && input.goal !== (t.goal ?? "")) ||
+        (input.acceptanceCriteria !== undefined &&
+          canonical(input.acceptanceCriteria) !==
+            canonical(t.acceptanceCriteria ?? [])) ||
         (input.title !== undefined && input.title !== t.title) ||
         (input.description !== undefined &&
           input.description !== t.description);
@@ -1334,7 +1520,7 @@ export class TaskLedger {
         intentChanged &&
         this.list<Run>("run", t.taskId).some(
           (r) =>
-            !r.observationOnly &&
+            !(r.historyOnly || r.observationOnly) &&
             (r.state === "running" || r.state === "uncertain"),
         )
       )
@@ -1343,8 +1529,24 @@ export class TaskLedger {
           "Cancel or reconcile active execution before changing task intent",
         );
       if (input.title !== undefined) t.title = text(input.title, "title", 500);
-      if (input.description !== undefined) t.description = input.description;
-      if (input.tags) t.tags = input.tags;
+      if (input.description !== undefined)
+        t.description = optionalText(input.description, "description");
+      if (input.goal !== undefined)
+        t.goal = input.goal === "" ? "" : text(input.goal, "goal", 10000);
+      if (input.acceptanceCriteria !== undefined)
+        t.acceptanceCriteria = this.criteria(input.acceptanceCriteria);
+      if (input.priorityOverride === null) delete t.priorityOverride;
+      else if (input.priorityOverride !== undefined)
+        t.priorityOverride = this.validatePriority(input.priorityOverride);
+      if (input.targetAt === null) delete t.targetAt;
+      else if (input.targetAt !== undefined)
+        t.targetAt = this.validateTargetAt(input.targetAt);
+      if (
+        input.state &&
+        !["candidate", "ready", "waiting", "archived"].includes(input.state)
+      )
+        fail("INVALID", "Invalid management task state");
+      if (input.tags !== undefined) t.tags = taskTags(input.tags);
       if (input.state) t.state = input.state;
       for (const field of ["userImmediacy", "importance", "urgency"] as const) {
         if (input[field] !== undefined) {
@@ -1354,11 +1556,17 @@ export class TaskLedger {
           t[field] = value;
         }
       }
-      if (intentChanged) this.invalidateConfirmation(t);
+      if (intentChanged) {
+        this.invalidateConfirmation(t);
+        t.intentRevision = (t.intentRevision ?? 1) + 1;
+        if (["completed", "failed"].includes(t.state))
+          t.state = this.confirmationAllows(t) ? "ready" : "waiting";
+      }
+      t.revision = (t.revision ?? 1) + 1;
       t.updatedAt = this.now();
       this.saveTask(t);
       this.event("task.updated", { fields: Object.keys(input) }, t.taskId);
-      return t;
+      return this.getTask(t.taskId);
     });
   }
   private confirmationAllows(task: Task) {
@@ -1381,6 +1589,11 @@ export class TaskLedger {
     this.planner();
     return this.command(commandId, "setTaskAdmission", input, () => {
       const task = this.getTask(input.taskId);
+      if (task.admissionRevision === undefined)
+        fail(
+          "LEGACY_ONLY",
+          "Admission curation applies only to legacy records; use task state for new work",
+        );
       if (!["admitted", "dismissed"].includes(input.state))
         fail("INVALID", "Invalid admission state");
       if ((task.admissionRevision ?? 1) !== input.expectedRevision)
@@ -1442,7 +1655,7 @@ export class TaskLedger {
       if (
         this.list<Run>("run", task.taskId).some(
           (r) =>
-            !r.observationOnly &&
+            !(r.historyOnly || r.observationOnly) &&
             (r.state === "running" || r.state === "uncertain"),
         )
       )
@@ -1476,6 +1689,100 @@ export class TaskLedger {
       return task;
     });
   }
+  private pinConfiguration(value?: Json): Json {
+    if (value === undefined || value === null) return null;
+    if (typeof value !== "object" || Array.isArray(value))
+      fail("INVALID", "Run configuration must be an object");
+    const config = value as Record<string, Json>;
+    const allowed = new Set([
+      "template",
+      "templateRef",
+      "input",
+      "reporting",
+      "notifyUserOnTerminal",
+      "trigger",
+      "decisionId",
+      "continuationOf",
+    ]);
+    if (Object.keys(config).some((k) => !allowed.has(k)))
+      fail("INVALID", "Unsupported Run configuration field");
+    let template: Template | undefined;
+    if (config.template) {
+      template = config.template as unknown as Template;
+      this.validateTemplate(template);
+      const key = `${template.templateId}@${template.version}`;
+      const existing = this.get<Template>("template", key);
+      if (existing && canonical(existing) !== canonical(template))
+        fail("CONFLICT", "Template version content differs");
+      if (!existing) this.put("template", key, template, template.templateId);
+    }
+    if (config.templateRef) {
+      const ref = config.templateRef as { templateId: string; version: number };
+      const pinned = this.getTemplate(ref.templateId, ref.version);
+      if (template && canonical(pinned) !== canonical(template))
+        fail("CONFLICT", "Template and reference differ");
+      template = pinned;
+    }
+    const result: Record<string, Json> = {};
+    if (template) {
+      result.templateRef = {
+        templateId: template.templateId,
+        version: template.version,
+      };
+      result.input = config.input ?? template.defaults ?? null;
+      validateSchema(template.inputSchema, result.input, "Template input");
+    } else if (config.input !== undefined) result.input = config.input;
+    for (const key of ["reporting", "notifyUserOnTerminal", "trigger"] as const)
+      if (config[key] !== undefined) result[key] = config[key];
+    if (config.reporting !== undefined && typeof config.reporting !== "string")
+      fail("INVALID", "Invalid reporting setting");
+    if (
+      config.notifyUserOnTerminal !== undefined &&
+      typeof config.notifyUserOnTerminal !== "boolean"
+    )
+      fail("INVALID", "Invalid terminal notification setting");
+    if (result.input !== undefined) canonicalData(result.input);
+    if (result.trigger !== undefined) canonicalData(result.trigger);
+    // Old command provenance stays in events, not in the execution configuration.
+    return result;
+  }
+  executionContext(runId: string): ExecutionContext {
+    const run = this.getRun(runId);
+    const config = run.configuration as {
+      template?: Template;
+      templateRef?: { templateId: string; version: number };
+    } | null;
+    const template = config?.templateRef
+      ? this.getTemplate(
+          config.templateRef.templateId,
+          config.templateRef.version,
+        )
+      : config?.template;
+    // Apply the same content budgets to already-persisted templates too; the
+    // consumer must not be the first place an over-bound legacy value fails.
+    if (template) {
+      canonicalSchema(template.inputSchema);
+      canonicalSchema(template.resultContract);
+      canonicalData(template.defaults);
+    }
+    if (config && "input" in config) canonicalData(config.input);
+    if (config && "trigger" in config) canonicalData(config.trigger);
+    const reports = (run.contextNotes ?? []).map((note) => {
+      if (typeof note !== "string") return note;
+      const report = this.need<Report>("report", note);
+      if (report.taskId !== run.taskId)
+        fail("FORBIDDEN", "Context report belongs to another task");
+      return {
+        reportId: report.reportId,
+        body: report.body,
+        actor: (report.data as { actor?: string })?.actor ?? "unknown",
+      };
+    });
+    const context = { ...(template ? { template } : {}), reports };
+    if (Buffer.byteLength(canonical(context)) > 1_000_000)
+      fail("TOO_LARGE", "Resolved execution context exceeds 1 MB");
+    return context;
+  }
   private newRun(input: RunInput): Run {
     const task = this.getTask(input.taskId);
     const parentRunId = this.inferParentRun(
@@ -1485,11 +1792,11 @@ export class TaskLedger {
     if (parentRunId) this.checkExecutionBudget(parentRunId, task.taskId);
     if (task.kind === "observed")
       fail("OBSERVE_ONLY", "Observed work cannot be dispatched");
-    if (["cancelled", "archived"].includes(task.state))
+    if (["candidate", "cancelled", "archived"].includes(task.state))
       fail("CLOSED", "Explicitly reopen task before execution");
     if (
       this.list<Run>("run", task.taskId).some(
-        (r) => r.state === "uncertain" && !r.observationOnly,
+        (r) => r.state === "uncertain" && !(r.historyOnly || r.observationOnly),
       )
     )
       fail(
@@ -1525,15 +1832,7 @@ export class TaskLedger {
       )
         fail("FORBIDDEN", "Task policy excludes workspace");
     }
-    const config = input.configuration as
-      | { template?: Template; input?: Json }
-      | undefined;
-    if (config?.template)
-      validateSchema(
-        config.template.inputSchema,
-        config.input ?? null,
-        "Template input",
-      );
+    const configuration = this.pinConfiguration(input.configuration);
     const key = id(input.runId ?? randomUUID());
     if (this.get("run", key)) fail("CONFLICT", "Run ID already exists");
     const notes = this.list<{
@@ -1542,27 +1841,44 @@ export class TaskLedger {
       consumedByRunId?: string;
     }>("note", task.taskId).filter((n) => !n.consumedByRunId);
     const contextNotes = [
-      ...(input.contextNotes ?? []),
-      ...notes.map((n) => ({
-        reportId: n.reportId,
-        actor: n.actor,
-        body: this.need<Report>("report", n.reportId).body,
-      })),
+      ...new Set([
+        ...(input.contextNotes ?? []).map((note) =>
+          typeof note === "string" ? note : note.reportId,
+        ),
+        ...notes.map((n) => n.reportId),
+      ]),
     ];
     if (contextNotes.length > 128)
-      fail(
-        "TOO_LARGE",
-        "Run note context exceeds explicit bound; review history and create a fresh scoped run",
-      );
-    for (const note of contextNotes) {
-      const source = this.need<Report>("report", note.reportId);
+      fail("TOO_LARGE", "Run note context exceeds 128 reports");
+    for (const reportId of contextNotes) {
+      const source = this.need<Report>("report", reportId);
+      if (source.taskId !== task.taskId)
+        fail("FORBIDDEN", "Context report belongs to another task");
+    }
+    // Old callers may supply note snapshots; verify them before retaining only the immutable ID.
+    for (const note of input.contextNotes ?? [])
+      if (typeof note !== "string") {
+        const source = this.need<Report>("report", note.reportId);
+        if (
+          source.body !== note.body ||
+          (source.data as { actor?: string })?.actor !== note.actor
+        )
+          fail("FORBIDDEN", "Run note context differs from source history");
+      }
+    const contextSessionIds = [...new Set(input.sessionIds ?? [])];
+    if (contextSessionIds.length > 128)
+      fail("TOO_LARGE", "Too many context sessions");
+    for (const sessionId of contextSessionIds) {
+      id(sessionId, "context sessionId");
       if (
-        source.taskId !== task.taskId ||
-        source.kind !== "note" ||
-        source.body !== note.body ||
-        (source.data as { actor?: string })?.actor !== note.actor
+        !this.list<Attempt>("attempt").some(
+          (a) => a.taskId === task.taskId && a.sessionId === sessionId,
+        )
       )
-        fail("FORBIDDEN", "Run note context differs from source history");
+        fail(
+          "FORBIDDEN",
+          "Context session has no attempt provenance for this task",
+        );
     }
     const run: Run = {
       runId: key,
@@ -1571,8 +1887,18 @@ export class TaskLedger {
       state: "queued",
       createdAt: this.now(),
       updatedAt: this.now(),
-      sessionIds: input.sessionIds ?? [],
-      configuration: input.configuration ?? null,
+      sessionIds: contextSessionIds,
+      historyOnly: false,
+      configuration,
+      intentSnapshot: {
+        title: task.title,
+        description: task.description,
+        ...(task.goal !== undefined ? { goal: task.goal } : {}),
+        acceptanceCriteria: task.acceptanceCriteria ?? [],
+        ...(task.intentRevision !== undefined
+          ? { intentRevision: task.intentRevision }
+          : {}),
+      },
       ...(this.options.safeRetry
         ? {
             retryPolicy: {
@@ -1590,6 +1916,11 @@ export class TaskLedger {
       ...(input.occurrenceId ? { occurrenceId: input.occurrenceId } : {}),
     };
     this.saveRun(run);
+    for (const sessionId of contextSessionIds)
+      this.db
+        .prepare("INSERT INTO run_context_sessions VALUES(?,?)")
+        .run(run.runId, sessionId);
+    this.executionContext(run.runId);
     for (const note of notes)
       this.put(
         "note",
@@ -1716,6 +2047,8 @@ export class TaskLedger {
       nodeId: string;
       ttlMs: number;
       resources?: string[];
+      /** Trusted gateway bound; never accepted from peer payload. */
+      maxClaimBytes?: number;
     },
   ) {
     return this.command(commandId, "claim", input, () => {
@@ -1738,15 +2071,15 @@ export class TaskLedger {
         this.list<Run>("run").filter(
           (r) =>
             r.route?.nodeId === input.nodeId &&
-            !r.observationOnly &&
+            !(r.historyOnly || r.observationOnly) &&
             ["running", "uncertain"].includes(r.state),
         ).length >= node.maxConcurrent
       )
         fail("BUSY", "Executor capacity occupied");
       const task = this.getTask(run.taskId);
-      if (task.kind === "observed" || run.observationOnly)
+      if (task.kind === "observed" || run.historyOnly || run.observationOnly)
         fail("OBSERVE_ONLY", "Historical observed work cannot be dispatched");
-      if (task.state === "archived")
+      if (["candidate", "archived"].includes(task.state))
         fail("CLOSED", "Archived task cannot execute queued work");
       if (!this.confirmationAllows(task))
         fail(
@@ -1802,7 +2135,25 @@ export class TaskLedger {
         task.taskId,
         run.runId,
       );
-      return { attempt, run, task };
+      const claim = {
+        attempt,
+        run,
+        task,
+        executionContext: this.executionContext(run.runId),
+      };
+      // Validate before this command commits its Attempt. The same codec is
+      // used by gateway receipts and client/worker journals; reserve the real
+      // ledger receipt -> remote receipt -> outbound storage wrapper layers.
+      wireCanonical({ receipt: { result: { value: claim } } });
+      if (input.maxClaimBytes !== undefined) {
+        finite(input.maxClaimBytes, 1024, 16 * 1024 * 1024, "claim byte bound");
+        if (
+          !Number.isInteger(input.maxClaimBytes) ||
+          Buffer.byteLength(canonical(claim)) > input.maxClaimBytes
+        )
+          fail("TOO_LARGE", "Claim exceeds configured transport bound");
+      }
+      return claim;
     });
   }
   private owned(ref: LeaseRef, allowCancelled = false, recovered = false) {
@@ -1839,7 +2190,9 @@ export class TaskLedger {
     if (this.getRun(rootRunId).taskId !== taskId)
       fail("FORBIDDEN", "Execution scope belongs to another task");
     const allTasks = this.list<Task>("task"),
-      allRuns = this.list<Run>("run").filter((r) => !r.observationOnly),
+      allRuns = this.list<Run>("run").filter(
+        (r) => !(r.historyOnly || r.observationOnly),
+      ),
       runIds = new Set([rootRunId]),
       taskIds = new Set<string>();
     let changed = true;
@@ -1891,7 +2244,9 @@ export class TaskLedger {
     }
     if (!parentTaskId) return undefined;
     const active = this.list<Run>("run", parentTaskId).filter(
-      (r) => !r.observationOnly && ["queued", "running"].includes(r.state),
+      (r) =>
+        !(r.historyOnly || r.observationOnly) &&
+        ["queued", "running"].includes(r.state),
     );
     if (active.length > 1)
       fail(
@@ -2232,8 +2587,7 @@ export class TaskLedger {
         .run(attempt.attemptId);
       if (exhausted) {
         run.state = "failed";
-        run.outcome = "failure";
-        run.validation = "not-submitted";
+
         run.updatedAt = this.now();
         this.saveRun(run);
         this.projectTaskState(task, run);
@@ -2339,9 +2693,7 @@ export class TaskLedger {
       attempt.sessionId = input.sessionId;
       attempt.updatedAt = this.now();
       this.saveAttempt(attempt);
-      if (!run.sessionIds.includes(input.sessionId))
-        run.sessionIds.push(input.sessionId);
-      this.saveRun(run);
+
       this.event(
         "session.linked",
         { sessionId: input.sessionId, attemptId: attempt.attemptId },
@@ -2352,6 +2704,7 @@ export class TaskLedger {
     });
   }
   private report(input: ReportInput): Report {
+    if (input.data !== undefined) canonicalData(input.data);
     this.getTask(input.taskId);
     if (input.runId && this.getRun(input.runId).taskId !== input.taskId)
       fail("FORBIDDEN", "Report run belongs to another task");
@@ -2501,9 +2854,35 @@ export class TaskLedger {
    */
   validateResultContract(context: ResultValidationContext): void {
     const { run, submission: input } = context;
-    const config = run.configuration as { template?: Template } | null;
-    if (config?.template && !(input.outcome === "unknown" && !input.report)) {
-      const contract = config.template.resultContract;
+    if (input.preDispatchFailure !== undefined) {
+      this.validatePreDispatchFailure(run, context.attempt, input);
+      return;
+    }
+    const config = run.configuration as {
+      template?: Template;
+      templateRef?: { templateId: string; version: number };
+    } | null;
+    let template: Template | undefined;
+    if (config?.templateRef) {
+      template =
+        context.phase === "executor-preflight"
+          ? context.executionContext?.template
+          : this.getTemplate(
+              config.templateRef.templateId,
+              config.templateRef.version,
+            );
+      if (
+        !template ||
+        template.templateId !== config.templateRef.templateId ||
+        template.version !== config.templateRef.version
+      )
+        fail(
+          "CONTEXT_MISSING",
+          "Pinned template context missing or mismatched",
+        );
+    } else template = config?.template;
+    if (template && !(input.outcome === "unknown" && !input.report)) {
+      const contract = template.resultContract;
       if (
         contract &&
         typeof contract === "object" &&
@@ -2521,10 +2900,8 @@ export class TaskLedger {
           },
           "Result",
         );
-      if (config.template.resultValidator) {
-        const validator = this.resultValidators.get(
-          config.template.resultValidator,
-        );
+      if (template.resultValidator) {
+        const validator = this.resultValidators.get(template.resultValidator);
         if (!validator)
           fail(
             "VALIDATOR_UNAVAILABLE",
@@ -2563,13 +2940,48 @@ export class TaskLedger {
       }
     }
   }
+  private validatePreDispatchFailure(
+    run: Run,
+    attempt: Attempt,
+    input: Settlement,
+  ) {
+    const failure = input.preDispatchFailure;
+    if (
+      !failure ||
+      typeof failure !== "object" ||
+      Array.isArray(failure) ||
+      Object.keys(failure).sort().join(",") !== "code,kind,model,provider" ||
+      failure.kind !== "native-provider-unavailable-v1" ||
+      failure.code !== "NO_ADAPTER" ||
+      input.outcome !== "blocked" ||
+      input.report !== undefined ||
+      input.notifications !== undefined ||
+      input.summary !== NATIVE_PROVIDER_UNAVAILABLE_SUMMARY ||
+      run.retry ||
+      !input.executionId ||
+      attempt.executionId !== input.executionId ||
+      failure.provider !== run.route?.provider ||
+      failure.model !== run.route?.model
+    )
+      fail("INVALID", "Invalid native pre-dispatch failure attestation");
+    // The trusted native adapter asserts only the new attempt did not dispatch.
+    // A prior report from this attempt contradicts that boundary; never downgrade it.
+    if (
+      this.list<Report>("report", run.taskId).some(
+        (r) => r.attemptId === attempt.attemptId,
+      )
+    )
+      fail("CONFLICT", "Attempt already has report evidence");
+  }
   private projectTaskState(task: Task, fallback: Run) {
     const runs = this.list<Run>("run", task.taskId).filter(
-      (r) => !r.observationOnly,
+      (r) => !(r.historyOnly || r.observationOnly),
     );
     const latest = runs.at(-1) ?? fallback;
     task.state =
-      latest.state === "succeeded"
+      latest.state === "succeeded" &&
+      (!latest.intentSnapshot?.intentRevision ||
+        latest.intentSnapshot.intentRevision === task.intentRevision)
         ? "completed"
         : latest.state === "failed"
           ? "failed"
@@ -2612,7 +3024,25 @@ export class TaskLedger {
       attempt,
       submission: input,
       phase: "authority",
+      executionContext: this.executionContext(run.runId),
     });
+    if (input.preDispatchFailure) {
+      this.event(
+        "run.pre_dispatch_failed",
+        {
+          origin: "native-adapter",
+          phase: "before-agent-start",
+          code: input.preDispatchFailure.code,
+          provider: input.preDispatchFailure.provider,
+          model: input.preDispatchFailure.model,
+          attemptId: attempt.attemptId,
+          nodeId: attempt.nodeId,
+          summary: NATIVE_PROVIDER_UNAVAILABLE_SUMMARY,
+        },
+        run.taskId,
+        run.runId,
+      );
+    }
     const report = input.report
       ? this.report({
           ...input.report,
@@ -2623,14 +3053,12 @@ export class TaskLedger {
           kind: "result",
         })
       : undefined;
-    run.outcome = input.outcome;
-    run.validation =
-      input.outcome === "unknown" && !input.report ? "not-submitted" : "valid";
+
     if (input.outcome === "partial") run.reviewStatus = "pending_user";
     run.state = (
       {
         success: "succeeded",
-        partial: "succeeded",
+        partial: "partial",
         failure: "failed",
         blocked: "blocked",
         unknown: "uncertain",
@@ -2719,10 +3147,12 @@ export class TaskLedger {
         );
       const runs = input.runId
         ? [this.getRun(input.runId)]
-        : this.list<Run>("run", task.taskId).filter((r) => !r.observationOnly);
+        : this.list<Run>("run", task.taskId).filter(
+            (r) => !(r.historyOnly || r.observationOnly),
+          );
       let changed = false;
       for (const run of runs) {
-        if (run.observationOnly)
+        if (run.historyOnly || run.observationOnly)
           fail("OBSERVE_ONLY", "Cannot cancel historical observed execution");
         if (run.taskId !== task.taskId)
           fail("FORBIDDEN", "Run belongs to different task");
@@ -2745,7 +3175,7 @@ export class TaskLedger {
         const others = this.list<Run>("run", task.taskId).filter(
           (r) =>
             r.runId !== input.runId &&
-            !r.observationOnly &&
+            !(r.historyOnly || r.observationOnly) &&
             !TERMINAL.has(r.state) &&
             !r.cancellationRequested,
         );
@@ -2817,7 +3247,7 @@ export class TaskLedger {
     this.planner();
     return this.command(commandId, "resolveUncertain", input, () => {
       const run = this.getRun(input.runId);
-      if (run.observationOnly)
+      if (run.historyOnly || run.observationOnly)
         fail(
           "OBSERVE_ONLY",
           "Historical evidence is reviewed through new reports, not execution reconciliation",
@@ -2871,7 +3301,7 @@ export class TaskLedger {
         const run = this.getRun(a.runId);
         if (run.currentAttemptId === a.attemptId && !TERMINAL.has(run.state)) {
           run.state = "uncertain";
-          run.outcome = "unknown";
+
           run.updatedAt = this.now();
           this.saveRun(run);
           const t = this.getTask(run.taskId);
@@ -3061,7 +3491,7 @@ export class TaskLedger {
         {
           decision: input.decision,
           reason: text(input.reason, "review reason", 1000),
-          originalOutcome: run.outcome ?? "unknown",
+          originalState: run.state,
         },
         run.taskId,
         run.runId,
@@ -3281,23 +3711,31 @@ export class TaskLedger {
       };
     });
   }
+  private validateTemplate(template: Template) {
+    id(template.templateId);
+    finite(template.version, 1, 1e6, "template version");
+    text(template.name, "template name", 500);
+    if (template.resultValidator !== undefined)
+      id(template.resultValidator, "validator ID");
+    canonicalData(template.defaults);
+    try {
+      canonicalSchema(template.inputSchema);
+      canonicalSchema(template.resultContract);
+      schemaValidator.compile(template.inputSchema as object);
+      schemaValidator.compile(template.resultContract as object);
+    } catch {
+      fail(
+        "INVALID_SCHEMA",
+        "Template schemas must be valid bounded local JSON schemas",
+      );
+    }
+    if (!Number.isInteger(template.version))
+      fail("INVALID", "Template version must be an integer");
+  }
   updateTemplate(commandId: string, template: Template) {
     this.planner();
     return this.command(commandId, "updateTemplate", template, () => {
-      id(template.templateId);
-      finite(template.version, 1, 1e6, "template version");
-      text(template.name, "template name", 500);
-      if (template.resultValidator !== undefined)
-        id(template.resultValidator, "validator ID");
-      try {
-        schemaValidator.compile(template.inputSchema as object);
-        schemaValidator.compile(template.resultContract as object);
-      } catch {
-        fail(
-          "INVALID_SCHEMA",
-          "Template schemas must be valid local JSON schemas",
-        );
-      }
+      this.validateTemplate(template);
       const key = `${template.templateId}@${template.version}`;
       if (this.get("template", key))
         fail("CONFLICT", "Template versions are immutable");
@@ -3482,7 +3920,10 @@ export class TaskLedger {
           route: input.route ?? s.route,
           occurrenceId: key,
           configuration: {
-            template: template as unknown as Json,
+            templateRef: {
+              templateId: template.templateId,
+              version: template.version,
+            },
             input: s.input,
             trigger: {
               scheduledFor: input.occurrenceAt,
@@ -3534,9 +3975,11 @@ export class TaskLedger {
           r.state === "queued" &&
           (!r.retry || Date.parse(r.retry.notBefore) <= this.clock()) &&
           r.route?.nodeId === nodeId &&
-          !r.observationOnly &&
+          !(r.historyOnly || r.observationOnly) &&
           tasks.get(r.taskId)?.kind !== "observed" &&
-          !["cancelled", "archived"].includes(tasks.get(r.taskId)!.state) &&
+          !["candidate", "cancelled", "archived"].includes(
+            tasks.get(r.taskId)!.state,
+          ) &&
           !r.cancellationRequested &&
           this.confirmationAllows(tasks.get(r.taskId)!),
       )
@@ -3544,8 +3987,12 @@ export class TaskLedger {
         const left = tasks.get(a.taskId)!,
           right = tasks.get(b.taskId)!;
         return (
-          (right.userImmediacy ?? 50) - (left.userImmediacy ?? 50) ||
-          (right.urgency ?? 40) - (left.urgency ?? 40) ||
+          ["low", "normal", "high", "urgent"].indexOf(
+            right.priority ?? "normal",
+          ) -
+            ["low", "normal", "high", "urgent"].indexOf(
+              left.priority ?? "normal",
+            ) ||
           left.createdAt.localeCompare(right.createdAt) ||
           a.createdAt.localeCompare(b.createdAt)
         );
@@ -3680,7 +4127,7 @@ export class TaskLedger {
       scope?.runs ?? this.list<Run>("run").filter((r) => ids.has(r.taskId));
     const pending = runs.filter(
       (r) =>
-        !r.observationOnly &&
+        !(r.historyOnly || r.observationOnly) &&
         (!TERMINAL.has(r.state) || r.state === "uncertain"),
     );
     const unstarted = tasks.filter(
@@ -3717,6 +4164,7 @@ export class TaskLedger {
       },
       tasks: this.list<Task>("task"),
       runs: this.list<Run>("run"),
+      attempts: this.list<Attempt>("attempt"),
       reports: this.list<Report>("report"),
       artifacts: this.list<Artifact>("artifact"),
       templates: this.list<Template>("template"),
@@ -3786,7 +4234,7 @@ export class TaskLedger {
       }
       for (const run of input.runs) {
         this.getTask(run.taskId);
-        const historicalRun = { ...run, observationOnly: true };
+        const historicalRun = { ...run, historyOnly: true };
         if (
           this.get("run", run.runId) &&
           hash(this.get("run", run.runId)) !== hash(historicalRun)

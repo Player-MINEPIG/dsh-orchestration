@@ -2,10 +2,11 @@ import http from 'node:http';
 import {readFile} from 'node:fs/promises';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 import path from 'node:path';
+import {managementSnapshot,readManagementCommand} from './management.mjs';
 
 const HERE=path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC=path.join(HERE,'public');
-const STATIC=new Map([['','index.html'],['index.html','index.html'],['app.js','app.js'],['model.js','model.js'],['client.js','client.js'],['styles.css','styles.css'],['favicon.svg','favicon.svg']]);
+const STATIC=new Map([['','index.html'],['index.html','index.html'],['app.js','app.js'],['model.js','model.js'],['client.js','client.js'],['styles.css','styles.css'],['favicon.svg','favicon.svg'],['manage.html','manage.html'],['management-app.js','management-app.js'],['management-model.js','management-model.js'],['management-client.js','management-client.js'],['management.css','management.css']]);
 const TYPES={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.svg':'image/svg+xml'};
 const LOOPBACK=new Set(['127.0.0.1','::1','::ffff:127.0.0.1']);
 const PRIVATE_KEYS=/password|passwd|secret|token|api.?key|authorization|cookie|system.?prompt|chain.?of.?thought|private.?notes/i;
@@ -36,17 +37,23 @@ function send(res,code,body,type='text/plain; charset=utf-8',method='GET'){res.w
 /**
  * Portable Node handler for DSH/another authenticated host. The default is local-only.
  * authorize(req) must validate the host's existing session before returning true.
- * No token creation, credential persistence, mutation, or database of its own.
+ * No token creation, credential persistence, or database of its own.
+ * Optional management requires an existing ledger adapter, named database and a trusted manager role.
  */
-export function createDashboardHandler({snapshot,basePath='/',authorize,requireSessionExpiry=false,accessLabel='云电脑本地视图',accessDescription='只读 · 不对公网开放',refreshIntervalMs=15000}={}){
+export function createDashboardHandler({snapshot,basePath='/',authorize,requireSessionExpiry=false,accessLabel='云电脑本地视图',accessDescription='只读 · 不对公网开放',refreshIntervalMs=15000,management,localRole='viewer',managementOrigin,databaseIdentity}={}){
  if(typeof snapshot!=='function')throw new Error('snapshot callback is required');
  if(requireSessionExpiry&&typeof authorize!=='function')throw new Error('Session expiry requires an authenticated host adapter');
+ if(management&&(!databaseIdentity?.databaseId||!databaseIdentity?.label||!path.isAbsolute(databaseIdentity?.path||'')))throw new Error('Management requires an explicit database identity and path');
+ if(management&&authorize&&!managementOrigin)throw new Error('Authenticated management requires an explicit managementOrigin');
+ if(managementOrigin){const url=new URL(managementOrigin);if(!['http:','https:'].includes(url.protocol)||url.origin!==managementOrigin)throw new Error('managementOrigin must be an exact HTTP(S) origin');}
+ if(!['viewer','manager'].includes(localRole))throw new Error('Invalid localRole');
  const base=normalBase(basePath);
  return async(req,res)=>{
   securityHeaders(res);
   try{
+   let session;
    if(authorize){
-    let session;try{session=await authorize(req);}catch{session=false;}
+    try{session=await authorize(req);}catch{session=false;}
     if(!session||(requireSessionExpiry&&(!Number.isFinite(session.expiresAt)||session.expiresAt<=Date.now()))){send(res,401,'Authentication required');return;}
     if(Number.isFinite(session.expiresAt))res.setHeader('X-DSH-Session-Expires-At',new Date(session.expiresAt).toISOString());
    }
@@ -54,16 +61,35 @@ export function createDashboardHandler({snapshot,basePath='/',authorize,requireS
     const hostname=(req.headers.host||'').toLowerCase().replace(/:\d+$/,'');
     if(!LOOPBACK.has(req.socket.remoteAddress)||!['127.0.0.1','localhost','[::1]'].includes(hostname)){send(res,403,'Local access only');return;}
    }
-   if(!['GET','HEAD'].includes(req.method)){res.setHeader('Allow','GET, HEAD');send(res,405,'Read-only dashboard');return;}
    let pathname;
    try{pathname=new URL(req.url,'http://localhost').pathname;}catch{send(res,400,'Invalid URL');return;}
    if(base!=='/'&&pathname===base.slice(0,-1)){res.writeHead(308,{Location:base});res.end();return;}
    if(!pathname.startsWith(base)){send(res,404,'Not found');return;}
    const relative=pathname.slice(base.length);
-   if(relative==='api/health'){send(res,200,JSON.stringify({ok:true,readOnly:true}),'application/json; charset=utf-8',req.method);return;}
+   const canManage=Boolean(management?.manage&&(authorize?session?.role==='manager':localRole==='manager'));
+   if(relative==='api/manage'&&req.method==='POST'&&management){
+    if(!canManage){send(res,403,JSON.stringify({error:'Management role required'}),'application/json; charset=utf-8');return;}
+    const expectedOrigin=managementOrigin||`http://${req.headers.host}`;
+    if(req.headers.origin!==expectedOrigin||req.headers['x-dsh-management']!=='1'||(req.headers['sec-fetch-site']&&req.headers['sec-fetch-site']!=='same-origin')){send(res,403,JSON.stringify({error:'Same-origin management request required'}),'application/json; charset=utf-8');return;}
+    try{
+     const body=await readManagementCommand(req);
+     if(Number.isFinite(session?.expiresAt)&&session.expiresAt<=Date.now()){send(res,401,JSON.stringify({error:'Authentication expired'}),'application/json; charset=utf-8');return;}
+     const receipt=await management.manage(body.commandId,body.operation,body.data);
+     // Mutation replies expose receipt metadata only; refreshed projections own visible records.
+     send(res,200,JSON.stringify({commandId:receipt.commandId,acceptedAt:receipt.acceptedAt}),'application/json; charset=utf-8');
+    }catch(error){
+     const codes={CONFLICT:409,NOT_FOUND:404,INVALID:400,VALIDATION:400,SCHEMA:400,TERMINAL:409,STATE:409,FORBIDDEN:403,POLICY:403};
+     const status=error.status||codes[error.code]||503;
+     send(res,status,JSON.stringify({error:error.status?error.message:'Management command was rejected',code:error.code||'INVALID_COMMAND'}),'application/json; charset=utf-8');
+    }
+    return;
+   }
+   if(!['GET','HEAD'].includes(req.method)){res.setHeader('Allow','GET, HEAD');send(res,405,'Read-only dashboard');return;}
+   if(relative==='api/workbench'&&management){send(res,200,JSON.stringify(managementSnapshot(await snapshot(),await management.snapshot(),databaseIdentity,{canManage})),'application/json; charset=utf-8',req.method);return;}
+   if(relative==='api/health'){send(res,200,JSON.stringify({ok:true,readOnly:!canManage,managementEnabled:Boolean(management)}),'application/json; charset=utf-8',req.method);return;}
    if(relative==='api/snapshot'){send(res,200,JSON.stringify(dashboardSnapshot(await snapshot())),'application/json; charset=utf-8',req.method);return;}
    if(relative==='config.js'){
-    const config={apiBase:base+'api',refreshIntervalMs,requireSessionExpiry,title:'DSH · 任务看板',accessLabel,accessDescription};
+    const config={apiBase:base+'api',refreshIntervalMs,requireSessionExpiry,title:'DSH · 任务看板',accessLabel,accessDescription,managementEnabled:Boolean(management)};
     send(res,200,`window.DSH_DASHBOARD_CONFIG=Object.freeze(${JSON.stringify(config).replace(/</g,'\\u003c')});`,'text/javascript; charset=utf-8',req.method);return;
    }
    const asset=STATIC.get(relative);if(!asset){send(res,404,'Not found');return;}
