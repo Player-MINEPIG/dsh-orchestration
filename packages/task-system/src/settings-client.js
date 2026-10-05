@@ -1274,7 +1274,7 @@ window.__ModuleLoader__.load({
         h(
           "style",
           null,
-          '[data-task-plugin-settings] button:not([role="switch"]) { border: 1px solid var(--dsw-border); border-radius: 6px; }',
+          '[data-task-plugin-settings] button:not([role="switch"]) { border: 1px solid var(--dsw-alias-border-l3, #8a8a8a); border-radius: 6px; }',
         ),
         h(
           "p",
