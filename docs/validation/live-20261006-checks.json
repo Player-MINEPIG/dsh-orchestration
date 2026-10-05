@@ -1,0 +1,267 @@
+{
+  "sourceCommit": "effb24c46d05cb5dce6cc15f1bebc88bee11cdf0",
+  "date": "2026-10-06",
+  "timezone": "Australia/Melbourne",
+  "status": "passed",
+  "realModelRequests": 5,
+  "model": "deepseek-official/deepseek-flash",
+  "inputTokensIncludingCache": 7415,
+  "outputTokens": 736,
+  "taskId": "live-20261006-report",
+  "checks": [
+    "real VPS TaskPlanner decision answered and accepted under operator policy",
+    "two real native workloads succeeded with report marker",
+    "same Task session reused across runs"
+  ],
+  "runs": [
+    {
+      "phase": 1,
+      "runId": "live-20261006-run-1",
+      "state": "succeeded",
+      "attempts": [
+        {
+          "attemptId": "92359436-a272-4105-b994-634ae92dda7c",
+          "createdAt": "2026-10-05T18:15:35.185Z",
+          "executionId": "exec-515b083885e8408c48f0c53448185b5c42d1c3920d9a92fe07e20a41e29b4cd6",
+          "fence": 1,
+          "leaseExpiresAt": "2026-10-05T18:16:35.185Z",
+          "nodeId": "mbp-executor",
+          "runId": "live-20261006-run-1",
+          "sessionId": "task-679cb7d9-5f0d-46c2-8c09-46331f664b34",
+          "state": "settled",
+          "taskId": "live-20261006-report",
+          "updatedAt": "2026-10-05T18:15:44.646Z"
+        }
+      ],
+      "reports": [
+        {
+          "artifactIds": [],
+          "attemptId": "92359436-a272-4105-b994-634ae92dda7c",
+          "body": "任务完成、报告有效性与回执ACK是三件独立的事：settle提交成功只代表执行侧宣称完成；报告需被平台记录校验才算有效；回执ACK还需消费方确认送达。三者可能不同步，验收时应分别核验。计算：19+23=42。私有会话标记：ORCH-20261006-CEDAR-42，用于后续会话连续性核对。",
+          "createdAt": "2026-10-05T18:15:44.646Z",
+          "kind": "result",
+          "recordedAt": "2026-10-05T18:15:44.646Z",
+          "reportId": "6280ff97-22fc-4b60-93fc-bc38bc23dd87",
+          "revision": 1,
+          "runId": "live-20261006-run-1",
+          "sessionId": "task-679cb7d9-5f0d-46c2-8c09-46331f664b34",
+          "taskId": "live-20261006-report",
+          "title": "双端真实报告与会话连续性验收报告"
+        }
+      ],
+      "sessionEvents": [
+        {
+          "at": "2026-10-05T18:15:39.416Z",
+          "detail": {
+            "decision": {
+              "answers": {
+                "session": {
+                  "choice": "new",
+                  "type": "choice"
+                },
+                "workspace": {
+                  "choice": "acceptance",
+                  "type": "choice"
+                }
+              },
+              "attempts": 1,
+              "elapsedMs": 1535.341665999993,
+              "evidence": {
+                "calibration": "none",
+                "kind": "structured-output"
+              },
+              "inputDigest": "9b6c3f965038a82b0300e00ac4103c31e343c5a242c359a3a2a2873578abbd3d",
+              "model": "live-judge",
+              "modelVersion": "deepseek-flash",
+              "modelVersionSource": "configured-pin",
+              "provider": "live-native",
+              "providerVersion": "1",
+              "questionVersions": {
+                "session": "1",
+                "workspace": "1"
+              },
+              "requestDigest": "b684647fd66202dc4b5c3c26ccec3851533a9a7e6056fa2c672c6a0bb1fa5608",
+              "requestId": "task-session-92359436-a272-4105-b994-634ae92dda7c",
+              "schemaVersion": 1,
+              "stateHash": "f3cd50362bac8b5ebff38148b9b26b05a39095b7424f51d1b562b1208746187e",
+              "status": "answered",
+              "usage": {
+                "input_tokens": 608,
+                "output_tokens": 75
+              }
+            },
+            "resume": false,
+            "sessionId": "task-679cb7d9-5f0d-46c2-8c09-46331f664b34",
+            "workspaceId": "acceptance"
+          },
+          "eventId": "9c827f83-526d-44e8-8e26-424b74402403",
+          "runId": "live-20261006-run-1",
+          "taskId": "live-20261006-report",
+          "type": "session.selected"
+        }
+      ]
+    },
+    {
+      "phase": 2,
+      "runId": "live-20261006-run-2",
+      "state": "succeeded",
+      "attempts": [
+        {
+          "attemptId": "ed13a9ab-4761-43d0-b690-e9352b0059a5",
+          "createdAt": "2026-10-05T18:15:46.741Z",
+          "executionId": "exec-c29b246543a58fcc6105aa0595858fc2d0d115048856c846831f0d3adb957f4a",
+          "fence": 1,
+          "leaseExpiresAt": "2026-10-05T18:16:46.741Z",
+          "nodeId": "mbp-executor",
+          "runId": "live-20261006-run-2",
+          "sessionId": "task-679cb7d9-5f0d-46c2-8c09-46331f664b34",
+          "state": "settled",
+          "taskId": "live-20261006-report",
+          "updatedAt": "2026-10-05T18:15:55.792Z"
+        }
+      ],
+      "reports": [
+        {
+          "artifactIds": [],
+          "attemptId": "ed13a9ab-4761-43d0-b690-e9352b0059a5",
+          "body": "基于同任务会话上一轮记录：计算结果 19+23=42；私有标记 ORCH-20261006-CEDAR-42。再次确认：任务完成、报告有效性与回执ACK彼此独立，需分别核验。",
+          "createdAt": "2026-10-05T18:15:55.791Z",
+          "kind": "result",
+          "recordedAt": "2026-10-05T18:15:55.791Z",
+          "reportId": "27d02558-0bfe-43be-bcbb-5d07daf923db",
+          "revision": 1,
+          "runId": "live-20261006-run-2",
+          "sessionId": "task-679cb7d9-5f0d-46c2-8c09-46331f664b34",
+          "taskId": "live-20261006-report",
+          "title": "会话连续性验收报告（第二阶段）"
+        }
+      ],
+      "sessionEvents": [
+        {
+          "at": "2026-10-05T18:15:50.908Z",
+          "detail": {
+            "decision": {
+              "answers": {
+                "session": {
+                  "choice": "reuse-0",
+                  "type": "choice"
+                },
+                "workspace": {
+                  "choice": "acceptance",
+                  "type": "choice"
+                }
+              },
+              "attempts": 1,
+              "elapsedMs": 1478.075416000007,
+              "evidence": {
+                "calibration": "none",
+                "kind": "structured-output"
+              },
+              "inputDigest": "81a8a2d3e8a7c4ebca13e34e818c44be73bb52b52150ddcd0e7e16ef4734e6ca",
+              "model": "live-judge",
+              "modelVersion": "deepseek-flash",
+              "modelVersionSource": "configured-pin",
+              "provider": "live-native",
+              "providerVersion": "1",
+              "questionVersions": {
+                "session": "1",
+                "workspace": "1"
+              },
+              "requestDigest": "dfbb28e4d2de32084181e51c78f1b1c7a0e7e90de8da470e6945dffa580fce44",
+              "requestId": "task-session-ed13a9ab-4761-43d0-b690-e9352b0059a5",
+              "schemaVersion": 1,
+              "stateHash": "9b421e3d272c00fdbcbe4f80c573a218cc1362285722fdce8f082b35f92ca925",
+              "status": "answered",
+              "usage": {
+                "input_tokens": 728,
+                "output_tokens": 170
+              }
+            },
+            "resume": true,
+            "sessionId": "task-679cb7d9-5f0d-46c2-8c09-46331f664b34",
+            "workspaceId": "acceptance"
+          },
+          "eventId": "2132b79e-0d4c-4477-85e8-a2b2c2bc35ee",
+          "runId": "live-20261006-run-2",
+          "taskId": "live-20261006-report",
+          "type": "session.selected"
+        }
+      ]
+    }
+  ],
+  "workerAcknowledgements": [
+    {
+      "runId": "live-20261006-run-1",
+      "state": "acknowledged",
+      "sessionId": "task-679cb7d9-5f0d-46c2-8c09-46331f664b34",
+      "receiptState": "succeeded",
+      "outcome": "success"
+    },
+    {
+      "runId": "live-20261006-run-2",
+      "state": "acknowledged",
+      "sessionId": "task-679cb7d9-5f0d-46c2-8c09-46331f664b34",
+      "receiptState": "succeeded",
+      "outcome": "success"
+    }
+  ],
+  "nativeSession": {
+    "sessionId": "task-679cb7d9-5f0d-46c2-8c09-46331f664b34",
+    "cwd": "/Users/pmp/AI/deepseek-harness/test-env/dsh-task-management-candidate-3-ece68974/data/workspace",
+    "turns": 2,
+    "modelRequests": 2,
+    "toolCalls": [
+      "task_settle",
+      "task_settle"
+    ],
+    "usage": [
+      {
+        "inputTokens": 2031,
+        "outputTokens": 223,
+        "cacheReadTokens": 0,
+        "cacheWriteTokens": 0,
+        "totalTokens": 2254
+      },
+      {
+        "inputTokens": 534,
+        "outputTokens": 185,
+        "cacheReadTokens": 2176,
+        "cacheWriteTokens": 0,
+        "totalTokens": 2895
+      }
+    ]
+  },
+  "cleanup": {
+    "mbpPid": 27539,
+    "mbpRemotePaused": true,
+    "mbpPolling": false,
+    "mbpQueueEmpty": true,
+    "mbpProfileRestoredByteForByte": true,
+    "vpsTestHostStopped": true,
+    "vpsActiveRuns": 0,
+    "originalCredentialsRetained": true,
+    "temporaryGrantsNotPersisted": true
+  },
+  "verificationLimits": [
+    "Two bounded report runs; no filesystem, shell, delegation, messaging or custom result schema.",
+    "No production reliability or reverse-role topology claim."
+  ],
+  "dashboard": {
+    "coldStartPassed": true,
+    "pid": 407275,
+    "taskDetail": "https://izbp11roeflhmn04yssxm4z.tail435ecd.ts.net:8443/manage.html#task/live-20261006-report",
+    "historicalNegativeLabelCorrected": true,
+    "standaloneImportsCorrected": [
+      "dashboard/server.mjs",
+      "scripts/task-management-acceptance.mjs",
+      "VPS private dashboard launcher"
+    ]
+  },
+  "regression": {
+    "tests": 63,
+    "passed": 62,
+    "failed": 0,
+    "skipped": 1,
+    "skipReason": "Existing externally supplied private original export fixture unavailable"
+  }
+}

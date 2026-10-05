@@ -105,7 +105,7 @@ async function main(){
  const port=Number(argument('--port','4317'));if(!Number.isInteger(port)||port<1||port>65535)throw new Error('Invalid port');
  const basePath=argument('--base-path','/');normalBase(basePath);
  if(args.includes('--host'))throw new Error('Standalone dashboard is loopback-only. Use an authenticated host adapter for deployment.');
- const {TaskLedger}=await import('../packages/task-system/dist/index.js');
+ const {TaskLedger}=await import('../packages/task-system/dist/ledger.js');
  const ledger=TaskLedger.open(ledgerPath,{readOnly:true});
  const server=createDashboardServer({snapshot:()=>ledger.snapshot(),basePath});
  server.listen(port,'127.0.0.1',()=>console.log(`DSH task dashboard: http://127.0.0.1:${port}${normalBase(basePath)} (read-only, loopback-only)`));

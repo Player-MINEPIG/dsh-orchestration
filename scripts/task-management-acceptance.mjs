@@ -5,7 +5,9 @@ import {dirname, isAbsolute, resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {randomUUID} from 'node:crypto';
 import {DatabaseSync} from 'node:sqlite';
-import {TaskLedger, Workbench, canonical, NATIVE_PROVIDER_UNAVAILABLE_SUMMARY} from '../packages/task-system/dist/index.js';
+import {TaskLedger, canonical} from '../packages/task-system/dist/ledger.js';
+import {Workbench} from '../packages/task-system/dist/workbench.js';
+import {NATIVE_PROVIDER_UNAVAILABLE_SUMMARY} from '../packages/task-system/dist/contracts.js';
 import {createDashboardServer} from '../dashboard/server.mjs';
 import {managementAdapter} from '../dashboard/management.mjs';
 
