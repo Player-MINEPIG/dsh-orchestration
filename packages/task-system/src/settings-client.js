@@ -40,8 +40,9 @@ window.__ModuleLoader__.load({
       schedulerDecisionTitle: "Scheduler · executor selection",
       schedulerDecisionHint:
         "The scheduler uses the existing task_plan decision tool to propose an executor. Applying a proposal checks the authoritative executor catalog and permissions.",
+      planningDecisionEnabled: "Enable scheduler executor-selection decisions",
       schedulerDecisionStatus:
-        "Requires the existing decision plugin to be loaded and configured. There is currently no separate scheduler decision on/off switch.",
+        "Enable this switch and configure the existing model to choose an executor. When disabled or the model is unavailable, an explicit route is retained; work without an assigned executor remains pending assignment.",
       schedulerDecisionModelEntry: "Scheduler decision model settings",
       schedulerDecisionSetup:
         "Open Plugins and configure the existing @dsh-task/typed-decisions entry. The executor session/workspace switch does not control task_plan.",
@@ -225,8 +226,9 @@ window.__ModuleLoader__.load({
       schedulerDecisionTitle: "调度端 · 选择执行者",
       schedulerDecisionHint:
         "调度端使用现有 task_plan 决策工具提出执行者建议；应用建议时校验权威执行端目录与权限。",
+      planningDecisionEnabled: "启用调度端执行者决策",
       schedulerDecisionStatus:
-        "需加载并配置已有决策插件；目前没有独立的调度决策启停开关。",
+        "打开此开关并配置已有模型，才使用模型选择执行者。关闭或模型不可用时沿用明确路由；未确定执行者则保持待分配。",
       schedulerDecisionModelEntry: "调度端决策模型配置",
       schedulerDecisionSetup:
         "打开“插件”，配置已有 @dsh-task/typed-decisions 条目。执行端的工作区／会话开关不控制 task_plan。",
@@ -515,7 +517,12 @@ window.__ModuleLoader__.load({
       },
     };
     const startupKeys = {
-      task: ["role", "defaultWorkspaceId", "sessionDecisionEnabled"],
+      task: [
+        "role",
+        "defaultWorkspaceId",
+        "planningDecisionEnabled",
+        "sessionDecisionEnabled",
+      ],
       remote: [
         "role",
         "paused",
@@ -542,9 +549,12 @@ window.__ModuleLoader__.load({
         if (
           (key === "role" &&
             !["planner", "executor", "both"].includes(entry)) ||
-          (["sessionDecisionEnabled", "taskSessionsEnabled", "paused"].includes(
-            key,
-          ) &&
+          ([
+            "planningDecisionEnabled",
+            "sessionDecisionEnabled",
+            "taskSessionsEnabled",
+            "paused",
+          ].includes(key) &&
             typeof entry !== "boolean") ||
           (["defaultWorkspaceId", "endpoint", "audience"].includes(key) &&
             entry !== null &&
@@ -815,6 +825,21 @@ window.__ModuleLoader__.load({
                 remote: state.value.remote,
                 queryIdentity,
               }),
+              state.value.role !== "executor"
+                ? h(
+                    "div",
+                    null,
+                    h(
+                      "h3",
+                      { style: headingStyle },
+                      t("schedulerDecisionTitle"),
+                    ),
+                    Object.hasOwn(state.value, "planningDecisionEnabled")
+                      ? fields(state.value, ["planningDecisionEnabled"])
+                      : h("p", { style: hintStyle }, t("settingsPending")),
+                    h("p", { style: hintStyle }, t("schedulerDecisionStatus")),
+                  )
+                : null,
               h("h3", { style: headingStyle }, t("workspaceTitle")),
               state.value.role === "planner"
                 ? h("p", { style: hintStyle }, t("executorDecisionInactive"))
@@ -1050,6 +1075,7 @@ window.__ModuleLoader__.load({
         ? {
             role: values.role,
             defaultWorkspaceId: values.defaultWorkspaceId ?? "",
+            planningDecisionEnabled: values.planningDecisionEnabled,
             sessionDecisionEnabled: values.sessionDecisionEnabled,
           }
         : {
@@ -1078,9 +1104,13 @@ window.__ModuleLoader__.load({
       if (target === "task") {
         next.defaultWorkspaceId =
           String(draft.defaultWorkspaceId).trim() || null;
-        next.sessionDecisionEnabled = draft.sessionDecisionEnabled;
-        if (typeof next.sessionDecisionEnabled !== "boolean")
-          invalid.push("sessionDecisionEnabled");
+        for (const key of [
+          "planningDecisionEnabled",
+          "sessionDecisionEnabled",
+        ]) {
+          next[key] = draft[key];
+          if (typeof next[key] !== "boolean") invalid.push(key);
+        }
       } else {
         next.paused = draft.paused;
         if (typeof next.paused !== "boolean") invalid.push("paused");
@@ -1344,28 +1374,57 @@ window.__ModuleLoader__.load({
                 { "data-task-scheduler-decision": true, hidden: !planner },
                 h("h4", { style: headingStyle }, t("schedulerDecisionTitle")),
                 h("p", { style: hintStyle }, t("schedulerDecisionHint")),
-                h("p", { style: hintStyle }, t("schedulerDecisionStatus")),
                 h(
-                  Button,
+                  "label",
                   {
-                    variant: "outline",
-                    onClick: () => {
-                      if (!openPlugins?.())
-                        openAdvanced?.("task-scheduler-decision-model");
+                    style: {
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: 20,
+                      margin: "12px 0",
                     },
                   },
-                  t("schedulerDecisionModelEntry"),
+                  t("planningDecisionEnabled"),
+                  h(Switch, {
+                    label: t("planningDecisionEnabled"),
+                    checked: draft.planningDecisionEnabled,
+                    disabled: disabled || !planner,
+                    onChange: (value) => edit("planningDecisionEnabled", value),
+                  }),
                 ),
-                h(
-                  "div",
-                  {
-                    id: "task-scheduler-decision-model",
-                    hidden: !advanced,
-                    tabIndex: -1,
-                  },
-                  h("p", { style: hintStyle }, t("schedulerDecisionSetup")),
-                  h("p", { style: hintStyle }, t("decisionHint")),
-                ),
+                h("p", { style: hintStyle }, t("schedulerDecisionStatus")),
+                draft.planningDecisionEnabled
+                  ? h(
+                      "div",
+                      { "data-task-scheduler-decision-entry": true },
+                      h(
+                        Button,
+                        {
+                          variant: "outline",
+                          onClick: () => {
+                            if (!openPlugins?.())
+                              openAdvanced?.("task-scheduler-decision-model");
+                          },
+                        },
+                        t("schedulerDecisionModelEntry"),
+                      ),
+                      h(
+                        "div",
+                        {
+                          id: "task-scheduler-decision-model",
+                          hidden: !advanced,
+                          tabIndex: -1,
+                        },
+                        h(
+                          "p",
+                          { style: hintStyle },
+                          t("schedulerDecisionSetup"),
+                        ),
+                        h("p", { style: hintStyle }, t("decisionHint")),
+                      ),
+                    )
+                  : null,
               ),
               h(
                 "div",

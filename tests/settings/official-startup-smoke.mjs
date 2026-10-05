@@ -130,9 +130,11 @@ try {
   assert.equal(snapshot.task.entryId, "task-system");
   assert.deepEqual(Object.keys(snapshot.task.values).sort(), [
     "defaultWorkspaceId",
+    "planningDecisionEnabled",
     "role",
     "sessionDecisionEnabled",
   ]);
+  assert.equal(snapshot.task.values.planningDecisionEnabled, true);
   const originalService = ctx.get("taskSystem");
   const identity = originalService.ledger.schedulerIdentity();
   const workspace = originalService.ledger
@@ -151,6 +153,7 @@ try {
     changes: {
       role: "executor",
       defaultWorkspaceId: workspace.workspaceId,
+      planningDecisionEnabled: false,
       sessionDecisionEnabled: true,
     },
   };
@@ -161,6 +164,8 @@ try {
   assert.notEqual(service, originalService);
   assert.equal(service.config.role, "executor");
   assert.equal(service.config.defaultWorkspaceId, workspace.workspaceId);
+  assert.equal(service.config.planningDecisionEnabled, false);
+  assert.equal(updated.task.values.planningDecisionEnabled, false);
   assert.equal(service.config.sessionDecisionEnabled, true);
   assert.equal(service.config.schedulerEnabled, false);
   assert.equal(service.config.autoExecute, false);
@@ -198,6 +203,7 @@ try {
   ctx = await start();
   const reopened = await invoke("startup");
   assert.equal(reopened.task.values.defaultWorkspaceId, workspace.workspaceId);
+  assert.equal(reopened.task.values.planningDecisionEnabled, false);
   assert.equal(reopened.task.values.sessionDecisionEnabled, true);
   assert.equal(ctx.get("taskSystem").ledger.schedulerIdentity(), identity);
   const restored = await invoke("saveStartup", {
@@ -207,6 +213,7 @@ try {
       changes: {
         role: "both",
         defaultWorkspaceId: null,
+        planningDecisionEnabled: true,
         sessionDecisionEnabled: false,
       },
     },
@@ -215,6 +222,8 @@ try {
   const final = await invoke("startup");
   assert.equal(final.task.values.defaultWorkspaceId, null);
   assert.equal(final.task.values.role, "both");
+  assert.equal(final.task.values.planningDecisionEnabled, true);
+  assert.equal(final.task.values.sessionDecisionEnabled, false);
   pass(
     "restart persistence and explicit null default restoration use the real official ConfigEditor",
   );

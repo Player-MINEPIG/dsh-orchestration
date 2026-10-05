@@ -115,6 +115,7 @@ test("read-only wire descriptor exposes one no-argument method and no mutation s
   const snapshot = schema.parse({
     schedulerId: "scheduler-fixture",
     defaultWorkspaceId: null,
+    planningDecisionEnabled: true,
     sessionDecisionEnabled: false,
     nodeId: "test",
     role: "executor",
@@ -508,6 +509,7 @@ test("startup drafts contain only approved fields; unchanged values and reset do
   const values = {
     role: "executor",
     defaultWorkspaceId: "fixture-workspace",
+    planningDecisionEnabled: true,
     sessionDecisionEnabled: false,
     nodeId: "must-not-edit",
     credentials: "must-not-copy",
@@ -515,6 +517,7 @@ test("startup drafts contain only approved fields; unchanged values and reset do
   const draft = ui.startupDraft("task", values);
   assert.deepEqual(Object.keys(draft).sort(), [
     "defaultWorkspaceId",
+    "planningDecisionEnabled",
     "role",
     "sessionDecisionEnabled",
   ]);
@@ -618,6 +621,7 @@ test("startup form stages a role edit, sends its exact expected snapshot, reads 
     values: {
       role: "executor",
       defaultWorkspaceId: "fixture-workspace",
+      planningDecisionEnabled: true,
       sessionDecisionEnabled: false,
     },
   };
@@ -725,11 +729,29 @@ test("startup transport descriptors match the final host and carry only one stri
     expected: {
       role: "executor",
       defaultWorkspaceId: null,
+      planningDecisionEnabled: true,
       sessionDecisionEnabled: false,
     },
     changes: { role: "planner" },
   };
   assert.equal(parameter.codec.create().parse(input), input);
+  for (const key of ["planningDecisionEnabled", "sessionDecisionEnabled"]) {
+    const booleanEdit = { ...input, changes: { [key]: false } };
+    assert.equal(parameter.codec.create().parse(booleanEdit), booleanEdit);
+    assert.throws(
+      () =>
+        parameter.codec
+          .create()
+          .parse({ ...input, changes: { [key]: "false" } }),
+      /Invalid startup value/,
+    );
+  }
+  const missingPlanning = { ...input, expected: { ...input.expected } };
+  delete missingPlanning.expected.planningDecisionEnabled;
+  assert.throws(
+    () => parameter.codec.create().parse(missingPlanning),
+    /Invalid startup values/,
+  );
   assert.throws(
     () =>
       parameter.codec
@@ -1111,6 +1133,7 @@ test("decision controls distinguish scheduler executor selection from executor w
       const fixture = startupRoleFixture({
         role,
         defaultWorkspaceId: "fixture-workspace",
+        planningDecisionEnabled: true,
         sessionDecisionEnabled: true,
       });
       fixture.props.advanced = advanced;
@@ -1126,10 +1149,13 @@ test("decision controls distinguish scheduler executor selection from executor w
       );
       assert.equal(scheduler.props.hidden, role === "executor");
       assert.equal(executor.props.hidden, role === "planner" && !advanced);
-      assert.equal(
-        find(scheduler, (node) => node.type === "FixtureSwitch"),
-        undefined,
+      const planningSwitch = find(
+        scheduler,
+        (node) => node.type === "FixtureSwitch",
       );
+      assert.equal(planningSwitch.props.label, "planningDecisionEnabled");
+      assert.equal(planningSwitch.props.checked, true);
+      assert.equal(planningSwitch.props.disabled, role === "executor");
       const sessionSwitch = find(
         executor,
         (node) => node.type === "FixtureSwitch",
@@ -1155,10 +1181,11 @@ test("decision controls distinguish scheduler executor selection from executor w
   }
 });
 
-test("scheduler model entry is independent of executor switch; role and mode edits preserve the existing CAS draft", async () => {
+test("scheduler and executor switches stage independent fields; role and mode edits preserve both CAS drafts", async () => {
   const values = {
     role: "both",
     defaultWorkspaceId: "fixture-workspace",
+    planningDecisionEnabled: true,
     sessionDecisionEnabled: false,
   };
   const fixture = startupRoleFixture(values),
@@ -1183,11 +1210,36 @@ test("scheduler model entry is independent of executor switch; role and mode edi
     find(tree, (node) => node.props?.["data-task-decision-entry"]),
     undefined,
   );
+  find(
+    tree,
+    (node) =>
+      node.type === "FixtureSwitch" &&
+      node.props.label === "planningDecisionEnabled",
+  ).props.onChange(false);
+  tree = fixture.render();
+  assert.equal(
+    find(tree, (node) => node.props?.["data-task-scheduler-decision-entry"]),
+    undefined,
+  );
+  assert.equal(
+    find(
+      tree,
+      (node) =>
+        node.type === "FixtureSwitch" &&
+        node.props.label === "sessionDecisionEnabled",
+    ).props.checked,
+    false,
+  );
   find(tree, (node) => node.type === "input").props.onChange({
     target: { value: "draft-workspace" },
   });
   tree = fixture.render();
-  find(tree, (node) => node.type === "FixtureSwitch").props.onChange(true);
+  find(
+    tree,
+    (node) =>
+      node.type === "FixtureSwitch" &&
+      node.props.label === "sessionDecisionEnabled",
+  ).props.onChange(true);
   tree = fixture.render();
   find(tree, (node) => node.type === "select").props.onChange({
     target: { value: "planner" },
@@ -1200,12 +1252,31 @@ test("scheduler model entry is independent of executor switch; role and mode edi
       "draft-workspace",
     );
     assert.equal(
-      find(tree, (node) => node.type === "FixtureSwitch").props.checked,
+      find(
+        tree,
+        (node) =>
+          node.type === "FixtureSwitch" &&
+          node.props.label === "sessionDecisionEnabled",
+      ).props.checked,
       true,
     );
     assert.equal(
-      find(tree, (node) => node.type === "FixtureSwitch").props.disabled,
+      find(
+        tree,
+        (node) =>
+          node.type === "FixtureSwitch" &&
+          node.props.label === "sessionDecisionEnabled",
+      ).props.disabled,
       true,
+    );
+    assert.equal(
+      find(
+        tree,
+        (node) =>
+          node.type === "FixtureSwitch" &&
+          node.props.label === "planningDecisionEnabled",
+      ).props.checked,
+      false,
     );
     assert.equal(writes.length, 0);
   }
@@ -1214,7 +1285,12 @@ test("scheduler model entry is independent of executor switch; role and mode edi
   });
   tree = fixture.render();
   assert.equal(
-    find(tree, (node) => node.type === "FixtureSwitch").props.disabled,
+    find(
+      tree,
+      (node) =>
+        node.type === "FixtureSwitch" &&
+        node.props.label === "sessionDecisionEnabled",
+    ).props.disabled,
     false,
   );
   assert.ok(find(tree, (node) => node.props?.["data-task-decision-entry"]));
@@ -1222,10 +1298,12 @@ test("scheduler model entry is independent of executor switch; role and mode edi
   assert.equal(writes[0].expected, values);
   assert.deepEqual(Object.keys(writes[0].changes).sort(), [
     "defaultWorkspaceId",
+    "planningDecisionEnabled",
     "role",
     "sessionDecisionEnabled",
   ]);
   assert.equal(writes[0].changes.role, "executor");
   assert.equal(writes[0].changes.defaultWorkspaceId, "draft-workspace");
+  assert.equal(writes[0].changes.planningDecisionEnabled, false);
   assert.equal(writes[0].changes.sessionDecisionEnabled, true);
 });
