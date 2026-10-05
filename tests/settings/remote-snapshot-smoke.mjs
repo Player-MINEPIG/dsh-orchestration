@@ -84,7 +84,13 @@ const mountedConsumer = root.plugin({
   async apply(ctx) {
     await ctx.remote.$mount({
       package: "@dsh-task/task-system",
-      descriptors: [ui.descriptor, ui.queueDescriptor],
+      descriptors: [
+        ui.descriptor,
+        ui.queueDescriptor,
+        ui.executorIdentityDescriptor,
+        ui.startupDescriptor,
+        ui.saveStartupDescriptor,
+      ],
     });
     consumer = ctx;
   },
@@ -130,9 +136,53 @@ assert.equal(
 );
 assert.equal(calls.at(-1).method, "taskPluginSettings/queue");
 assert.deepEqual(Object.keys(calls.at(-1).payload.args), []);
+const startup = {
+  writable: true,
+  applies: "plugin-restart",
+  task: {
+    entryId: "task-system",
+    values: {
+      role: "executor",
+      defaultWorkspaceId: null,
+      sessionDecisionEnabled: false,
+    },
+  },
+  remote: null,
+};
+result = { ok: true, value: startup };
+assert.equal(
+  (
+    await ui.readRemote(
+      consumer,
+      "startup",
+      ui.startupDescriptor.result.create(),
+    )
+  ).task.entryId,
+  "task-system",
+);
+const input = {
+  target: "task",
+  expected: startup.task.values,
+  changes: { role: "both" },
+};
+result = { ok: true, value: { saved: true, applies: "plugin-restart" } };
+assert.equal(
+  (
+    await ui.readRemote(
+      consumer,
+      "saveStartup",
+      ui.saveStartupDescriptor.result.create(),
+      input,
+    )
+  ).saved,
+  true,
+);
+assert.equal(calls.at(-1).method, "taskPluginSettings/saveStartup");
+assert.equal(calls.at(-1).payload.args.input, input);
+assert.deepEqual(Object.keys(calls.at(-1).payload.args), ["input"]);
 await mountedConsumer.dispose();
 await mountedGateway.dispose();
 await core.dispose();
 console.log(
-  "PASS: real official Remote mount reproduces undeclared namespace failure; Context.get and RemoteResult unwrap succeed; carrier failure remains an error; queue uses its no-argument read-only route.",
+  "PASS: real official Remote mount reproduces undeclared namespace failure; Context.get and RemoteResult unwrap succeed; carrier failure remains an error; queue/startup use read-only routes and saveStartup carries the exact typed input.",
 );

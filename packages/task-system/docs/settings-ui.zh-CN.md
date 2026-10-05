@@ -23,7 +23,7 @@ DSH 自带 WebUI；入口是 `dsh web` 或 `dsh --profile web`。自定义名称
 
 关闭 autoExecute 不会停止 `task-remote-execution` 的远程轮询，也不会取消正在运行的任务。已配置的安全重试同样独立。只读区明确显示远端地址、角色、轮询间隔、远程并发以及自动领取状态。
 
-当前 GUI 没有“暂停远程节点”按钮。远程轮询由启动配置 pollIntervalMs 控制：设为 0 并重启后不自动轮询；已经领取的任务和显式调用仍需分别处理。此页不编辑远端授权、节点身份、密钥或登录凭据。
+当前 GUI 没有“暂停远程节点”按钮。远程轮询由启动配置 pollIntervalMs 控制：设为 0 并重启后不自动轮询；已经领取的任务和显式调用仍需分别处理。此页不编辑远端授权、节点身份、密钥或登录凭据。已有连接地址可由独立启动表单修改；后端检查 expected snapshot 并保留现有认证、grant 和未知字段。
 
 ## 本机队列与会话摘要
 
@@ -31,15 +31,25 @@ DSH 自带 WebUI；入口是 `dsh web` 或 `dsh --profile web`。自定义名称
 
 新版后端 `describe()` 顶层提供 schedulerId、defaultWorkspaceId 和 sessionDecisionEnabled，remote 提供 executorIdentity 和 taskSessionsEnabled。执行端身份只读显示调度端与分配的 executorId；nodeId 明确标为内部 ID，不提供文本编辑器。旧连接沿用原会话协议，界面不扩展 peer grant。
 
-默认工作区须已在本机登记，启动配置改变后重启生效。决策使用已有 typed-decisions 适配器及其 provider/model 配置，本 GUI 增量没有新增 JEV 协议或凭据输入。当前新增字段是只读摘要；配置编辑与显式身份查询由后续后端合同整合，不能把只读摘要当作已完成的配置表单。
+默认工作区须已在本机登记，启动配置改变后重启生效。决策使用已有 typed-decisions 适配器及其 provider/model 配置，本 GUI 增量没有新增 JEV 协议或凭据输入。角色、默认工作区、会话决策和调度端连接在独立启动表单中编辑；身份仅通过显式查询确认，没有 ID 文本编辑器。启动表单通过公开 startup/saveStartup RPC 保存，原六字段运行表单继续使用官方 SettingsFormModel。
 
 队列及新版会话摘要需要配套后端。旧宿主不具备队列接口时会显示读取失败；缺少新版启动字段时明确提示接口未加载。仅更新浏览器脚本不能激活新的后端接口。
+
+## 独立启动配置保存
+
+启动表单先读取 `startup()` 的条目和值；草稿仅在点击 **保存并重启插件** 后提交。`saveStartup({target, expected, changes})` 只接收指定 task/remote 的严格字段子集；后端使用实际公开 ConfigEditor.edit 合并保存，拒绝旧快照、配置覆盖层与运行中工作。保存后重新读取 startup，并清除旧部署／队列摘要；改变连接不会继承页面之前显示的执行端身份。
+
+Task 允许 role、defaultWorkspaceId、sessionDecisionEnabled；remote 允许 role、endpoint、audience、pollIntervalMs、concurrency 和受限制的 trustedNetworkTarget。旧连接的 Task 会话迁移使用明确的“保存并重启”操作，无常驻开关，也不扩展 peer grant。身份查询只在点击 **向调度端查询本机执行端 ID** 时调用无参数 RPC，不能指定其他节点。
+
+未配置连接时，表单要求显式填写 endpoint、audience、精确目标地址／端口和本机 source address。只有已有 trusted-network 认证模式及固定内部节点身份才能由后端建立此连接；不创建 key、grant 或 native route，新连接保持远程轮询关闭。signed 连接缺少预配置引用会被拒绝，需使用官方安全配置流程完成。
+
+默认工作区填写已在本机登记且允许当前节点使用的 workspace ID，不是任意目录路径。决策提供者和模型复用 typed-decisions 原有配置，未新增 JEV 协议。
 
 ## 启动配置和覆盖层
 
 只读区显示当前节点 ID、角色、真实 DB 路径、profile 配置路径、维护设置、租约、工具允许列表与远端连接摘要。地址中的用户信息、query 和 fragment 均不发送到浏览器。密钥内容、环境变量引用和完整 Config 不会进入只读响应。
 
-数据库、身份、角色、租约、授权和远端连接属于启动配置。修改现有 profile 文件后重启。不要为了此 GUI 建立第二份数据库、额外授权或新凭据。
+数据库、身份、角色、租约、授权和远端连接属于启动配置。角色、工作区及允许的连接字段通过独立启动表单保存并重启受影响插件；不会重启整个 DSH。数据库、租约、授权和凭据仍由原安全配置流程管理。不要为了此 GUI 建立第二份数据库、额外授权或新凭据。
 
 配置层顺序是 bundle → profile → Home patch → 命令行 --patch。**config 是整对象替换，不是逐字段合并。** 若 Home 或 CLI 覆写 task-system.config，GUI 保存会由官方宿主拒绝，并且不会落盘。仅从 CLI config 删掉六个可编辑字段仍不能解决。
 
@@ -55,4 +65,7 @@ DSH 自带 WebUI；入口是 `dsh web` 或 `dsh --profile web`。自定义名称
 
 无凭据的官方 Loader/Settings 验证覆盖每个字段的真实运行读取、保持 plugin fiber 和账本实例、过期 revision/非法范围/启动字段拒绝、重启持久化、官方 client-modules 读取浏览器包及 CLI 整对象覆盖拒写。
 
-实际官方 SettingsFormModel 的离线测试覆盖草稿、保存、重复保存、范围错误、冲突保留、恢复默认、只读与卸载。本机 3082 已完成真实 DOM 验收：设置入口、六字段、官方并发保存 1→2→1，原值恢复且调度／自动执行保持关闭。只读部署旧实现存在 Cordis 未声明动态命名空间依赖和未解包 RemoteResult 的问题；新客户端使用公开 Context.get 读取已挂载服务、检查成功／失败分支并校验业务快照。该修复已由实际官方 Gateway 和 Cordis 的无凭据 fixture 验证，真实浏览器读取复验单独记录。
+实际官方 SettingsFormModel 的离线测试覆盖草稿、保存、重复保存、范围错误、冲突保留、恢复默认、只读与卸载。本机 3082 已完成真实 DOM 验收：设置入口、六字段、官方并发保存 1→2→1，原值恢复且调度／自动执行保持关闭。只读部署旧实现存在 Cordis 未声明动态命名空间依赖和未解包 RemoteResult 的问题；新客户端使用公开 Context.get 读取已挂载服务、检查成功／失败分支并校验业务快照。该修复已由实际官方 Gateway 和 Cordis 的无凭据 fixture 验证，真实浏览器读取与新版启动表单验收由测试环境一次更新后单独记录。
+
+
+独立官方 DSH 启动 fixture 通过真实公开 Gateway/ConfigEditor 验证窄快照、保存后插件重启及重读、旧 snapshot 拒绝、身份改写拒绝、重启持久化和 null 默认值恢复；没有真实模型或凭据调用。浏览器 Gateway fixture 则验证 Context.get、RemoteResult 解包和 saveStartup 的精确 input 参数。

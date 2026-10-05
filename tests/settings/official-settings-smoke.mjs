@@ -56,7 +56,9 @@ const taskConfig = {
   autoExecute: false,
   healthAlerts: false,
   executionTimeoutMs: 2000,
+  workspaceRoots: [{ id: "fixture-root", path: tmp, allowCreate: false }],
   localNode: {
+    workspaceIds: ["default"],
     models: [
       { provider: "test-offline", model: "script", reasoningEfforts: [] },
     ],
@@ -99,6 +101,7 @@ const start = () =>
   );
 const route = {
   nodeId: "fixture",
+  workspaceId: "default",
   provider: "test-offline",
   model: "script",
   requiredCapabilities: [],
@@ -118,6 +121,14 @@ async function until(fn, ms = 2000) {
 }
 try {
   ctx = await start();
+  ctx.get("taskSystem").ledger.registerWorkspace("fixture-workspace", {
+    workspaceId: "default",
+    nodeId: "fixture",
+    path: tmp,
+    label: "Fixture",
+    state: "ready",
+    createdAt: new Date().toISOString(),
+  });
   assert.ok(ctx.taskSystem?.native);
   const read = () =>
     ctx.settings.describe().find((d) => d.ns === "task-system");
@@ -310,7 +321,7 @@ try {
   assert.equal(
     ctx.typert.local.list().filter((d) => d.namespace === "taskPluginSettings")
       .length,
-    1,
+    5,
   );
   assert.equal(
     ctx.typert.local.get("taskPluginSettings/describe").parameters.length,
@@ -320,9 +331,7 @@ try {
     Object.keys(info).some((key) => /key|secret|token|password/i.test(key)),
     false,
   );
-  pass(
-    "allowlisted read-only deployment data and a single no-argument Remote method",
-  );
+  pass("allowlisted deployment data and five typed settings Remote methods");
   assert.deepEqual(
     await ctx.typertGateway.invoke({
       namespace: "taskPluginSettings",

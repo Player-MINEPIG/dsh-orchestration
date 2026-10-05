@@ -7,6 +7,8 @@ import {
   settingsDescriptor,
   queueDescriptor,
   executorIdentityDescriptor,
+  startupDescriptor,
+  saveStartupDescriptor,
   hasTaskConfigOverride,
 } from "../dist/settings.js";
 import { RemoteExecutionService } from "../dist/remote/index.js";
@@ -196,7 +198,7 @@ test("browser companion exposes the same served form in Settings and its install
     },
     remote: {
       $mount: async (contribution) => (
-        assert.equal(contribution.descriptors.length, 3),
+        assert.equal(contribution.descriptors.length, 5),
         () => {}
       ),
     },
@@ -426,6 +428,7 @@ test("queue and explicit identity-query descriptors match the frozen backend", (
   for (const [actual, expected] of [
     [ui.queueDescriptor, queueDescriptor],
     [ui.executorIdentityDescriptor, executorIdentityDescriptor],
+    [ui.startupDescriptor, startupDescriptor],
   ]) {
     for (const key of ["id", "namespace", "service", "method"])
       assert.equal(actual[key], expected[key]);
@@ -683,4 +686,103 @@ test("startup form stages a role edit, sends its exact expected snapshot, reads 
   assert.equal(readonlySave.props.disabled, true);
   await readonlySave.props.onClick();
   assert.equal(writes.length, count);
+});
+
+test("startup transport descriptors match the final host and carry only one strict input", async () => {
+  const ui = client();
+  for (const [actual, expected] of [
+    [ui.startupDescriptor, startupDescriptor],
+    [ui.saveStartupDescriptor, saveStartupDescriptor],
+  ]) {
+    for (const key of ["id", "namespace", "service", "method"])
+      assert.equal(actual[key], expected[key]);
+    assert.equal(actual.result.typeSymbol, expected.result.typeSymbol);
+  }
+  const parameter = ui.saveStartupDescriptor.parameters[0];
+  assert.equal(parameter.wire, saveStartupDescriptor.parameters[0].wire);
+  assert.equal(
+    parameter.codec.typeSymbol,
+    saveStartupDescriptor.parameters[0].codec.typeSymbol,
+  );
+  const input = {
+    target: "task",
+    expected: {
+      role: "executor",
+      defaultWorkspaceId: null,
+      sessionDecisionEnabled: false,
+    },
+    changes: { role: "planner" },
+  };
+  assert.equal(parameter.codec.create().parse(input), input);
+  assert.throws(
+    () =>
+      parameter.codec
+        .create()
+        .parse({ ...input, changes: { nodeId: "other" } }),
+    /Invalid startup/,
+  );
+  assert.throws(
+    () => parameter.codec.create().parse({ ...input, namespace: "unrelated" }),
+    /Invalid startup/,
+  );
+  const args = [];
+  const ctx = {
+    get: () => ({
+      saveStartup: async (...values) => {
+        args.push(values);
+        return { ok: true, value: { saved: true, applies: "plugin-restart" } };
+      },
+    }),
+  };
+  const result = await ui.readRemote(
+    ctx,
+    "saveStartup",
+    ui.saveStartupDescriptor.result.create(),
+    input,
+  );
+  assert.equal(result.saved, true);
+  assert.equal(args[0].length, 1);
+  assert.equal(args[0][0], input);
+  assert.throws(
+    () =>
+      ui.saveStartupDescriptor.result
+        .create()
+        .parse({ saved: false, applies: "plugin-restart" }),
+    /Invalid startup save result/,
+  );
+});
+
+test("unconfigured connection requires explicit source and target and starts with polling off", () => {
+  const ui = client(),
+    values = {
+      role: "executor",
+      endpoint: null,
+      audience: null,
+      pollIntervalMs: 5000,
+      concurrency: 1,
+      taskSessionsEnabled: false,
+      trustedNetworkTarget: null,
+    };
+  const draft = ui.startupDraft("remote", values);
+  assert.equal(draft.pollIntervalMs, "0");
+  assert.ok(
+    ui.startupChanges("remote", values, draft).invalid.includes("targetPort"),
+  );
+  Object.assign(draft, {
+    endpoint: "http://fixture.invalid:8443/commands",
+    audience: "fixture-authority",
+    targetAddress: "fixture.invalid",
+    targetPort: "8443",
+    targetLocalAddress: "fixture.local",
+  });
+  const parsed = ui.startupChanges("remote", values, draft);
+  assert.equal(parsed.invalid.length, 0);
+  assert.equal(parsed.changes.pollIntervalMs, 0);
+  assert.equal(parsed.changes.trustedNetworkTarget.allowHttp, true);
+  assert.equal(
+    parsed.changes.trustedNetworkTarget.localAddress,
+    "fixture.local",
+  );
+  assert.equal(parsed.changes.nodeId, undefined);
+  assert.equal(parsed.changes.authMode, undefined);
 });

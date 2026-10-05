@@ -33,7 +33,7 @@ window.__ModuleLoader__.load({
     const en = {
       startupEditable: "Role, workspace and scheduler connection",
       startupTask: "Task-service startup settings",
-      startupRemote: "Existing scheduler connection",
+      startupRemote: "Scheduler connection",
       startupSave: "Save and restart plugin",
       startupSaving: "Saving and restarting…",
       startupSaved: "Saved; current configuration was read again.",
@@ -48,7 +48,7 @@ window.__ModuleLoader__.load({
       startupRestartHint:
         "Startup edits use a separate save. Saving restarts the affected plugin; it does not restart DSH. Identity, credentials and remote permissions stay under their existing owners.",
       startupUnconfigured:
-        "No existing authenticated scheduler connection is configured. Set up an authorized connection through the official secure configuration flow before editing it here.",
+        "No scheduler connection is configured. This form can create a connection only with an existing trusted-network authentication mode and fixed internal node identity. Other authentication setup uses the official secure configuration flow; no keys or permissions are created here.",
       startupEndpointHint:
         "For an existing trusted-network connection, the endpoint must match the exact target address and port. Connection changes are blocked while work is active, claimed or uncertain.",
       startupMigration: "Save and restart: enable Task session protocol",
@@ -175,7 +175,7 @@ window.__ModuleLoader__.load({
     const zh = {
       startupEditable: "角色、工作区与调度端连接",
       startupTask: "任务服务启动配置",
-      startupRemote: "已有调度端连接",
+      startupRemote: "调度端连接",
       startupSave: "保存并重启插件",
       startupSaving: "保存并重启中…",
       startupSaved: "已保存，并已重新读取当前配置。",
@@ -188,7 +188,7 @@ window.__ModuleLoader__.load({
       startupRestartHint:
         "启动配置单独保存；保存会重启受影响的插件，不会重启 DSH。身份、凭据和远端权限由原配置流程管理。",
       startupUnconfigured:
-        "尚未配置已有认证的调度端连接。请先通过官方安全配置流程登记已授权连接，再在此编辑。",
+        "尚未配置调度端连接。此表单仅可在已有 trusted-network 认证模式和固定内部节点身份的配置上建立连接；其他认证配置请使用官方安全配置流程。此页不创建密钥或授予权限。",
       startupEndpointHint:
         "已有 trusted-network 连接的调度端地址须与精确目标地址和端口一致。存在运行中、已领取或状态未确认的工作时不能改变连接。",
       startupMigration: "保存并重启：启用 Task 会话协议",
@@ -424,6 +424,142 @@ window.__ModuleLoader__.load({
               )
             )
               throw new Error("Invalid executor identity");
+            return value;
+          },
+        }),
+      },
+    };
+    const startupKeys = {
+      task: ["role", "defaultWorkspaceId", "sessionDecisionEnabled"],
+      remote: [
+        "role",
+        "endpoint",
+        "audience",
+        "pollIntervalMs",
+        "concurrency",
+        "taskSessionsEnabled",
+        "trustedNetworkTarget",
+      ],
+    };
+    function parseStartupValues(value, target, partial = false) {
+      const keys = startupKeys[target];
+      if (
+        !keys ||
+        !value ||
+        typeof value !== "object" ||
+        Array.isArray(value) ||
+        Object.keys(value).some((key) => !keys.includes(key)) ||
+        (!partial && keys.some((key) => !Object.hasOwn(value, key)))
+      )
+        throw new Error("Invalid startup values");
+      for (const [key, entry] of Object.entries(value)) {
+        if (
+          (key === "role" &&
+            !["planner", "executor", "both"].includes(entry)) ||
+          (["sessionDecisionEnabled", "taskSessionsEnabled"].includes(key) &&
+            typeof entry !== "boolean") ||
+          (["defaultWorkspaceId", "endpoint", "audience"].includes(key) &&
+            entry !== null &&
+            typeof entry !== "string") ||
+          (key === "pollIntervalMs" &&
+            (!Number.isSafeInteger(entry) || entry < 0 || entry > 3600000)) ||
+          (key === "concurrency" &&
+            (!Number.isSafeInteger(entry) || entry < 1 || entry > 16))
+        )
+          throw new Error("Invalid startup value");
+        if (
+          key === "trustedNetworkTarget" &&
+          entry !== null &&
+          (!entry ||
+            typeof entry !== "object" ||
+            Object.keys(entry).some(
+              (field) =>
+                !["address", "port", "localAddress", "allowHttp"].includes(
+                  field,
+                ),
+            ) ||
+            typeof entry.address !== "string" ||
+            !entry.address ||
+            typeof entry.localAddress !== "string" ||
+            !entry.localAddress ||
+            !Number.isSafeInteger(entry.port) ||
+            entry.port < 1 ||
+            entry.port > 65535 ||
+            entry.allowHttp !== true)
+        )
+          throw new Error("Invalid startup connection target");
+      }
+      return value;
+    }
+    const startupDescriptor = {
+      id: "@dsh-task/task-system#taskPluginSettings/startup",
+      service: "taskPluginSettings",
+      namespace: "taskPluginSettings",
+      method: "startup",
+      invocation: { kind: "direct" },
+      parameters: [],
+      result: {
+        mode: "strict",
+        typeSymbol: "@dsh-task/task-system#StartupSettings",
+        create: () => ({
+          parse(value) {
+            if (
+              !value ||
+              typeof value.writable !== "boolean" ||
+              value.applies !== "plugin-restart"
+            )
+              throw new Error("Invalid startup settings snapshot");
+            for (const target of ["task", "remote"]) {
+              const row = value[target];
+              if (row === null) continue;
+              if (!row || typeof row.entryId !== "string")
+                throw new Error("Invalid startup settings row");
+              parseStartupValues(row.values, target);
+            }
+            return value;
+          },
+        }),
+      },
+    };
+    const saveStartupDescriptor = {
+      id: "@dsh-task/task-system#taskPluginSettings/saveStartup",
+      service: "taskPluginSettings",
+      namespace: "taskPluginSettings",
+      method: "saveStartup",
+      invocation: { kind: "direct" },
+      parameters: [
+        {
+          name: "input",
+          wire: "input",
+          source: "json",
+          codec: {
+            mode: "strict",
+            typeSymbol: "@dsh-task/task-system#SaveStartupInput",
+            create: () => ({
+              parse(value) {
+                if (
+                  !value ||
+                  !["task", "remote"].includes(value.target) ||
+                  Object.keys(value).some(
+                    (key) => !["target", "expected", "changes"].includes(key),
+                  )
+                )
+                  throw new Error("Invalid startup edit");
+                parseStartupValues(value.expected, value.target);
+                parseStartupValues(value.changes, value.target, true);
+                return value;
+              },
+            }),
+          },
+        },
+      ],
+      result: {
+        mode: "strict",
+        typeSymbol: "@dsh-task/task-system#SaveStartupResult",
+        create: () => ({
+          parse(value) {
+            if (value?.saved !== true || value.applies !== "plugin-restart")
+              throw new Error("Invalid startup save result");
             return value;
           },
         }),
@@ -790,7 +926,9 @@ window.__ModuleLoader__.load({
             role: values.role,
             endpoint: values.endpoint ?? "",
             audience: values.audience ?? "",
-            pollIntervalMs: String(values.pollIntervalMs),
+            pollIntervalMs: String(
+              values.endpoint === null ? 0 : values.pollIntervalMs,
+            ),
             concurrency: String(values.concurrency),
             ...(values.trustedNetworkTarget
               ? {
@@ -798,7 +936,9 @@ window.__ModuleLoader__.load({
                   targetPort: String(values.trustedNetworkTarget.port),
                   targetLocalAddress: values.trustedNetworkTarget.localAddress,
                 }
-              : {}),
+              : values.endpoint === null
+                ? { targetAddress: "", targetPort: "", targetLocalAddress: "" }
+                : {}),
           };
     }
     function startupChanges(target, values, draft, migrate = false) {
@@ -831,7 +971,7 @@ window.__ModuleLoader__.load({
           )
             invalid.push(key);
         }
-        if (values.trustedNetworkTarget) {
+        if (values.trustedNetworkTarget || values.endpoint === null) {
           const address = String(draft.targetAddress).trim(),
             localAddress = String(draft.targetLocalAddress).trim(),
             port = Number(draft.targetPort);
@@ -844,6 +984,7 @@ window.__ModuleLoader__.load({
             address,
             port,
             localAddress,
+            allowHttp: true,
           };
         }
         if (migrate) next.taskSessionsEnabled = true;
@@ -927,7 +1068,11 @@ window.__ModuleLoader__.load({
                 id: `task-startup-${target}-${key}`,
                 style: controlStyle,
                 value: draft[key],
-                disabled,
+                disabled:
+                  disabled ||
+                  (target === "remote" &&
+                    row.values.endpoint === null &&
+                    key === "pollIntervalMs"),
                 "aria-invalid": parsed.invalid.includes(key),
                 inputMode: [
                   "pollIntervalMs",
@@ -981,7 +1126,7 @@ window.__ModuleLoader__.load({
               ...["endpoint", "audience", "pollIntervalMs", "concurrency"].map(
                 (key) => field(key),
               ),
-              row.values.trustedNetworkTarget
+              row.values.trustedNetworkTarget || row.values.endpoint === null
                 ? h(
                     React.Fragment,
                     null,
@@ -991,6 +1136,9 @@ window.__ModuleLoader__.load({
                       "targetLocalAddress",
                     ].map((key) => field(key)),
                   )
+                : null,
+              row.values.endpoint === null
+                ? h("p", { style: hintStyle }, t("startupUnconfigured"))
                 : null,
               h("p", { style: hintStyle }, t("startupEndpointHint")),
               row.values.taskSessionsEnabled === false
@@ -1093,7 +1241,7 @@ window.__ModuleLoader__.load({
                     onSaved: afterSave,
                   })
                 : h("p", { style: hintStyle }, t("startupUnavailable")),
-              state.value.remote?.values.endpoint
+              state.value.remote
                 ? h(StartupRow, {
                     key:
                       state.value.remote.entryId +
@@ -1224,7 +1372,7 @@ window.__ModuleLoader__.load({
           : null,
       );
     }
-    async function readRemote(ctx, method, codec) {
+    async function readRemote(ctx, method, codec, ...args) {
       // $mount owns a separate Cordis namespace. This dynamically mounted service
       // is read through the documented Context.get API, not an undeclared inject.
       const service = ctx.get("remote.taskPluginSettings");
@@ -1232,7 +1380,7 @@ window.__ModuleLoader__.load({
         throw Object.assign(new Error("Task settings service is unavailable"), {
           code: "client/service-unavailable",
         });
-      const result = await service[method]();
+      const result = await service[method](...args);
       if (result?.ok === false) throw result.error;
       if (result?.ok !== true)
         throw Object.assign(new Error("Invalid task settings Remote result"), {
@@ -1250,7 +1398,13 @@ window.__ModuleLoader__.load({
       ctx.effect(() => () => controller.dispose(), "task settings form");
       const unmount = await ctx.remote.$mount({
         package: "@dsh-task/task-system",
-        descriptors: [descriptor, queueDescriptor, executorIdentityDescriptor],
+        descriptors: [
+          descriptor,
+          queueDescriptor,
+          executorIdentityDescriptor,
+          startupDescriptor,
+          saveStartupDescriptor,
+        ],
       });
       ctx.effect(() => unmount, "task settings read-only remote");
       const read = () =>
@@ -1263,6 +1417,15 @@ window.__ModuleLoader__.load({
           "executorIdentity",
           executorIdentityDescriptor.result.create(),
         );
+      const startup = () =>
+        readRemote(ctx, "startup", startupDescriptor.result.create());
+      const saveStartup = (input) =>
+        readRemote(
+          ctx,
+          "saveStartup",
+          saveStartupDescriptor.result.create(),
+          saveStartupDescriptor.parameters[0].codec.create().parse(input),
+        );
       ctx.effect(
         () =>
           ctx.configForms.whileServed(["task-system"], () => {
@@ -1271,6 +1434,8 @@ window.__ModuleLoader__.load({
               read,
               readQueue,
               queryIdentity,
+              startup,
+              saveStartup,
             });
             const section = ctx.slots.inject("settings.section", () =>
               ctx.slots.register(
@@ -1313,6 +1478,8 @@ window.__ModuleLoader__.load({
       readRemote,
       queueDescriptor,
       executorIdentityDescriptor,
+      startupDescriptor,
+      saveStartupDescriptor,
       ExecutorIdentity,
       startupDraft,
       startupChanges,
