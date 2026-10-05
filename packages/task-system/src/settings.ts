@@ -1,4 +1,11 @@
 import {
+  DecisionSettings,
+  SaveDecisionInput,
+  SaveDecisionResult,
+  readDecisionSettings,
+  saveDecisionSettings,
+} from "./decision-settings.js";
+import {
   StartupSettings,
   SaveStartupInput,
   SaveStartupResult,
@@ -182,6 +189,43 @@ export const saveStartupDescriptor: InvocationDescriptor = {
   },
 };
 
+export const decisionSettingsDescriptor: InvocationDescriptor = {
+  id: "@dsh-task/task-system#taskPluginSettings/decisionSettings",
+  service: "taskPluginSettings",
+  namespace: "taskPluginSettings",
+  method: "decisionSettings",
+  invocation: { kind: "direct" },
+  parameters: [],
+  result: {
+    mode: "strict",
+    typeSymbol: "@dsh-task/task-system#DecisionSettings",
+    create: () => DecisionSettings,
+  },
+};
+export const saveDecisionSettingsDescriptor: InvocationDescriptor = {
+  id: "@dsh-task/task-system#taskPluginSettings/saveDecisionSettings",
+  service: "taskPluginSettings",
+  namespace: "taskPluginSettings",
+  method: "saveDecisionSettings",
+  invocation: { kind: "direct" },
+  parameters: [
+    {
+      name: "input",
+      wire: "input",
+      source: "json",
+      codec: {
+        mode: "strict",
+        typeSymbol: "@dsh-task/task-system#SaveDecisionInput",
+        create: () => SaveDecisionInput,
+      },
+    },
+  ],
+  result: {
+    mode: "strict",
+    typeSymbol: "@dsh-task/task-system#SaveDecisionResult",
+    create: () => SaveDecisionResult,
+  },
+};
 /** Higher CLI insertions and overrides both outrank profile form writes. */
 export function hasTaskConfigOverride(patches: readonly unknown[]): boolean {
   return patches.some((value) => {
@@ -204,6 +248,12 @@ export function hasTaskConfigOverride(patches: readonly unknown[]): boolean {
 export class TaskPluginSettings extends TypertRemoteService {
   constructor(ctx: Context) {
     super(ctx, "taskPluginSettings");
+  }
+  async decisionSettings() {
+    return await readDecisionSettings(this.ctx);
+  }
+  async saveDecisionSettings(input: unknown) {
+    return await saveDecisionSettings(this.ctx, input);
   }
   async startup() {
     return readStartupSettings(this.ctx);
@@ -372,6 +422,8 @@ export function apply(ctx: Context): void {
             executorIdentityDescriptor,
             startupDescriptor,
             saveStartupDescriptor,
+            decisionSettingsDescriptor,
+            saveDecisionSettingsDescriptor,
           ],
         }),
       "task settings read-only descriptor",

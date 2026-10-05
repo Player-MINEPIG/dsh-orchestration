@@ -13,3 +13,12 @@
             kind: rules
             rulesVersion: '1'
             rules: []
+    - id: typed-decision-native-completion
+      name: '@dsh-task/typed-decisions/dsh-completion'
+      config:
+        routes: []
+        maxOutputTokens: 2048
+        maxInputBytes: 65536
+        maxOutputBytes: 131072
+        maxRuntimeMs: 10000
+        maxConcurrent: 2

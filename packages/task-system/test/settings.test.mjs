@@ -203,7 +203,7 @@ test("browser companion exposes the same served form in Settings and its install
     },
     remote: {
       $mount: async (contribution) => (
-        assert.equal(contribution.descriptors.length, 6),
+        assert.equal(contribution.descriptors.length, 8),
         () => {}
       ),
     },
@@ -1129,10 +1129,7 @@ function startupRoleFixture(values) {
     refreshWorkspaces: () => {},
     saveStartup: async (input) => writes.push(input),
     onSaved: async () => {},
-    openPlugins: () => {
-      navigation.push("plugins");
-      return true;
-    },
+    openDecisionModels: () => navigation.push("models-form"),
     openAdvanced: (id) => navigation.push(id),
   };
   const find = (node, predicate) => {
@@ -1232,10 +1229,10 @@ test("scheduler and executor switches stage independent fields; role and mode ed
     (node) => node.props?.["data-task-scheduler-decision"],
   );
   button(scheduler, "schedulerDecisionModelEntry").props.onClick();
-  assert.deepEqual(navigation, ["plugins"]);
-  props.openPlugins = () => false;
+  assert.deepEqual(navigation, ["models-form"]);
+  props.openDecisionModels = () => navigation.push("models-form");
   button(fixture.render(), "schedulerDecisionModelEntry").props.onClick();
-  assert.deepEqual(navigation, ["plugins", "task-scheduler-decision-model"]);
+  assert.deepEqual(navigation, ["models-form", "models-form"]);
   assert.equal(writes.length, 0);
   assert.equal(
     find(tree, (node) => node.props?.["data-task-decision-entry"]),

@@ -130,7 +130,11 @@ and existing model provider directly. It needs no custom adapter, task system,
 agent loop, sessions, tools or separate process. Keep your usual native model
 provider/authentication configuration; no model call occurs on plugin load.
 
-Add this native row and configure the decision service in the same profile:
+When used with the task-system Web companion, **Settings → Task system → Decision model settings** selects an existing DSH provider/model and saves through the public ConfigEditor. Both task roles share the same decision configuration. Manage native providers and credentials in the official **Models** page. The form preserves env references, unknown fields and unrelated routes. It never calls a model or creates credentials. Jev non-secret fields and existing compatible model/endpoints are editable; absent credentials remain visibly not ready.
+
+The bundle installs an idle native bridge with `routes: []` and finite budgets for the first explicit GUI save. Preserve any existing bridge instance/config when updating; do not load duplicate instances. The independent `./settings` module owns narrow configuration reads and CAS edits and has no Task/remote dependency.
+
+For headless/operator configuration, the same existing protocol is:
 
 ```yaml
 - id: typed-decision-native-completion

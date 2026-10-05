@@ -54,7 +54,7 @@ const ui=window.taskUI;
 let startup={writable:true,applies:'plugin-restart',task:{entryId:'task-system',values:{role:'executor',defaultWorkspaceId:'workspace-fixture',planningDecisionEnabled:true,sessionDecisionEnabled:false}},remote:{entryId:'task-remote-execution',loaded:true,loaderDisabled:false,values:{role:'executor',paused:true,endpoint:'http://fixture.invalid:8443/commands',audience:'fixture-authority',pollIntervalMs:0,concurrency:1,taskSessionsEnabled:true,trustedNetworkTarget:{address:'fixture.invalid',port:8443,localAddress:'fixture.local',allowHttp:true}}}};
 window.fixtureWorkspaceMode='ready';window.fixtureWorkspaceReads=0;window.fixtureWrites=[];window.fixtureIdentityQueries=0;window.fixturePluginSection=null;window.fixtureNavigationAvailable=false;
 const live={available:true,writable:true,saving:false,dirty:false,valid:true,fields:Object.fromEntries(ui.keys.map(key=>[key,{text:['schedulerEnabled','autoExecute','healthAlerts'].includes(key)?'false':'1000',overridden:false,invalid:false}]))};
-const props={openPlugins:()=>window.fixtureNavigationAvailable&&ui.openPlugins({slots:{entries:()=>[{options:{store:{create:()=>({actions:{openSection:id=>{window.fixturePluginSection=id;}}})}}}]}}),t:key=>ui.zh[key]??key,useTaskSettings:project=>project(live),edit(){},resetField(){},save(){},discard(){},
+const props={readDecisionSettings:async()=>({available:false,writable:false,snapshot:null,catalog:[],readiness:[]}),saveDecisionSettings:async()=>{throw Error('No decision entry in this fixture');},openModels:()=>{window.fixturePluginSection='models';return true;},openPlugins:()=>window.fixtureNavigationAvailable&&ui.openPlugins({slots:{entries:()=>[{options:{store:{create:()=>({actions:{openSection:id=>{window.fixturePluginSection=id;}}})}}}]}}),t:key=>ui.zh[key]??key,useTaskSettings:project=>project(live),edit(){},resetField(){},save(){},discard(){},
 readWorkspaces:async()=>{window.fixtureWorkspaceReads++;if(window.fixtureWorkspaceMode==='error')throw {code:'CATALOG_UNAVAILABLE'};return {scope:{entryId:'task-system',nodeId:'fixture-node',schedulerId:'fixture-scheduler'},source:'official',items:[{workspaceId:'workspace-fixture',title:'同名项目',path:'/projects/original',available:true},...(window.fixtureWorkspaceMode==='missing'?[]:[{workspaceId:'workspace-draft',title:'同名项目',path:'/projects/second',available:true}])]};},
 startup:async()=>structuredClone(startup), saveStartup:async input=>{window.fixtureWrites.push(structuredClone(input));Object.assign(startup[input.target].values,input.changes);},
 read:async()=>({nodeId:'fixture-node',role:startup.task.values.role,databasePath:'/fixture/tasks.sqlite',profilePatch:'/fixture/cordis.patch.yml',schedulerId:'fixture-scheduler',defaultWorkspaceId:startup.task.values.defaultWorkspaceId,planningDecisionEnabled:startup.task.values.planningDecisionEnabled,sessionDecisionEnabled:startup.task.values.sessionDecisionEnabled,remote:{...startup.remote.values,nodeId:'fixture-node',polling:false,authMode:'trusted-network',executorIdentity:null}}),
@@ -262,17 +262,21 @@ try {
       true,
     );
     await click(btn("执行端决策模型配置"));
+    await until(() =>
+      run(`!!document.querySelector('[data-decision-model-settings]')`),
+    );
     assert.equal(
       await run(
         `document.querySelector('[data-task-mode] button[aria-pressed="true"]').textContent.trim()`,
       ),
-      "高级",
+      "简单",
     );
-    assert.equal(await run(`document.activeElement.id`), "task-decision-model");
-    await run(`window.fixtureNavigationAvailable=true`);
-    await click(btn("执行端决策模型配置"));
-    assert.equal(await run(`window.fixturePluginSection`), "plugins");
-    await click(btn("简单"));
+    assert.equal(
+      await run(`document.activeElement.id`),
+      "task-decision-model-form",
+    );
+    assert.equal(await run(`window.fixturePluginSection`), null);
+    await click(btn("关闭模型配置"));
     await click(scopedBtn('[data-startup-target="task"]', "保存并重启插件"));
     const taskWrite = await run(`fixtureWrites[0]`);
     assert.deepEqual(taskWrite.expected, {
@@ -396,7 +400,7 @@ try {
       taskChanges: taskWrite.changes,
       computed,
       advancedComputed,
-      publicPluginNavigationRequested: true,
+      directModelFormRequested: true,
       imagePath,
     });
   }

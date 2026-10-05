@@ -23,7 +23,7 @@ DSH 自带 WebUI；入口是 `dsh web` 或 `dsh --profile web`。自定义名称
 
 关闭 autoExecute 不会停止 `task-remote-execution` 的远程轮询，也不会取消正在运行的任务。已配置的安全重试同样独立。只读区明确显示远端地址、角色、轮询间隔、远程并发以及自动领取状态。
 
-当前 GUI 没有“暂停远程节点”按钮。远程轮询由启动配置 pollIntervalMs 控制：设为 0 并重启后不自动轮询；已经领取的任务和显式调用仍需分别处理。此页不编辑远端授权、节点身份、密钥或登录凭据。已有连接地址可由独立启动表单修改；后端检查 expected snapshot 并保留现有认证、grant 和未知字段。
+远程启动表单提供独立 paused 控制，保持连接配置可编辑；paused=true 时远程请求、领取与轮询停止。pollIntervalMs=0 只关闭自动轮询，不能替代 paused。此页不编辑远端授权、节点身份、密钥或登录凭据。已有连接地址可由独立启动表单修改；后端检查 expected snapshot 并保留现有认证、grant 和未知字段。
 
 ## 本机队列与会话摘要
 
@@ -39,11 +39,23 @@ DSH 自带 WebUI；入口是 `dsh web` 或 `dsh --profile web`。自定义名称
 
 启动表单先读取 `startup()` 的条目和值；草稿仅在点击 **保存并重启插件** 后提交。`saveStartup({target, expected, changes})` 只接收指定 task/remote 的严格字段子集；后端使用实际公开 ConfigEditor.edit 合并保存，拒绝旧快照、配置覆盖层与运行中工作。保存后重新读取 startup，并清除旧部署／队列摘要；改变连接不会继承页面之前显示的执行端身份。
 
-Task 允许 role、defaultWorkspaceId、sessionDecisionEnabled；remote 允许 role、endpoint、audience、pollIntervalMs、concurrency 和受限制的 trustedNetworkTarget。旧连接的 Task 会话迁移使用明确的“保存并重启”操作，无常驻开关，也不扩展 peer grant。身份查询只在点击 **向调度端查询本机执行端 ID** 时调用无参数 RPC，不能指定其他节点。
+Task 允许 role、defaultWorkspaceId、planningDecisionEnabled、sessionDecisionEnabled；remote 允许 role、paused、endpoint、audience、pollIntervalMs、concurrency 和受限制的 trustedNetworkTarget。旧连接的 Task 会话迁移使用明确的“保存并重启”操作，无常驻开关，也不扩展 peer grant。身份查询只在点击 **向调度端查询本机执行端 ID** 时调用无参数 RPC，不能指定其他节点。
 
 未配置连接时，表单要求显式填写 endpoint、audience、精确目标地址／端口和本机 source address。只有已有 trusted-network 认证模式及固定内部节点身份才能由后端建立此连接；不创建 key、grant 或 native route，新连接保持远程轮询关闭。signed 连接缺少预配置引用会被拒绝，需使用官方安全配置流程完成。
 
-默认工作区填写已在本机登记且允许当前节点使用的 workspace ID，不是任意目录路径。决策提供者和模型复用 typed-decisions 原有配置，未新增 JEV 协议。
+默认工作区从本机已登记、ready、已授权目录选择，显示名称与路径；内部保留原稳定 workspace ID，高级页面只读显示 ID。决策模型使用上面的独立表单，未新增 JEV 协议。
+
+## 决策模型配置
+
+在任务系统设置中点击 **调度端决策模型配置** 或 **执行端决策模型配置**，直接打开同一表单；两个角色共用 typed-decisions 配置。普通 DSH LLM 从官方已有 provider/model 目录选择，初始空值不自动选第一项。**在“模型”中管理 provider 与凭据** 直接打开官方 Models 页面；返回后刷新目录。
+
+表单沿用已有规则、structured、Typesafe Jev、已注册 compatible 模式。Jev 可保存非秘密 model/modelVersion；compatible 保存已有条目的 model/modelVersion/endpoint，保留其 capabilityDeclaration、凭据/env 引用及未知字段。缺凭据时明确未就绪，仍允许保存非秘密配置；本表单没有 secret 输入，也不创建凭据或测试模型连接。
+
+独立 `decisionSettings()` / `saveDecisionSettings({ expected, selection })` RPC 使用严格字段白名单。配置编辑由 typed-decisions 的公开 `./settings` 模块拥有，任务系统只适配该公开接口。普通模型保留既有模型和 native bridge 路由，同步新增或选用对应 selector，并把选定模型放到该 provider 的默认首项。保存通过实际 ConfigEditor.edit 校验、持久化和正常插件重启，不重启 DSH。第二个条目保存失败时只按 CAS 撤回本次 bridge 新增；无法确认撤回则明确报 partial save，不显示成功。
+
+选择和取消不写配置。刷新保留草稿和原 expected 快照；配置变化后保存拒绝覆盖，取消草稿可载入当前值。简单／高级切换保留模型草稿和工作区草稿。远端 paused 与授权不会因模型配置改变。
+
+新版 typed-decisions bundle 安装声明包含一条 routes=[] 的空闲 native bridge，具备原有有限预算，仅在显式保存路由后才有可用模型；空 bridge 不发请求。升级时应使用正常 bundle 组合补齐该条目；已有 bridge 配置、ID 与预算需原样保留，不能重复加载第二个实例。旧宿主缺少条目时表单如实提示安装未齐，不要求用户编辑 profile JSON。
 
 ## 启动配置和覆盖层
 

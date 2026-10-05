@@ -31,6 +31,42 @@ window.__ModuleLoader__.load({
     ]);
     const NS = "taskPluginSettings";
     const en = {
+      decisionFormTitle: "Decision model settings",
+      decisionShared:
+        "Scheduler executor selection and executor workspace/session decisions use this same configuration.",
+      decisionMode: "Decision adapter",
+      decisionProvider: "Configured DSH provider",
+      decisionModel: "Configured model",
+      decisionChoose: "Choose…",
+      decisionModelSelector: "Model selector",
+      decisionModelVersion: "Exact model version",
+      decisionEndpoint: "Compatible API endpoint",
+      decisionManageModels: "Manage providers and credentials in Models",
+      decisionCredentialMissing:
+        "Credentials are not configured. Non-secret settings can be saved; model decisions are not ready.",
+      decisionCatalogEmpty:
+        "No configured DSH model is available. Add or repair it in Models, then refresh.",
+      decisionBridgeMissing:
+        "The native bridge entry is missing. Update this plugin installation to enable GUI routing.",
+      decisionRestart:
+        "Save restarts the decision plugins. Credentials, env references and other routes are retained.",
+      decisionSave: "Save decision model",
+      decisionCurrent: "Current configuration",
+      decisionStatus_ready: "Configured",
+      "decisionStatus_configured-unverified":
+        "Configured; connection not verified",
+      decisionStatus_unconfirmed: "Credential readiness could not be confirmed",
+      "decisionStatus_credential-missing": "Credentials missing",
+      "decisionStatus_bridge-missing": "Native model route missing",
+      "decisionStatus_model-unavailable": "Configured model unavailable",
+      decisionConflict:
+        "Configuration changed. Your draft is retained. Refresh and discard to use current values before retrying.",
+      decisionSaveFailed:
+        "Save could not be confirmed. Your draft is retained; refresh to check current configuration.",
+      decisionReadFailed: "Could not read model settings. Refresh to retry.",
+      decisionUnavailable:
+        "The typed-decisions plugin is not installed or has no editable entry.",
+      decisionClose: "Close model settings",
       simpleMode: "Simple",
       advancedMode: "Advanced",
       settingsMode: "Settings mode",
@@ -45,7 +81,7 @@ window.__ModuleLoader__.load({
         "Enable this switch and configure the existing model to choose an executor. When disabled or the decision plugin is not loaded, an explicit route is retained; work without an assigned executor remains pending assignment.",
       schedulerDecisionModelEntry: "Scheduler decision model settings",
       schedulerDecisionSetup:
-        "Open Plugins and configure the existing @dsh-task/typed-decisions entry. The executor session/workspace switch does not control task_plan.",
+        "Open Decision model settings. Both roles reuse the same configured model.",
       executorDecisionTitle: "Executor · workspace and session",
       executorDecisionHint:
         "After receiving a task, the executor selects its workspace and creates or reuses a Task session within the task's constraints.",
@@ -55,7 +91,7 @@ window.__ModuleLoader__.load({
       decisionModelStatus:
         "Uses the existing decision-model configuration. If no valid decision is available, the default Task session/workspace policy applies.",
       decisionModelSetup:
-        "Open Plugins and configure the existing @dsh-task/typed-decisions entry with your existing model/provider. This switch enables its use for session/workspace decisions.",
+        "Open Decision model settings to select the configured provider and model.",
       schedulerAddress: "Scheduler address",
       audienceHint:
         "Audience must match the scheduler's configured target validation label. Obtain it from the scheduler; it is not inferred from the address.",
@@ -165,7 +201,7 @@ window.__ModuleLoader__.load({
       workspaceHint:
         "The default workspace must already be registered locally. Changes apply after restart. Without a valid decision, execution uses the default Task session and workspace policy.",
       decisionHint:
-        "Decision adapters reuse @dsh-task/typed-decisions: DSH LLM, Typesafe Jev, or a registered AnyJev adapter. Configure the existing typed-decisions profile entry; this page does not create provider credentials.",
+        "Decision adapters reuse @dsh-task/typed-decisions: DSH LLM, Typesafe Jev, or a registered AnyJev adapter. Select the model in this form; manage credentials through Models.",
       settingsPending:
         "This Host has not loaded the session/workspace settings interface yet.",
       queueTitle: "Local task queue · read only",
@@ -230,6 +266,38 @@ window.__ModuleLoader__.load({
         "Edits are staged until Save. Leaving this page discards unsaved changes. Saved runtime settings persist in this profile and do not restart the task service.",
     };
     const zh = {
+      decisionFormTitle: "决策模型配置",
+      decisionShared:
+        "调度端选择执行端、执行端选择工作区／会话，共用此决策模型配置。",
+      decisionMode: "决策模式",
+      decisionProvider: "已有 DSH provider",
+      decisionModel: "已有模型",
+      decisionChoose: "请选择…",
+      decisionModelSelector: "模型选择名",
+      decisionModelVersion: "实际模型／版本",
+      decisionEndpoint: "Compatible API 地址",
+      decisionManageModels: "在“模型”中管理 provider 与凭据",
+      decisionCredentialMissing:
+        "凭据尚未配置。可保存非秘密设置；模型决策尚未就绪。",
+      decisionCatalogEmpty:
+        "暂无可选的已配置 DSH 模型。请在“模型”中添加或修复后刷新。",
+      decisionBridgeMissing:
+        "当前安装缺少 native bridge 条目；更新插件安装后即可在此保存普通模型路由。",
+      decisionRestart: "保存后重启相关决策插件；保留凭据、env 引用和其他路由。",
+      decisionSave: "保存决策模型",
+      decisionCurrent: "当前配置",
+      decisionStatus_ready: "已配置",
+      "decisionStatus_configured-unverified": "已配置；连接尚未验证",
+      decisionStatus_unconfirmed: "凭据状态尚未确认",
+      "decisionStatus_credential-missing": "缺少凭据",
+      "decisionStatus_bridge-missing": "缺少普通模型路由",
+      "decisionStatus_model-unavailable": "已配置模型不可用",
+      decisionConflict:
+        "配置已变化，草稿保留。刷新并取消草稿以载入当前值后重试。",
+      decisionSaveFailed: "保存未能确认，草稿保留；请刷新检查当前配置。",
+      decisionReadFailed: "无法读取决策模型配置，请刷新重试。",
+      decisionUnavailable: "typed-decisions 插件未安装或没有可编辑条目。",
+      decisionClose: "关闭模型配置",
       simpleMode: "简单",
       advancedMode: "高级",
       settingsMode: "设置模式",
@@ -243,7 +311,7 @@ window.__ModuleLoader__.load({
         "打开此开关并配置已有模型，才使用模型选择执行者。关闭或未加载决策插件时沿用明确路由；未确定执行者则保持待分配。",
       schedulerDecisionModelEntry: "调度端决策模型配置",
       schedulerDecisionSetup:
-        "打开“插件”，配置已有 @dsh-task/typed-decisions 条目。执行端的工作区／会话开关不控制 task_plan。",
+        "打开“决策模型配置”选择已有模型；两个角色共用同一配置。",
       executorDecisionTitle: "执行端 · 工作区与会话",
       executorDecisionHint:
         "任务派过来后，由执行端在任务约束内选择工作区，并新建或复用 Task 会话。",
@@ -253,7 +321,7 @@ window.__ModuleLoader__.load({
       decisionModelStatus:
         "使用已有决策模型配置；没有有效决策时，采用默认 Task 会话与工作区策略。",
       decisionModelSetup:
-        "打开“插件”，配置已有 @dsh-task/typed-decisions 条目并使用已有模型／provider；此开关控制是否将它用于会话与工作区决策。",
+        "点击“决策模型配置”选择已有模型／provider；此开关控制会话与工作区决策。",
       schedulerAddress: "调度端地址",
       audienceHint:
         "audience 是调度端配置的目标验证标识，必须与调度端的值一致；请向调度端获取，不按地址猜测。",
@@ -358,7 +426,7 @@ window.__ModuleLoader__.load({
       workspaceHint:
         "默认工作区须已在本机登记；改变后重启生效。没有有效决策时，执行采用默认的 Task 会话和工作区策略。",
       decisionHint:
-        "决策复用 @dsh-task/typed-decisions：普通 DSH LLM、Typesafe Jev 或已注册的 AnyJev adapter。请配置已有 typed-decisions profile 条目；此页不新建 provider 凭据。",
+        "决策复用 @dsh-task/typed-decisions：普通 DSH LLM、Typesafe Jev 或已注册的 AnyJev adapter。在表单中选择模型；凭据在官方“模型”中管理。",
       settingsPending: "当前宿主尚未加载会话／工作区设置接口。",
       queueTitle: "本机任务队列 · 只读",
       queueHint:
@@ -742,6 +810,15 @@ window.__ModuleLoader__.load({
       fontSize: 13,
       lineHeight: 1.65,
       margin: "5px 0 12px",
+    };
+    const controlStyle = {
+      width: "100%",
+      boxSizing: "border-box",
+      padding: "7px 10px",
+      color: "var(--dsw-alias-label-primary, currentColor)",
+      background: "var(--dsw-alias-bg-layer-1, transparent)",
+      border: "1px solid var(--dsw-alias-border-l3, #8a8a8a)",
+      borderRadius: 6,
     };
     const headingStyle = {
       fontSize: 16,
@@ -1381,6 +1458,7 @@ window.__ModuleLoader__.load({
       refreshWorkspaces,
       openAdvanced,
       openPlugins,
+      openDecisionModels,
     }) {
       const [draft, setDraft] = React.useState(() =>
         startupDraft(target, row.values),
@@ -1460,15 +1538,7 @@ window.__ModuleLoader__.load({
           });
         }
       };
-      const controlStyle = {
-        width: "100%",
-        boxSizing: "border-box",
-        padding: "7px 10px",
-        color: "var(--dsw-alias-label-primary, currentColor)",
-        background: "var(--dsw-alias-bg-layer-1, transparent)",
-        border: "1px solid var(--dsw-alias-border-l3, #8a8a8a)",
-        borderRadius: 6,
-      };
+
       const field = (key, label = key) =>
         h(
           "label",
@@ -1609,8 +1679,7 @@ window.__ModuleLoader__.load({
                         {
                           variant: "outline",
                           onClick: () => {
-                            if (!openPlugins?.())
-                              openAdvanced?.("task-scheduler-decision-model");
+                            openDecisionModels?.();
                           },
                         },
                         t("schedulerDecisionModelEntry"),
@@ -1684,8 +1753,7 @@ window.__ModuleLoader__.load({
                         {
                           variant: "outline",
                           onClick: () => {
-                            if (!openPlugins?.())
-                              openAdvanced?.("task-decision-model");
+                            openDecisionModels?.();
                           },
                         },
                         t("decisionModelEntry"),
@@ -1868,6 +1936,7 @@ window.__ModuleLoader__.load({
       advanced = true,
       openAdvanced,
       openPlugins,
+      openDecisionModels,
     }) {
       const { state, refresh, replace } = useReadSnapshot(startup);
       const workspaceScopeKey = JSON.stringify([
@@ -1938,6 +2007,7 @@ window.__ModuleLoader__.load({
                     advanced,
                     openAdvanced,
                     openPlugins,
+                    openDecisionModels,
                     onRoleChange: setTaskRole,
                     workspaceDirectory: workspaceCatalog.state,
                     refreshWorkspaces: workspaceCatalog.refresh,
@@ -2011,10 +2081,416 @@ window.__ModuleLoader__.load({
         ),
       );
     }
+    const decisionSettingsDescriptor = {
+      id: "@dsh-task/task-system#taskPluginSettings/decisionSettings",
+      service: NS,
+      namespace: NS,
+      method: "decisionSettings",
+      invocation: { kind: "direct" },
+      parameters: [],
+      result: {
+        mode: "strict",
+        typeSymbol: "@dsh-task/task-system#DecisionSettings",
+        create: () => ({
+          parse(value) {
+            if (
+              !value ||
+              typeof value.available !== "boolean" ||
+              typeof value.writable !== "boolean" ||
+              !Array.isArray(value.catalog) ||
+              !Array.isArray(value.readiness) ||
+              (value.snapshot !== null &&
+                (!value.snapshot ||
+                  typeof value.snapshot.entryId !== "string" ||
+                  !Array.isArray(value.snapshot.providers)))
+            )
+              throw Error("Invalid decision settings");
+            return value;
+          },
+        }),
+      },
+    };
+    function parseDecisionInput(value) {
+      const keys = {
+        rules: ["kind", "providerId"],
+        structured: ["kind", "providerId", "nativeProvider", "modelVersion"],
+        jev: ["kind", "providerId", "model", "modelVersion"],
+        compatible: ["kind", "providerId", "model", "modelVersion", "endpoint"],
+      };
+      const selection = value?.selection,
+        fields = keys[selection?.kind];
+      if (
+        !value ||
+        Object.keys(value).sort().join() !== "expected,selection" ||
+        !value.expected?.entryId ||
+        !fields ||
+        Object.keys(selection).sort().join() !== [...fields].sort().join() ||
+        fields.some(
+          (k) => typeof selection[k] !== "string" || !selection[k].trim(),
+        )
+      )
+        throw Error("Invalid decision selection");
+      return value;
+    }
+    const saveDecisionSettingsDescriptor = {
+      id: "@dsh-task/task-system#taskPluginSettings/saveDecisionSettings",
+      service: NS,
+      namespace: NS,
+      method: "saveDecisionSettings",
+      invocation: { kind: "direct" },
+      parameters: [
+        {
+          name: "input",
+          wire: "input",
+          source: "json",
+          codec: {
+            mode: "strict",
+            typeSymbol: "@dsh-task/task-system#SaveDecisionInput",
+            create: () => ({ parse: parseDecisionInput }),
+          },
+        },
+      ],
+      result: {
+        mode: "strict",
+        typeSymbol: "@dsh-task/task-system#SaveDecisionResult",
+        create: () => ({
+          parse(value) {
+            if (value?.saved !== true || value.applies !== "plugin-restart")
+              throw Error("Unconfirmed decision save");
+            return value;
+          },
+        }),
+      },
+    };
+    function decisionChoices(snapshot) {
+      const choices = snapshot.providers.map((p) => ({
+        id: p.id,
+        kind: p.kind,
+        label: `${p.kind === "structured" ? "DSH LLM" : p.kind === "jev" ? "Typesafe Jev" : p.kind === "compatible" ? "AnyJev compatible" : "Rules"} · ${p.id}`,
+      }));
+      for (const [kind, base, label] of [
+        ["structured", "ordinary", "DSH LLM"],
+        ["jev", "typesafe", "Typesafe Jev"],
+      ]) {
+        if (choices.some((p) => p.kind === kind)) continue;
+        let id = base;
+        for (let n = 2; choices.some((p) => p.id === id); n++)
+          id = `${base}-${n}`;
+        choices.push({ id, kind, label });
+      }
+      return choices;
+    }
+    function decisionDraft(snapshot, providerId = snapshot.defaultProvider) {
+      const kind =
+        decisionChoices(snapshot).find((p) => p.id === providerId)?.kind ??
+        "rules";
+      const p = snapshot.providers.find((p) => p.id === providerId),
+        model = p?.models?.[0];
+      const route = snapshot.completion?.routes.find(
+        (r) => r.model === model?.model && r.modelVersion === model.version,
+      );
+      return kind === "structured"
+        ? {
+            kind,
+            providerId,
+            nativeProvider: route?.provider ?? "",
+            modelVersion: route?.modelVersion ?? "",
+          }
+        : kind === "rules"
+          ? { kind, providerId }
+          : {
+              kind,
+              providerId,
+              model: p?.model ?? "jev-1.13.0",
+              modelVersion: p?.modelVersion ?? "jev-1.13.0",
+              ...(kind === "compatible" ? { endpoint: p?.endpoint ?? "" } : {}),
+            };
+    }
+    function DecisionModelRow({
+      t,
+      value,
+      saveDecisionSettings,
+      onSaved,
+      openModels,
+    }) {
+      const snapshot = value.snapshot;
+      const [draft, setDraft] = React.useState(() => decisionDraft(snapshot));
+      const [expected, setExpected] = React.useState(snapshot);
+      const [status, setStatus] = React.useState({ saving: false });
+      const choices = decisionChoices(snapshot),
+        selectedNative = value.catalog.find(
+          (p) => p.provider === draft.nativeProvider,
+        );
+      const edit = (key, text) => {
+        setDraft((old) => ({ ...old, [key]: text }));
+        setStatus({ saving: false });
+      };
+      const valid =
+        Object.entries(draft).every(
+          ([, v]) => typeof v === "string" && v.trim(),
+        ) &&
+        (draft.kind !== "structured" ||
+          (snapshot.completion &&
+            selectedNative?.available &&
+            selectedNative.models.some((m) => m.id === draft.modelVersion)));
+      const dirty =
+        JSON.stringify(draft) !== JSON.stringify(decisionDraft(expected));
+      const disabled = !value.writable || status.saving;
+      const select = (key, label, items) =>
+        h(
+          "label",
+          { style: { display: "block", margin: "12px 0" } },
+          h("span", { style: { display: "block", marginBottom: 6 } }, label),
+          h(
+            "select",
+            {
+              id: `task-decision-${key}`,
+              style: controlStyle,
+              value: draft[key],
+              disabled,
+              onChange: (e) => {
+                if (key === "providerId")
+                  setDraft(decisionDraft(snapshot, e.target.value));
+                else if (key === "nativeProvider")
+                  setDraft((old) => ({
+                    ...old,
+                    nativeProvider: e.target.value,
+                    modelVersion: "",
+                  }));
+                else edit(key, e.target.value);
+                setStatus({ saving: false });
+              },
+            },
+            h("option", { value: "" }, t("decisionChoose")),
+            draft[key] && !items.some((i) => i.id === draft[key])
+              ? h(
+                  "option",
+                  { value: draft[key], disabled: true },
+                  `${draft[key]} · ${t("workspaceUnavailableSuffix")}`,
+                )
+              : null,
+            ...items.map((i) =>
+              h(
+                "option",
+                { key: i.id, value: i.id, disabled: i.available === false },
+                i.label ?? i.name,
+              ),
+            ),
+          ),
+        );
+      const text = (key, label) =>
+        h(
+          "label",
+          { style: { display: "block", margin: "12px 0" } },
+          h("span", { style: { display: "block", marginBottom: 6 } }, label),
+          h("input", {
+            id: `task-decision-${key}`,
+            style: controlStyle,
+            value: draft[key],
+            disabled,
+            onChange: (e) => edit(key, e.target.value),
+          }),
+        );
+      const readiness = value.readiness.find(
+        (p) => p.providerId === snapshot.defaultProvider,
+      )?.status;
+      const credentialMissing =
+        draft.kind === "structured"
+          ? selectedNative?.credential === "missing"
+          : ["jev", "compatible"].includes(draft.kind) &&
+            (!snapshot.providers.some((p) => p.id === draft.providerId) ||
+              value.readiness.find((p) => p.providerId === draft.providerId)
+                ?.status === "credential-missing");
+      return h(
+        "div",
+        { "data-decision-model-form": true },
+        h("p", { style: hintStyle }, t("decisionShared")),
+        readiness
+          ? h(
+              "p",
+              { role: "status", style: hintStyle },
+              `${t("decisionCurrent")}: ${t(`decisionStatus_${readiness}`)}`,
+            )
+          : null,
+        select("providerId", t("decisionMode"), choices),
+        draft.kind === "structured"
+          ? h(
+              React.Fragment,
+              null,
+              select(
+                "nativeProvider",
+                t("decisionProvider"),
+                value.catalog.map((p) => ({
+                  id: p.provider,
+                  name: p.name,
+                  available: p.available,
+                })),
+              ),
+              select(
+                "modelVersion",
+                t("decisionModel"),
+                selectedNative?.models ?? [],
+              ),
+              !snapshot.completion
+                ? h("p", { role: "alert" }, t("decisionBridgeMissing"))
+                : null,
+              !value.catalog.length
+                ? h("p", { role: "status" }, t("decisionCatalogEmpty"))
+                : null,
+            )
+          : ["jev", "compatible"].includes(draft.kind)
+            ? h(
+                React.Fragment,
+                null,
+                text("model", t("decisionModelSelector")),
+                text("modelVersion", t("decisionModelVersion")),
+                draft.kind === "compatible"
+                  ? text("endpoint", t("decisionEndpoint"))
+                  : null,
+              )
+            : null,
+        credentialMissing
+          ? h("p", { role: "status" }, t("decisionCredentialMissing"))
+          : null,
+        h(
+          Button,
+          {
+            variant: "outline",
+            onClick: () => {
+              if (!openModels?.())
+                setStatus({ saving: false, code: "MODELS_GUI_UNAVAILABLE" });
+            },
+          },
+          t("decisionManageModels"),
+        ),
+        h("p", { style: hintStyle }, t("decisionRestart")),
+        status.code
+          ? h(
+              "p",
+              { role: "alert" },
+              t(
+                status.code === "DECISION_CONFLICT"
+                  ? "decisionConflict"
+                  : "decisionSaveFailed",
+              ),
+              ` (${status.code})`,
+            )
+          : null,
+        status.saved ? h("p", { role: "status" }, t("startupSaved")) : null,
+        h(
+          "div",
+          {
+            style: { display: "flex", gap: 8, flexWrap: "wrap", marginTop: 14 },
+          },
+          h(
+            Button,
+            {
+              variant: "outline",
+              disabled: disabled || !dirty || !valid,
+              onClick: async () => {
+                setStatus({ saving: true });
+                try {
+                  await saveDecisionSettings(
+                    parseDecisionInput({ expected, selection: draft }),
+                  );
+                  const saved = await onSaved();
+                  setExpected(saved.snapshot);
+                  setDraft(decisionDraft(saved.snapshot));
+                  setStatus({ saving: false, saved: true });
+                } catch (error) {
+                  setStatus({
+                    saving: false,
+                    code:
+                      error?.message?.match(/DECISION_[A-Z_]+/)?.[0] ??
+                      error?.code ??
+                      "DECISION_SAVE_REJECTED",
+                  });
+                }
+              },
+            },
+            t(status.saving ? "startupSaving" : "decisionSave"),
+          ),
+          h(
+            Button,
+            {
+              variant: "outline",
+              disabled:
+                status.saving ||
+                (!dirty &&
+                  JSON.stringify(expected) === JSON.stringify(snapshot)),
+              onClick: () => {
+                setDraft(decisionDraft(snapshot));
+                setExpected(snapshot);
+                setStatus({ saving: false });
+              },
+            },
+            t("discardDraft"),
+          ),
+        ),
+      );
+    }
+    function DecisionModelSettings({
+      t,
+      readDecisionSettings,
+      saveDecisionSettings,
+      openModels,
+      close,
+    }) {
+      const { state, refresh, replace } = useReadSnapshot(readDecisionSettings);
+      return h(
+        "section",
+        {
+          "data-decision-model-settings": true,
+          id: "task-decision-model-form",
+          tabIndex: -1,
+        },
+        h("h3", { style: headingStyle }, t("decisionFormTitle")),
+        state.loading && !state.value
+          ? h("p", { role: "status" }, t("loading"))
+          : null,
+        state.failed
+          ? h("p", { role: "alert" }, t("decisionReadFailed"))
+          : null,
+        state.value?.snapshot
+          ? h(DecisionModelRow, {
+              key: state.value.snapshot.entryId,
+              t,
+              value: state.value,
+              saveDecisionSettings,
+              onSaved: async () => {
+                const current = await readDecisionSettings();
+                replace(current);
+                return current;
+              },
+              openModels,
+            })
+          : state.value
+            ? h("p", { role: "status" }, t("decisionUnavailable"))
+            : null,
+        h(
+          "div",
+          { style: { display: "flex", gap: 8, marginTop: 12 } },
+          h(
+            Button,
+            { variant: "outline", onClick: refresh, disabled: state.loading },
+            t("refresh"),
+          ),
+          h(Button, { variant: "outline", onClick: close }, t("decisionClose")),
+        ),
+      );
+    }
+
     function Page(props) {
       const { t } = props;
       const [refreshKey, setRefreshKey] = React.useState(0);
       const [advanced, setAdvanced] = React.useState(false);
+      const [modelOpen, setModelOpen] = React.useState(false);
+      const openDecisionModels = () => {
+        setModelOpen(true);
+        requestAnimationFrame(() =>
+          document.getElementById("task-decision-model-form")?.focus(),
+        );
+      };
       const openAdvanced = (id) => {
         setAdvanced(true);
         requestAnimationFrame(() => document.getElementById(id)?.focus());
@@ -2074,6 +2550,16 @@ window.__ModuleLoader__.load({
               advanced,
               openAdvanced,
               openPlugins: props.openPlugins,
+              openDecisionModels,
+            })
+          : null,
+        modelOpen
+          ? h(DecisionModelSettings, {
+              t,
+              readDecisionSettings: props.readDecisionSettings,
+              saveDecisionSettings: props.saveDecisionSettings,
+              openModels: props.openModels,
+              close: () => setModelOpen(false),
             })
           : null,
         h(LocalQueue, {
@@ -2197,15 +2683,17 @@ window.__ModuleLoader__.load({
         });
       return codec.parse(result.value);
     }
-    function openPlugins(ctx) {
+    function openSettingsSection(ctx, id) {
       const shell = ctx.slots
         .entries?.("sidebar.settings")
         .find((entry) => entry.options.store)
         ?.options.store.create();
       if (!shell?.actions?.openSection) return false;
-      shell.actions.openSection("plugins");
+      shell.actions.openSection(id);
       return true;
     }
+    const openPlugins = (ctx) => openSettingsSection(ctx, "plugins");
+    const openModels = (ctx) => openSettingsSection(ctx, "models");
     async function apply(ctx) {
       const t = ctx.locale.bind(NS);
       ctx.effect(
@@ -2223,6 +2711,8 @@ window.__ModuleLoader__.load({
           executorIdentityDescriptor,
           startupDescriptor,
           saveStartupDescriptor,
+          decisionSettingsDescriptor,
+          saveDecisionSettingsDescriptor,
         ],
       });
       ctx.effect(() => unmount, "task settings read-only remote");
@@ -2230,6 +2720,19 @@ window.__ModuleLoader__.load({
         readRemote(ctx, "describe", descriptor.result.create());
       const readQueue = () =>
         readRemote(ctx, "queue", queueDescriptor.result.create());
+      const readDecisionSettings = () =>
+        readRemote(
+          ctx,
+          "decisionSettings",
+          decisionSettingsDescriptor.result.create(),
+        );
+      const saveDecisionSettings = (input) =>
+        readRemote(
+          ctx,
+          "saveDecisionSettings",
+          saveDecisionSettingsDescriptor.result.create(),
+          parseDecisionInput(input),
+        );
       const readWorkspaces = () =>
         readRemote(
           ctx,
@@ -2259,6 +2762,9 @@ window.__ModuleLoader__.load({
               read,
               readQueue,
               readWorkspaces,
+              readDecisionSettings,
+              saveDecisionSettings,
+              openModels: () => openModels(ctx),
               queryIdentity,
               startup,
               saveStartup,
@@ -2301,6 +2807,14 @@ window.__ModuleLoader__.load({
       apply,
       Controller,
       openPlugins,
+      openModels,
+      decisionSettingsDescriptor,
+      saveDecisionSettingsDescriptor,
+      DecisionModelRow,
+      DecisionModelSettings,
+      decisionDraft,
+      decisionChoices,
+      parseDecisionInput,
       fieldSpec,
       descriptor,
       readRemote,

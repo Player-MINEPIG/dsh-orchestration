@@ -50,7 +50,7 @@ export class DshCompletionService extends Service implements StructuredCompletio
   constructor(ctx: Context, private readonly config: Config) {
     super(ctx, 'typedDecisionCompletion');
     const seen = new Set<string>();
-    if (!config.routes.length) fail('native completion requires a model route');
+    // An empty installed bridge stays idle until a GUI route is explicitly saved.
     for (const route of config.routes) {
       text(route.model, 'native model selector'); text(route.modelVersion, 'native model version'); text(route.provider, 'native provider');
       if (seen.has(route.model)) fail('duplicate native model selector');
