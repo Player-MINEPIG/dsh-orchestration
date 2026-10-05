@@ -155,9 +155,9 @@ test('native terminal observation ignores foreign sessions and clears prior erro
   try {
     foreign = await h.ctx.agents.create({ sessionId: SessionId('foreign-terminal-fixture'), agentOptions: { provider: 'test-offline', model: 'script' } });
     const { task, claim } = seed(h);
-    const ownedSessionId = `task-${claim.attempt.attemptId}`;
+    const ownedSessionId = () => h.ledger.getAttempt(claim.attempt.attemptId).sessionId;
     h.ctx.on('agent/status', ({ agent, status }) => {
-      if (agent.id !== ownedSessionId || status !== 'idle' || queued) return;
+      if (agent.id !== ownedSessionId() || status !== 'idle' || queued) return;
       queued = true;
       agent.followup(createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'Complete the same invocation' }] }));
     });
@@ -165,7 +165,7 @@ test('native terminal observation ignores foreign sessions and clears prior erro
     // completion. An unscoped observer would overwrite the owned outcome.
     h.adapter.script[1] = () => {
       h.ctx.on('session/event', (session, event) => {
-        if (session.id === ownedSessionId && event.type === 'turn/end' && event.data.reason.kind === 'completed') {
+        if (session.id === ownedSessionId() && event.type === 'turn/end' && event.data.reason.kind === 'completed') {
           foreign.agent.session.append('turn/end', { turn: 1, reason: { kind: 'error', error: { code: 'MISSING_CREDENTIAL', message: 'foreign-secret-sentinel' } } });
           foreignTerminals++;
         }
@@ -191,7 +191,7 @@ test('causal task_settle takes precedence over a later native terminal error', a
   try {
     const { task, claim } = seed(h);
     h.ctx.on('agent/turn-stopping', ({ agent }) => {
-      if (agent.id === `task-${claim.attempt.attemptId}`) throw new LlmError('late-secret-sentinel', 'AUTH');
+      if (agent.id === h.ledger.getAttempt(claim.attempt.attemptId).sessionId) throw new LlmError('late-secret-sentinel', 'AUTH');
     });
     const result = await h.ctx.taskSystem.native.execute(claim);
     assert.equal(terminalCodes.at(-1), 'AUTH');
@@ -345,7 +345,7 @@ test('native provider disposal aborts and drains its owned agent without stoppin
   await h.ctx.taskSystem.native.dispose();
   await assert.rejects(running, /interrupted/);
   assert.ok(h.ctx.tools, 'shared host tools remain alive');
-  assert.equal(h.ctx.agents.get(`task-${claim.attempt.attemptId}`), undefined);
+  assert.equal(h.ctx.agents.get(h.ledger.getAttempt(claim.attempt.attemptId).sessionId), undefined);
   assert.equal(h.ledger.getRun(claim.run.runId).state, 'uncertain');
   await h.dispose();
 });
@@ -410,7 +410,7 @@ test('durable cancellation is acknowledged after the native agent actually stops
     const cancelled = await tool(h.ctx, 'task_cancel', { commandId: 'cancel-running', taskId: task.taskId, reason: 'test cancellation' });
     assert.equal(cancelled.isError, false);
     await assert.rejects(running);
-    assert.equal(h.ctx.agents.get(`task-${claim.attempt.attemptId}`), undefined);
+    assert.equal(h.ctx.agents.get(h.ledger.getAttempt(claim.attempt.attemptId).sessionId), undefined);
     assert.equal(h.ledger.getRun(claim.run.runId).state, 'cancelled');
   } finally { await h.dispose(); }
 });
@@ -523,7 +523,7 @@ test('native curation is reversible, preserves history, and remains forbidden to
     const running = h.ctx.taskSystem.native.execute(claim);
     running.catch(() => undefined);
     await until(() => h.adapter.requests.length === 1);
-    const agent = h.ctx.agents.get(`task-${claim.attempt.attemptId}`);
+    const agent = h.ctx.agents.get(h.ledger.getAttempt(claim.attempt.attemptId).sessionId);
     const denied = await tool(h.ctx, 'task_curate', { commandId: 'owned-curation', taskId: claim.task.taskId, state: 'dismissed', expectedRevision: h.ledger.getTask(claim.task.taskId).admissionRevision, reason: 'Forbidden self-curation' }, agent);
     assert.equal(denied.isError, true);
     assert.equal(h.ledger.getTask(claim.task.taskId).admissionState, undefined);
@@ -708,7 +708,7 @@ test('task policy intersects configured tools and runtime timeout drains before 
     const { claim } = seed(bounded, '', { policy: { maxRuntimeMs: 100 } });
     await assert.rejects(bounded.ctx.taskSystem.native.execute(claim), /interrupted/);
     assert.equal(bounded.ledger.getRun(claim.run.runId).state, 'uncertain');
-    assert.equal(bounded.ctx.agents.get(`task-${claim.attempt.attemptId}`), undefined);
+    assert.equal(bounded.ctx.agents.get(bounded.ledger.getAttempt(claim.attempt.attemptId).sessionId), undefined);
   } finally { await bounded.dispose(); }
 });
 
@@ -821,7 +821,7 @@ test('explicit delegation tools create only descendants, inherit policy, and exp
     const pending = h.ctx.taskSystem.native.execute(claim);
     pending.catch(() => undefined);
     await until(() => h.adapter.requests.length);
-    const agent = h.ctx.agents.get(`task-${claim.attempt.attemptId}`);
+    const agent = h.ctx.agents.get(h.ledger.getAttempt(claim.attempt.attemptId).sessionId);
     const childResult = await tool(h.ctx, 'task_create', { commandId: 'owned-child', title: 'Delegated child' }, agent);
     assert.equal(childResult.isError, false);
     const child = childResult.value.value;
@@ -901,7 +901,7 @@ test('actual DSH file tools reject traversal, outside absolute paths, symlinks a
     const { claim } = seed(h, '', { workspaceId: 'workspace' });
     const running = h.ctx.taskSystem.native.execute(claim); running.catch(() => undefined);
     await until(() => h.adapter.requests.length);
-    const agent = h.ctx.agents.get(`task-${claim.attempt.attemptId}`);
+    const agent = h.ctx.agents.get(h.ledger.getAttempt(claim.attempt.attemptId).sessionId);
     const inside = await tool(h.ctx, 'read', { file_path: 'inside.txt' }, agent);
     assert.equal(inside.isError, false, JSON.stringify(inside));
     assert.ok(JSON.stringify(inside).includes('Inside allowed data'));
@@ -1089,7 +1089,7 @@ test('public native approval hook holds the exact call and applies trusted allow
       await until(() => h.ledger.approvals().length === 1);
       const request = h.ledger.approvals()[0];
       assert.equal(request.state, 'pending'); assert.equal(request.toolName, 'fixture_approval');
-      assert.equal(request.sessionId, `task-${claim.attempt.attemptId}`);
+      assert.equal(request.sessionId, h.ledger.getAttempt(claim.attempt.attemptId).sessionId);
       assert.equal(request.executionId, h.ledger.getAttempt(claim.attempt.attemptId).executionId);
       assert.ok(request.description.includes('write-fixture-result'));
       assert.equal(state.effects, 0); assert.equal(h.ledger.getRun(claim.run.runId).state, 'running');
@@ -1138,7 +1138,7 @@ test('standard native file tools cannot read or mutate authority database, SQLit
     const { claim } = seed(h, '', { workspaceId: 'workspace' });
     const running = h.ctx.taskSystem.native.execute(claim); running.catch(() => undefined);
     await until(() => h.adapter.requests.length);
-    const agent = h.ctx.agents.get(`task-${claim.attempt.attemptId}`);
+    const agent = h.ctx.agents.get(h.ledger.getAttempt(claim.attempt.attemptId).sessionId);
     for (const file_path of ['tasks.sqlite', 'tasks.sqlite-wal', 'tasks.sqlite-shm', 'tasks.sqlite-journal', 'tasks.sqlite.results.sqlite', 'tasks.sqlite.results.sqlite-wal', 'tasks.sqlite.results.sqlite-shm', 'ledger-alias.sqlite', 'control/settings.json']) {
       for (const name of ['read', 'write', 'edit']) {
         const args = name === 'read' ? { file_path } : name === 'write' ? { file_path, content: 'forbidden' } : { file_path, old_string: 'operator-only', new_string: 'model-approved' };
@@ -1161,7 +1161,7 @@ test('quiescent native terminal journal survives authority SQLite lock and host 
     const { task, run, claim } = seed(h);
     h.ledger.renew('short-test-lease', { runId: run.runId, attemptId: claim.attempt.attemptId, nodeId: 'local', fence: claim.attempt.fence, ttlMs: 1000 });
     h.ctx.on('session/event', (session, event) => {
-      if (session.id === `task-${claim.attempt.attemptId}` && event.type === 'turn/end' && !lock) {
+      if (session.id === h.ledger.getAttempt(claim.attempt.attemptId).sessionId && event.type === 'turn/end' && !lock) {
         lock = new DatabaseSync(join(dir, 'tasks.sqlite'));
         lock.exec('BEGIN IMMEDIATE');
       }
@@ -1170,7 +1170,7 @@ test('quiescent native terminal journal survives authority SQLite lock and host 
     assert.ok(lock, 'actual terminal event acquired an independent SQLite write lock');
     assert.equal(h.adapter.requests.length, 1);
     assert.equal(h.ctx.taskSystem.native.activeCount, 0);
-    assert.equal(h.ctx.agents.get(`task-${claim.attempt.attemptId}`), undefined);
+    assert.equal(h.ctx.agents.get(h.ledger.getAttempt(claim.attempt.attemptId).sessionId), undefined);
     const [entry] = h.ctx.taskSystem.results.pending();
     assert.equal(entry.state, 'held'); assert.equal(entry.reasonCode, 'AUTHORITY_UNAVAILABLE');
     assert.equal(entry.settlement.outcome, 'success');

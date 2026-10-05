@@ -1,12 +1,13 @@
+import { chooseExecutionSession } from '../execution-session.js'
 import { byteLimit, canonical, canonicalData, digest, insist, isRecord, validatePreDispatchFailure } from './protocol.js'
 import { resolvedClaimContext } from './context.js'
 import { authorizedWorkspace } from './policy.js'
 import { bindCollaboration } from './collaboration.js'
 import { validateRetryWitness } from './retry.js'
-import type { Claim, ExecutionProvider, ExecutionResult, LedgerPort, LeaseRef, WorkerPolicy } from './ports.js'
+import type { TaskSessionChoice, TaskSessionContext, Claim, ExecutionProvider, ExecutionResult, LedgerPort, LeaseRef, WorkerPolicy } from './ports.js'
 import type { DispatchRecord, RecoveryStore } from './store.js'
 
-export interface WorkerOptions { ledger: LedgerPort; provider: ExecutionProvider; store: RecoveryStore; policy: WorkerPolicy; ttlMs?: number; maxResultBytes?: number; now?: () => number }
+export interface WorkerOptions { ledger: LedgerPort; provider: ExecutionProvider; store: RecoveryStore; policy: WorkerPolicy; ttlMs?: number; maxResultBytes?: number; now?: () => number; taskSessions?: boolean; prepare?: () => Promise<void>; chooseSession?: (claim: Claim,context: TaskSessionContext,signal: AbortSignal) => Promise<TaskSessionChoice> }
 export class ExecutorWorker {
   private options: WorkerOptions
   private active = true
@@ -16,6 +17,8 @@ export class ExecutorWorker {
   private pollingTimer?: ReturnType<typeof setInterval>
   private polling?: Promise<unknown>
   lastPollFailed = false
+  private observedQueue: import("./ports.js").Run[] = []
+  queueSnapshot() { return this.observedQueue.map(run => ({ ...run })) }
   constructor(options: WorkerOptions) {
     this.options = { ...options,maxResultBytes: byteLimit(options.maxResultBytes,60000) }
     insist(options.policy.role !== 'planner', 'EXECUTOR_ROLE_REQUIRED', 403)
@@ -36,6 +39,7 @@ export class ExecutorWorker {
     insist(this.active,'DRAINING',503)
     insist(Number.isSafeInteger(concurrency) && concurrency >= 1 && concurrency <= 16,'INVALID_CONCURRENCY')
     const pending = await this.options.ledger.pendingRuns(this.options.policy.nodeId)
+    this.observedQueue = pending.slice(0,128)
     const { policy,provider } = this.options
     const candidates = pending.filter(run => {
       const route = run.route
@@ -64,16 +68,18 @@ export class ExecutorWorker {
   }
   private async executeOwned(runId: string, commandId: string, abort: AbortController): Promise<DispatchRecord> {
     const { ledger, provider, store, policy } = this.options
+    await this.options.prepare?.()
     const claim = (await ledger.claim(commandId, { runId, nodeId: policy.nodeId, ttlMs: this.options.ttlMs ?? 60000 })).value
+    this.observedQueue = this.observedQueue.filter(run => run.runId !== runId)
     insist(!claim.run.historyOnly && !claim.run.observationOnly,'OBSERVE_ONLY',403)
     claim.executionContext = resolvedClaimContext(claim)
     const existing = store.dispatch(claim.attempt.attemptId)
     if (existing) return existing.state === 'result' ? await this.deliver(existing) : existing.state === 'retry_pending' ? await this.requestRetry(existing) : existing
-    const workspacePath = await authorizedWorkspace(claim,policy,provider)
+    let workspacePath = await authorizedWorkspace(claim,policy,provider)
     insist(Date.parse(claim.attempt.leaseExpiresAt) > this.now(), 'LEASE_EXPIRED', 409)
     const executionId = store.executionId(claim.attempt.attemptId)
     const lease: LeaseRef = { runId, attemptId: claim.attempt.attemptId, nodeId: policy.nodeId, fence: claim.attempt.fence,executionId }
-    const sessionId = claim.run.retry?.sessionId ?? `task-${digest([runId,claim.attempt.attemptId]).slice(0,40)}`
+    let sessionId = claim.run.retry?.sessionId ?? `task-${digest([runId,claim.attempt.attemptId]).slice(0,40)}`
     if (claim.run.retry) insist(claim.attempt.sessionId === sessionId && Date.parse(claim.run.retry.notBefore) <= this.now(),'INVALID_RETRY_CONTINUATION',409)
     const executionStartedAt = claim.run.executionStartedAt ? Date.parse(claim.run.executionStartedAt) : this.now()
     insist(Number.isFinite(executionStartedAt),'INVALID_EXECUTION_START')
@@ -84,6 +90,7 @@ export class ExecutorWorker {
     insist(store.createDispatch(record), 'DISPATCH_ALREADY_EXISTS', 409)
     let renewal: Promise<void> | undefined
     let renewalError = false
+    let selectingSession = false
     let timer: ReturnType<typeof setTimeout> | undefined
     let expiryTimer: ReturnType<typeof setTimeout> | undefined
     let deadlineTimer: ReturnType<typeof setTimeout> | undefined
@@ -108,6 +115,24 @@ export class ExecutorWorker {
       // Bind one execution owner before session creation or provider effects.
       // Another recovery store cannot reuse this owner's idempotency identity.
       claim.attempt = (await ledger.markRunning(`running-${executionId}`,lease)).value
+      let resumeSession = Boolean(claim.run.retry)
+      if (this.options.taskSessions && !claim.run.retry) {
+        selectingSession = true
+        insist(ledger.sessionContext && ledger.selectTaskSession,'TASK_SESSION_CONNECTION_UPGRADE_REQUIRED',503)
+        const context = await ledger.sessionContext(lease)
+        const choice = this.options.chooseSession
+          ? await this.options.chooseSession(claim,context,abort.signal)
+          : await chooseExecutionSession({ claim,context,workspaces: policy.workspaces.map(workspace => ({ ...workspace,description: workspace.workspaceId,eligible: true })),signal: abort.signal })
+        const selected = (await ledger.selectTaskSession(`select-${executionId}`,{ ...lease,...choice })).value
+        insist(selected.schedulerId === context.schedulerId && selected.nodeId === policy.nodeId && selected.taskId === claim.task.taskId,'TASK_SESSION_IDENTITY_MISMATCH',403)
+        sessionId = selected.sessionId
+        resumeSession = selected.resume
+        claim.run = (await ledger.getRun(runId))!
+        claim.attempt = (await ledger.getAttempt(lease.attemptId))!
+        workspacePath = await authorizedWorkspace(claim,policy,provider)
+        record.sessionId = sessionId
+        selectingSession = false
+      }
       store.saveDispatch(record)
       await ledger.bindSession(`session-${executionId}`,{ ...lease,sessionId })
       insist(this.active && !abort.signal.aborted && expiresAt > this.now(), 'DISPATCH_CANCELLED', 409)
@@ -115,7 +140,7 @@ export class ExecutorWorker {
       if (runtimeRemaining !== undefined) deadlineTimer = setTimeout(() => { abort.abort(new Error('Task runtime budget exhausted')) },Math.max(1,claim.task.policy!.maxRuntimeMs! - (this.now() - executionStartedAt)))
       this.executing++
       let result: ExecutionResult
-      try { result = await provider.execute({ claim,sessionId,workspacePath,signal: abort.signal,collaboration: bindCollaboration(ledger,lease,claim.task.taskId,abort.signal) }) }
+      try { result = await provider.execute({ claim,sessionId,resumeSession,workspacePath,signal: abort.signal,collaboration: bindCollaboration(ledger,lease,claim.task.taskId,abort.signal) }) }
       finally { this.executing-- }
       validateResult(result,this.options.maxResultBytes!)
       if (renewalError || abort.signal.aborted || expiresAt <= this.now()) {
@@ -126,7 +151,7 @@ export class ExecutorWorker {
         else record.state = 'result'
       }
     } catch {
-      record.state = 'uncertain'; record.detail = 'Execution or receipt failed after durable dispatch intent; no automatic replay'
+      record.state = 'uncertain'; record.detail = selectingSession ? 'Task session negotiation was not accepted. Verify scheduler connection and explicit executorIdentity, sessionContext, selectTaskSession grants; no default-session fallback was executed.' : 'Execution or receipt failed after durable dispatch intent; no automatic replay'
     } finally {
       if (timer) clearTimeout(timer)
       if (expiryTimer) clearTimeout(expiryTimer)

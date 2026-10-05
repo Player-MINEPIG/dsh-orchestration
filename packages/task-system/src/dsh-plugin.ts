@@ -1,3 +1,4 @@
+import { chooseExecutionSession } from "./execution-session.js";
 import { Context, Service } from "@deepseek-ai/cordis";
 import z from "@deepseek-ai/schemastery";
 import { isVolatile } from "@deepseek-ai/cosmokit";
@@ -78,6 +79,8 @@ export interface Config {
   observationMaxText?: number;
   trustedUnconfinedTools?: boolean;
   workspaceRoots?: WorkspaceRoot[];
+  defaultWorkspaceId?: string | null;
+  sessionDecisionEnabled?: boolean;
   localNode?: LocalNodeBootstrap | null;
   remoteNodes?: NodeBootstrap[];
   autoAdmitObservations?: boolean;
@@ -107,6 +110,7 @@ const nodeCatalogFields = {
   models: modelCatalog,
   capabilities: z.array(z.string()).default([]),
   workspaceIds: z.array(z.string()).default([]),
+  defaultWorkspaceId: z.string().required(false),
   enabled: z.boolean().default(true),
   maxConcurrent: z.number().min(1).max(32).step(1).required(false),
 };
@@ -154,6 +158,8 @@ const PlainConfig: z<Config> = z.object({
   observationMaxMessages: z.number().min(1).max(1000).step(1).default(64),
   observationMaxText: z.number().min(100).max(8000).step(1).default(8000),
   trustedUnconfinedTools: z.boolean().default(false),
+  defaultWorkspaceId: z.union([z.const(null), z.string()]).default(null),
+  sessionDecisionEnabled: z.boolean().default(false),
   workspaceRoots: z
     .array(
       z.object({
@@ -301,6 +307,7 @@ export interface NativeClaim {
 export interface ExternalExecutionRequest {
   claim: NativeClaim;
   sessionId: string;
+  resumeSession?: boolean;
   workspacePath: string;
   signal: AbortSignal;
   collaboration?: NativeCollaboration;
@@ -866,16 +873,21 @@ export class NativeExecutionProvider {
             claim.attempt.sessionId !== sessionId)
         )
           throw new Error("external retry session identity mismatch");
-        owned.handle = retry
-          ? await this.ctx.agents.resume({
-              ...agentConfig,
-              resumeSessionId: SessionId(sessionId),
-            })
-          : await this.ctx.agents.create({
-              ...agentConfig,
-              sessionId: SessionId(sessionId),
-              meta: { cwd: workspacePath },
-            });
+        owned.handle =
+          retry || request.resumeSession
+            ? await this.ctx.agents.resume({
+                ...agentConfig,
+                resumeSessionId: SessionId(sessionId),
+              })
+            : await this.ctx.agents.create({
+                ...agentConfig,
+                sessionId: SessionId(sessionId),
+                meta: { cwd: workspacePath },
+              });
+        if (owned.handle.agent.session.header.cwd !== workspacePath)
+          throw new Error(
+            "Resumed session workspace does not match its authorized binding",
+          );
         if (!this.accepting || owned.aborted)
           throw new Error(
             "external native attempt interrupted during creation",
@@ -1004,22 +1016,8 @@ export class NativeExecutionProvider {
       throw new Error(
         "native execution requires an explicit provider/model route",
       );
-    const sessionId = resume
-      ? claim.attempt.sessionId
-      : `task-${ref.attemptId}`;
-    if (!sessionId)
-      throw new Error("resume requires an existing bound session");
-    const workspaceId = route.workspaceId ?? claim.task.workspaceId;
-    const workspace = workspaceId
-      ? this.owner.ledger.getWorkspace(workspaceId)
-      : undefined;
-    if (
-      workspaceId &&
-      (!workspace ||
-        workspace.state !== "ready" ||
-        workspace.nodeId !== ref.nodeId)
-    )
-      throw new Error("native workspace is not ready on the assigned node");
+    let sessionId = claim.attempt.sessionId ?? "";
+    let workspace: ReturnType<TaskLedger["getWorkspace"]> | undefined;
     const setup = (agentCtx: Context, agent: Agent) => {
       owned.agent = agent;
       this.bySession.set(sessionId, owned);
@@ -1080,6 +1078,51 @@ export class NativeExecutionProvider {
         ).value;
         return { run, submitted: false };
       }
+      if (!resume) {
+        const context = this.owner.ledger.sessionContext(ref);
+        const node = this.owner.ledger.getNode(ref.nodeId);
+        const choice = await chooseExecutionSession({
+          claim,
+          context,
+          defaultWorkspaceId: this.owner.config.defaultWorkspaceId,
+          workspaces: (this.owner.ledger.snapshot().workspaces ?? []).map(
+            (workspace) => ({
+              workspaceId: workspace.workspaceId,
+              nodeId: workspace.nodeId,
+              description: workspace.label,
+              eligible:
+                workspace.state === "ready" &&
+                node.workspaceIds.includes(workspace.workspaceId),
+            }),
+          ),
+          ...(this.owner.config.sessionDecisionEnabled &&
+          this.ctx.get("typedDecisions")
+            ? { decisions: this.ctx.get("typedDecisions") }
+            : {}),
+          signal: owned.creation.signal,
+          ttlMs: this.owner.config.decisionTtlMs,
+        });
+        const selected = this.owner.ledger.selectTaskSession(
+          `select:${ref.attemptId}:${ref.executionId}`,
+          { ...ref, ...choice },
+        ).value;
+        sessionId = selected.sessionId;
+        resume = selected.resume;
+        claim.run = this.owner.ledger.getRun(ref.runId);
+        claim.attempt = this.owner.ledger.getAttempt(ref.attemptId);
+      }
+      if (!sessionId)
+        throw new Error("resume requires an existing bound session");
+      const workspaceId =
+        claim.run.route?.workspaceId ?? claim.task.workspaceId;
+      workspace = workspaceId
+        ? this.owner.ledger.getWorkspace(workspaceId)
+        : undefined;
+      if (
+        workspace &&
+        (workspace.state !== "ready" || workspace.nodeId !== ref.nodeId)
+      )
+        throw new Error("native workspace is not ready on the assigned node");
       this.owner.ledger.bindSession(
         `bind:${ref.attemptId}:${ref.executionId}`,
         {
@@ -1101,6 +1144,10 @@ export class NativeExecutionProvider {
             setup,
             signal: owned.creation.signal,
           });
+      if (workspace && owned.handle.agent.session.header.cwd !== workspace.path)
+        throw new Error(
+          "Resumed session workspace does not match its authorized binding",
+        );
       this.bySession.set(sessionId, owned);
       if (!this.accepting || owned.aborted)
         throw new Error("native execution stopped during agent creation");
@@ -1140,7 +1187,7 @@ export class NativeExecutionProvider {
                 ? "Continue this run from its persisted session and completed tool results. Do not repeat completed operations; exact prior tool invocations are blocked. No new task or permission grant is being issued. Submit task_settle when the remaining work is complete."
                 : [
                     resume
-                      ? "Resume this attempt. Reconcile prior effects before repeating any operation."
+                      ? "Continue this Task in its existing session for the newly assigned run. Prior session instructions are history; the current authenticated run defines the scope. Reconcile prior effects before repeating operations."
                       : "Execute this task within your configured tools and workspace.",
                     JSON.stringify(this.executionPrompt(claim)),
                     "Submit a structured outcome using task_settle. Assistant text and idle never count as task completion.",
@@ -1708,6 +1755,9 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
       ? [
           {
             ...config.localNode,
+            ...(config.defaultWorkspaceId
+              ? { defaultWorkspaceId: config.defaultWorkspaceId }
+              : {}),
             nodeId: config.nodeId,
             roles: [config.role] as Role[],
             maxConcurrent:
@@ -1737,6 +1787,9 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
       models: current.models,
       capabilities: current.capabilities,
       workspaceIds: current.workspaceIds,
+      ...(current.defaultWorkspaceId
+        ? { defaultWorkspaceId: current.defaultWorkspaceId }
+        : {}),
       enabled: current.enabled,
       maxConcurrent: current.maxConcurrent ?? 1,
     };
@@ -1758,6 +1811,18 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
       config.nodeId,
       config.workspaceRoots,
     );
+  if (config.defaultWorkspaceId) {
+    const workspace = ledger.getWorkspace(config.defaultWorkspaceId);
+    const node = ledger.getNode(config.nodeId);
+    if (
+      workspace.nodeId !== config.nodeId ||
+      workspace.state !== "ready" ||
+      !node.workspaceIds.includes(workspace.workspaceId)
+    )
+      throw new Error(
+        "TASK_SESSION_CONFIG: default workspace must be registered, ready and granted to this node",
+      );
+  }
   service.recoverResults();
   ledger.recoverExpired(`boot:${randomUUID()}`);
   if (config.observationEnabled)

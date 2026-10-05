@@ -1,3 +1,4 @@
+import { chooseExecutionSession } from '../execution-session.js'
 import { Context, Service } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { resolve } from 'node:path'
@@ -25,12 +26,14 @@ export interface Config {
   audience: string; peers: { keyId: string; nodeId: string; publicKey: string; audience: string; operations: Operation[]; workspaces: string[]; capabilities: string[] }[];
   capabilities: string[]; workspaces: WorkspaceBinding[]; allowLoopbackHttp: boolean; leaseTtlMs: number; maxBodyBytes: number; maxResponseBytes: number;
   pollIntervalMs: number; concurrency: number;
+  /** Compatibility for old connections; new setup writes true after explicit grants. */
+  taskSessionsEnabled?: boolean;
   coordinator?: { endpoint: string; audience: string; authMode?: AuthMode; keyId?: string; privateKeyEnv?: string; trustedNetwork?: TrustedNetworkTarget | null; maxResponseBytes?: number; heartbeatIntervalMs?: number; nativeRoutes: { provider: string; models: { model: string; reasoningEfforts: string[] }[] }[] } | null;
   /** Forward only observations inside the configured local workspace binding. */
   observationForwarding?: { workspaceId: string } | null;
 }
 const authModeSchema = z.union([z.const('ed25519'),z.const('trusted-network')])
-const operationSchema = z.union([z.const('claim'),z.const('renew'),z.const('submit'),z.const('cancel'),z.const('receipt'),z.const('bindSession'),z.const('markRunning'),z.const('getRun'),z.const('getAttempt'),z.const('acknowledgeCancellation'),z.const('listWork'),z.const('observe'),z.const('delegate'),z.const('taskHistory'),z.const('taskWait'),z.const('taskNote'),z.const('taskReport'),z.const('heartbeat'),z.const('nodeStatus'),z.const('retryBeforeEffects'),z.const('offerApproval'),z.const('approvalStatus'),z.const('cancelApproval')])
+const operationSchema = z.union([z.const('claim'),z.const('renew'),z.const('submit'),z.const('cancel'),z.const('receipt'),z.const('bindSession'),z.const('markRunning'),z.const('getRun'),z.const('getAttempt'),z.const('acknowledgeCancellation'),z.const('listWork'),z.const('observe'),z.const('delegate'),z.const('taskHistory'),z.const('taskWait'),z.const('taskNote'),z.const('taskReport'),z.const('heartbeat'),z.const('nodeStatus'),z.const('retryBeforeEffects'),z.const('offerApproval'),z.const('approvalStatus'),z.const('cancelApproval'),z.const('executorIdentity'),z.const('sessionContext'),z.const('selectTaskSession')])
 const addressSchema = z.string().required()
 const portSchema = z.number().step(1).min(1).max(65535).required()
 const networkPolicySchema = z.object({
@@ -49,13 +52,14 @@ export const Config: z<Config> = z.object({
   capabilities: z.array(z.string()).default([]), workspaces: z.array(z.object({ workspaceId: z.string().required(),nodeId: z.string().required(),path: z.string().required(),allowedRoot: z.string().required() })).default([]),
   allowLoopbackHttp: z.boolean().default(false), leaseTtlMs: z.number().step(1).min(1000).max(300000).default(60000), maxBodyBytes: z.number().step(1).min(1024).max(MAX_WIRE_BYTES).default(DEFAULT_MAX_BODY_BYTES), maxResponseBytes: z.number().step(1).min(1024).max(MAX_WIRE_BYTES).default(DEFAULT_MAX_RESPONSE_BYTES),
   pollIntervalMs: z.union([z.const(0),z.number().step(1).min(100).max(3600000)]).default(0), concurrency: z.number().step(1).min(1).max(16).default(1),
+  taskSessionsEnabled: z.boolean().required(false),
   coordinator: z.union([z.const(null),z.object({ endpoint: z.string().required(),audience: z.string().required(),authMode: authModeSchema.default('ed25519'),keyId: z.string(),privateKeyEnv: z.string(),trustedNetwork: z.union([z.const(null),networkTargetSchema]).default(null),maxResponseBytes: z.number().step(1).min(1024).max(MAX_WIRE_BYTES).default(DEFAULT_MAX_RESPONSE_BYTES),heartbeatIntervalMs: z.union([z.const(0),z.number().step(1).min(1000).max(3600000)]).default(0),nativeRoutes: z.array(z.object({ provider: z.string().required(),models: z.array(z.object({ model: z.string().required(),reasoningEfforts: z.array(z.string()).default([]) })).required() })).default([]) })]).default(null),
   observationForwarding: z.union([z.const(null),z.object({ workspaceId: z.string().required() })]).default(null).description('Forward only captured observations whose immutable session cwd resolves within this configured workspace path and allowed root.'),
 })
 interface HostWebServer { register(route: { kind: 'exact'; path: string; handler: (req: IncomingMessage,res: ServerResponse) => Promise<void> }): () => void }
 /** An independently replaceable taskSystem service supplies only this structural ledger seam. */
 export interface TaskSystemPort {
-  ledger: LedgerPort; native?: NativeExecutionPort; config?: { autoAdmitObservations?: boolean };
+  ledger: LedgerPort; native?: NativeExecutionPort; config?: { autoAdmitObservations?: boolean; defaultWorkspaceId?: string | null; sessionDecisionEnabled?: boolean; decisionTtlMs?: number };
   subscribeObservations?(sink: (candidate: ObservationCandidate, options: { signal: AbortSignal }) => Promise<unknown> | unknown): () => void;
 }
 export class RemoteExecutionService extends Service {
@@ -94,8 +98,17 @@ export class RemoteExecutionService extends Service {
       concurrency: this.config.concurrency,
       polling: this.active && !!this.nativeWorker && this.config.pollIntervalMs > 0,
       authMode: this.config.authMode ?? 'ed25519',
+      executorIdentity: this.client?.cachedExecutorIdentity() ?? null,
+      taskSessionsEnabled: this.config.taskSessionsEnabled === true,
     }
   }
+  queueSnapshot() {
+    const dispatches = this.store.dispatches().filter(record => !['acknowledged','cancelled','retry_scheduled'].includes(record.state))
+    const byRun = new Map(dispatches.map(record => [record.claim.run.runId,{ taskId: record.claim.task.taskId,runId: record.claim.run.runId,title: record.claim.task.title,state: String(record.state),sessionId: record.sessionId,workspaceId: record.claim.run.route?.workspaceId ?? null }]))
+    for (const worker of this.workers) for (const run of worker.queueSnapshot()) if (!byRun.has(run.runId)) byRun.set(run.runId,{ taskId: run.taskId,runId: run.runId,title: run.intentSnapshot?.title ?? run.taskId,state: run.state,sessionId: '',workspaceId: run.route?.workspaceId ?? null })
+    return { sampledAt: new Date().toISOString(),nodeId: this.config.nodeId,items: [...byRun.values()].slice(0,100),truncated: byRun.size > 100 }
+  }
+  async executorIdentity() { insist(this.client,'COORDINATOR_REQUIRED',503); return await this.client.executorIdentity() }
   configureCoordinator(taskSystem: TaskSystemPort): void {
     const coordinator = this.config.coordinator
     if (!coordinator) { insist(!this.config.observationForwarding,'OBSERVATION_COORDINATOR_REQUIRED'); return }
@@ -167,7 +180,13 @@ export class RemoteExecutionService extends Service {
   createWorker(provider: ExecutionProvider): ExecutorWorker {
     insist(this.active,'DRAINING',503)
     insist(this.workers.size === 0,'ONE_WORKER_OWNER_PER_STORE',409)
-    const worker = new ExecutorWorker({ ledger: this.workerLedger,provider,store: this.store,policy: { role: this.config.role,nodeId: this.config.nodeId,capabilities: this.config.capabilities,workspaces: this.config.workspaces },ttlMs: this.config.leaseTtlMs,maxResultBytes: Math.max(1024,this.config.maxBodyBytes - 4096) })
+    const worker = new ExecutorWorker({ ledger: this.workerLedger,provider,store: this.store,policy: { role: this.config.role,nodeId: this.config.nodeId,capabilities: this.config.capabilities,workspaces: this.config.workspaces },ttlMs: this.config.leaseTtlMs,maxResultBytes: Math.max(1024,this.config.maxBodyBytes - 4096),taskSessions: this.config.taskSessionsEnabled === true,
+      ...(this.config.taskSessionsEnabled && this.client ? { prepare: async () => { await this.client!.executorIdentity() } } : {}),
+      chooseSession: async (claim,context,signal) => {
+        const task = this.ctx.get('taskSystem') as TaskSystemPort | undefined
+        return await chooseExecutionSession({ claim,context,defaultWorkspaceId: task?.config?.defaultWorkspaceId,workspaces: this.config.workspaces.map(workspace => ({ workspaceId: workspace.workspaceId,nodeId: workspace.nodeId,description: workspace.workspaceId,eligible: true })),...(task?.config?.sessionDecisionEnabled && this.ctx.get('typedDecisions') ? { decisions: this.ctx.get('typedDecisions') } : {}),signal,ttlMs: task?.config?.decisionTtlMs })
+      },
+    })
     this.workers.add(worker)
     if (this.config.pollIntervalMs > 0) worker.startPolling(this.config.pollIntervalMs,this.config.concurrency)
     return worker

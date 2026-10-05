@@ -4,7 +4,7 @@ import { dirname } from 'node:path'
 import { closeSync, mkdirSync, openSync } from 'node:fs'
 import { byteLimit, canonical, DEFAULT_MAX_RESPONSE_BYTES, digest, insist, ProtocolError } from './protocol.js'
 import type { CommandEnvelope, Json } from './protocol.js'
-import type { Claim, ExecutionResult, LeaseRef, Receipt } from './ports.js'
+import type { Claim, ExecutionResult, LeaseRef, Receipt, ExecutorIdentity } from './ports.js'
 
 export interface CommandReceipt { commandId: string; state: 'pending' | 'done' | 'uncertain'; result?: Json }
 export interface DispatchRecord { attemptId: string; state: 'dispatching' | 'result' | 'acknowledged' | 'uncertain' | 'cancellation' | 'cancelled' | 'retry_pending' | 'retry_scheduled'; claim: Claim; lease: LeaseRef; sessionId: string; result?: ExecutionResult; receipt?: Receipt; detail?: string }
@@ -33,6 +33,26 @@ export class RecoveryStore {
     this.db.prepare("INSERT OR IGNORE INTO metadata(key,value) VALUES('instanceId',?)").run(randomUUID())
     this.instanceId = String(this.db.prepare("SELECT value FROM metadata WHERE key='instanceId'").get()?.value)
     insist(/^[0-9a-f-]{36}$/.test(this.instanceId),'INVALID_STORE_IDENTITY')
+  }
+  /** Assigns only a display identity for an already-authorized node; never grants access. */
+  executorIdentity(schedulerId: string, nodeId: string): ExecutorIdentity {
+    return this.transaction(() => {
+      const key = `executor:${schedulerId}:${nodeId}`
+      this.db.prepare('INSERT OR IGNORE INTO metadata(key,value) VALUES(?,?)').run(key, `executor-${randomUUID()}`)
+      return { schedulerId,nodeId,executorId: String(this.db.prepare('SELECT value FROM metadata WHERE key=?').get(key)?.value) }
+    })
+  }
+  schedulerMapping(binding: string): ExecutorIdentity | undefined {
+    const row = this.db.prepare('SELECT value FROM metadata WHERE key=?').get(`scheduler:${binding}`)
+    return row ? JSON.parse(String(row.value)) as ExecutorIdentity : undefined
+  }
+  rememberScheduler(binding: string, identity: ExecutorIdentity): ExecutorIdentity {
+    return this.transaction(() => {
+      const prior = this.schedulerMapping(binding)
+      insist(!prior || canonical(prior) === canonical(identity), 'SCHEDULER_IDENTITY_CHANGED', 409)
+      this.db.prepare('INSERT OR IGNORE INTO metadata(key,value) VALUES(?,?)').run(`scheduler:${binding}`, canonical(identity))
+      return identity
+    })
   }
   executionId(attemptId: string): string { return `exec-${digest([this.instanceId,attemptId])}` }
   private transaction<T>(fn: () => T): T {

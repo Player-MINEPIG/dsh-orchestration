@@ -1,3 +1,9 @@
+import type {
+  TaskSession,
+  TaskSessionContext,
+  TaskSessionChoice,
+  SelectedTaskSession,
+} from "./remote/ports.js";
 import {
   canonical as wireCanonical,
   canonicalData,
@@ -314,6 +320,12 @@ export class TaskLedger {
       CREATE TABLE IF NOT EXISTS run_context_sessions(run_id TEXT NOT NULL,session_id TEXT NOT NULL,PRIMARY KEY(run_id,session_id));
     `);
     }
+    if (!options.readOnly)
+      this.db
+        .prepare(
+          "INSERT OR IGNORE INTO entities(kind,id,data) VALUES('authority','scheduler',?)",
+        )
+        .run(JSON.stringify({ schedulerId: `scheduler-${randomUUID()}` }));
     const schema = this.db.prepare("SELECT version FROM schema_meta").get() as
       | { version: number }
       | undefined;
@@ -1784,6 +1796,7 @@ export class TaskLedger {
     return context;
   }
   private newRun(input: RunInput): Run {
+    input = structuredClone(input);
     const task = this.getTask(input.taskId);
     const parentRunId = this.inferParentRun(
       task.parentTaskId,
@@ -1804,6 +1817,11 @@ export class TaskLedger {
         "Reconcile uncertain prior execution before another run",
       );
     if (input.route) {
+      const workspaceId =
+        input.route.workspaceId ??
+        task.workspaceId ??
+        this.getNode(input.route.nodeId).defaultWorkspaceId;
+      if (workspaceId) input.route = { ...input.route, workspaceId };
       this.validateRoute(input.route);
       const node = this.getNode(input.route.nodeId);
       let ancestorRunId = parentRunId;
@@ -1976,6 +1994,14 @@ export class TaskLedger {
         typeof node.enabled !== "boolean"
       )
         fail("INVALID", "Invalid node capability declaration");
+      if (
+        node.defaultWorkspaceId !== undefined &&
+        !node.workspaceIds.includes(id(node.defaultWorkspaceId))
+      )
+        fail(
+          "FORBIDDEN",
+          "Default workspace must be in this node's configured grants",
+        );
       for (const m of node.models) {
         text(m.provider, "provider", 100);
         text(m.model, "model", 200);
@@ -2682,6 +2708,152 @@ export class TaskLedger {
       attempt.updatedAt = this.now();
       this.saveAttempt(attempt);
       return attempt;
+    });
+  }
+  /** Nonsecret stable authority identity, scoped to this ledger rather than an endpoint. */
+  schedulerIdentity(): string {
+    return this.need<{ schedulerId: string }>("authority", "scheduler")
+      .schedulerId;
+  }
+  sessionContext(ref: LeaseRef): TaskSessionContext {
+    const { run } = this.owned(ref);
+    const sessions = this.list<TaskSession>("taskSession", run.taskId).filter(
+      (session) => session.nodeId === ref.nodeId,
+    );
+    const current = this.get<TaskSession>(
+      "taskSessionDefault",
+      hash([run.taskId, ref.nodeId]),
+    );
+    return {
+      schedulerId: this.schedulerIdentity(),
+      ...(current ? { taskSessionId: current.sessionId } : {}),
+      sessions: [
+        ...sessions
+          .filter((session) => session.sessionId !== current?.sessionId)
+          .slice(-127),
+        ...(current ? [current] : []),
+      ],
+    };
+  }
+  /** Commits only within the current leased execution; no session history is adopted. */
+  selectTaskSession(commandId: string, input: LeaseRef & TaskSessionChoice) {
+    return this.command(commandId, "selectTaskSession", input, () => {
+      const { run, attempt } = this.owned(input);
+      const task = this.getTask(run.taskId);
+      const currentSession = this.get<TaskSession>(
+        "taskSessionDefault",
+        hash([run.taskId, input.nodeId]),
+      );
+      if (
+        input.expectedTaskSessionId !== undefined &&
+        input.expectedTaskSessionId !== (currentSession?.sessionId ?? null)
+      )
+        fail("CONFLICT", "Task session catalog changed before selection");
+      if (!attempt.executionId)
+        fail(
+          "EXECUTION_OWNER",
+          "Start the exact execution before selecting a session",
+        );
+      if (!run.route) fail("FORBIDDEN", "A session requires an assigned route");
+      if (!input.session || !["new", "reuse"].includes(input.session.mode))
+        fail("INVALID", "Invalid session choice");
+      const workspaceId =
+        input.workspaceId ??
+        run.route!.workspaceId ??
+        task.workspaceId ??
+        this.getNode(input.nodeId).defaultWorkspaceId;
+      if (task.workspaceId && workspaceId !== task.workspaceId)
+        fail(
+          "FORBIDDEN",
+          "Explicit task workspace cannot be changed by session selection",
+        );
+      if (
+        task.policy?.allowedWorkspaceIds &&
+        (!workspaceId || !task.policy.allowedWorkspaceIds.includes(workspaceId))
+      )
+        fail("FORBIDDEN", "Task policy excludes workspace");
+      const route = { ...run.route!, ...(workspaceId ? { workspaceId } : {}) };
+      this.validateRoute(route);
+      const schedulerId = this.schedulerIdentity();
+      const retrySessionId = run.retry?.sessionId;
+      if (
+        retrySessionId &&
+        (input.session.mode !== "reuse" ||
+          input.session.sessionId !== retrySessionId ||
+          workspaceId !== run.route!.workspaceId)
+      )
+        fail(
+          "CONFLICT",
+          "Retry must preserve its authoritative session and workspace",
+        );
+      let session: TaskSession;
+      let resume = input.session.mode === "reuse";
+      if (input.session.mode === "reuse") {
+        const prior = this.get<TaskSession>(
+          "taskSession",
+          input.session.sessionId,
+        );
+        if (
+          !prior ||
+          prior.schedulerId !== schedulerId ||
+          prior.taskId !== run.taskId ||
+          prior.nodeId !== input.nodeId ||
+          prior.workspaceId !== workspaceId
+        )
+          fail(
+            "FORBIDDEN",
+            "Session is not an owned Task session in this workspace",
+          );
+        session = prior!;
+      } else {
+        if (attempt.sessionId)
+          fail("CONFLICT", "Active attempt session cannot be replaced");
+        session = {
+          schedulerId,
+          taskId: run.taskId,
+          nodeId: input.nodeId,
+          ...(workspaceId ? { workspaceId } : {}),
+          sessionId: `task-${randomUUID()}`,
+          createdAt: this.now(),
+        };
+      }
+      if (attempt.sessionId && attempt.sessionId !== session.sessionId)
+        fail("CONFLICT", "Active attempt session cannot be replaced");
+      const resource = `task-session:${session.sessionId}`;
+      const owner = this.db
+        .prepare("SELECT attempt_id FROM resources WHERE resource=?")
+        .get(resource);
+      if (owner && owner.attempt_id !== attempt.attemptId)
+        fail("BUSY", "Task session is already owned by another attempt");
+      this.db
+        .prepare(
+          "INSERT OR IGNORE INTO resources(resource,attempt_id) VALUES(?,?)",
+        )
+        .run(resource, attempt.attemptId);
+      this.put("taskSession", session.sessionId, session, run.taskId);
+      this.put(
+        "taskSessionDefault",
+        hash([run.taskId, input.nodeId]),
+        session,
+        run.taskId,
+      );
+      attempt.sessionId = session.sessionId;
+      attempt.updatedAt = this.now();
+      this.saveAttempt(attempt);
+      run.route = route;
+      this.saveRun(run);
+      this.event(
+        "session.selected",
+        {
+          sessionId: session.sessionId,
+          workspaceId: workspaceId ?? null,
+          resume,
+          ...(input.decision ? { decision: input.decision } : {}),
+        },
+        run.taskId,
+        run.runId,
+      );
+      return { ...session, resume } as SelectedTaskSession;
     });
   }
   bindSession(commandId: string, input: LeaseRef & { sessionId: string }) {

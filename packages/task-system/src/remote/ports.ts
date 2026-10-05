@@ -1,6 +1,11 @@
 import type { Json, Role, PreDispatchFailure } from './protocol.js'
 import type { Claim as CoreClaim, Run as CoreRun } from '../contracts.js'
 
+export interface ExecutorIdentity { schedulerId: string; executorId: string; nodeId: string }
+export interface TaskSession { schedulerId: string; taskId: string; nodeId: string; workspaceId?: string; sessionId: string; createdAt: string }
+export interface TaskSessionContext { schedulerId: string; taskSessionId?: string; sessions: TaskSession[] }
+export interface TaskSessionChoice { expectedTaskSessionId?: string | null; workspaceId?: string; session: { mode: 'new' } | { mode: 'reuse'; sessionId: string }; decision?: Json }
+export interface SelectedTaskSession extends TaskSession { resume: boolean }
 export interface Receipt<T = unknown> { commandId: string; acceptedAt: string; value: T }
 export interface Route { nodeId: string; provider: string; model: string; reasoningEffort?: string; workspaceId?: string; requiredCapabilities: string[] }
 export interface TaskPolicy { allowedNodeIds?: string[]; allowedWorkspaceIds?: string[]; allowedTools?: string[]; maxRuntimeMs?: number; maxDepth?: number; requiredResources?: string[]; maxChildren?: number; maxDescendants?: number; settlementQuietMs?: number }
@@ -43,6 +48,9 @@ export interface ExecutionCollaboration {
 type MaybePromise<T> = T | Promise<T>
 /** An adapter must preserve the ledger's transaction, idempotency, lease and fencing guarantees. */
 export interface LedgerPort {
+  schedulerIdentity?(): string
+  sessionContext?(input: LeaseRef): MaybePromise<TaskSessionContext>
+  selectTaskSession?(commandId: string,input: LeaseRef & TaskSessionChoice): MaybePromise<Receipt<SelectedTaskSession>>
   /** maxClaimBytes is a host transport budget, never a peer-supplied command field. */
   claim(commandId: string, input: { runId: string; nodeId: string; ttlMs: number; maxClaimBytes?: number }): MaybePromise<Receipt<Claim>>
   renew(commandId: string, input: LeaseRef & { ttlMs: number }): MaybePromise<Receipt<Attempt>>
@@ -69,7 +77,7 @@ export interface LedgerPort {
   queueScopedNote?(commandId: string,input: LeaseRef & { taskId?: string; body: string },options?: { signal?: AbortSignal }): MaybePromise<Receipt<unknown>>
   appendScopedReport?(commandId: string,input: LeaseRef & { taskId?: string } & Omit<TaskReportInput,'targetTaskId'>,options?: { signal?: AbortSignal }): MaybePromise<Receipt<unknown>>
 }
-export interface ExecutionRequest { claim: Claim; sessionId: string; workspacePath: string; signal: AbortSignal; collaboration?: ExecutionCollaboration }
+export interface ExecutionRequest { claim: Claim; sessionId: string; resumeSession?: boolean; workspacePath: string; signal: AbortSignal; collaboration?: ExecutionCollaboration }
 export type ExecutionResult = Pick<Settlement, 'outcome' | 'summary' | 'report' | 'preDispatchFailure'> & { retryWitness?: SafeRetryWitness; retryAllowed?: boolean }
 /** Host-owned implementation. Must enforce declared capabilities and await abort quiescence. */
 export interface ExecutionProvider {

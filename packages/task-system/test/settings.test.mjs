@@ -104,6 +104,9 @@ test("read-only wire descriptor exposes one no-argument method and no mutation s
   assert.equal(settingsDescriptor.parameters.length, 0);
   const schema = settingsDescriptor.result.create();
   const snapshot = schema.parse({
+    schedulerId: "scheduler-fixture",
+    defaultWorkspaceId: null,
+    sessionDecisionEnabled: false,
     nodeId: "test",
     role: "executor",
     databasePath: "/tmp/tasks.sqlite",

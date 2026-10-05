@@ -272,6 +272,8 @@ export interface Workspace {
 }
 export interface NodeCapability {
   nodeId: string;
+  /** Operator-selected registered workspace used when a route does not specify one. */
+  defaultWorkspaceId?: string;
   roles: Role[];
   capabilities: string[];
   models: { provider: string; model: string; reasoningEfforts: string[] }[];

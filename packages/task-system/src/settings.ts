@@ -10,7 +10,30 @@ import { existsSync } from "node:fs";
 import type { TaskSystemService } from "./dsh-plugin.js";
 import type { RemoteExecutionService } from "./remote/index.js";
 
+const ExecutorIdentity = z.object({
+  schedulerId: z.string(),
+  executorId: z.string(),
+  nodeId: z.string(),
+});
+const QueueSnapshot = z.object({
+  sampledAt: z.string(),
+  nodeId: z.string(),
+  items: z.array(
+    z.object({
+      taskId: z.string(),
+      runId: z.string(),
+      title: z.string(),
+      state: z.string(),
+      sessionId: z.string().nullable(),
+      workspaceId: z.string().nullable(),
+    }),
+  ),
+  truncated: z.boolean(),
+});
 const ReadonlySettings = z.object({
+  schedulerId: z.string(),
+  defaultWorkspaceId: z.string().nullable(),
+  sessionDecisionEnabled: z.boolean(),
   nodeId: z.string(),
   role: z.enum(["planner", "executor", "both"]),
   databasePath: z.string(),
@@ -30,6 +53,8 @@ const ReadonlySettings = z.object({
       concurrency: z.number(),
       polling: z.boolean(),
       authMode: z.string(),
+      executorIdentity: ExecutorIdentity.nullable(),
+      taskSessionsEnabled: z.boolean(),
     })
     .nullable(),
 });
@@ -44,6 +69,33 @@ export const settingsDescriptor: InvocationDescriptor = {
     mode: "strict",
     typeSymbol: "@dsh-task/task-system#ReadonlySettings",
     create: () => ReadonlySettings,
+  },
+};
+
+export const queueDescriptor: InvocationDescriptor = {
+  id: "@dsh-task/task-system#taskPluginSettings/queue",
+  service: "taskPluginSettings",
+  namespace: "taskPluginSettings",
+  method: "queue",
+  invocation: { kind: "direct" },
+  parameters: [],
+  result: {
+    mode: "strict",
+    typeSymbol: "@dsh-task/task-system#QueueSnapshot",
+    create: () => QueueSnapshot,
+  },
+};
+export const executorIdentityDescriptor: InvocationDescriptor = {
+  id: "@dsh-task/task-system#taskPluginSettings/executorIdentity",
+  service: "taskPluginSettings",
+  namespace: "taskPluginSettings",
+  method: "executorIdentity",
+  invocation: { kind: "direct" },
+  parameters: [],
+  result: {
+    mode: "strict",
+    typeSymbol: "@dsh-task/task-system#ExecutorIdentity",
+    create: () => ExecutorIdentity,
   },
 };
 
@@ -70,6 +122,53 @@ export class TaskPluginSettings extends TypertRemoteService {
   constructor(ctx: Context) {
     super(ctx, "taskPluginSettings");
   }
+  async executorIdentity() {
+    const remote = this.ctx.get("remoteExecution") as
+      | RemoteExecutionService
+      | undefined;
+    if (!remote)
+      throw new Error(
+        "Configure an authenticated scheduler connection before querying the executor ID",
+      );
+    return ExecutorIdentity.parse(await remote.executorIdentity());
+  }
+  async queue() {
+    const task = this.ctx.get("taskSystem") as TaskSystemService | undefined;
+    if (!task) throw new Error("Task plugin is not loaded");
+    const remote = this.ctx.get("remoteExecution") as
+      | RemoteExecutionService
+      | undefined;
+    const remoteQueue = remote?.queueSnapshot();
+    const snapshot = task.ledger.snapshot();
+    const tasks = new Map(snapshot.tasks.map((task) => [task.taskId, task]));
+    const runs = snapshot.runs.filter(
+      (run) =>
+        run.route?.nodeId === task.config.nodeId &&
+        ["queued", "running", "blocked", "uncertain"].includes(run.state) &&
+        !run.historyOnly &&
+        !run.observationOnly,
+    );
+    const items = [
+      ...(remoteQueue?.items ?? []),
+      ...runs.map((run) => ({
+        taskId: run.taskId,
+        runId: run.runId,
+        title: tasks.get(run.taskId)?.title ?? run.taskId,
+        state: run.state,
+        sessionId:
+          (snapshot.attempts ?? []).find(
+            (attempt) => attempt.attemptId === run.currentAttemptId,
+          )?.sessionId ?? null,
+        workspaceId: run.route?.workspaceId ?? null,
+      })),
+    ];
+    return QueueSnapshot.parse({
+      sampledAt: new Date().toISOString(),
+      nodeId: task.config.nodeId,
+      truncated: items.length > 100 || remoteQueue?.truncated === true,
+      items: items.slice(0, 100),
+    });
+  }
   async describe() {
     const task = this.ctx.get("taskSystem") as TaskSystemService | undefined;
     if (!task) throw new Error("Task plugin is not loaded");
@@ -94,6 +193,9 @@ export class TaskPluginSettings extends TypertRemoteService {
     );
     // Construct the allowlist explicitly. Never serialize a Config or Loader row.
     return ReadonlySettings.parse({
+      schedulerId: task.ledger.schedulerIdentity(),
+      defaultWorkspaceId: config.defaultWorkspaceId ?? null,
+      sessionDecisionEnabled: config.sessionDecisionEnabled ?? false,
       nodeId: config.nodeId,
       role: config.role,
       databasePath: resolve(config.databasePath),
@@ -129,7 +231,11 @@ export function apply(ctx: Context): void {
           face: "host",
           schemas: [],
           model: { services: [], events: [], objects: [] },
-          invocations: [settingsDescriptor],
+          invocations: [
+            settingsDescriptor,
+            queueDescriptor,
+            executorIdentityDescriptor,
+          ],
         }),
       "task settings read-only descriptor",
     );

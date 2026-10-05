@@ -1,6 +1,6 @@
 import { byteLimit, canonical, canonicalData, canonicalSchema, DEFAULT_MAX_BODY_BYTES, DEFAULT_MAX_RESPONSE_BYTES, digest, identifier, insist, isRecord, parseCommandEnvelope, ProtocolError, validatePreDispatchFailure } from './protocol.js'
 import type { CommandEnvelope, RequestVerifier, Json, AuthorizedPeer, Role, TransportIdentity } from './protocol.js'
-import type { ApprovalOffer, DelegationInput, LedgerPort, LeaseRef, SafeRetryWitness, Settlement, TaskReportInput } from './ports.js'
+import type { TaskSessionChoice, ApprovalOffer, DelegationInput, LedgerPort, LeaseRef, SafeRetryWitness, Settlement, TaskReportInput } from './ports.js'
 import type { CommandReceipt, RecoveryStore } from './store.js'
 import { validateRetryWitness } from './retry.js'
 
@@ -65,7 +65,7 @@ export function validatePayload(envelope: CommandEnvelope): void {
     case 'renew': fields(p,['runId','attemptId','fence','ttlMs'],['executionId']); lease(p,envelope.nodeId); ttl(p); break
     case 'cancel': fields(p,['runId','reason']); id(p,'runId'); text(p,'reason',1000); break
     case 'receipt': fields(p,['commandId']); id(p,'commandId'); break
-    case 'listWork': case 'nodeStatus': fields(p,[]); break
+    case 'listWork': case 'nodeStatus': case 'executorIdentity': fields(p,[]); break
     case 'heartbeat': {
       fields(p,['sampledAt','runtimeReady','activeExecutions'],['providerStatus'])
       insist(Number.isSafeInteger(p.sampledAt) && Number(p.sampledAt) >= 0,'INVALID_SAMPLE_TIME')
@@ -101,6 +101,18 @@ export function validatePayload(envelope: CommandEnvelope): void {
     }
     case 'getRun': fields(p,['runId']); id(p,'runId'); break
     case 'getAttempt': fields(p,['attemptId']); id(p,'attemptId'); break
+    case 'sessionContext': fields(p,ownedFields); lease(p,envelope.nodeId); break
+    case 'selectTaskSession': {
+      fields(p,[...ownedFields,'session'],['workspaceId','decision','expectedTaskSessionId']); lease(p,envelope.nodeId)
+      if (p.workspaceId !== undefined) id(p,'workspaceId')
+      if (p.expectedTaskSessionId !== undefined && p.expectedTaskSessionId !== null) id(p,'expectedTaskSessionId')
+      insist(isRecord(p.session),'INVALID_SESSION_SELECTION')
+      const selected = p.session as Record<string,Json>
+      if (selected.mode === 'new') fields(selected,['mode'])
+      else { fields(selected,['mode','sessionId']); insist(selected.mode === 'reuse','INVALID_SESSION_SELECTION'); id(selected,'sessionId') }
+      if (p.decision !== undefined) canonicalData(p.decision)
+      break
+    }
     case 'bindSession': fields(p,['runId','attemptId','fence','sessionId'],['executionId']); lease(p,envelope.nodeId); id(p,'sessionId'); break
     case 'offerApproval': {
       fields(p,[...ownedFields,'requestId','sessionId','agentId','callId','toolName','argumentsDigest','description','expiresAt','allowRemoteOnce'])
@@ -175,6 +187,15 @@ export class RemoteGateway {
     try {
       let result: unknown
       switch (envelope.operation) {
+        case 'executorIdentity': insist(ledger.schedulerIdentity,'SCHEDULER_IDENTITY_UNSUPPORTED',503); result = store.executorIdentity(ledger.schedulerIdentity(),peer.nodeId); break
+        case 'sessionContext': {
+          insist(ledger.sessionContext,'TASK_SESSIONS_UNSUPPORTED',503)
+          const context = await ledger.sessionContext(lease(p,peer.nodeId))
+          const current = context.sessions.find(session => session.sessionId === context.taskSessionId)
+          insist(!current || (current.workspaceId && peer.workspaces.includes(current.workspaceId)),'TASK_SESSION_WORKSPACE_DENIED',403)
+          result = { ...context,sessions: context.sessions.filter(session => session.workspaceId && peer.workspaces.includes(session.workspaceId)) }; break
+        }
+        case 'selectTaskSession': insist(ledger.selectTaskSession,'TASK_SESSIONS_UNSUPPORTED',503); result = await ledger.selectTaskSession(commandId,{ ...lease(p,peer.nodeId),session: p.session as unknown as TaskSessionChoice['session'],...(p.expectedTaskSessionId !== undefined ? { expectedTaskSessionId: p.expectedTaskSessionId as string | null } : {}),...(p.workspaceId ? { workspaceId: String(p.workspaceId) } : {}),...(p.decision ? { decision: p.decision } : {}) }); break
         case 'heartbeat': {
           insist(ledger.recordNodeHeartbeat,'HEARTBEAT_UNSUPPORTED',503)
           result = await ledger.recordNodeHeartbeat(commandId,{ nodeId: peer.nodeId,sampledAt: Number(p.sampledAt),runtimeReady: p.runtimeReady as boolean,activeExecutions: Number(p.activeExecutions),...(p.providerStatus !== undefined ? { providerStatus: p.providerStatus } : {}) }); break
@@ -259,7 +280,7 @@ export class RemoteGateway {
   }
   private async authorize(e: CommandEnvelope, peer: AuthorizedPeer, requireLive: boolean): Promise<void> {
     if (e.operation === 'receipt' || e.operation === 'listWork') return
-    if (e.operation === 'heartbeat' || e.operation === 'nodeStatus') {
+    if (e.operation === 'heartbeat' || e.operation === 'nodeStatus' || e.operation === 'executorIdentity') {
       insist(this.options.ledger.nodeStatuses,'NODE_STATUS_UNSUPPORTED',503)
       const status = (await this.options.ledger.nodeStatuses()).find(node => node.nodeId === peer.nodeId)
       insist(status,'REGISTERED_NODE_REQUIRED',403)
@@ -282,6 +303,7 @@ export class RemoteGateway {
       insist(this.options.ledger.cancelApproval,'APPROVAL_BRIDGE_UNSUPPORTED',503)
       return
     }
+    if (e.operation === 'selectTaskSession' && e.payload.workspaceId !== undefined) insist(peer.workspaces.includes(String(e.payload.workspaceId)),'WORKSPACE_DENIED',403)
     const inspectedAttempt = e.operation === 'getAttempt' ? await this.options.ledger.getAttempt(String(e.payload.attemptId)) : undefined
     if (e.operation === 'getAttempt') insist(inspectedAttempt?.nodeId === peer.nodeId,'ATTEMPT_DENIED',403)
     const run = await this.options.ledger.getRun(inspectedAttempt?.runId ?? String(e.payload.runId))
@@ -293,7 +315,7 @@ export class RemoteGateway {
     const workspace = run.route.workspaceId
     insist(workspace && peer.workspaces.includes(workspace), 'WORKSPACE_DENIED', 403)
     insist(run.route.requiredCapabilities.every(cap => peer.capabilities.includes(cap)), 'CAPABILITY_DENIED', 403)
-    if (['submit','renew','bindSession','markRunning','acknowledgeCancellation','retryBeforeEffects',...collaborationOps].includes(e.operation)) {
+    if (['sessionContext','selectTaskSession','submit','renew','bindSession','markRunning','acknowledgeCancellation','retryBeforeEffects',...collaborationOps].includes(e.operation)) {
       const attempt = await this.options.ledger.getAttempt(String(e.payload.attemptId))
       insist(attempt && attempt.nodeId === peer.nodeId && attempt.runId === run.runId && attempt.fence === e.payload.fence, 'ATTEMPT_DENIED', 403)
       if (e.operation === 'offerApproval') {

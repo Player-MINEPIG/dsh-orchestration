@@ -6,7 +6,7 @@ import type { AuthMode, CommandEnvelope, Json, Operation } from './protocol.js'
 import { trustedNetworkFetch, validateNetworkTarget } from './network-client.js'
 import type { TrustedNetworkTarget } from './trusted-network.js'
 import type { CommandReceipt, RecoveryStore } from './store.js'
-import type { ApprovalOffer, ApprovalRequest, Attempt, CapturedText, Claim, DelegationInput, HeartbeatInput, NodeStatus, LedgerPort, LeaseRef, ObservationCandidate, ObservationInput, Receipt, Run, SafeRetryWitness, Settlement, SettlementView, Task, TaskHistory, TaskReportInput } from './ports.js'
+import type { ExecutorIdentity, TaskSessionContext, TaskSessionChoice, SelectedTaskSession, ApprovalOffer, ApprovalRequest, Attempt, CapturedText, Claim, DelegationInput, HeartbeatInput, NodeStatus, LedgerPort, LeaseRef, ObservationCandidate, ObservationInput, Receipt, Run, SafeRetryWitness, Settlement, SettlementView, Task, TaskHistory, TaskReportInput } from './ports.js'
 
 export interface ClientOptions { endpoint: string; audience: string; nodeId: string; authMode?: AuthMode; keyId?: string; privateKey?: KeyObject; trustedNetwork?: TrustedNetworkTarget; store: RecoveryStore; allowLoopbackHttp?: boolean; timeoutMs?: number; maxBodyBytes?: number; maxResponseBytes?: number; now?: () => number; fetch?: typeof fetch }
 /** Existing key material is injected by the host. This package never generates or saves credentials. */
@@ -34,6 +34,17 @@ export class RemoteClient {
       this.transportFetch = options.fetch ?? fetch
       this.authBinding = digest({ authMode: 'ed25519',version: 1,keyId: options.keyId })
     }
+  }
+  private schedulerBinding(): string {
+    return digest({ endpoint: this.endpoint.href, audience: this.options.audience, nodeId: this.options.nodeId, authBinding: this.authBinding })
+  }
+  cachedExecutorIdentity(): ExecutorIdentity | undefined { return this.options.store.schedulerMapping(this.schedulerBinding()) }
+  async executorIdentity(): Promise<ExecutorIdentity> {
+    const receipt = await this.send('executorIdentity', `identity-${randomUUID()}`, {})
+    const identity = receipt.result
+    insist(receipt.state === 'done' && isRecord(identity), 'EXECUTOR_IDENTITY_UNAVAILABLE', 503)
+    insist(Object.keys(identity).length === 3 && identity.nodeId === this.options.nodeId && typeof identity.schedulerId === 'string' && /^scheduler-[0-9a-f-]{36}$/.test(identity.schedulerId) && typeof identity.executorId === 'string' && /^executor-[0-9a-f-]{36}$/.test(identity.executorId), 'INVALID_EXECUTOR_IDENTITY', 403)
+    return this.options.store.rememberScheduler(this.schedulerBinding(), identity as unknown as ExecutorIdentity)
   }
   send(operation: Operation, commandId: string, payload: Record<string, Json>, options?: { signal?: AbortSignal }): Promise<CommandReceipt> {
     const request = this.tail.then(() => this.sendOwned(operation,commandId,payload,options?.signal))
@@ -128,6 +139,8 @@ export class RemoteLedgerClient implements LedgerPort {
     insist(run?.taskId === input.taskId,'TASK_RUN_MISMATCH',403)
     return this.command('cancel',commandId,{ runId: input.runId,reason: input.reason })
   }
+  async sessionContext(input: LeaseRef): Promise<TaskSessionContext> { const context = await this.command<TaskSessionContext>('sessionContext',`sessions-${randomUUID()}`,this.scoped(input)); const identity = this.client.cachedExecutorIdentity(); insist(!identity || context.schedulerId === identity.schedulerId,'SCHEDULER_IDENTITY_CHANGED',403); return context }
+  selectTaskSession(commandId: string,input: LeaseRef & TaskSessionChoice): Promise<Receipt<SelectedTaskSession>> { return this.command('selectTaskSession',commandId,{ ...this.scoped(input),session: input.session as unknown as Json,...(input.expectedTaskSessionId !== undefined ? { expectedTaskSessionId: input.expectedTaskSessionId } : {}),...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),...(input.decision ? { decision: input.decision } : {}) }) }
   bindSession(commandId: string,input: LeaseRef & { sessionId: string }): Promise<Receipt<Attempt>> { return this.command('bindSession',commandId,{ ...this.scoped(input),sessionId: input.sessionId }) }
   markRunning(commandId: string,input: LeaseRef): Promise<Receipt<Attempt>> { return this.command('markRunning',commandId,this.scoped(input)) }
   acknowledgeCancellation(commandId: string,input: LeaseRef): Promise<Receipt<Run>> { return this.command('acknowledgeCancellation',commandId,this.scoped(input)) }
