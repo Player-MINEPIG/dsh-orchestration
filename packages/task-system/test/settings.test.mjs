@@ -155,7 +155,7 @@ test("remote read-only projection strips URL user info, query and fragment, and 
   );
 });
 
-test("packaged browser companion attaches to the official installed task row, not an official-plugin card", async () => {
+test("browser companion exposes the same served form in Settings and its installed plugin row", async () => {
   class Model {
     constructor() {}
     bind(project) {
@@ -205,14 +205,32 @@ test("packaged browser companion attaches to the official installed task row, no
     },
   };
   await ui.apply(ctx);
-  assert.equal(registrations.length, 1);
-  assert.equal(registrations[0].options.name, "plugins.row.config");
-  assert.equal(
-    registrations[0].options.key,
-    "@dsh-task/task-system#task-system",
+  assert.equal(registrations.length, 2);
+  const section = registrations.find(
+    (r) => r.options.name === "settings.section",
   );
-  for (const cleanup of effects.reverse()) cleanup?.();
-  assert.equal(disposed.length, 1);
+  const row = registrations.find(
+    (r) => r.options.name === "plugins.row.config",
+  );
+  assert.equal(section.options.id, "task-system");
+  assert.equal(section.options.label(), "title");
+  assert.equal(row.options.key, "@dsh-task/task-system#task-system");
+  assert.equal(section.component, row.component);
+  assert.equal(
+    section.options.inject().hooks.taskSettings,
+    row.options.inject().hooks.taskSettings,
+  );
+  for (const cleanup of effects.splice(0).reverse()) cleanup?.();
+  assert.equal(disposed.length, 2);
+  registrations.length = 0;
+  ctx.configForms.whileServed = () => () => {};
+  await ui.apply(ctx);
+  assert.equal(
+    registrations.length,
+    0,
+    "hide both entries while the Host does not serve task-system settings",
+  );
+  for (const cleanup of effects.splice(0).reverse()) cleanup?.();
 });
 
 test("higher CLI insertion and whole-config override are detected without inspecting credentials", () => {

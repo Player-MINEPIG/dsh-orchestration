@@ -2,7 +2,7 @@
 
 DSH 自带 WebUI；入口是 `dsh web` 或 `dsh --profile web`。自定义名称的 profile 必须由 Web 模板创建，并且在同一 profile 安装任务插件，才会同时有聊天界面和插件管理入口。只有 base/headless profile 不会自动变成 WebUI。
 
-本包的设置入口是：侧栏 **插件 → 已安装的 @dsh-task/task-system → task-system → 配置**。浏览器伴生组件由同包的 `task-system-settings` 行提供。任务管理面板仍是 VPS 上独立访问的网页；此页只管理插件运行设置，不搬运任务列表、数据库或业务逻辑。
+本包的直接设置入口是：侧栏 **设置 → 任务系统**。原 **插件 → 已安装的 @dsh-task/task-system → task-system → 配置** 入口仍可使用；两处复用同一六字段表单和官方配置保存机制。浏览器伴生组件由同包的 `task-system-settings` 行提供。任务管理面板仍是 VPS 上独立访问的网页；此页只管理插件运行设置，不搬运任务列表、数据库或业务逻辑。
 
 ## 可保存的设置
 

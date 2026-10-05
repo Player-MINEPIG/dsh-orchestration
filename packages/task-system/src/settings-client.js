@@ -463,19 +463,37 @@ window.__ModuleLoader__.load({
       const read = () => ctx.remote.taskPluginSettings.describe();
       ctx.effect(
         () =>
-          ctx.configForms.whileServed(["task-system"], () =>
-            ctx.slots.inject("plugins.row.config", () =>
+          ctx.configForms.whileServed(["task-system"], () => {
+            const inject = () => ({ ...controller.inject(), read });
+            const section = ctx.slots.inject("settings.section", () =>
+              ctx.slots.register(
+                {
+                  name: "settings.section",
+                  id: "task-system",
+                  order: 30,
+                  label: () => t("title"),
+                  locale: NS,
+                  inject,
+                },
+                Page,
+              ),
+            );
+            const row = ctx.slots.inject("plugins.row.config", () =>
               ctx.slots.register(
                 {
                   name: "plugins.row.config",
                   key: "@dsh-task/task-system#task-system",
                   locale: NS,
-                  inject: () => ({ ...controller.inject(), read }),
+                  inject,
                 },
                 Page,
               ),
-            ),
-          ),
+            );
+            return () => {
+              row();
+              section();
+            };
+          }),
         "task settings page",
       );
     }
