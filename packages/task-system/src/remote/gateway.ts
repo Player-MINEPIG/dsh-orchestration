@@ -155,11 +155,17 @@ export interface GatewayOptions { role: Role; nodeId: string; verifier: RequestV
 export class RemoteGateway {
   private options: GatewayOptions
   private active = true
+  private configurationPaused = false
   private pending = new Set<Promise<unknown>>()
   get authMode(): RequestVerifier['authMode'] { return this.options.verifier.authMode }
   constructor(options: GatewayOptions) {
     this.options = { ...options,maxBodyBytes: byteLimit(options.maxBodyBytes,DEFAULT_MAX_BODY_BYTES),maxResponseBytes: byteLimit(options.maxResponseBytes,DEFAULT_MAX_RESPONSE_BYTES) }
     insist(options.role !== 'executor', 'PLANNER_ROLE_REQUIRED', 403)
+  }
+  beginConfigurationEdit(): () => void {
+    insist(!this.configurationPaused && this.pending.size === 0,'CONFIGURATION_BUSY',409)
+    this.configurationPaused = true
+    return () => { this.configurationPaused = false }
   }
   private bounded(receipt: CommandReceipt): CommandReceipt {
     insist(Buffer.byteLength(canonical(receipt)) <= this.options.maxResponseBytes!,'RESPONSE_LIMIT',413)
@@ -167,6 +173,7 @@ export class RemoteGateway {
   }
   async handle(body: Uint8Array | string, transport?: TransportIdentity): Promise<CommandReceipt> {
     insist(this.active, 'DRAINING', 503)
+    insist(!this.configurationPaused,'CONFIGURATION_BUSY',409)
     const promise = this.handleOwned(body,transport); this.pending.add(promise)
     try { return this.bounded(await promise) } finally { this.pending.delete(promise) }
   }
@@ -193,7 +200,7 @@ export class RemoteGateway {
           const context = await ledger.sessionContext(lease(p,peer.nodeId))
           const current = context.sessions.find(session => session.sessionId === context.taskSessionId)
           insist(!current || (current.workspaceId && peer.workspaces.includes(current.workspaceId)),'TASK_SESSION_WORKSPACE_DENIED',403)
-          result = { ...context,sessions: context.sessions.filter(session => session.workspaceId && peer.workspaces.includes(session.workspaceId)) }; break
+          result = { ...context,...(context.eligibleWorkspaceIds ? { eligibleWorkspaceIds: context.eligibleWorkspaceIds.filter(workspaceId => peer.workspaces.includes(workspaceId)) } : {}),sessions: context.sessions.filter(session => session.workspaceId && peer.workspaces.includes(session.workspaceId)) }; break
         }
         case 'selectTaskSession': insist(ledger.selectTaskSession,'TASK_SESSIONS_UNSUPPORTED',503); result = await ledger.selectTaskSession(commandId,{ ...lease(p,peer.nodeId),session: p.session as unknown as TaskSessionChoice['session'],...(p.expectedTaskSessionId !== undefined ? { expectedTaskSessionId: p.expectedTaskSessionId as string | null } : {}),...(p.workspaceId ? { workspaceId: String(p.workspaceId) } : {}),...(p.decision ? { decision: p.decision } : {}) }); break
         case 'heartbeat': {

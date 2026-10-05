@@ -176,7 +176,7 @@ export async function resolveTaskSessionDecision(
     decisions?: TaskSessionDecisionService;
     route?: TaskSessionDecisionRoute;
     signal?: AbortSignal;
-    currentSnapshot?: () => TaskSessionSnapshot;
+    currentSnapshot?: () => TaskSessionSnapshot | Promise<TaskSessionSnapshot>;
     now?: () => number;
   },
 ): Promise<TaskSessionDecisionResult> {
@@ -199,13 +199,13 @@ export async function resolveTaskSessionDecision(
     });
   } catch {
     options.signal?.throwIfAborted();
-    return defaultTaskSessionSelection(
-      options.currentSnapshot?.() ?? initial,
-      "decision-failed",
-    );
+    const current = (await options.currentSnapshot?.()) ?? initial;
+    options.signal?.throwIfAborted();
+    return defaultTaskSessionSelection(current, "decision-failed");
   }
   options.signal?.throwIfAborted();
-  const current = options.currentSnapshot?.() ?? initial;
+  const current = (await options.currentSnapshot?.()) ?? initial;
+  options.signal?.throwIfAborted();
   return {
     ...consumeTaskSessionDecisionReceipt(
       receipt,

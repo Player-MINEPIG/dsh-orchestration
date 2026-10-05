@@ -13,6 +13,8 @@ export interface ClientOptions { endpoint: string; audience: string; nodeId: str
 export class RemoteClient {
   private options: ClientOptions
   private busy = false
+  private configurationPaused = false
+  private queued = 0
   private tail: Promise<unknown> = Promise.resolve()
   private lifetime = new AbortController()
   private active = true
@@ -35,6 +37,11 @@ export class RemoteClient {
       this.authBinding = digest({ authMode: 'ed25519',version: 1,keyId: options.keyId })
     }
   }
+  beginConfigurationEdit(): () => void {
+    insist(!this.configurationPaused && !this.busy && this.queued === 0,'CONFIGURATION_BUSY',409)
+    this.configurationPaused = true
+    return () => { this.configurationPaused = false }
+  }
   private schedulerBinding(): string {
     return digest({ endpoint: this.endpoint.href, audience: this.options.audience, nodeId: this.options.nodeId, authBinding: this.authBinding })
   }
@@ -47,7 +54,9 @@ export class RemoteClient {
     return this.options.store.rememberScheduler(this.schedulerBinding(), identity as unknown as ExecutorIdentity)
   }
   send(operation: Operation, commandId: string, payload: Record<string, Json>, options?: { signal?: AbortSignal }): Promise<CommandReceipt> {
-    const request = this.tail.then(() => this.sendOwned(operation,commandId,payload,options?.signal))
+    insist(!this.configurationPaused,'CONFIGURATION_BUSY',409)
+    this.queued++
+    const request = this.tail.then(() => this.sendOwned(operation,commandId,payload,options?.signal)).finally(() => { this.queued-- })
     this.tail = request.catch(() => undefined)
     return request
   }

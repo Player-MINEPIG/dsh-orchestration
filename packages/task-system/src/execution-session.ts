@@ -27,8 +27,10 @@ export async function chooseExecutionSession(input: {
   decisions?: TaskSessionDecisionService;
   signal?: AbortSignal;
   ttlMs?: number;
+  refresh?: () => TaskSessionContext | Promise<TaskSessionContext>;
 }): Promise<TaskSessionChoice> {
-  const { claim, context } = input;
+  const { claim } = input;
+  let context = input.context;
   const workspaceId =
     claim.run.route?.workspaceId ??
     claim.task.workspaceId ??
@@ -63,40 +65,45 @@ export async function chooseExecutionSession(input: {
         : { mode: "new" },
     };
   }
-  const snapshot: TaskSessionSnapshot = {
-    taskId: claim.task.taskId,
-    nodeId: claim.attempt.nodeId,
-    defaultWorkspaceId: workspaceId,
-    ...(context.taskSessionId ? { taskSessionId: context.taskSessionId } : {}),
-    context: {
-      title: claim.task.title,
-      description: claim.task.description,
-      runId: claim.run.runId,
-      schedulerId: context.schedulerId,
-    },
-    validUntil: Date.now() + (input.ttlMs ?? 30000),
-    workspaces: input.workspaces.map((workspace) => ({
-      ...workspace,
-      eligible:
-        workspace.eligible &&
-        (!claim.task.workspaceId ||
-          claim.task.workspaceId === workspace.workspaceId) &&
-        (!claim.task.policy?.allowedWorkspaceIds ||
-          claim.task.policy.allowedWorkspaceIds.includes(
-            workspace.workspaceId,
-          )),
-    })),
-    sessions: context.sessions
-      .filter((session) => session.workspaceId !== undefined)
-      .map((session) => ({
-        sessionId: session.sessionId,
-        taskId: session.taskId,
-        nodeId: session.nodeId,
-        workspaceId: session.workspaceId!,
-        description: `Existing session for Task ${session.taskId}`,
-        eligible: session.schedulerId === context.schedulerId,
+  const buildSnapshot = (): TaskSessionSnapshot => {
+    const task = context.task ?? claim.task;
+    return {
+      taskId: claim.task.taskId,
+      nodeId: claim.attempt.nodeId,
+      defaultWorkspaceId: context.workspaceId ?? workspaceId,
+      ...(context.taskSessionId
+        ? { taskSessionId: context.taskSessionId }
+        : {}),
+      context: {
+        title: task.title,
+        description: task.description,
+        runId: claim.run.runId,
+        schedulerId: context.schedulerId,
+      },
+      validUntil: Date.now() + (input.ttlMs ?? 30000),
+      workspaces: input.workspaces.map((workspace) => ({
+        ...workspace,
+        eligible:
+          workspace.eligible &&
+          (!context.eligibleWorkspaceIds ||
+            context.eligibleWorkspaceIds.includes(workspace.workspaceId)) &&
+          (!task.workspaceId || task.workspaceId === workspace.workspaceId) &&
+          (!task.policy?.allowedWorkspaceIds ||
+            task.policy.allowedWorkspaceIds.includes(workspace.workspaceId)),
       })),
+      sessions: context.sessions
+        .filter((session) => session.workspaceId !== undefined)
+        .map((session) => ({
+          sessionId: session.sessionId,
+          taskId: session.taskId,
+          nodeId: session.nodeId,
+          workspaceId: session.workspaceId!,
+          description: `Existing session for Task ${session.taskId}`,
+          eligible: session.schedulerId === context.schedulerId,
+        })),
+    };
   };
+  const snapshot = buildSnapshot();
   const selection = input.decisions
     ? await (
         await import("./session-policy.js")
@@ -104,6 +111,14 @@ export async function chooseExecutionSession(input: {
         decisions: input.decisions,
         requestId: `task-session-${claim.attempt.attemptId}`,
         signal: input.signal,
+        ...(input.refresh
+          ? {
+              currentSnapshot: async () => {
+                context = await input.refresh!();
+                return buildSnapshot();
+              },
+            }
+          : {}),
       })
     : defaultTaskSessionSelection(snapshot, "decision-disabled");
   input.signal?.throwIfAborted();

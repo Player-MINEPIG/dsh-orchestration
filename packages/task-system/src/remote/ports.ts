@@ -3,7 +3,7 @@ import type { Claim as CoreClaim, Run as CoreRun } from '../contracts.js'
 
 export interface ExecutorIdentity { schedulerId: string; executorId: string; nodeId: string }
 export interface TaskSession { schedulerId: string; taskId: string; nodeId: string; workspaceId?: string; sessionId: string; createdAt: string }
-export interface TaskSessionContext { schedulerId: string; taskSessionId?: string; sessions: TaskSession[] }
+export interface TaskSessionContext { task?: Task; workspaceId?: string; eligibleWorkspaceIds?: string[]; schedulerId: string; taskSessionId?: string; sessions: TaskSession[] }
 export interface TaskSessionChoice { expectedTaskSessionId?: string | null; workspaceId?: string; session: { mode: 'new' } | { mode: 'reuse'; sessionId: string }; decision?: Json }
 export interface SelectedTaskSession extends TaskSession { resume: boolean }
 export interface Receipt<T = unknown> { commandId: string; acceptedAt: string; value: T }

@@ -1078,6 +1078,33 @@ export class NativeExecutionProvider {
         ).value;
         return { run, submitted: false };
       }
+      renewal = setInterval(
+        () => {
+          try {
+            this.owner.ledger.renew(`renew:${ref.attemptId}:${randomUUID()}`, {
+              ...ref,
+              ttlMs: this.owner.config.leaseTtlMs,
+            });
+          } catch {
+            owned.aborted = true;
+            owned.creation.abort(new Error("task lease lost or cancelled"));
+            owned.handle?.agent.cancel({
+              kind: "hook",
+              reason: "task lease lost or cancelled",
+            });
+          }
+        },
+        Math.max(
+          100,
+          Math.floor(
+            Math.min(
+              this.owner.config.leaseTtlMs,
+              Date.parse(claim.attempt.leaseExpiresAt) - Date.now(),
+            ) / 3,
+          ),
+        ),
+      );
+      renewal.unref();
       if (!resume) {
         const context = this.owner.ledger.sessionContext(ref);
         const node = this.owner.ledger.getNode(ref.nodeId);
@@ -1101,6 +1128,7 @@ export class NativeExecutionProvider {
             : {}),
           signal: owned.creation.signal,
           ttlMs: this.owner.config.decisionTtlMs,
+          refresh: () => this.owner.ledger.sessionContext(ref),
         });
         const selected = this.owner.ledger.selectTaskSession(
           `select:${ref.attemptId}:${ref.executionId}`,
@@ -1151,24 +1179,6 @@ export class NativeExecutionProvider {
       this.bySession.set(sessionId, owned);
       if (!this.accepting || owned.aborted)
         throw new Error("native execution stopped during agent creation");
-      renewal = setInterval(
-        () => {
-          try {
-            this.owner.ledger.renew(`renew:${ref.attemptId}:${randomUUID()}`, {
-              ...ref,
-              ttlMs: this.owner.config.leaseTtlMs,
-            });
-          } catch {
-            owned.aborted = true;
-            owned.handle?.agent.cancel({
-              kind: "hook",
-              reason: "task lease lost or cancelled",
-            });
-          }
-        },
-        Math.max(100, Math.floor(this.owner.config.leaseTtlMs / 3)),
-      );
-      renewal.unref();
       // Resumed inbox items retain their DSH message identities. The new
       // instruction explicitly requests reconciliation before further effects.
       owned.handle.agent.followup(
@@ -1398,6 +1408,7 @@ export class TaskSystemService extends Service {
   native?: NativeExecutionProvider;
   workspaces?: WorkspaceManager;
   private accepting = true;
+  private configurationPaused = false;
   private readonly providers = new Set<NativeExecutionProvider>();
   private readonly drains = new Map<number, () => Promise<void>>();
   private drainGeneration = 0;
@@ -1417,7 +1428,25 @@ export class TaskSystemService extends Service {
   ) {
     super(ctx, "taskSystem");
   }
+  beginConfigurationEdit(): () => void {
+    if (
+      this.configurationPaused ||
+      [...this.providers].some((provider) => provider.activeCount > 0)
+    )
+      throw new TaskError("CONFIGURATION_BUSY", "Native execution is active");
+    const release = this.ledger.beginConfigurationEdit();
+    this.configurationPaused = true;
+    return () => {
+      this.configurationPaused = false;
+      release();
+    };
+  }
   assertExecuting(): void {
+    if (this.configurationPaused)
+      throw new TaskError(
+        "CONFIGURATION_BUSY",
+        "Startup configuration is changing",
+      );
     if (!this.accepting) throw new Error("task system is draining");
     if (this.config.role === "planner")
       throw new Error("planner role cannot execute native workloads");

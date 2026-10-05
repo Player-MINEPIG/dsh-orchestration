@@ -53,6 +53,9 @@ test('optional typed decision actually selects a new session and permitted alter
   const decisions=new DecisionEngine([provider],{defaultProvider:'ordinary',maxAttempts:1});t.after(()=>decisions.close())
   const selected=await select(f,x.ref,x.c,{decisions});assert.equal(calls,1);assert.equal(selected.workspaceId,'other');assert.equal(f.ledger.getRun(x.ref.runId).route.workspaceId,'other')
   const event=f.ledger.snapshot().events.find(event=>event.type==='session.selected');assert.ok(event.detail.decision);assert.equal(event.detail.decision.status,'answered')
+  f.ledger.submit('settle-decision',{...x.ref,outcome:'success',summary:'fixture'})
+  const nextRun=f.run('after-alternate');assert.equal(nextRun.route.workspaceId,'other')
+  const next=f.claim(nextRun,'after-alternate'),reused=await select(f,next.ref,next.c);assert.equal(reused.sessionId,selected.sessionId);assert.equal(reused.resume,true);assert.equal(reused.workspaceId,'other')
 })
 test('configured invalid default workspace fails rather than inventing a path',async t=>{
   const f=fixture(t),x=f.claim(f.run('one'),'one')
@@ -115,4 +118,35 @@ test('concurrent first-run snapshots cannot silently create two default Task ses
   f.ledger.selectTaskSession('first-choice',{...a.ref,...first})
   assert.throws(()=>f.ledger.selectTaskSession('racing-choice',{...b.ref,...second}),/catalog changed/)
   assert.equal(f.ledger.sessionContext(a.ref).sessions.length,1)
+})
+
+test('runtime refresh rejects a stale alternate-workspace decision and falls back to its still-legal default',async t=>{
+  const f=fixture(t),x=f.claim(f.run('one'),'one')
+  const provider=new StructuredModelProvider('ordinary',[{model:'judge',version:'fixture',reasoningEfforts:[]}],{complete:async()=>{
+    f.ledger.registerNode('narrow-workspaces',{...f.ledger.getNode('worker'),workspaceIds:['default']})
+    return {output:{answers:{session:{type:'choice',choice:'new'},workspace:{type:'choice',choice:'other'}}},modelVersion:'fixture'}
+  }})
+  const decisions=new DecisionEngine([provider],{defaultProvider:'ordinary',maxAttempts:1});t.after(()=>decisions.close())
+  const selected=await select(f,x.ref,x.c,{decisions,refresh:()=>f.ledger.sessionContext(x.ref)})
+  assert.equal(selected.workspaceId,'default')
+})
+test('a refreshed fallback uses the refreshed Task binding in its commit CAS',async t=>{
+  const f=fixture(t),x=f.claim(f.run('one'),'one');let concurrentlyBound
+  const provider=new StructuredModelProvider('ordinary',[{model:'judge',version:'fixture',reasoningEfforts:[]}],{complete:async()=>{
+    concurrentlyBound=f.ledger.selectTaskSession('other-authority-call',{...x.ref,expectedTaskSessionId:null,workspaceId:'default',session:{mode:'new'}}).value
+    return {output:{answers:{session:{type:'choice',choice:'new'},workspace:{type:'choice',choice:'default'}}},modelVersion:'fixture'}
+  }})
+  const decisions=new DecisionEngine([provider],{defaultProvider:'ordinary',maxAttempts:1});t.after(()=>decisions.close())
+  const selected=await select(f,x.ref,x.c,{decisions,refresh:()=>f.ledger.sessionContext(x.ref)})
+  assert.equal(selected.sessionId,concurrentlyBound.sessionId);assert.equal(selected.resume,true)
+})
+test('remote worker renews its lease while an optional session decision is pending',async t=>{
+  const f=fixture(t),store=new RecoveryStore(':memory:');t.after(()=>store.close())
+  const worker=new ExecutorWorker({ledger:f.ledger,provider:{id:'mock',capabilities:[],supports:()=>true,execute:async()=>({outcome:'success',summary:'fixture-only'})},store,ttlMs:1000,taskSessions:true,policy:{role:'executor',nodeId:'worker',capabilities:[],workspaces:['default','other'].map(workspaceId=>({workspaceId,nodeId:'worker',path:join(f.dir,workspaceId),allowedRoot:f.dir}))},chooseSession:async(claim,context,signal,refresh)=>{
+    await new Promise(resolve=>setTimeout(resolve,1200));signal.throwIfAborted()
+    return chooseExecutionSession({claim,context:await refresh(),signal,workspaces:['default','other'].map(workspaceId=>({workspaceId,nodeId:'worker',description:workspaceId,eligible:true}))})
+  }})
+  t.after(()=>worker.dispose())
+  const started=Date.now(),result=await worker.execute(f.run('long-decision').runId,'long-claim')
+  assert.ok(Date.now()-started>=1200);assert.equal(result.state,'acknowledged');assert.equal(f.ledger.getRun(result.claim.run.runId).state,'succeeded')
 })

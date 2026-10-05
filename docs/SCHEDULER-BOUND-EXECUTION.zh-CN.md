@@ -15,7 +15,7 @@
 
 任务插件配置新增 `defaultWorkspaceId: string|null` 和 `sessionDecisionEnabled: boolean=false`，均为重启生效字段。工作区必须已注册、ready、归属于当前 node 且在其授予列表中；无效配置明确失败，不创建目录或推断路径。节点目录也支持 `defaultWorkspaceId`，使未指定工作区的路由在调度器创建 Run 时得到明确工作区。
 
-优先级：Run 显式工作区 → Task 显式工作区 → 节点/执行器配置的默认工作区。Task 显式工作区不能被可选会话决策改写。
+优先级：Run 显式工作区 → Task 显式工作区 → 此 Task 已选会话的工作区 → 节点/执行器配置的默认工作区。Task 显式工作区不能被可选会话决策改写。
 
 本地新执行默认复用当前 Task 已绑定的 session；首个执行才创建。映射保留 schedulerId、taskId、nodeId、workspaceId、sessionId。在另一调度器出现同名 Task 不会重用该 session。普通对话、观察历史、其他 Task 的会话不进入可复用目录。复用前检查真实 DSH session 的不可变 cwd。并发尝试不能同时拥有同一 session。safe retry 保持其原有权威 session 与工作区，不重新决策。
 
@@ -42,3 +42,27 @@
 - `taskPluginSettings.queue()`：无参数，本地只读快照 `{sampledAt,nodeId,items,truncated}`，最多 100 条；每项仅含 taskId、runId、title、state、sessionId、workspaceId，不包含 prompt、原始配置或凭据
 
 远程队列显示本地执行 journal 和上次 polling 已发现的待处理项；查看设置不会额外触发调度或模型。快照时间表示本地读取时间，不能当作调度器刚刚完成网络刷新。
+
+
+## 可保存的启动设置
+
+新增 `taskPluginSettings.startup()` 返回严格裁剪的 task/remote 字段与 `applies: "plugin-restart"`；不返回凭据、环境变量引用、peer grant 或全量原始配置。
+
+`taskPluginSettings.saveStartup({target,expected,changes})` 只接受 startup 结果中对应 `values` 作为 expected，以及明确允许字段的局部 changes：
+
+- target=task：role、defaultWorkspaceId、sessionDecisionEnabled
+- target=remote：role、endpoint、audience、pollIntervalMs、concurrency、taskSessionsEnabled、trustedNetworkTarget
+
+每次只保存一个目标，expected 快照必须匹配当前可见值。保存使用公开 `Context.get('configEditor')` 与 `ConfigEditor.edit`，在宿主回调中合并当前完整配置，因此保留未知字段及未编辑的鉴权信息。CLI 层提前拒绝；Home/CLI 覆盖的最终判定、原子落盘与失败回滚由 ConfigEditor 负责。不能通过任意 namespace、nodeId、key、credential、grant 或原始 Config 绕过白名单。
+
+保存会按官方 Loader 生命周期重启受影响插件。已有本地/远程 execution、claimed run、未定结果或待恢复 journal 时拒绝保存；写入期间暂停新 claim/native/remote admission，避免检查后又插入执行。界面应提示插件重启并在保存后重新读取，不把草稿值当成生效值。新 endpoint/auth binding 使用新的已验证连接映射，不沿用旧 endpoint 的缓存身份。
+
+已有连接可编辑非秘密字段。首次连接仅允许在已选 trusted-network mode 且已有 configured nodeId 时，由用户同时明确保存 endpoint、audience、exact source/target；初始化保持 polling=0、nativeRoutes=[]，按新连接写入 taskSessionsEnabled=true。调度器必须已有该 peer 的认证和操作 grant，连接失败不会自行授权。此 RPC 不创建签名凭据、不切换 auth mode、不扫描或探测网络、不授予 peer；signed 首次连接仍需操作者配置现成 signing references。
+
+决策等待期间已启动 native 与 remote lease renewal；返回后重新取得权威 Task/会话/合法工作区快照，用刷新后的绑定执行 CAS。过期选项回到仍合法的默认值。决策选过其他工作区后，后续无显式覆盖的 Run 继续使用该 Task 会话的真实工作区，不退回节点默认而破坏复用。
+
+## 此增量的离线验收
+
+修复反例和启动编辑相关 44 项定向测试通过；最终 task-system 248 项、既有离线 native/protocol 71 项均通过，构建与格式检查通过。测试仅使用自写 fixture、脚本化模型/网络边界及临时目录；真实 GUI 保存路径和真实 peer grant 启用由对应环境 owner 做授权验收。
+
+`describe().schedulerId` 是本地 TaskLedger 的 authority ID；执行器展示上游调度器时应使用 `describe().remote.executorIdentity.schedulerId`，不要把本地备用账本 ID 误标为上游调度器。executorIdentity 未查询前为 null。

@@ -1,3 +1,10 @@
+import {
+  StartupSettings,
+  SaveStartupInput,
+  SaveStartupResult,
+  readStartupSettings,
+  saveStartupSettings,
+} from "./startup-settings.js";
 /** Optional official Web settings companion. No tasks, database or credentials are owned here. */
 import { Context } from "@deepseek-ai/cordis";
 import {
@@ -99,6 +106,44 @@ export const executorIdentityDescriptor: InvocationDescriptor = {
   },
 };
 
+export const startupDescriptor: InvocationDescriptor = {
+  id: "@dsh-task/task-system#taskPluginSettings/startup",
+  service: "taskPluginSettings",
+  namespace: "taskPluginSettings",
+  method: "startup",
+  invocation: { kind: "direct" },
+  parameters: [],
+  result: {
+    mode: "strict",
+    typeSymbol: "@dsh-task/task-system#StartupSettings",
+    create: () => StartupSettings,
+  },
+};
+export const saveStartupDescriptor: InvocationDescriptor = {
+  id: "@dsh-task/task-system#taskPluginSettings/saveStartup",
+  service: "taskPluginSettings",
+  namespace: "taskPluginSettings",
+  method: "saveStartup",
+  invocation: { kind: "direct" },
+  parameters: [
+    {
+      name: "input",
+      wire: "input",
+      source: "json",
+      codec: {
+        mode: "strict",
+        typeSymbol: "@dsh-task/task-system#SaveStartupInput",
+        create: () => SaveStartupInput,
+      },
+    },
+  ],
+  result: {
+    mode: "strict",
+    typeSymbol: "@dsh-task/task-system#SaveStartupResult",
+    create: () => SaveStartupResult,
+  },
+};
+
 /** Higher CLI insertions and overrides both outrank profile form writes. */
 export function hasTaskConfigOverride(patches: readonly unknown[]): boolean {
   return patches.some((value) => {
@@ -121,6 +166,12 @@ export function hasTaskConfigOverride(patches: readonly unknown[]): boolean {
 export class TaskPluginSettings extends TypertRemoteService {
   constructor(ctx: Context) {
     super(ctx, "taskPluginSettings");
+  }
+  async startup() {
+    return readStartupSettings(this.ctx);
+  }
+  async saveStartup(input: unknown) {
+    return await saveStartupSettings(this.ctx, input);
   }
   async executorIdentity() {
     const remote = this.ctx.get("remoteExecution") as
@@ -235,6 +286,8 @@ export function apply(ctx: Context): void {
             settingsDescriptor,
             queueDescriptor,
             executorIdentityDescriptor,
+            startupDescriptor,
+            saveStartupDescriptor,
           ],
         }),
       "task settings read-only descriptor",

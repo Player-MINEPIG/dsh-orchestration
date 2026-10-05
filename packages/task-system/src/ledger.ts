@@ -334,6 +334,23 @@ export class TaskLedger {
       fail("SCHEMA", "Unsupported ledger schema");
     }
   }
+  private configurationPaused = false;
+  beginConfigurationEdit(): () => void {
+    if (
+      this.configurationPaused ||
+      this.list<Run>("run").some(
+        (run) =>
+          !run.historyOnly &&
+          !run.observationOnly &&
+          ["running", "uncertain"].includes(run.state),
+      )
+    )
+      fail("CONFIGURATION_BUSY", "Execution or recovery is active");
+    this.configurationPaused = true;
+    return () => {
+      this.configurationPaused = false;
+    };
+  }
   close() {
     if (!this.closed) {
       this.closed = true;
@@ -1820,6 +1837,10 @@ export class TaskLedger {
       const workspaceId =
         input.route.workspaceId ??
         task.workspaceId ??
+        this.get<TaskSession>(
+          "taskSessionDefault",
+          hash([task.taskId, input.route.nodeId]),
+        )?.workspaceId ??
         this.getNode(input.route.nodeId).defaultWorkspaceId;
       if (workspaceId) input.route = { ...input.route, workspaceId };
       this.validateRoute(input.route);
@@ -2077,6 +2098,8 @@ export class TaskLedger {
       maxClaimBytes?: number;
     },
   ) {
+    if (this.configurationPaused)
+      fail("CONFIGURATION_BUSY", "Startup configuration is changing");
     return this.command(commandId, "claim", input, () => {
       finite(input.ttlMs, 100, 3_600_000, "lease TTL");
       if (
@@ -2717,6 +2740,18 @@ export class TaskLedger {
   }
   sessionContext(ref: LeaseRef): TaskSessionContext {
     const { run } = this.owned(ref);
+    const task = this.getTask(run.taskId),
+      node = this.getNode(ref.nodeId);
+    const eligibleWorkspaceIds = node.workspaceIds.filter((workspaceId) => {
+      const workspace = this.get<Workspace>("workspace", workspaceId);
+      return (
+        workspace?.state === "ready" &&
+        workspace.nodeId === ref.nodeId &&
+        (!task.workspaceId || task.workspaceId === workspaceId) &&
+        (!task.policy?.allowedWorkspaceIds ||
+          task.policy.allowedWorkspaceIds.includes(workspaceId))
+      );
+    });
     const sessions = this.list<TaskSession>("taskSession", run.taskId).filter(
       (session) => session.nodeId === ref.nodeId,
     );
@@ -2726,6 +2761,15 @@ export class TaskLedger {
     );
     return {
       schedulerId: this.schedulerIdentity(),
+      task: {
+        taskId: task.taskId,
+        title: task.title,
+        description: task.description,
+        ...(task.workspaceId ? { workspaceId: task.workspaceId } : {}),
+        ...(task.policy ? { policy: task.policy } : {}),
+      },
+      ...(run.route?.workspaceId ? { workspaceId: run.route.workspaceId } : {}),
+      eligibleWorkspaceIds,
       ...(current ? { taskSessionId: current.sessionId } : {}),
       sessions: [
         ...sessions

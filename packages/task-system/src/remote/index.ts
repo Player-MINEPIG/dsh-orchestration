@@ -66,6 +66,7 @@ export class RemoteExecutionService extends Service {
   readonly gateway?: RemoteGateway
   private workers = new Set<ExecutorWorker>()
   private active = true
+  private configurationPaused = false
   private config: Config
   private ledger: LedgerPort
   private store: RecoveryStore
@@ -101,6 +102,17 @@ export class RemoteExecutionService extends Service {
       executorIdentity: this.client?.cachedExecutorIdentity() ?? null,
       taskSessionsEnabled: this.config.taskSessionsEnabled === true,
     }
+  }
+  beginConfigurationEdit(): () => void {
+    insist(!this.configurationPaused && !this.heartbeatPending && !this.store.dispatches().some(record => !['acknowledged','cancelled','retry_scheduled'].includes(record.state)),'CONFIGURATION_BUSY',409)
+    const releases: (() => void)[] = []
+    try {
+      if (this.client) releases.push(this.client.beginConfigurationEdit())
+      if (this.gateway) releases.push(this.gateway.beginConfigurationEdit())
+      for (const worker of this.workers) releases.push(worker.beginConfigurationEdit())
+      this.configurationPaused = true
+      return () => { this.configurationPaused = false; for (const release of releases.reverse()) release() }
+    } catch (error) { for (const release of releases.reverse()) release(); throw error }
   }
   queueSnapshot() {
     const dispatches = this.store.dispatches().filter(record => !['acknowledged','cancelled','retry_scheduled'].includes(record.state))
@@ -157,7 +169,7 @@ export class RemoteExecutionService extends Service {
     }
     if (heartbeatIntervalMs > 0) {
       const tick = (): void => {
-        if (!this.active || this.heartbeatPending) return
+        if (!this.active || this.heartbeatPending || this.configurationPaused) return
         this.heartbeatPending = this.heartbeatNow().then(() => { this.lastHeartbeatFailed = false },() => { this.lastHeartbeatFailed = true }).finally(() => { this.heartbeatPending = undefined })
       }
       this.heartbeatTimer = setInterval(tick,heartbeatIntervalMs)
@@ -179,12 +191,13 @@ export class RemoteExecutionService extends Service {
   }
   createWorker(provider: ExecutionProvider): ExecutorWorker {
     insist(this.active,'DRAINING',503)
+    insist(!this.configurationPaused,'CONFIGURATION_BUSY',409)
     insist(this.workers.size === 0,'ONE_WORKER_OWNER_PER_STORE',409)
     const worker = new ExecutorWorker({ ledger: this.workerLedger,provider,store: this.store,policy: { role: this.config.role,nodeId: this.config.nodeId,capabilities: this.config.capabilities,workspaces: this.config.workspaces },ttlMs: this.config.leaseTtlMs,maxResultBytes: Math.max(1024,this.config.maxBodyBytes - 4096),taskSessions: this.config.taskSessionsEnabled === true,
       ...(this.config.taskSessionsEnabled && this.client ? { prepare: async () => { await this.client!.executorIdentity() } } : {}),
-      chooseSession: async (claim,context,signal) => {
+      chooseSession: async (claim,context,signal,refresh) => {
         const task = this.ctx.get('taskSystem') as TaskSystemPort | undefined
-        return await chooseExecutionSession({ claim,context,defaultWorkspaceId: task?.config?.defaultWorkspaceId,workspaces: this.config.workspaces.map(workspace => ({ workspaceId: workspace.workspaceId,nodeId: workspace.nodeId,description: workspace.workspaceId,eligible: true })),...(task?.config?.sessionDecisionEnabled && this.ctx.get('typedDecisions') ? { decisions: this.ctx.get('typedDecisions') } : {}),signal,ttlMs: task?.config?.decisionTtlMs })
+        return await chooseExecutionSession({ claim,context,defaultWorkspaceId: task?.config?.defaultWorkspaceId,workspaces: this.config.workspaces.map(workspace => ({ workspaceId: workspace.workspaceId,nodeId: workspace.nodeId,description: workspace.workspaceId,eligible: true })),...(task?.config?.sessionDecisionEnabled && this.ctx.get('typedDecisions') ? { decisions: this.ctx.get('typedDecisions') } : {}),signal,ttlMs: task?.config?.decisionTtlMs,refresh })
       },
     })
     this.workers.add(worker)
