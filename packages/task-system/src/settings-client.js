@@ -148,7 +148,19 @@ window.__ModuleLoader__.load({
       roleExecutor: "Executor",
       roleBoth: "Scheduler and executor",
       workspaceTitle: "Executor · sessions and workspace",
-      defaultWorkspaceId: "Default workspace ID",
+      defaultWorkspaceId: "Workspace ID · read only",
+      defaultWorkspace: "Default workspace",
+      workspaceNone: "No default workspace selected",
+      workspaceLoading: "Reading this host's workspaces…",
+      workspaceFailed:
+        "Could not read this host's workspaces. Refresh to retry; your current selection and draft are retained.",
+      workspaceEmpty:
+        "No registered workspace is currently available for tasks on this host.",
+      workspaceUnavailable:
+        "Current selection is unavailable and retained. Choose another workspace or discard this change.",
+      workspaceUnavailableOption: "Current selection · unavailable",
+      workspaceUnavailableSuffix: "unavailable",
+      workspaceRefresh: "Refresh workspaces",
       sessionDecisionEnabled: "Enable executor workspace/session decisions",
       workspaceHint:
         "The default workspace must already be registered locally. Changes apply after restart. Without a valid decision, execution uses the default Task session and workspace policy.",
@@ -330,7 +342,18 @@ window.__ModuleLoader__.load({
       roleExecutor: "执行端",
       roleBoth: "调度端和执行端",
       workspaceTitle: "执行端 · 会话与工作区",
-      defaultWorkspaceId: "默认工作区 ID",
+      defaultWorkspaceId: "工作区 ID · 只读",
+      defaultWorkspace: "默认工作区",
+      workspaceNone: "未指定默认工作区",
+      workspaceLoading: "正在读取本机工作区…",
+      workspaceFailed:
+        "未能读取本机工作区，请刷新重试；当前选择和草稿予以保留。",
+      workspaceEmpty: "本机尚无已登记且可用于任务的工作区。",
+      workspaceUnavailable:
+        "当前选择已不可用，仍予以保留。请选择其他工作区，或丢弃本次更改。",
+      workspaceUnavailableOption: "当前选择 · 不可用",
+      workspaceUnavailableSuffix: "不可用",
+      workspaceRefresh: "刷新工作区",
       sessionDecisionEnabled: "启用执行端工作区／会话决策",
       workspaceHint:
         "默认工作区须已在本机登记；改变后重启生效。没有有效决策时，执行采用默认的 Task 会话和工作区策略。",
@@ -492,6 +515,43 @@ window.__ModuleLoader__.load({
         }),
       },
     };
+    const workspaceCatalogDescriptor = {
+      id: "@dsh-task/task-system#taskPluginSettings/workspaces",
+      service: "taskPluginSettings",
+      namespace: "taskPluginSettings",
+      method: "workspaces",
+      invocation: { kind: "direct" },
+      parameters: [],
+      result: {
+        mode: "strict",
+        typeSymbol: "@dsh-task/task-system#WorkspaceCatalog",
+        create: () => ({
+          parse(value) {
+            if (
+              !value ||
+              !value.scope ||
+              ["entryId", "nodeId", "schedulerId"].some(
+                (key) => typeof value.scope[key] !== "string",
+              ) ||
+              !["official", "task"].includes(value.source) ||
+              !Array.isArray(value.items) ||
+              value.items.some(
+                (item) =>
+                  !item ||
+                  ["workspaceId", "title", "path"].some(
+                    (key) => typeof item[key] !== "string",
+                  ) ||
+                  typeof item.available !== "boolean",
+              ) ||
+              new Set(value.items.map((item) => item.workspaceId)).size !==
+                value.items.length
+            )
+              throw new Error("Invalid local workspace catalog");
+            return value;
+          },
+        }),
+      },
+    };
     const executorIdentityDescriptor = {
       id: "@dsh-task/task-system#taskPluginSettings/executorIdentity",
       service: "taskPluginSettings",
@@ -618,6 +678,14 @@ window.__ModuleLoader__.load({
                   typeof row.loaderDisabled !== "boolean")
               )
                 throw new Error("Invalid startup remote loading state");
+              if (
+                target === "task" &&
+                row.workspaceScope &&
+                ["nodeId", "schedulerId"].some(
+                  (key) => typeof row.workspaceScope[key] !== "string",
+                )
+              )
+                throw new Error("Invalid startup workspace scope");
               parseStartupValues(row.values, target);
             }
             return value;
@@ -1184,6 +1252,121 @@ window.__ModuleLoader__.load({
       );
       return { changes, invalid, dirty: Object.keys(changes).length > 0 };
     }
+    function workspaceDirectoryState(row, state, selected) {
+      const value = state?.value;
+      const matches =
+        !!value &&
+        value.scope.entryId === row.entryId &&
+        (!row.workspaceScope ||
+          ["nodeId", "schedulerId"].every(
+            (key) => value.scope[key] === row.workspaceScope[key],
+          ));
+      const items = matches ? value.items : [];
+      const current = items.find((item) => item.workspaceId === selected);
+      return {
+        items,
+        ready: matches && !state.loading && !state.failed,
+        current,
+        unavailable: !!selected && (!current || !current.available),
+      };
+    }
+    function WorkspaceSelect({
+      t,
+      row,
+      directory,
+      refresh,
+      selected,
+      edit,
+      disabled,
+      advanced,
+      controlStyle,
+    }) {
+      const view = workspaceDirectoryState(row, directory, selected);
+      return h(
+        "div",
+        { "data-task-workspace-selector": true },
+        h(
+          "label",
+          { style: { display: "block", margin: "12px 0" } },
+          h(
+            "span",
+            { style: { display: "block", marginBottom: 6 } },
+            t("defaultWorkspace"),
+          ),
+          h(
+            "select",
+            {
+              id: "task-startup-task-defaultWorkspaceId",
+              style: controlStyle,
+              value: selected,
+              disabled: disabled || !view.ready,
+              onChange: (event) =>
+                edit("defaultWorkspaceId", event.target.value),
+            },
+            h("option", { value: "" }, t("workspaceNone")),
+            selected && !view.current
+              ? h(
+                  "option",
+                  { value: selected, disabled: true },
+                  t("workspaceUnavailableOption"),
+                )
+              : null,
+            ...view.items.map((item) =>
+              h(
+                "option",
+                {
+                  key: item.workspaceId,
+                  value: item.workspaceId,
+                  disabled: !item.available,
+                },
+                `${item.title} · ${item.path}${item.available ? "" : ` · ${t("workspaceUnavailableSuffix")}`}`,
+              ),
+            ),
+          ),
+        ),
+        directory?.loading
+          ? h("p", { role: "status", style: hintStyle }, t("workspaceLoading"))
+          : null,
+        directory?.failed ||
+          (directory?.value && !view.ready && !directory.loading)
+          ? h("p", { role: "alert", style: hintStyle }, t("workspaceFailed"))
+          : null,
+        view.ready && view.unavailable
+          ? h(
+              "p",
+              { role: "alert", style: hintStyle },
+              t("workspaceUnavailable"),
+            )
+          : null,
+        view.ready && !view.items.some((item) => item.available)
+          ? h("p", { style: hintStyle }, t("workspaceEmpty"))
+          : null,
+        h(
+          Button,
+          {
+            variant: "outline",
+            onClick: refresh,
+            disabled: !refresh || directory?.loading,
+          },
+          t("workspaceRefresh"),
+        ),
+        h(
+          "label",
+          { hidden: !advanced, style: { display: "block", margin: "12px 0" } },
+          h(
+            "span",
+            { style: { display: "block", marginBottom: 6 } },
+            t("defaultWorkspaceId"),
+          ),
+          h("input", {
+            id: "task-startup-task-workspaceId-readonly",
+            style: controlStyle,
+            readOnly: true,
+            value: selected,
+          }),
+        ),
+      );
+    }
     function StartupRow({
       t,
       target,
@@ -1194,6 +1377,8 @@ window.__ModuleLoader__.load({
       advanced = true,
       visible = true,
       onRoleChange,
+      workspaceDirectory = { loading: true },
+      refreshWorkspaces,
       openAdvanced,
       openPlugins,
     }) {
@@ -1224,6 +1409,21 @@ window.__ModuleLoader__.load({
         setStatus({ saving: false });
       };
       const parsed = startupChanges(target, row.values, draft);
+      const workspaceChanged =
+        target === "task" &&
+        Object.hasOwn(parsed.changes, "defaultWorkspaceId");
+      const directory =
+        target === "task"
+          ? workspaceDirectoryState(
+              row,
+              workspaceDirectory,
+              draft.defaultWorkspaceId,
+            )
+          : null;
+      const workspaceInvalid =
+        workspaceChanged &&
+        (!directory.ready ||
+          (draft.defaultWorkspaceId && directory.unavailable));
       const disabled =
         !writable ||
         status.saving ||
@@ -1232,7 +1432,13 @@ window.__ModuleLoader__.load({
       const planner = draft.role === "planner" || draft.role === "both";
       const save = async (migrate = false) => {
         const update = startupChanges(target, row.values, draft, migrate);
-        if (disabled || !update.dirty || update.invalid.length) return;
+        if (
+          disabled ||
+          workspaceInvalid ||
+          !update.dirty ||
+          update.invalid.length
+        )
+          return;
         setStatus({ saving: true });
         try {
           await saveStartup({
@@ -1437,7 +1643,17 @@ window.__ModuleLoader__.load({
                 !executor
                   ? h("p", { style: hintStyle }, t("executorDecisionInactive"))
                   : null,
-                field("defaultWorkspaceId"),
+                WorkspaceSelect({
+                  t,
+                  row,
+                  directory: workspaceDirectory,
+                  refresh: refreshWorkspaces,
+                  selected: draft.defaultWorkspaceId,
+                  edit,
+                  disabled: disabled || !executor,
+                  advanced,
+                  controlStyle,
+                }),
                 h(
                   "label",
                   {
@@ -1617,7 +1833,11 @@ window.__ModuleLoader__.load({
             Button,
             {
               variant: "outline",
-              disabled: disabled || !parsed.dirty || parsed.invalid.length > 0,
+              disabled:
+                disabled ||
+                workspaceInvalid ||
+                !parsed.dirty ||
+                parsed.invalid.length > 0,
               onClick: () => save(),
             },
             t(status.saving ? "startupSaving" : "startupSave"),
@@ -1643,15 +1863,30 @@ window.__ModuleLoader__.load({
       t,
       startup,
       saveStartup,
+      readWorkspaces,
       onSaved,
       advanced = true,
       openAdvanced,
       openPlugins,
     }) {
       const { state, refresh, replace } = useReadSnapshot(startup);
+      const workspaceScopeKey = JSON.stringify([
+        state.value?.task?.entryId,
+        state.value?.task?.workspaceScope,
+      ]);
+      const workspaceRead = React.useCallback(
+        () => readWorkspaces(),
+        [readWorkspaces, workspaceScopeKey],
+      );
+      const workspaceCatalog = useReadSnapshot(
+        workspaceRead,
+        !!readWorkspaces && !!state.value?.task,
+      );
       const [taskRole, setTaskRole] = React.useState(null);
       const savedRoleKey =
-        state.value?.task?.entryId + JSON.stringify(state.value?.task?.values);
+        state.value?.task?.entryId +
+        JSON.stringify(state.value?.task?.values) +
+        workspaceScopeKey;
       React.useEffect(() => {
         setTaskRole(state.value?.task?.values.role ?? null);
       }, [savedRoleKey]);
@@ -1663,6 +1898,7 @@ window.__ModuleLoader__.load({
         onSaved();
         const value = await startup();
         replace(value);
+        if (readWorkspaces) workspaceCatalog.refresh();
       };
       return h(
         "section",
@@ -1695,13 +1931,16 @@ window.__ModuleLoader__.load({
                 ? h(StartupRow, {
                     key:
                       state.value.task.entryId +
-                      JSON.stringify(state.value.task.values),
+                      JSON.stringify(state.value.task.values) +
+                      workspaceScopeKey,
                     t,
                     target: "task",
                     advanced,
                     openAdvanced,
                     openPlugins,
                     onRoleChange: setTaskRole,
+                    workspaceDirectory: workspaceCatalog.state,
+                    refreshWorkspaces: workspaceCatalog.refresh,
                     row: state.value.task,
                     writable: state.value.writable,
                     saveStartup,
@@ -1829,6 +2068,7 @@ window.__ModuleLoader__.load({
           ? h(StartupSettings, {
               t,
               startup: props.startup,
+              readWorkspaces: props.readWorkspaces,
               saveStartup: props.saveStartup,
               onSaved: () => setRefreshKey((value) => value + 1),
               advanced,
@@ -1979,6 +2219,7 @@ window.__ModuleLoader__.load({
         descriptors: [
           descriptor,
           queueDescriptor,
+          workspaceCatalogDescriptor,
           executorIdentityDescriptor,
           startupDescriptor,
           saveStartupDescriptor,
@@ -1989,6 +2230,12 @@ window.__ModuleLoader__.load({
         readRemote(ctx, "describe", descriptor.result.create());
       const readQueue = () =>
         readRemote(ctx, "queue", queueDescriptor.result.create());
+      const readWorkspaces = () =>
+        readRemote(
+          ctx,
+          "workspaces",
+          workspaceCatalogDescriptor.result.create(),
+        );
       const queryIdentity = () =>
         readRemote(
           ctx,
@@ -2011,6 +2258,7 @@ window.__ModuleLoader__.load({
               ...controller.inject(),
               read,
               readQueue,
+              readWorkspaces,
               queryIdentity,
               startup,
               saveStartup,
@@ -2057,6 +2305,7 @@ window.__ModuleLoader__.load({
       descriptor,
       readRemote,
       queueDescriptor,
+      workspaceCatalogDescriptor,
       executorIdentityDescriptor,
       startupDescriptor,
       saveStartupDescriptor,
@@ -2066,6 +2315,8 @@ window.__ModuleLoader__.load({
       simpleEndpointDisplay,
       simpleEndpointInput,
       StartupRow,
+      WorkspaceSelect,
+      workspaceDirectoryState,
       StartupSettings,
       QueueContents,
       LocalQueue,

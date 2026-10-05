@@ -10,6 +10,8 @@ import {
   startupDescriptor,
   saveStartupDescriptor,
   hasTaskConfigOverride,
+  workspaceCatalogDescriptor,
+  TaskPluginSettings,
 } from "../dist/settings.js";
 import { RemoteExecutionService } from "../dist/remote/index.js";
 
@@ -201,7 +203,7 @@ test("browser companion exposes the same served form in Settings and its install
     },
     remote: {
       $mount: async (contribution) => (
-        assert.equal(contribution.descriptors.length, 5),
+        assert.equal(contribution.descriptors.length, 6),
         () => {}
       ),
     },
@@ -1099,6 +1101,32 @@ function startupRoleFixture(values) {
     row: { entryId: "task-system", values },
     writable: true,
     advanced: false,
+    workspaceDirectory: {
+      loading: false,
+      value: {
+        scope: {
+          entryId: "task-system",
+          nodeId: "fixture-node",
+          schedulerId: "fixture-scheduler",
+        },
+        source: "task",
+        items: [
+          {
+            workspaceId: "fixture-workspace",
+            title: "Project",
+            path: "/fixture/original",
+            available: true,
+          },
+          {
+            workspaceId: "draft-workspace",
+            title: "Project",
+            path: "/fixture/draft",
+            available: true,
+          },
+        ],
+      },
+    },
+    refreshWorkspaces: () => {},
     saveStartup: async (input) => writes.push(input),
     onSaved: async () => {},
     openPlugins: () => {
@@ -1164,7 +1192,10 @@ test("decision controls distinguish scheduler executor selection from executor w
       assert.equal(sessionSwitch.props.checked, true);
       assert.equal(sessionSwitch.props.disabled, role === "planner");
       assert.equal(
-        find(executor, (node) => node.type === "input").props.disabled,
+        find(
+          executor,
+          (node) => node.props?.id === "task-startup-task-defaultWorkspaceId",
+        ).props.disabled,
         role === "planner",
       );
       assert.equal(
@@ -1230,7 +1261,10 @@ test("scheduler and executor switches stage independent fields; role and mode ed
     ).props.checked,
     false,
   );
-  find(tree, (node) => node.type === "input").props.onChange({
+  find(
+    tree,
+    (node) => node.props?.id === "task-startup-task-defaultWorkspaceId",
+  ).props.onChange({
     target: { value: "draft-workspace" },
   });
   tree = fixture.render();
@@ -1248,7 +1282,10 @@ test("scheduler and executor switches stage independent fields; role and mode ed
     props.advanced = advanced;
     tree = fixture.render();
     assert.equal(
-      find(tree, (node) => node.type === "input").props.value,
+      find(
+        tree,
+        (node) => node.props?.id === "task-startup-task-defaultWorkspaceId",
+      ).props.value,
       "draft-workspace",
     );
     assert.equal(
@@ -1306,4 +1343,140 @@ test("scheduler and executor switches stage independent fields; role and mode ed
   assert.equal(writes[0].changes.defaultWorkspaceId, "draft-workspace");
   assert.equal(writes[0].changes.planningDecisionEnabled, false);
   assert.equal(writes[0].changes.sessionDecisionEnabled, true);
+});
+
+test("workspace directory descriptor reads only metadata and preserves strict local scope", () => {
+  const ui = client();
+  for (const key of ["id", "namespace", "service", "method"])
+    assert.equal(
+      ui.workspaceCatalogDescriptor[key],
+      workspaceCatalogDescriptor[key],
+    );
+  assert.equal(workspaceCatalogDescriptor.parameters.length, 0);
+  const value = {
+    scope: {
+      entryId: "task-system",
+      nodeId: "local",
+      schedulerId: "scheduler",
+    },
+    source: "official",
+    items: [
+      {
+        workspaceId: "one",
+        title: "Project",
+        path: "/projects/one",
+        available: true,
+      },
+      {
+        workspaceId: "two",
+        title: "Project",
+        path: "/projects/two",
+        available: true,
+      },
+    ],
+  };
+  assert.equal(
+    ui.workspaceCatalogDescriptor.result.create().parse(value),
+    value,
+  );
+  assert.equal(
+    workspaceCatalogDescriptor.result.create().parse(value).items[1].path,
+    "/projects/two",
+  );
+  assert.throws(
+    () =>
+      ui.workspaceCatalogDescriptor.result
+        .create()
+        .parse({ ...value, items: [value.items[0], value.items[0]] }),
+    /workspace catalog/,
+  );
+});
+
+test("workspace selector retains missing values, distinguishes names by path and blocks stale or failed directory saves", async () => {
+  const f = startupRoleFixture({
+    role: "both",
+    defaultWorkspaceId: "fixture-workspace",
+    planningDecisionEnabled: true,
+    sessionDecisionEnabled: false,
+  });
+  const { find, props, writes } = f;
+  const select = (tree) =>
+    find(
+      tree,
+      (node) => node.props?.id === "task-startup-task-defaultWorkspaceId",
+    );
+  const save = (tree) =>
+    find(
+      tree,
+      (node) =>
+        node.type === "FixtureButton" && node.children.includes("startupSave"),
+    );
+  let tree = f.render();
+  assert.equal(select(tree).props.value, "fixture-workspace");
+  assert.equal(select(tree).props.disabled, false);
+  assert.ok(
+    select(tree).children.some((node) =>
+      node?.children?.includes("Project · /fixture/draft"),
+    ),
+  );
+  select(tree).props.onChange({ target: { value: "draft-workspace" } });
+  tree = f.render();
+  props.workspaceDirectory = { ...props.workspaceDirectory, failed: true };
+  tree = f.render();
+  assert.equal(select(tree).props.value, "draft-workspace");
+  assert.equal(select(tree).props.disabled, true);
+  assert.equal(save(tree).props.disabled, true);
+  await save(tree).props.onClick();
+  assert.equal(writes.length, 0);
+  props.workspaceDirectory = {
+    loading: false,
+    value: {
+      ...props.workspaceDirectory.value,
+      items: [props.workspaceDirectory.value.items[0]],
+    },
+  };
+  tree = f.render();
+  assert.equal(select(tree).props.value, "draft-workspace");
+  assert.ok(
+    select(tree).children.some(
+      (node) => node?.props?.value === "draft-workspace" && node.props.disabled,
+    ),
+  );
+  assert.equal(save(tree).props.disabled, true);
+  props.workspaceDirectory.value = {
+    ...props.workspaceDirectory.value,
+    scope: {
+      ...props.workspaceDirectory.value.scope,
+      entryId: "another-profile",
+    },
+  };
+  tree = f.render();
+  assert.equal(select(tree).props.disabled, true);
+  assert.equal(select(tree).props.value, "draft-workspace");
+  props.workspaceDirectory = {
+    loading: false,
+    value: {
+      scope: {
+        entryId: "task-system",
+        nodeId: "fixture-node",
+        schedulerId: "fixture-scheduler",
+      },
+      source: "task",
+      items: [
+        {
+          workspaceId: "draft-workspace",
+          title: "Project",
+          path: "/fixture/draft",
+          available: true,
+        },
+      ],
+    },
+  };
+  tree = f.render();
+  assert.equal(select(tree).props.value, "draft-workspace");
+  assert.equal(save(tree).props.disabled, false);
+  await save(tree).props.onClick();
+  assert.deepEqual(Object.keys(writes[0].changes), ["defaultWorkspaceId"]);
+  assert.equal(writes[0].changes.defaultWorkspaceId, "draft-workspace");
+  assert.equal(writes[0].expected, props.row.values);
 });

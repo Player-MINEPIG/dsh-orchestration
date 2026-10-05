@@ -1298,6 +1298,11 @@ export class TaskLedger {
   getWorkspace(workspaceId: string) {
     return this.need<Workspace>("workspace", workspaceId);
   }
+  registeredWorkspaces(nodeId: string): Workspace[] {
+    return this.list<Workspace>("workspace").filter(
+      (workspace) => workspace.nodeId === nodeId,
+    );
+  }
   getNode(nodeId: string) {
     return this.need<NodeCapability>("node", nodeId);
   }

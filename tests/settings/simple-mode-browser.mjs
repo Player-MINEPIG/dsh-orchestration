@@ -52,9 +52,10 @@ window.__ModuleLoader__={load(row){window.taskUI=row.factory(name=>{if(!modules[
 await new Promise((done,fail)=>{const s=document.createElement('script');s.src='/candidate.js';s.onload=done;s.onerror=fail;document.head.append(s);});
 const ui=window.taskUI;
 let startup={writable:true,applies:'plugin-restart',task:{entryId:'task-system',values:{role:'executor',defaultWorkspaceId:'workspace-fixture',planningDecisionEnabled:true,sessionDecisionEnabled:false}},remote:{entryId:'task-remote-execution',loaded:true,loaderDisabled:false,values:{role:'executor',paused:true,endpoint:'http://fixture.invalid:8443/commands',audience:'fixture-authority',pollIntervalMs:0,concurrency:1,taskSessionsEnabled:true,trustedNetworkTarget:{address:'fixture.invalid',port:8443,localAddress:'fixture.local',allowHttp:true}}}};
-window.fixtureWrites=[];window.fixtureIdentityQueries=0;window.fixturePluginSection=null;window.fixtureNavigationAvailable=false;
+window.fixtureWorkspaceMode='ready';window.fixtureWorkspaceReads=0;window.fixtureWrites=[];window.fixtureIdentityQueries=0;window.fixturePluginSection=null;window.fixtureNavigationAvailable=false;
 const live={available:true,writable:true,saving:false,dirty:false,valid:true,fields:Object.fromEntries(ui.keys.map(key=>[key,{text:['schedulerEnabled','autoExecute','healthAlerts'].includes(key)?'false':'1000',overridden:false,invalid:false}]))};
 const props={openPlugins:()=>window.fixtureNavigationAvailable&&ui.openPlugins({slots:{entries:()=>[{options:{store:{create:()=>({actions:{openSection:id=>{window.fixturePluginSection=id;}}})}}}]}}),t:key=>ui.zh[key]??key,useTaskSettings:project=>project(live),edit(){},resetField(){},save(){},discard(){},
+readWorkspaces:async()=>{window.fixtureWorkspaceReads++;if(window.fixtureWorkspaceMode==='error')throw {code:'CATALOG_UNAVAILABLE'};return {scope:{entryId:'task-system',nodeId:'fixture-node',schedulerId:'fixture-scheduler'},source:'official',items:[{workspaceId:'workspace-fixture',title:'同名项目',path:'/projects/original',available:true},...(window.fixtureWorkspaceMode==='missing'?[]:[{workspaceId:'workspace-draft',title:'同名项目',path:'/projects/second',available:true}])]};},
 startup:async()=>structuredClone(startup), saveStartup:async input=>{window.fixtureWrites.push(structuredClone(input));Object.assign(startup[input.target].values,input.changes);},
 read:async()=>({nodeId:'fixture-node',role:startup.task.values.role,databasePath:'/fixture/tasks.sqlite',profilePatch:'/fixture/cordis.patch.yml',schedulerId:'fixture-scheduler',defaultWorkspaceId:startup.task.values.defaultWorkspaceId,planningDecisionEnabled:startup.task.values.planningDecisionEnabled,sessionDecisionEnabled:startup.task.values.sessionDecisionEnabled,remote:{...startup.remote.values,nodeId:'fixture-node',polling:false,authMode:'trusted-network',executorIdentity:null}}),
 readQueue:async()=>({sampledAt:'2026-10-05T00:00:00.000Z',nodeId:'fixture-node',items:[{taskId:'fixture-task',runId:'fixture-run',title:'示例：整理交付材料',state:'queued',sessionId:null,workspaceId:'workspace-fixture'}],truncated:false}),
@@ -213,7 +214,7 @@ try {
     await call("Page.navigate", { url: origin });
     await until(() =>
       run(
-        `window.fixtureReady&&!!document.querySelector('#task-startup-task-role')`,
+        `window.fixtureReady&&!!document.querySelector('#task-startup-task-role')&&!document.querySelector('#task-startup-task-defaultWorkspaceId').disabled`,
       ),
     );
     await run(

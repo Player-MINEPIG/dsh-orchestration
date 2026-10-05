@@ -135,6 +135,16 @@ try {
     "sessionDecisionEnabled",
   ]);
   assert.equal(snapshot.task.values.planningDecisionEnabled, true);
+  const directory = await invoke("workspaces");
+  assert.equal(directory.scope.entryId, snapshot.task.entryId);
+  assert.equal(directory.scope.nodeId, "fixture");
+  assert.ok(
+    directory.items.some(
+      (item) =>
+        item.workspaceId === snapshot.task.values.defaultWorkspaceId ||
+        item.available,
+    ),
+  );
   const originalService = ctx.get("taskSystem");
   const identity = originalService.ledger.schedulerIdentity();
   const workspace = originalService.ledger

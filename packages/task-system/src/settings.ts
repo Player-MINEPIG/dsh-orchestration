@@ -37,6 +37,42 @@ const QueueSnapshot = z.object({
   ),
   truncated: z.boolean(),
 });
+export const WorkspaceCatalog = z.object({
+  scope: z.object({
+    entryId: z.string(),
+    nodeId: z.string(),
+    schedulerId: z.string(),
+  }),
+  source: z.enum(["official", "task"]),
+  items: z.array(
+    z.object({
+      workspaceId: z.string(),
+      title: z.string(),
+      path: z.string(),
+      available: z.boolean(),
+    }),
+  ),
+});
+export const workspaceCatalogDescriptor: InvocationDescriptor = {
+  id: "@dsh-task/task-system#taskPluginSettings/workspaces",
+  service: "taskPluginSettings",
+  namespace: "taskPluginSettings",
+  method: "workspaces",
+  invocation: { kind: "direct" },
+  parameters: [],
+  result: {
+    mode: "strict",
+    typeSymbol: "@dsh-task/task-system#WorkspaceCatalog",
+    create: () => WorkspaceCatalog,
+  },
+};
+interface WorkspaceRegistryPort {
+  list(): readonly {
+    path: string;
+    title: string;
+    status?(): Promise<"ok" | "missing-dir">;
+  }[];
+}
 const ReadonlySettings = z.object({
   schedulerId: z.string(),
   defaultWorkspaceId: z.string().nullable(),
@@ -172,6 +208,50 @@ export class TaskPluginSettings extends TypertRemoteService {
   async startup() {
     return readStartupSettings(this.ctx);
   }
+  async workspaces() {
+    const task = this.ctx.get("taskSystem") as TaskSystemService | undefined;
+    if (!task) throw new Error("Task plugin is not loaded");
+    const row = readStartupSettings(this.ctx).task;
+    if (!row) throw new Error("Task startup scope is unavailable");
+    // Public registry metadata only: never project sessionIds or read session content.
+    const registry = this.ctx.get("workspaceRegistry") as
+      | WorkspaceRegistryPort
+      | undefined;
+    const official = registry?.list();
+    const byPath = new Map(official?.map((item) => [resolve(item.path), item]));
+    const nodeId = task.config.nodeId;
+    let node: ReturnType<TaskSystemService["ledger"]["getNode"]> | undefined;
+    try {
+      node = task.ledger.getNode(nodeId);
+    } catch (error) {
+      if ((error as { code?: string }).code !== "NOT_FOUND") throw error;
+    }
+    const items = await Promise.all(
+      task.ledger.registeredWorkspaces(nodeId).map(async (item) => {
+        const directory = byPath.get(resolve(item.path));
+        const status = directory?.status ? await directory.status() : "ok";
+        return {
+          workspaceId: item.workspaceId,
+          title: directory?.title || item.label,
+          path: item.path,
+          available:
+            item.state === "ready" &&
+            !!node?.enabled &&
+            !!node.workspaceIds.includes(item.workspaceId) &&
+            status === "ok",
+        };
+      }),
+    );
+    return WorkspaceCatalog.parse({
+      scope: {
+        entryId: row.entryId,
+        nodeId,
+        schedulerId: task.ledger.schedulerIdentity(),
+      },
+      source: official ? "official" : "task",
+      items,
+    });
+  }
   async saveStartup(input: unknown) {
     return await saveStartupSettings(this.ctx, input);
   }
@@ -288,6 +368,7 @@ export function apply(ctx: Context): void {
           invocations: [
             settingsDescriptor,
             queueDescriptor,
+            workspaceCatalogDescriptor,
             executorIdentityDescriptor,
             startupDescriptor,
             saveStartupDescriptor,

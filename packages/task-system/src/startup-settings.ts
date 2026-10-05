@@ -39,7 +39,15 @@ export const RemoteStartupValues = z
 export const StartupSettings = z.object({
   writable: z.boolean(),
   applies: z.literal("plugin-restart"),
-  task: z.object({ entryId: z.string(), values: TaskStartupValues }).nullable(),
+  task: z
+    .object({
+      entryId: z.string(),
+      values: TaskStartupValues,
+      workspaceScope: z
+        .object({ nodeId: z.string(), schedulerId: z.string() })
+        .optional(),
+    })
+    .nullable(),
   remote: z
     .object({
       entryId: z.string(),
@@ -208,6 +216,14 @@ export function readStartupSettings(ctx: Context) {
       ? {
           entryId: a.options.id,
           values: taskValues(a.options.config ?? {}, task),
+          ...(task
+            ? {
+                workspaceScope: {
+                  nodeId: task.config.nodeId,
+                  schedulerId: task.ledger.schedulerIdentity(),
+                },
+              }
+            : {}),
         }
       : null,
     remote: b
