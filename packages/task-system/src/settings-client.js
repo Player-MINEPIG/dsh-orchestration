@@ -42,12 +42,15 @@ window.__ModuleLoader__.load({
         "Uses the existing decision-model configuration. If no valid decision is available, the default Task session/workspace policy applies.",
       decisionModelSetup:
         "Open Plugins and configure the existing @dsh-task/typed-decisions entry with your existing model/provider. This switch enables its use for session/workspace decisions.",
+      schedulerAddress: "Scheduler address",
+      audienceHint:
+        "Audience must match the scheduler's configured target validation label. Obtain it from the scheduler; it is not inferred from the address.",
       schedulerConnection: "Scheduler connection",
       executorConnections: "Executor connections",
       executorSetupStatus:
         "Executor registrations and permissions use the existing task-system plugin configuration. Review them in Plugins before remote dispatch.",
       connectionSetupStatus:
-        "Connection not ready. Complete its existing authentication, target binding and permissions in advanced settings or Plugins.",
+        "Connection not ready. Obtain connection information from the scheduler, including audience, authentication/permissions and the exact target binding, then complete it in advanced settings or Plugins.",
       connectionUnconfirmed:
         "Connection configured; scheduler identity and permissions have not been confirmed here.",
       remotePausedStatus:
@@ -211,12 +214,15 @@ window.__ModuleLoader__.load({
         "使用已有决策模型配置；没有有效决策时，采用默认 Task 会话与工作区策略。",
       decisionModelSetup:
         "打开“插件”，配置已有 @dsh-task/typed-decisions 条目并使用已有模型／provider；此开关控制是否将它用于会话与工作区决策。",
+      schedulerAddress: "调度端地址",
+      audienceHint:
+        "audience 是调度端配置的目标验证标识，必须与调度端的值一致；请向调度端获取，不按地址猜测。",
       schedulerConnection: "调度端连接",
       executorConnections: "执行端连接信息",
       executorSetupStatus:
         "执行端注册与权限沿用已有 task-system 插件配置；远程派发前请在“插件”中确认。",
       connectionSetupStatus:
-        "连接尚未就绪。请在高级设置或“插件”中完成已有认证、目标绑定与权限配置。",
+        "连接尚未就绪。请向调度端获取连接信息（audience、认证／权限及目标绑定），再在高级设置或“插件”中补齐。",
       connectionUnconfirmed: "连接已配置；此处尚未确认调度端身份与权限。",
       remotePausedStatus: "远程运行已暂停，连接配置仍可编辑。",
       startupEditable: "角色、工作区与调度端连接",
@@ -981,6 +987,35 @@ window.__ModuleLoader__.load({
         ),
       );
     }
+    function connectionUrl(value) {
+      try {
+        const url = new URL(value);
+        return ["http:", "https:"].includes(url.protocol) ? url : null;
+      } catch {
+        return null;
+      }
+    }
+    function simpleEndpointDisplay(value) {
+      const url = connectionUrl(value);
+      return url && !url.username && !url.password && !url.search && !url.hash
+        ? url.origin
+        : value;
+    }
+    function simpleEndpointInput(value, previous) {
+      const text = String(value).trim(),
+        url = connectionUrl(text);
+      if (
+        !url ||
+        url.username ||
+        url.password ||
+        url.search ||
+        url.hash ||
+        url.pathname !== "/"
+      )
+        return text;
+      const path = connectionUrl(previous)?.pathname ?? "/dsh-task/v1/commands";
+      return url.origin + path;
+    }
     function startupDraft(target, values) {
       return target === "task"
         ? {
@@ -1107,7 +1142,10 @@ window.__ModuleLoader__.load({
         startupDraft(target, row.values),
       );
       const [status, setStatus] = React.useState({ saving: false });
+      const endpoint = React.useRef(row.values.endpoint);
       const edit = (key, value) => {
+        if (key === "endpoint" && connectionUrl(value))
+          endpoint.current = value;
         if (key === "role") onRoleChange?.(value);
         setDraft((old) => ({
           ...old,
@@ -1172,7 +1210,11 @@ window.__ModuleLoader__.load({
             hidden: target === "remote" && !advanced && key !== "endpoint",
             style: { display: "block", margin: "12px 0" },
           },
-          h("span", { style: { display: "block", marginBottom: 6 } }, t(label)),
+          h(
+            "span",
+            { style: { display: "block", marginBottom: 6 } },
+            t(key === "endpoint" && !advanced ? "schedulerAddress" : label),
+          ),
           key === "role"
             ? h(
                 "select",
@@ -1194,7 +1236,10 @@ window.__ModuleLoader__.load({
             : h("input", {
                 id: `task-startup-${target}-${key}`,
                 style: controlStyle,
-                value: draft[key],
+                value:
+                  key === "endpoint" && !advanced
+                    ? simpleEndpointDisplay(draft[key])
+                    : draft[key],
                 disabled:
                   disabled ||
                   (target === "remote" &&
@@ -1208,8 +1253,20 @@ window.__ModuleLoader__.load({
                 ].includes(key)
                   ? "numeric"
                   : undefined,
-                onChange: (event) => edit(key, event.target.value),
+                onChange: (event) =>
+                  edit(
+                    key,
+                    key === "endpoint" && !advanced
+                      ? simpleEndpointInput(
+                          event.target.value,
+                          endpoint.current,
+                        )
+                      : event.target.value,
+                  ),
               }),
+          key === "audience" && advanced
+            ? h("p", { style: hintStyle }, t("audienceHint"))
+            : null,
         );
       return h(
         "section",
@@ -1439,6 +1496,7 @@ window.__ModuleLoader__.load({
               disabled: disabled || !parsed.dirty,
               onClick: () => {
                 setDraft(startupDraft(target, row.values));
+                endpoint.current = row.values.endpoint;
                 onRoleChange?.(row.values.role);
                 setStatus({ saving: false });
               },
@@ -1603,6 +1661,7 @@ window.__ModuleLoader__.load({
           [data-task-plugin-settings] button:focus-visible, [data-task-plugin-settings] input:focus-visible, [data-task-plugin-settings] select:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
           [data-task-plugin-settings] section, [data-task-plugin-settings] [data-task-runtime] { border-top: 1px solid var(--dsw-alias-border-l3, #8a8a8a); padding-top: 18px; margin-top: 22px; }
           [data-task-plugin-settings] [data-task-startup-settings] > [data-startup-target="task"] { border-top: 0; padding-top: 0; margin-top: 0; }
+          [data-task-plugin-settings] section > h3:first-child, [data-task-plugin-settings] section > h4:first-child { margin-top: 0 !important; }
           [data-task-plugin-settings] [data-task-mode] { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
           [data-task-plugin-settings] [data-task-mode] [aria-pressed="true"] { font-weight: 600; box-shadow: inset 0 -2px currentColor; }`,
         ),
@@ -1871,6 +1930,8 @@ window.__ModuleLoader__.load({
       ExecutorIdentity,
       startupDraft,
       startupChanges,
+      simpleEndpointDisplay,
+      simpleEndpointInput,
       StartupRow,
       StartupSettings,
       QueueContents,

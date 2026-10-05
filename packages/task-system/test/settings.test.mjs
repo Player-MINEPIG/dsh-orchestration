@@ -21,6 +21,7 @@ function client(primitives = {}, react = {}) {
       "utf8",
     ),
     {
+      URL,
       window: {
         __ModuleLoader__: {
           load(row) {
@@ -28,6 +29,7 @@ function client(primitives = {}, react = {}) {
             module = row.factory((name) =>
               name === "react"
                 ? {
+                    useRef: (initial) => ({ current: initial }),
                     createElement: (type, props, ...children) => ({
                       type,
                       props,
@@ -995,4 +997,54 @@ test("remote pause stages, discards and saves through the loaded configuration; 
     await button(tree, "startupSave").props.onClick();
     assert.equal(writes.length, 1);
   }
+});
+
+test("simple scheduler addresses preserve existing paths and never infer audience", () => {
+  const ui = client();
+  const existing = "https://fixture.invalid/dsh-task/v1/commands";
+  assert.equal(ui.simpleEndpointDisplay(existing), "https://fixture.invalid");
+  assert.equal(
+    ui.simpleEndpointInput("https://new.invalid", existing),
+    "https://new.invalid/dsh-task/v1/commands",
+  );
+  assert.equal(ui.simpleEndpointInput(existing, null), existing);
+  assert.equal(
+    ui.simpleEndpointInput("https://new.invalid", null),
+    "https://new.invalid/dsh-task/v1/commands",
+  );
+  const custom = "https://fixture.invalid/custom/commands";
+  assert.equal(ui.simpleEndpointDisplay(custom), "https://fixture.invalid");
+  assert.equal(
+    ui.simpleEndpointInput("https://new.invalid", custom),
+    "https://new.invalid/custom/commands",
+  );
+  assert.equal(
+    ui.simpleEndpointInput("https://new.invalid/explicit", custom),
+    "https://new.invalid/explicit",
+  );
+  assert.equal(ui.simpleEndpointInput("incomplete", custom), "incomplete");
+  assert.equal(
+    ui.simpleEndpointDisplay("https://fixture.invalid?token=invalid"),
+    "https://fixture.invalid?token=invalid",
+  );
+  const values = {
+    role: "executor",
+    paused: true,
+    endpoint: existing,
+    audience: "existing-target",
+    pollIntervalMs: 0,
+    concurrency: 1,
+    taskSessionsEnabled: true,
+    trustedNetworkTarget: null,
+  };
+  const draft = ui.startupDraft("remote", values);
+  draft.concurrency = "2";
+  const changes = ui.startupChanges("remote", values, draft).changes;
+  assert.deepEqual(Object.keys(changes), ["concurrency"]);
+  const incomplete = { ...values, endpoint: null, audience: null };
+  const newDraft = ui.startupDraft("remote", incomplete);
+  newDraft.endpoint = ui.simpleEndpointInput("https://new.invalid", null);
+  const pending = ui.startupChanges("remote", incomplete, newDraft);
+  assert.ok(pending.invalid.includes("audience"));
+  assert.equal(pending.changes.audience, undefined);
 });
