@@ -81,6 +81,7 @@ export interface Config {
   workspaceRoots?: WorkspaceRoot[];
   defaultWorkspaceId?: string | null;
   sessionDecisionEnabled?: boolean;
+  planningDecisionEnabled?: boolean;
   localNode?: LocalNodeBootstrap | null;
   remoteNodes?: NodeBootstrap[];
   autoAdmitObservations?: boolean;
@@ -160,6 +161,7 @@ const PlainConfig: z<Config> = z.object({
   trustedUnconfinedTools: z.boolean().default(false),
   defaultWorkspaceId: z.union([z.const(null), z.string()]).default(null),
   sessionDecisionEnabled: z.boolean().default(false),
+  planningDecisionEnabled: z.boolean().default(true),
   workspaceRoots: z
     .array(
       z.object({
@@ -291,6 +293,7 @@ export interface NativeClaim {
     | "executionStartedAt"
     | "retryPolicy"
     | "retry"
+    | "workspaceConstraint"
   >;
   attempt: Pick<
     Claim["attempt"],
@@ -1893,137 +1896,150 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
     );
   }
 
-  if (config.role !== "executor")
-    ctx.inject(["typedDecisions"], async (planningCtx) => {
-      // Keep this optional package import inside the service-dependent lifecycle.
-      // Installing only task-system never imports the decisions package.
-      const { TaskPlanner, taskDecisionCatalog } = await import(
-        "./planning.js"
+  if (config.role !== "executor") {
+    const planningCtx = ctx;
+    // Planning itself is available without a decision plugin. Only its model
+    // branch dynamically imports the optional typed-decision consumer.
+    const { TaskPlanner, taskDecisionCatalog } = await import("./planning.js");
+    const decisions = () => planningCtx.get("typedDecisions");
+    const planner = new TaskPlanner(
+      ledger,
+      decisions,
+      () =>
+        taskDecisionCatalog(
+          ledger,
+          { role: config.role, nodeId: config.nodeId },
+          config.decisionTtlMs,
+        ),
+      () => {
+        if (config.role === "executor")
+          throw new Error("executor cannot apply task plans");
+      },
+      Date.now,
+      () => config.planningDecisionEnabled,
+    );
+    const lifecycle = new AbortController();
+    const pending = new Set<Promise<unknown>>();
+    let observationTick: ReturnType<typeof setInterval> | undefined;
+    let observationJob: Promise<void> | undefined;
+    let closing: Promise<void> | undefined;
+    const track = <T>(job: Promise<T>): Promise<T> => {
+      pending.add(job);
+      void job.then(
+        () => pending.delete(job),
+        () => pending.delete(job),
       );
-      const decisions = planningCtx.get("typedDecisions");
-      if (!decisions) throw new Error("typed decision service unavailable");
-      const planner = new TaskPlanner(
-        ledger,
-        decisions,
-        () =>
-          taskDecisionCatalog(
-            ledger,
-            { role: config.role, nodeId: config.nodeId },
-            config.decisionTtlMs,
-          ),
-        () => {
-          if (config.role === "executor")
-            throw new Error("executor cannot apply task plans");
-        },
-      );
-      const lifecycle = new AbortController();
-      const pending = new Set<Promise<unknown>>();
-      let observationTick: ReturnType<typeof setInterval> | undefined;
-      let observationJob: Promise<void> | undefined;
-      let closing: Promise<void> | undefined;
-      const track = <T>(job: Promise<T>): Promise<T> => {
-        pending.add(job);
-        void job.then(
-          () => pending.delete(job),
-          () => pending.delete(job),
-        );
-        return job;
-      };
-      const drain = () =>
-        (closing ??= (async () => {
-          lifecycle.abort(new Error("typed planning dependency stopped"));
-          if (observationTick) clearInterval(observationTick);
-          await Promise.allSettled([...pending]);
-        })());
-      const removeDrain = service.addDrain(drain);
-      planningCtx.effect(() => async () => {
-        await drain();
-        removeDrain();
-      });
-      if (config.autoAdmitObservations) {
-        const consider = () => {
-          if (lifecycle.signal.aborted || observationJob) return;
-          const candidate = ledger
-            .observationCandidates("pending")
-            .find((item) => !ledger.getDecision(`observe:${item.candidateId}`));
-          if (!candidate) return;
-          observationJob = track(
-            (async () => {
-              const record = await planner.planObservation(
-                candidate.candidateId,
-                { signal: lifecycle.signal },
-              );
-              lifecycle.signal.throwIfAborted();
-              if (
-                record.proposal &&
-                typeof record.proposal === "object" &&
-                !Array.isArray(record.proposal) &&
-                record.proposal.kind === "proposal"
-              )
-                planner.apply(record.decisionId);
-            })(),
-          )
-            .catch((error) => {
-              if (!lifecycle.signal.aborted)
-                planningCtx.logger.warn(
-                  "observation decision requires review: %s",
-                  error,
-                );
-            })
-            .finally(() => {
-              observationJob = undefined;
-            });
-        };
-        observationTick = setInterval(consider, config.maintenanceIntervalMs);
-        if (!config.keepAlive) observationTick.unref();
-        consider();
-      }
-      planningCtx.tools.register(
-        defineTool({
-          name: "task_plan",
-          description:
-            "Obtain a typed planning recommendation, or explicitly apply a stored recommendation after deterministic current-catalog checks. Observation alone never invokes apply.",
-          parameters: {
-            action: {
-              type: "string",
-              enum: ["propose", "apply"],
-              required: true,
-            },
-            requestId: { type: "string", required: true },
-            title: { type: "string" },
-            description: { type: "string" },
-            provider: { type: "string" },
-            model: { type: "string" },
-            reasoningEffort: { type: "string" },
-          },
-          output,
-          execute: async (args, exec) => {
-            exec.signal.throwIfAborted();
-            lifecycle.signal.throwIfAborted();
-            if (args.action === "apply")
-              return json(planner.apply(args.requestId));
-            if (!args.title) throw new Error("planning requires title");
-            return json(
-              await track(
-                planner.plan(
-                  {
-                    requestId: args.requestId,
-                    title: args.title,
-                    description: args.description ?? "",
-                    ...(args.provider ? { provider: args.provider } : {}),
-                    ...(args.model ? { model: args.model } : {}),
-                    ...(args.reasoningEffort
-                      ? { reasoningEffort: args.reasoningEffort }
-                      : {}),
-                  },
-                  { signal: AbortSignal.any([exec.signal, lifecycle.signal]) },
-                ),
-              ),
-            );
-          },
-        }),
-      );
+      return job;
+    };
+    const drain = () =>
+      (closing ??= (async () => {
+        lifecycle.abort(new Error("typed planning dependency stopped"));
+        if (observationTick) clearInterval(observationTick);
+        await Promise.allSettled([...pending]);
+      })());
+    const removeDrain = service.addDrain(drain);
+    planningCtx.effect(() => async () => {
+      await drain();
+      removeDrain();
     });
+    if (config.autoAdmitObservations) {
+      const consider = () => {
+        if (
+          lifecycle.signal.aborted ||
+          observationJob ||
+          !config.planningDecisionEnabled ||
+          !planningCtx.get("typedDecisions")
+        )
+          return;
+        const candidate = ledger
+          .observationCandidates("pending")
+          .find((item) => !ledger.getDecision(`observe:${item.candidateId}`));
+        if (!candidate) return;
+        observationJob = track(
+          (async () => {
+            const record = await planner.planObservation(
+              candidate.candidateId,
+              { signal: lifecycle.signal },
+            );
+            lifecycle.signal.throwIfAborted();
+            if (
+              record.proposal &&
+              typeof record.proposal === "object" &&
+              !Array.isArray(record.proposal) &&
+              record.proposal.kind === "proposal"
+            )
+              planner.apply(record.decisionId);
+          })(),
+        )
+          .catch((error) => {
+            if (!lifecycle.signal.aborted)
+              planningCtx.logger.warn(
+                "observation decision requires review: %s",
+                error,
+              );
+          })
+          .finally(() => {
+            observationJob = undefined;
+          });
+      };
+      observationTick = setInterval(consider, config.maintenanceIntervalMs);
+      if (!config.keepAlive) observationTick.unref();
+      consider();
+    }
+    planningCtx.tools.register(
+      defineTool({
+        name: "task_plan",
+        description:
+          "Propose or apply task planning. Scheduler decisions select executor/model route, never workspace/session. With planning decisions disabled or unavailable, keep an explicit route or leave the task pending routing. Observation alone never invokes apply.",
+        parameters: {
+          action: {
+            type: "string",
+            enum: ["propose", "apply"],
+            required: true,
+          },
+          requestId: { type: "string", required: true },
+          title: { type: "string" },
+          description: { type: "string" },
+          route: { type: "object", additionalProperties: true },
+          workspaceId: { type: "string" },
+          provider: { type: "string" },
+          model: { type: "string" },
+          reasoningEffort: { type: "string" },
+        },
+        output,
+        execute: async (args, exec) => {
+          exec.signal.throwIfAborted();
+          lifecycle.signal.throwIfAborted();
+          if (args.action === "apply")
+            return json(planner.apply(args.requestId));
+          if (!args.title) throw new Error("planning requires title");
+          return json(
+            await track(
+              planner.plan(
+                {
+                  requestId: args.requestId,
+                  title: args.title,
+                  description: args.description ?? "",
+                  ...(args.route
+                    ? { route: args.route as unknown as Claim["run"]["route"] }
+                    : {}),
+                  ...(args.workspaceId
+                    ? { workspaceId: args.workspaceId }
+                    : {}),
+                  ...(args.provider ? { provider: args.provider } : {}),
+                  ...(args.model ? { model: args.model } : {}),
+                  ...(args.reasoningEffort
+                    ? { reasoningEffort: args.reasoningEffort }
+                    : {}),
+                },
+                { signal: AbortSignal.any([exec.signal, lifecycle.signal]) },
+              ),
+            ),
+          );
+        },
+      }),
+    );
+  }
 
   ctx.tools.register(
     defineTool({

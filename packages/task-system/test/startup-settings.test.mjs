@@ -120,3 +120,10 @@ test('new connections cannot switch authentication mode or invent a configured n
   f.remoteRow.options.config.authMode='trusted-network';f.remoteRow.options.config.nodeId='unconfigured'
   await assert.rejects(saveStartupSettings(f.ctx,input(f,'remote',changes)),{code:'STARTUP_CONNECTION_REQUIRED'});assert.equal(f.writes.length,0);assert.equal(f.remoteRow.options.config.coordinator,null)
 })
+
+test('planning decision switch persists independently without changing executor session settings',async t=>{
+  const f=fixture(t)
+  f.taskRow.options.config.sessionDecisionEnabled=true;f.taskRow.options.config.defaultWorkspaceId=null
+  const result=await saveStartupSettings(f.ctx,input(f,'task',{planningDecisionEnabled:false}))
+  assert.equal(result.saved,true);assert.equal(f.taskRow.options.config.planningDecisionEnabled,false);assert.equal(f.taskRow.options.config.sessionDecisionEnabled,true);assert.equal(f.taskRow.options.config.defaultWorkspaceId,null)
+})

@@ -79,5 +79,13 @@ try {
   service=ctx.get('remoteExecution');view=await ctx.get('taskPluginSettings').startup()
   assert.equal(view.remote.loaded,true);assert.equal(view.remote.values.paused,true);assert.equal(view.remote.values.concurrency,2);assert.equal(view.remote.values.endpoint,'http://127.0.0.3:45679/commands')
   assert.equal(service.gateway,undefined);assert.equal(service.nativeWorker,undefined);assert.equal(service.coordinatorLedger,undefined);assert.equal(existsSync(remoteState),false)
-  console.log(JSON.stringify({...evidence,pausedConfigurationFiberLoaded:true,officialPausedSaveSucceeded:true,pausedSaveSurvivedRestart:true,pausedAfterSave:true,invalidResumePreservedPaused:true,noRemoteJournal:true,noCoordinatorClient:true,noWorker:true,noListener:true,noHeartbeat:true,pausedExecutionEntrypointsRejected:true},null,2))
+  const planningBefore=view.task.values
+  assert.equal(planningBefore.planningDecisionEnabled,true)
+  await ctx.get('taskPluginSettings').saveStartup({target:'task',expected:planningBefore,changes:{planningDecisionEnabled:false}})
+  view=await ctx.get('taskPluginSettings').startup()
+  assert.equal(view.task.values.planningDecisionEnabled,false);assert.equal(view.task.values.sessionDecisionEnabled,planningBefore.sessionDecisionEnabled)
+  await ctx.fiber.dispose();ctx=await start()
+  view=await ctx.get('taskPluginSettings').startup()
+  assert.equal(view.task.values.planningDecisionEnabled,false);assert.equal(view.remote.values.paused,true);assert.equal(existsSync(remoteState),false)
+  console.log(JSON.stringify({...evidence,pausedConfigurationFiberLoaded:true,officialPausedSaveSucceeded:true,pausedSaveSurvivedRestart:true,pausedAfterSave:true,invalidResumePreservedPaused:true,noRemoteJournal:true,noCoordinatorClient:true,noWorker:true,noListener:true,noHeartbeat:true,pausedExecutionEntrypointsRejected:true,planningSwitchOfficialSaveAndRestart:true},null,2))
 } finally {if(ctx) await ctx.fiber.dispose();rmSync(tmp,{recursive:true,force:true})}

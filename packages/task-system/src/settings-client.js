@@ -42,7 +42,7 @@ window.__ModuleLoader__.load({
         "The scheduler uses the existing task_plan decision tool to propose an executor. Applying a proposal checks the authoritative executor catalog and permissions.",
       planningDecisionEnabled: "Enable scheduler executor-selection decisions",
       schedulerDecisionStatus:
-        "Enable this switch and configure the existing model to choose an executor. When disabled or the model is unavailable, an explicit route is retained; work without an assigned executor remains pending assignment.",
+        "Enable this switch and configure the existing model to choose an executor. When disabled or the decision plugin is not loaded, an explicit route is retained; work without an assigned executor remains pending assignment.",
       schedulerDecisionModelEntry: "Scheduler decision model settings",
       schedulerDecisionSetup:
         "Open Plugins and configure the existing @dsh-task/typed-decisions entry. The executor session/workspace switch does not control task_plan.",
@@ -228,7 +228,7 @@ window.__ModuleLoader__.load({
         "调度端使用现有 task_plan 决策工具提出执行者建议；应用建议时校验权威执行端目录与权限。",
       planningDecisionEnabled: "启用调度端执行者决策",
       schedulerDecisionStatus:
-        "打开此开关并配置已有模型，才使用模型选择执行者。关闭或模型不可用时沿用明确路由；未确定执行者则保持待分配。",
+        "打开此开关并配置已有模型，才使用模型选择执行者。关闭或未加载决策插件时沿用明确路由；未确定执行者则保持待分配。",
       schedulerDecisionModelEntry: "调度端决策模型配置",
       schedulerDecisionSetup:
         "打开“插件”，配置已有 @dsh-task/typed-decisions 条目。执行端的工作区／会话开关不控制 task_plan。",

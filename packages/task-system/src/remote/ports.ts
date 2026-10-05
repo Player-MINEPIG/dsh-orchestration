@@ -3,14 +3,14 @@ import type { Claim as CoreClaim, Run as CoreRun } from '../contracts.js'
 
 export interface ExecutorIdentity { schedulerId: string; executorId: string; nodeId: string }
 export interface TaskSession { schedulerId: string; taskId: string; nodeId: string; workspaceId?: string; sessionId: string; createdAt: string }
-export interface TaskSessionContext { task?: Task; workspaceId?: string; eligibleWorkspaceIds?: string[]; schedulerId: string; taskSessionId?: string; sessions: TaskSession[] }
+export interface TaskSessionContext { task?: Task; workspaceId?: string; workspaceConstraint?: string; eligibleWorkspaceIds?: string[]; schedulerId: string; taskSessionId?: string; sessions: TaskSession[] }
 export interface TaskSessionChoice { expectedTaskSessionId?: string | null; workspaceId?: string; session: { mode: 'new' } | { mode: 'reuse'; sessionId: string }; decision?: Json }
 export interface SelectedTaskSession extends TaskSession { resume: boolean }
 export interface Receipt<T = unknown> { commandId: string; acceptedAt: string; value: T }
 export interface Route { nodeId: string; provider: string; model: string; reasoningEffort?: string; workspaceId?: string; requiredCapabilities: string[] }
 export interface TaskPolicy { allowedNodeIds?: string[]; allowedWorkspaceIds?: string[]; allowedTools?: string[]; maxRuntimeMs?: number; maxDepth?: number; requiredResources?: string[]; maxChildren?: number; maxDescendants?: number; settlementQuietMs?: number }
 export interface Task { taskId: string; title: string; description: string; workspaceId?: string; policy?: TaskPolicy }
-export interface Run { runId: string; taskId: string; state: string; route?: Route; configuration: Json; cancellationRequested?: boolean; historyOnly?: boolean; observationOnly?: boolean; intentSnapshot?: CoreRun['intentSnapshot']; contextNotes?: CoreRun['contextNotes']; executionStartedAt?: string; retryPolicy?: { maxRetries: number; baseDelayMs: number; maxDelayMs: number; resumableTools?: string[] }; retry?: { count: number; notBefore: string; sessionId: string; previousAttemptId: string; reasonCode: string; completedTools?: CompletedToolFingerprint[] } }
+export interface Run { runId: string; taskId: string; state: string; route?: Route; workspaceConstraint?: string; configuration: Json; cancellationRequested?: boolean; historyOnly?: boolean; observationOnly?: boolean; intentSnapshot?: CoreRun['intentSnapshot']; contextNotes?: CoreRun['contextNotes']; executionStartedAt?: string; retryPolicy?: { maxRetries: number; baseDelayMs: number; maxDelayMs: number; resumableTools?: string[] }; retry?: { count: number; notBefore: string; sessionId: string; previousAttemptId: string; reasonCode: string; completedTools?: CompletedToolFingerprint[] } }
 export interface Attempt { attemptId: string; taskId: string; runId: string; nodeId: string; fence: number; leaseExpiresAt: string; state: string; sessionId?: string; executionId?: string }
 export interface Claim { attempt: Attempt; run: Run; task: Task; executionContext?: CoreClaim['executionContext'] }
 export interface LeaseRef { runId: string; attemptId: string; nodeId: string; fence: number; executionId?: string }

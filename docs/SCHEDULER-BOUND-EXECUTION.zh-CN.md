@@ -50,7 +50,7 @@
 
 `taskPluginSettings.saveStartup({target,expected,changes})` 只接受 startup 结果中对应 `values` 作为 expected，以及明确允许字段的局部 changes：
 
-- target=task：role、defaultWorkspaceId、sessionDecisionEnabled
+- target=task：role、defaultWorkspaceId、planningDecisionEnabled、sessionDecisionEnabled
 - target=remote：role、paused、endpoint、audience、pollIntervalMs、concurrency、taskSessionsEnabled、trustedNetworkTarget
 
 每次只保存一个目标，expected 快照必须匹配当前可见值。保存使用公开 `Context.get('configEditor')` 与 `ConfigEditor.edit`，在宿主回调中合并当前完整配置，因此保留未知字段及未编辑的鉴权信息。CLI 层提前拒绝；Home/CLI 覆盖的最终判定、原子落盘与失败回滚由 ConfigEditor 负责。不能通过任意 namespace、nodeId、key、credential、grant 或原始 Config 绕过白名单。
@@ -80,3 +80,19 @@
 官方 rc.2 的 ConfigEditor 不支持 Loader-disabled 且没有 fiber 的条目。该场景现在明确返回 `STARTUP_REMOTE_DISABLED`，不会为了可编辑而偷偷启用旧连接。已有 disabled 配置需要操作者在保持原身份、grant 和其他字段等值的前提下先配置 `paused:true`，再显式加载插件。该一次性迁移不由本 RPC 自动实施；rc.2 无法用同一个 disabled-edit API 完成其首步。
 
 真实官方回归：`DSH_OFFICIAL_ROOT=<现有官方rc.2安装目录> node --expose-internals tests/settings/disabled-remote-config-editor.mjs`。它在临时 profile 中复现 disabled-save 失败，证明公开 Entry.update 不持久保存 profile patch；再预置 paused 等值迁移，使用真正 ConfigEditor 保存 endpoint/concurrency，卸载重启读回，并验证全程无 remote journal/client/listener/worker/heartbeat。未配置连接的恢复被拒，文件和 paused 状态不变。测试不修改现有真实 profile。
+
+## 调度与执行端独立的决策开关
+
+- `planningDecisionEnabled: true` 是兼容默认值，只控制调度端 TaskPlanner；`sessionDecisionEnabled` 继续独立控制执行端 Session/Workspace 选择
+- 两个字段均经 Task Config、`describe()`、`startup().task.values` 与 `saveStartup(target='task')` 暴露，保存按原普通配置生命周期生效
+- 调度开关关闭、typed 服务缺失或可选包未安装时，`task_plan` 仍可用且不调用规划模型。明确完整 route 原样沿用；没有 route 则等待明确路由，不添加“第一台机器”之类的新策略
+- task_plan 结果的 `source` 为 `default` 或 `decision`，`routingStatus` 为 `pending-route`、`ready` 或 `not-requested`。`ready` 只表示候选完整，仍需 apply 与权威校验；pending-route 的提案应用后仅创建 Task/请求记录，不派发 Run
+- task_plan 可传明确 `route`（执行 provider/model/effort/能力约束）与 `workspaceId`（用户 Task 约束）。已有 schedule.route 与 task_run 的明确分配路径保持原样
+
+当前调度模型的请求删除 workspace 问题，不提供工作区候选；仍保留原 modelEffort 功能。返回额外 workspace 答案会被拒。调度模型建议不再写入 Task.workspaceId；该字段只接受明确输入或保留现有 Task 值。尚未应用的旧模型 workspace 回执返回 `WORKSPACE_REPLAN_REQUIRED`，需新 requestId 重新规划；已存历史和已应用结果不清洗。
+
+新 Run 的可选 `workspaceConstraint` 固定明确 Task/Run/Schedule 的 workspace。执行端候选和权威 selectTaskSession 同时验证它；自动补全的执行端默认/已有 Task session workspace 不标为约束。继续旧 Run 只保留已有 constraint，不倒推来源。该字段是原 claim 数据中的兼容可选字段，没有新增操作或 grant。
+
+ExecutionRoute.workspaceId 类型本来可选，newRun 可从明确 Task、已有 Task session 或该节点已登记的 defaultWorkspaceId 补全。远程 gateway 仍要求领取前存在具体授权 workspace；若节点没配置合法默认且任务无明确工作区，应补配置后派活，不能让调度模型代选。
+
+本次检查：44 项核心定向测试（含两开关四组合的真实 native 接线）、随后全部 266 项 task-system 与 71 项离线 native 回归通过；官方 rc.2 ConfigEditor 真实临时 profile 保存 planningDecisionEnabled=false 并重启读回，同时 executor session 开关未改变。未调用真实模型或更改真实连接、凭据、peer grant。

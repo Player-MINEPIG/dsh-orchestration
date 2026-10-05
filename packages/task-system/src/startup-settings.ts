@@ -21,6 +21,7 @@ export const TaskStartupValues = z
     role: Role,
     defaultWorkspaceId: z.string().min(1).nullable(),
     sessionDecisionEnabled: z.boolean(),
+    planningDecisionEnabled: z.boolean(),
   })
   .strict();
 export const RemoteStartupValues = z
@@ -130,6 +131,10 @@ function taskValues(raw: Raw, task: TaskSystemService | undefined) {
       typeof raw.defaultWorkspaceId === "string"
         ? raw.defaultWorkspaceId
         : (task?.config.defaultWorkspaceId ?? null),
+    planningDecisionEnabled:
+      typeof raw.planningDecisionEnabled === "boolean"
+        ? raw.planningDecisionEnabled
+        : (task?.config.planningDecisionEnabled ?? true),
     sessionDecisionEnabled:
       typeof raw.sessionDecisionEnabled === "boolean"
         ? raw.sessionDecisionEnabled
@@ -297,7 +302,12 @@ export async function saveStartupSettings(ctx: Context, value: unknown) {
               "Default workspace must already be registered, ready and granted to this executor",
             );
         }
-        if (resolved.sessionDecisionEnabled && !resolved.defaultWorkspaceId)
+        if (
+          resolved.sessionDecisionEnabled &&
+          !resolved.defaultWorkspaceId &&
+          (input.changes.sessionDecisionEnabled === true ||
+            Object.hasOwn(input.changes, "defaultWorkspaceId"))
+        )
           reject(
             "STARTUP_WORKSPACE_REQUIRED",
             "Choose an authorized default workspace before enabling session decisions",

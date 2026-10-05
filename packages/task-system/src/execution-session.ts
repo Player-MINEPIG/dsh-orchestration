@@ -13,7 +13,10 @@ import type {
 export async function chooseExecutionSession(input: {
   claim: {
     task: Claim["task"];
-    run: Pick<Claim["run"], "runId" | "route" | "retry">;
+    run: Pick<
+      Claim["run"],
+      "runId" | "route" | "retry" | "workspaceConstraint"
+    >;
     attempt: Pick<Claim["attempt"], "attemptId" | "nodeId">;
   };
   context: TaskSessionContext;
@@ -85,6 +88,9 @@ export async function chooseExecutionSession(input: {
         ...workspace,
         eligible:
           workspace.eligible &&
+          (!(context.workspaceConstraint ?? claim.run.workspaceConstraint) ||
+            workspace.workspaceId ===
+              (context.workspaceConstraint ?? claim.run.workspaceConstraint)) &&
           (!context.eligibleWorkspaceIds ||
             context.eligibleWorkspaceIds.includes(workspace.workspaceId)) &&
           (!task.workspaceId || task.workspaceId === workspace.workspaceId) &&

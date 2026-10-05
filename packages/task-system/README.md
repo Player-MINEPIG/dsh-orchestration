@@ -69,7 +69,9 @@ The append-only task/report history is the durable memory. Query/search/summary 
 
 ## Optional typed decisions
 
-Install the independent typed-decisions bundle to enable `task_plan`. `@dsh-task/task-system/planning` exports `TaskPlanner` and `taskDecisionCatalog`. Requests cover persistence/attachment, executor, provider/model/effort, actual workspace and narrative reporting. Accepted decision receipts persist in the task ledger before effects. A stale catalog, invalid candidate or failed policy check prevents application. A proposed new workspace requires authorized physical provisioning and a fresh plan; the model does not grant directory access.
+`task_plan` remains available without the independent typed-decisions bundle. `planningDecisionEnabled` defaults to true for compatibility; when disabled or the service is absent, planning makes no model call, preserves an explicit complete route, or leaves the task pending routing. `@dsh-task/task-system/planning` exports `TaskPlanner` and `taskDecisionCatalog`.
+
+Scheduler model requests retain task admission, executor, provider/model/effort and reporting choices, but never ask for a workspace or session. Those choices belong to the executor under its independent `sessionDecisionEnabled` setting. Explicit Task/Run/Schedule workspace constraints remain binding; derived defaults do not become user constraints. Old unapplied scheduler workspace recommendations require replanning instead of changing stored history. Receipts persist before effects, and current-catalog, capability and workspace checks remain mandatory.
 
 ## Private WebUI and migration
 

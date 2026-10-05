@@ -24,5 +24,6 @@
   "noWorker": true,
   "noListener": true,
   "noHeartbeat": true,
-  "pausedExecutionEntrypointsRejected": true
+  "pausedExecutionEntrypointsRejected": true,
+  "planningSwitchOfficialSaveAndRestart": true
 }

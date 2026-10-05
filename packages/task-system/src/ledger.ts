@@ -1812,9 +1812,24 @@ export class TaskLedger {
       fail("TOO_LARGE", "Resolved execution context exceeds 1 MB");
     return context;
   }
-  private newRun(input: RunInput): Run {
+  private newRun(
+    input: RunInput,
+    inherited?: { workspaceConstraint?: string },
+  ): Run {
     input = structuredClone(input);
     const task = this.getTask(input.taskId);
+    const workspaceConstraint = inherited
+      ? (inherited.workspaceConstraint ?? task.workspaceId)
+      : (input.route?.workspaceId ?? task.workspaceId);
+    if (
+      task.workspaceId &&
+      input.route?.workspaceId &&
+      task.workspaceId !== input.route.workspaceId
+    )
+      fail(
+        "FORBIDDEN",
+        "Explicit route cannot override the Task workspace constraint",
+      );
     const parentRunId = this.inferParentRun(
       task.parentTaskId,
       input.parentRunId,
@@ -1952,6 +1967,7 @@ export class TaskLedger {
         : {}),
       ...(contextNotes.length ? { contextNotes } : {}),
       ...(input.route ? { route: input.route } : {}),
+      ...(workspaceConstraint ? { workspaceConstraint } : {}),
       ...(input.occurrenceId ? { occurrenceId: input.occurrenceId } : {}),
     };
     this.saveRun(run);
@@ -2748,6 +2764,7 @@ export class TaskLedger {
         workspace?.state === "ready" &&
         workspace.nodeId === ref.nodeId &&
         (!task.workspaceId || task.workspaceId === workspaceId) &&
+        (!run.workspaceConstraint || run.workspaceConstraint === workspaceId) &&
         (!task.policy?.allowedWorkspaceIds ||
           task.policy.allowedWorkspaceIds.includes(workspaceId))
       );
@@ -2769,6 +2786,9 @@ export class TaskLedger {
         ...(task.policy ? { policy: task.policy } : {}),
       },
       ...(run.route?.workspaceId ? { workspaceId: run.route.workspaceId } : {}),
+      ...(run.workspaceConstraint
+        ? { workspaceConstraint: run.workspaceConstraint }
+        : {}),
       eligibleWorkspaceIds,
       ...(current ? { taskSessionId: current.sessionId } : {}),
       sessions: [
@@ -2806,6 +2826,11 @@ export class TaskLedger {
         run.route!.workspaceId ??
         task.workspaceId ??
         this.getNode(input.nodeId).defaultWorkspaceId;
+      if (run.workspaceConstraint && workspaceId !== run.workspaceConstraint)
+        fail(
+          "FORBIDDEN",
+          "Explicit Run/Schedule workspace cannot be changed by session selection",
+        );
       if (task.workspaceId && workspaceId !== task.workspaceId)
         fail(
           "FORBIDDEN",
@@ -3728,20 +3753,23 @@ export class TaskLedger {
         runs.some((r) => r.runId !== prior.runId && !TERMINAL.has(r.state))
       )
         fail("CONFLICT", "Only the current blocked run can be continued");
-      const run = this.newRun({
-        taskId: task.taskId,
-        route: prior.route,
-        sessionIds: prior.sessionIds,
-        contextNotes: prior.contextNotes,
-        configuration: {
-          ...(prior.configuration &&
-          typeof prior.configuration === "object" &&
-          !Array.isArray(prior.configuration)
-            ? prior.configuration
-            : {}),
-          continuationOf: prior.runId,
+      const run = this.newRun(
+        {
+          taskId: task.taskId,
+          route: prior.route,
+          sessionIds: prior.sessionIds,
+          contextNotes: prior.contextNotes,
+          configuration: {
+            ...(prior.configuration &&
+            typeof prior.configuration === "object" &&
+            !Array.isArray(prior.configuration)
+              ? prior.configuration
+              : {}),
+            continuationOf: prior.runId,
+          },
         },
-      });
+        { workspaceConstraint: prior.workspaceConstraint },
+      );
       this.event(
         "run.continued",
         { previousRunId: prior.runId },
@@ -3813,6 +3841,7 @@ export class TaskLedger {
       persistence: "ignore" | "create" | "attach";
       route?: ExecutionRoute;
       reporting: "none" | "summary" | "escalate";
+      workspaceId?: string;
     },
   ) {
     this.planner();
@@ -3837,10 +3866,38 @@ export class TaskLedger {
         model?: string;
         reasoningEffort?: string;
       } | null;
-      const expectedWorkspace = proposal.workspace as {
-        action?: string;
-        workspaceRef?: string;
-      } | null;
+      if (proposal.workspace)
+        fail(
+          "WORKSPACE_REPLAN_REQUIRED",
+          "Stored scheduler workspace recommendation requires replanning; workspace/session belong to the executor",
+        );
+      const originalInput = decision.input as Record<string, Json>;
+      const fixedRoute = originalInput.route as unknown as
+        | ExecutionRoute
+        | undefined;
+      const explicitWorkspaceId =
+        typeof originalInput.workspaceId === "string"
+          ? originalInput.workspaceId
+          : fixedRoute?.workspaceId;
+      if (input.workspaceId !== explicitWorkspaceId)
+        fail(
+          "CONFLICT",
+          "Explicit Task workspace differs from the recorded input",
+        );
+      if (
+        fixedRoute &&
+        canonical(input.route) !==
+          canonical({
+            ...fixedRoute,
+            ...(explicitWorkspaceId
+              ? { workspaceId: explicitWorkspaceId }
+              : {}),
+          })
+      )
+        fail(
+          "CONFLICT",
+          "Explicit execution route differs from the recorded input",
+        );
       const expectedReporting = proposal.reporting as {
         narrative?: string;
       } | null;
@@ -3852,8 +3909,7 @@ export class TaskLedger {
           input.route.provider !== expectedRoute?.provider ||
           input.route.model !== expectedRoute?.model ||
           input.route.reasoningEffort !== expectedRoute?.reasoningEffort ||
-          input.route.workspaceId !== expectedWorkspace?.workspaceRef ||
-          expectedWorkspace?.action === "create"
+          input.route.workspaceId !== explicitWorkspaceId
         )
           fail("CONFLICT", "Execution route differs from recorded decision");
       } else if (expectedExecutor || expectedRoute)
@@ -3870,13 +3926,22 @@ export class TaskLedger {
           : this.newTask({
               title: input.title,
               description: input.description,
-              workspaceId: input.route?.workspaceId,
+              workspaceId: explicitWorkspaceId,
             });
       if (
         input.persistence === "attach" &&
         proposal.attachTaskId !== task.taskId
       )
         fail("CONFLICT", "Attachment differs from decision");
+      if (
+        input.persistence === "attach" &&
+        explicitWorkspaceId &&
+        task.workspaceId !== explicitWorkspaceId
+      )
+        fail(
+          "CONFLICT",
+          "Existing Task workspace must be changed explicitly before replanning",
+        );
       if (task.kind === "observed" && input.route) {
         const originalInput = decision.input as Record<string, Json>;
         if (originalInput.observationCandidateId)

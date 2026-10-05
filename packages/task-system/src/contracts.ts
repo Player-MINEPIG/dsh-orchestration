@@ -119,6 +119,8 @@ export interface Run {
   reviewStatus?: "pending_user" | "accepted" | "rejected";
   validation?: "valid" | "not-submitted";
   route?: ExecutionRoute;
+  /** Explicit user Task/Run/Schedule workspace; derived executor defaults do not set this. */
+  workspaceConstraint?: string;
   occurrenceId?: string;
   configuration: Json;
   currentAttemptId?: string;

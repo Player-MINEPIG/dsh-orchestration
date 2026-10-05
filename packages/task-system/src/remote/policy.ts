@@ -8,6 +8,7 @@ export async function authorizedWorkspace(claim: Claim, policy: WorkerPolicy, pr
   insist(identifier(policy.nodeId) && claim.attempt.nodeId === policy.nodeId && claim.run.route?.nodeId === policy.nodeId, 'WRONG_EXECUTOR', 403)
   insist(claim.attempt.taskId === claim.task.taskId && claim.attempt.runId === claim.run.runId && claim.run.taskId === claim.task.taskId, 'CLAIM_IDENTITY_MISMATCH', 403)
   const route = claim.run.route
+  insist(!claim.run.workspaceConstraint || route.workspaceId === claim.run.workspaceConstraint,'TASK_WORKSPACE_CONSTRAINT',403)
   const taskPolicy = claim.task.policy
   insist(!taskPolicy?.allowedNodeIds || taskPolicy.allowedNodeIds.includes(policy.nodeId),'TASK_NODE_DENIED',403)
   insist(!taskPolicy?.allowedWorkspaceIds || (route.workspaceId && taskPolicy.allowedWorkspaceIds.includes(route.workspaceId)),'TASK_WORKSPACE_DENIED',403)

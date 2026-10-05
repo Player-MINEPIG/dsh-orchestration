@@ -866,10 +866,12 @@ test('resume cannot renew the attempt runtime budget or start effects after its 
   } finally { await h.dispose(); }
 });
 
-test('optional typed planning tool loads only with its provider and records an abstaining proposal without task admission', async () => {
+test('planning tool keeps a deterministic path before provider load and after unload', async () => {
   const h = await harness({ role: 'planner' });
   try {
-    assert.equal(h.ctx.tools.get('task_plan'), undefined);
+    assert.ok(h.ctx.tools.get('task_plan'));
+    const before = await tool(h.ctx, 'task_plan', { action: 'propose', requestId: 'before-provider', title: 'Await assignment without a model' });
+    assert.equal(before.isError, false); assert.equal(h.ledger.getDecision('before-provider').receipt.kind, 'deterministic-planning-v1');
     await h.ctx.loader.create({ id: 'decisions', name: pathToFileURL(resolve('packages/typed-decisions/dist/index.js')).href, config: {} });
     await h.ctx.loader.await();
     await until(() => h.ctx.tools.get('task_plan'));
@@ -880,7 +882,9 @@ test('optional typed planning tool loads only with its provider and records an a
     assert.ok(h.ledger.getDecision('optional-plan'));
     await h.ctx.loader.resolve('decisions').fiber.dispose();
     await h.ctx.loader.await();
-    assert.equal(h.ctx.tools.get('task_plan'), undefined);
+    assert.ok(h.ctx.tools.get('task_plan'));
+    const after = await tool(h.ctx, 'task_plan', { action: 'propose', requestId: 'after-provider', title: 'Still available without a model' });
+    assert.equal(after.isError, false); assert.equal(h.ledger.getDecision('after-provider').receipt.kind, 'deterministic-planning-v1');
   } finally { await h.dispose(); }
 });
 

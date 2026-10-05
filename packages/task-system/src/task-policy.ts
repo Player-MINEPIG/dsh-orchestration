@@ -39,6 +39,8 @@ export interface WorkspaceCandidate extends TaskCandidate {
   eligible: boolean;
 }
 export interface TaskDecisionSnapshot {
+  /** Scheduler-host requests leave workspace/session choices to the executor. */
+  workspaceSelection?: "executor";
   stateHash: string;
   validUntil: number;
   context: Json;
@@ -201,11 +203,15 @@ export function buildTaskDecisionRequest(
         "Select an eligible provider/model/reasoning tuple for the chosen executor, or none if not executing. Never invent another combination.",
         { none: "No model execution", ...candidateMap(routes) },
       ),
-      question(
-        "workspace",
-        "Select an eligible actual-workspace reuse/create proposal for the chosen executor, or none. This does not create a directory.",
-        { none: "No workspace change", ...candidateMap(workspaces) },
-      ),
+      ...(snapshot.workspaceSelection === "executor"
+        ? []
+        : [
+            question(
+              "workspace",
+              "Select an eligible actual-workspace reuse/create proposal for the chosen executor, or none. This does not create a directory.",
+              { none: "No workspace change", ...candidateMap(workspaces) },
+            ),
+          ]),
       question(
         "reporting",
         "Choose optional narrative reporting. Protocol completion and mandatory error/approval/budget reports always happen independently.",
@@ -263,7 +269,11 @@ export function consumeTaskDecisionReceipt(
     if (stableStringify(request) !== stableStringify(rebuilt))
       return abstain("request-snapshot-mismatch");
     object(receipt.answers, "answers");
-    keys(receipt.answers, [...ids], [...ids], "task answers");
+    const answerIds =
+      snapshot.workspaceSelection === "executor"
+        ? ids.filter((id) => id !== "workspace")
+        : [...ids];
+    keys(receipt.answers, answerIds, answerIds, "task answers");
     const values: Record<string, string> = {};
     for (const q of request.questions) {
       const answer = receipt.answers[q.questionId];
@@ -280,11 +290,16 @@ export function consumeTaskDecisionReceipt(
     const { executors, routes, workspaces } = filtered(snapshot);
     const executor = executors.find((e) => e.id === values.executor) ?? null;
     const modelRoute = routes.find((r) => r.id === values.modelEffort) ?? null;
-    const workspace = workspaces.find((w) => w.id === values.workspace) ?? null;
+    const workspace =
+      snapshot.workspaceSelection === "executor"
+        ? null
+        : (workspaces.find((w) => w.id === values.workspace) ?? null);
     if (
       (values.executor !== "none" && !executor) ||
       (values.modelEffort !== "none" && !modelRoute) ||
-      (values.workspace !== "none" && !workspace)
+      (snapshot.workspaceSelection !== "executor" &&
+        values.workspace !== "none" &&
+        !workspace)
     )
       return abstain("candidate-no-longer-eligible");
     if (
@@ -304,6 +319,7 @@ export function consumeTaskDecisionReceipt(
     )
       return abstain("explicit-model-route-not-preserved");
     if (
+      snapshot.workspaceSelection !== "executor" &&
       snapshot.explicit?.workspaceId &&
       workspace?.id !== snapshot.explicit.workspaceId
     )
