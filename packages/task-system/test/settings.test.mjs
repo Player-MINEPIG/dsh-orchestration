@@ -190,7 +190,19 @@ test("browser companion exposes the same served form in Settings and its install
         assert.equal(contribution.descriptors.length, 1),
         () => {}
       ),
-      taskPluginSettings: { describe: async () => ({}) },
+    },
+    get(name) {
+      assert.equal(name, "remote.taskPluginSettings");
+      return {
+        describe: async () => ({
+          ok: true,
+          value: {
+            nodeId: "fixture",
+            databasePath: "/tmp/fixture.sqlite",
+            role: "executor",
+          },
+        }),
+      };
     },
     slots: {
       inject: (name, callback) => callback(),
@@ -212,6 +224,7 @@ test("browser companion exposes the same served form in Settings and its install
   const row = registrations.find(
     (r) => r.options.name === "plugins.row.config",
   );
+  assert.equal((await section.options.inject().read()).nodeId, "fixture");
   assert.equal(section.options.id, "task-system");
   assert.equal(section.options.label(), "title");
   assert.equal(row.options.key, "@dsh-task/task-system#task-system");
@@ -251,5 +264,40 @@ test("higher CLI insertion and whole-config override are detected without inspec
   assert.equal(
     hasTaskConfigOverride([{ id: "task-system", disabled: false }]),
     false,
+  );
+});
+
+test("read-only client consumes the official RemoteResult without inventing a successful or empty snapshot", async () => {
+  const ui = client(),
+    codec = ui.descriptor.result.create();
+  const snapshot = {
+    nodeId: "fixture",
+    databasePath: "/tmp/fixture.sqlite",
+    role: "executor",
+  };
+  let result = { ok: true, value: snapshot };
+  const ctx = { get: () => ({ describe: async () => result }) };
+  assert.equal((await ui.readRemote(ctx, "describe", codec)).nodeId, "fixture");
+  result = {
+    ok: false,
+    error: { code: "gateway/internal", message: "fixture failure" },
+  };
+  await assert.rejects(
+    ui.readRemote(ctx, "describe", codec),
+    (error) => error === result.error,
+  );
+  result = snapshot;
+  await assert.rejects(
+    ui.readRemote(ctx, "describe", codec),
+    (error) => error.code === "client/invalid-result",
+  );
+  await assert.rejects(
+    ui.readRemote({ get: () => undefined }, "describe", codec),
+    (error) => error.code === "client/service-unavailable",
+  );
+  result = { ok: true, value: {} };
+  await assert.rejects(
+    ui.readRemote(ctx, "describe", codec),
+    /Invalid task settings snapshot/,
   );
 });

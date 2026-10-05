@@ -355,7 +355,11 @@ window.__ModuleLoader__.load({
               h("p", { style: hintStyle }, t("remoteHint")),
             )
           : null,
-        h(Button, { onClick: refresh, disabled: state.loading }, t("refresh")),
+        h(
+          Button,
+          { variant: "outline", onClick: refresh, disabled: state.loading },
+          t("refresh"),
+        ),
       );
     }
     function Page(props) {
@@ -365,6 +369,11 @@ window.__ModuleLoader__.load({
       return h(
         "div",
         { "data-task-plugin-settings": true },
+        h(
+          "style",
+          null,
+          '[data-task-plugin-settings] button:not([role="switch"]) { border: 1px solid var(--dsw-border); border-radius: 6px; }',
+        ),
         h(
           "p",
           {
@@ -420,7 +429,7 @@ window.__ModuleLoader__.load({
                     ? h(
                         Button,
                         {
-                          variant: "ghost",
+                          variant: "outline",
                           disabled: !state.writable || state.saving,
                           onClick: () => props.resetField(key),
                         },
@@ -447,6 +456,22 @@ window.__ModuleLoader__.load({
         h(ReadOnly, { t, read: props.read }),
       );
     }
+    async function readRemote(ctx, method, codec) {
+      // $mount owns a separate Cordis namespace. This dynamically mounted service
+      // is read through the documented Context.get API, not an undeclared inject.
+      const service = ctx.get("remote.taskPluginSettings");
+      if (!service || typeof service[method] !== "function")
+        throw Object.assign(new Error("Task settings service is unavailable"), {
+          code: "client/service-unavailable",
+        });
+      const result = await service[method]();
+      if (result?.ok === false) throw result.error;
+      if (result?.ok !== true)
+        throw Object.assign(new Error("Invalid task settings Remote result"), {
+          code: "client/invalid-result",
+        });
+      return codec.parse(result.value);
+    }
     async function apply(ctx) {
       const t = ctx.locale.bind(NS);
       ctx.effect(
@@ -460,7 +485,8 @@ window.__ModuleLoader__.load({
         descriptors: [descriptor],
       });
       ctx.effect(() => unmount, "task settings read-only remote");
-      const read = () => ctx.remote.taskPluginSettings.describe();
+      const read = () =>
+        readRemote(ctx, "describe", descriptor.result.create());
       ctx.effect(
         () =>
           ctx.configForms.whileServed(["task-system"], () => {
@@ -503,6 +529,7 @@ window.__ModuleLoader__.load({
       Controller,
       fieldSpec,
       descriptor,
+      readRemote,
       Page,
       en,
       zh,
