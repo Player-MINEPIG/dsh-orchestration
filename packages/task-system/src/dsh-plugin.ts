@@ -1,5 +1,6 @@
 import { Context, Service } from "@deepseek-ai/cordis";
 import z from "@deepseek-ai/schemastery";
+import { isVolatile } from "@deepseek-ai/cosmokit";
 import {
   defineTool,
   type ToolRunContext,
@@ -110,7 +111,7 @@ const nodeCatalogFields = {
   maxConcurrent: z.number().min(1).max(32).step(1).required(false),
 };
 
-export const Config: z<Config> = z.object({
+const PlainConfig: z<Config> = z.object({
   databasePath: z.string().default(".dsh-task/tasks.sqlite"),
   nodeId: z.string().default("local"),
   role: z
@@ -179,6 +180,44 @@ export const Config: z<Config> = z.object({
     )
     .default([]),
 });
+
+/** Only values read at an operation/tick boundary are editable live. */
+export const LIVE_SETTING_KEYS = [
+  "schedulerEnabled",
+  "autoExecute",
+  "maxConcurrent",
+  "executionTimeoutMs",
+  "healthAlerts",
+  "localHeartbeatIntervalMs",
+] as const;
+export const Config = z.object({
+  ...PlainConfig.dict,
+  ...Object.fromEntries(
+    LIVE_SETTING_KEYS.map((key) => [key, PlainConfig.dict![key]!.volatile()]),
+  ),
+});
+
+/** Preserve the Loader-owned references; re-parsing them would detach live updates. */
+function liveConfig(input: Config): ResolvedConfig {
+  const entries = Object.entries(input);
+  const config = PlainConfig(
+    Object.fromEntries(
+      entries.map(([key, value]) => [
+        key,
+        isVolatile(value) ? value.get() : value,
+      ]),
+    ) as Config,
+  ) as ResolvedConfig;
+  for (const key of LIVE_SETTING_KEYS) {
+    const ref: unknown = input[key];
+    if (isVolatile(ref))
+      Object.defineProperty(config, key, {
+        enumerable: true,
+        get: () => ref.get(),
+      });
+  }
+  return config;
+}
 
 declare module "@deepseek-ai/cordis" {
   interface Context {
@@ -1623,7 +1662,13 @@ function taskWithin(
 }
 
 export async function apply(ctx: Context, input: Config): Promise<void> {
-  const config = Config(input) as ResolvedConfig;
+  const config = liveConfig(input);
+  ctx.inject(["settings"], (child) => {
+    const settings = child.get("settings") as {
+      configure(presentation: { auto: boolean }, owner: unknown): () => void;
+    };
+    child.effect(() => settings.configure({ auto: false }, ctx.fiber));
+  });
   if (!config.databasePath.trim() || !config.nodeId.trim())
     throw new Error("databasePath and nodeId must be non-empty");
   const databasePath = resolve(config.databasePath);

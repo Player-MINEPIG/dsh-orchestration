@@ -8,6 +8,9 @@
         keepAlive: true
         maintenanceIntervalMs: 1000
         leaseTtlMs: 60000
+        schedulerEnabled: false
         autoExecute: false
         maxConcurrent: 1
         executionTools: []
+    - id: task-system-settings
+      name: '@dsh-task/task-system'

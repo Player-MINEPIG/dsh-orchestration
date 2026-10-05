@@ -5,3 +5,4 @@ export * from "./observation.js";
 export * from "./legacy-import.js";
 export * from "./workbench-contracts.js";
 export * from "./workbench.js";
+export { apply } from "./settings.js";

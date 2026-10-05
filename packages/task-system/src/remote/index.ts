@@ -81,6 +81,21 @@ export class RemoteExecutionService extends Service {
     super(ctx,'remoteExecution'); this.config = config; this.ledger = ledger; this.workerLedger = ledger; this.store = store
     if (config.role !== 'executor') this.gateway = new RemoteGateway({ role: config.role,nodeId: config.nodeId,verifier: config.authMode === 'trusted-network' ? new TrustedNetworkVerifier({ ...config.trustedNetwork!,audience: config.audience }) : new IdentityVerifier({ audience: config.audience,peers: config.peers }),ledger,store,maxBodyBytes: config.maxBodyBytes,maxResponseBytes: config.maxResponseBytes })
   }
+  /** Read-only settings projection, deliberately excludes keys, grants and credentials. */
+  settingsSnapshot() {
+    let endpoint: string | null = null
+    if (this.config.coordinator) {
+      const url = new URL(this.config.coordinator.endpoint)
+      endpoint = `${url.protocol}//${url.host}${url.pathname}`
+    }
+    return {
+      role: this.config.role, nodeId: this.config.nodeId,
+      endpoint, pollIntervalMs: this.config.pollIntervalMs,
+      concurrency: this.config.concurrency,
+      polling: this.active && !!this.nativeWorker && this.config.pollIntervalMs > 0,
+      authMode: this.config.authMode ?? 'ed25519',
+    }
+  }
   configureCoordinator(taskSystem: TaskSystemPort): void {
     const coordinator = this.config.coordinator
     if (!coordinator) { insist(!this.config.observationForwarding,'OBSERVATION_COORDINATOR_REQUIRED'); return }

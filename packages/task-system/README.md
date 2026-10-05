@@ -28,6 +28,10 @@ Target: Node 24+, DSH 0.2.0-rc.2. Build this monorepo with `npm ci --ignore-scri
 
 Set `DSH_TASK_DATABASE` to the intended database path and use that **same path** for WebUI `--ledger`. The project's private demonstration uses `.runtime/tasks.sqlite`; it is ignored by Git. Each task has one authority; a remote executor must connect to that authority rather than independently accepting conflicting task state.
 
+## Native DSH plugin settings GUI
+
+Use the official Web profile (`dsh web`). In the same profile, open **Plugins → Installed → @dsh-task/task-system → task-system → Configure**. The package now includes an optional browser companion with six explicitly live settings plus read-only deployment and remote-polling details. The separate VPS task dashboard remains separate. New bundle installations explicitly start with schedule admission and local auto-execution disabled. See [settings scope, profile overrides and verification limits](docs/settings-ui.zh-CN.md).
+
 ## Configuration and roles
 
 `databasePath`, `nodeId`, `role` (`planner`, `executor`, `both`), lifecycle timing and tool limits are explicit native Config fields. `autoExecute` is off by default. Enable it only with registered model/node/workspace capabilities and a bounded execution tool allowlist. `maxConcurrent` limits local execution. Scheduler admission uses an explicitly configured route or leaves a run queued for later routing. The plugin owns its timers, native handles, observer and cleanup; an external supervisor may keep the DSH host alive.

@@ -25,7 +25,8 @@
       "types": "./dist/remote/api.d.ts",
       "default": "./dist/remote/api.js"
     },
-    "./channels": "./dist/channels.js"
+    "./channels": "./dist/channels.js",
+    "./client": "./dist/settings-client.js"
   },
   "types": "./dist/index.d.ts",
   "files": [
@@ -38,13 +39,22 @@
   "dsh": {
     "bundle": {
       "patch": "dsh.bundle.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-plugin-manager",
+        "@deepseek-ai/dsh-api-remotes"
+      ]
     }
   },
   "engines": {
     "node": ">=24.0.0"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json && node ../../scripts/build-task-pack.mjs",
+    "build": "tsc -p tsconfig.json && node ../../scripts/build-task-pack.mjs && node ../../scripts/build-task-settings.mjs",
     "test": "node --test test/*.test.mjs test/remote/*.test.mjs"
   },
   "peerDependencies": {
@@ -56,7 +66,9 @@
     "@deepseek-ai/dsh-llm": "0.2.0-rc.2",
     "@dsh-task/typed-decisions": "0.2.0",
     "@deepseek-ai/dsh-session-projection": "0.2.0-rc.2",
-    "@deepseek-ai/dsh-user-approval": "0.2.0-rc.2"
+    "@deepseek-ai/dsh-user-approval": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-typert-protocol": "0.2.0-rc.2",
+    "@deepseek-ai/cosmokit": "1.8.5"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "4.0.4",
