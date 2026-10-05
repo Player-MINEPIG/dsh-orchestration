@@ -335,11 +335,32 @@ export async function saveDecisionSettings(
     const existing = provider.models?.find(
       (m: Raw) => m.model === selector && m.version === s.modelVersion,
     );
+    let advertisedEfforts: string[] = [];
+    if (!prior && !existing) {
+      const llm = ctx.get("llm") as
+        | {
+            resolveModelInfo(
+              provider: string,
+              model: string,
+            ): Promise<{ reasoning?: { efforts: readonly { id: string }[] } }>;
+          }
+        | undefined;
+      if (!llm?.resolveModelInfo) reject("DECISION_MODEL_METADATA_UNAVAILABLE");
+      try {
+        advertisedEfforts = strings(
+          (
+            await llm.resolveModelInfo(s.nativeProvider, s.modelVersion)
+          ).reasoning?.efforts.map((e) => e.id) ?? [],
+        );
+      } catch {
+        reject("DECISION_MODEL_METADATA_UNAVAILABLE");
+      }
+    }
     const model = existing ?? {
       model: selector,
       version: s.modelVersion,
       versionSource: "configured-pin",
-      reasoningEfforts: prior?.reasoningEfforts ?? [],
+      reasoningEfforts: prior?.reasoningEfforts ?? advertisedEfforts,
     };
     provider.models = [
       model,

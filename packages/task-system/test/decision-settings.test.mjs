@@ -84,6 +84,12 @@ function fixture() {
         { id: "old", name: "Old" },
         { id: "new", name: "New" },
       ],
+      resolveModelInfo: async () => ({
+        reasoning: {
+          efforts: [{ id: "low", name: "Low" }],
+          defaultEffort: "low",
+        },
+      }),
       listConfigurableProviders: () => [
         {
           provider: "offline",
@@ -157,6 +163,11 @@ test("strict save accepts configured Models selections, rejects secrets and unav
     (p) => p.id === "other",
   );
   assert.equal(provider.models[0].version, "new");
+  assert.deepEqual(provider.models[0].reasoningEfforts, ["low"]);
+  assert.deepEqual(f.entries[1].options.config.routes[1].reasoningEfforts, [
+    "low",
+  ]);
+  assert.deepEqual(f.entries[1].options.config.routes[0].reasoningEfforts, []);
   assert.equal(provider.models[1].hidden, "preserved");
   assert.equal(provider.envRef, "do-not-change");
   assert.equal(f.entries[1].options.config.routes[0].hidden, "preserved");

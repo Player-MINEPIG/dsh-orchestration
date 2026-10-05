@@ -167,6 +167,12 @@ const start = async () => {
     { provider, id: "keep-model", name: "Keep model" },
     { provider, id: "selected-model", name: "Selected model" },
   ];
+  adapter.resolveModel = async (provider, model) => ({
+    provider,
+    id: model,
+    name: model,
+    reasoning: { efforts: [{ id: "low", name: "Low" }], defaultEffort: "low" },
+  });
   host.llm.registerAdapter(["offline"], adapter);
   return { host, adapter };
 };
@@ -220,6 +226,14 @@ try {
     "selected-model",
   );
   assert.equal(ctx.get("typedDecisionCompletion").routes.length, 2);
+  assert.deepEqual(
+    ctx.get("typedDecisionCompletion").routes[1].reasoningEfforts,
+    ["low"],
+  );
+  assert.deepEqual(
+    ctx.get("typedDecisionCompletion").routes[0].reasoningEfforts,
+    [],
+  );
   assert.deepEqual(
     raw("@dsh-task/typed-decisions").providers.find(
       (p) => p.id === "compatible",
