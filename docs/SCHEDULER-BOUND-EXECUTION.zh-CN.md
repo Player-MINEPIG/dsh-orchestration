@@ -51,7 +51,7 @@
 `taskPluginSettings.saveStartup({target,expected,changes})` 只接受 startup 结果中对应 `values` 作为 expected，以及明确允许字段的局部 changes：
 
 - target=task：role、defaultWorkspaceId、sessionDecisionEnabled
-- target=remote：role、endpoint、audience、pollIntervalMs、concurrency、taskSessionsEnabled、trustedNetworkTarget
+- target=remote：role、paused、endpoint、audience、pollIntervalMs、concurrency、taskSessionsEnabled、trustedNetworkTarget
 
 每次只保存一个目标，expected 快照必须匹配当前可见值。保存使用公开 `Context.get('configEditor')` 与 `ConfigEditor.edit`，在宿主回调中合并当前完整配置，因此保留未知字段及未编辑的鉴权信息。CLI 层提前拒绝；Home/CLI 覆盖的最终判定、原子落盘与失败回滚由 ConfigEditor 负责。不能通过任意 namespace、nodeId、key、credential、grant 或原始 Config 绕过白名单。
 
@@ -66,3 +66,17 @@
 修复反例和启动编辑相关 44 项定向测试通过；最终 task-system 248 项、既有离线 native/protocol 71 项均通过，构建与格式检查通过。测试仅使用自写 fixture、脚本化模型/网络边界及临时目录；真实 GUI 保存路径和真实 peer grant 启用由对应环境 owner 做授权验收。
 
 `describe().schedulerId` 是本地 TaskLedger 的 authority ID；执行器展示上游调度器时应使用 `describe().remote.executorIdentity.schedulerId`，不要把本地备用账本 ID 误标为上游调度器。executorIdentity 未查询前为 null。
+
+
+## Loader 已加载与远程连接暂停
+
+远程配置新增 `paused: boolean`，默认 `false` 保留已启用旧部署的行为。`paused: true` 保持插件配置 fiber 存在，因此可以使用公开 ConfigEditor 保存；远程 `apply` 在创建 RecoveryStore、读取签名环境变量、初始化 client/listener/worker/poll/heartbeat 之前返回。不另设 connectionDraft 或第二个运行 owner。
+
+- `startup().remote` 增加 `loaded` 和 `loaderDisabled`，`values.paused` 是连接暂停状态
+- `describe().remote.paused` 标记远程运行是否暂停；暂停时 `polling=false`、队列为空、身份查询与执行入口返回 `REMOTE_PAUSED`
+- 编辑连接字段时若仍 `paused=true`，保存只重载配置服务，不连接、不派活
+- 将 `paused` 改为 `false` 是用户明确的“恢复/连接”动作，界面不能把它当成普通草稿保存；已有 active-work / unresolved-recovery 拦截继续生效
+
+官方 rc.2 的 ConfigEditor 不支持 Loader-disabled 且没有 fiber 的条目。该场景现在明确返回 `STARTUP_REMOTE_DISABLED`，不会为了可编辑而偷偷启用旧连接。已有 disabled 配置需要操作者在保持原身份、grant 和其他字段等值的前提下先配置 `paused:true`，再显式加载插件。该一次性迁移不由本 RPC 自动实施；rc.2 无法用同一个 disabled-edit API 完成其首步。
+
+真实官方回归：`DSH_OFFICIAL_ROOT=<现有官方rc.2安装目录> node --expose-internals tests/settings/disabled-remote-config-editor.mjs`。它在临时 profile 中复现 disabled-save 失败，证明公开 Entry.update 不持久保存 profile patch；再预置 paused 等值迁移，使用真正 ConfigEditor 保存 endpoint/concurrency，卸载重启读回，并验证全程无 remote journal/client/listener/worker/heartbeat。未配置连接的恢复被拒，文件和 paused 状态不变。测试不修改现有真实 profile。

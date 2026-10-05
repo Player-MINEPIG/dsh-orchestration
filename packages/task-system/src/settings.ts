@@ -59,6 +59,7 @@ const ReadonlySettings = z.object({
       pollIntervalMs: z.number(),
       concurrency: z.number(),
       polling: z.boolean(),
+      paused: z.boolean(),
       authMode: z.string(),
       executorIdentity: ExecutorIdentity.nullable(),
       taskSessionsEnabled: z.boolean(),

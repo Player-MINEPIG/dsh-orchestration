@@ -1,0 +1,28 @@
+{
+  "officialRuntime": "0.2.0-rc.2",
+  "disabledEntryVisible": true,
+  "disabledEntryHasFiber": false,
+  "configEditorCallbackCalled": false,
+  "rawConfigEditorError": "Configuration entry is no longer available",
+  "startupRpcError": {
+    "code": "STARTUP_REMOTE_DISABLED",
+    "message": "This remote plugin is Loader-disabled. Migrate its unchanged configuration with paused=true before loading it; do not enable an unpaused connection merely to edit settings"
+  },
+  "profilePatchUnchanged": true,
+  "loaderRootUnchanged": true,
+  "publicEntryUpdatePersists": false,
+  "reopenedConcurrency": 1,
+  "disabledRemoteServiceStarted": false,
+  "remoteStateCreated": false,
+  "pausedConfigurationFiberLoaded": true,
+  "officialPausedSaveSucceeded": true,
+  "pausedSaveSurvivedRestart": true,
+  "pausedAfterSave": true,
+  "invalidResumePreservedPaused": true,
+  "noRemoteJournal": true,
+  "noCoordinatorClient": true,
+  "noWorker": true,
+  "noListener": true,
+  "noHeartbeat": true,
+  "pausedExecutionEntrypointsRejected": true
+}

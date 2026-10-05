@@ -26,6 +26,7 @@ export const TaskStartupValues = z
 export const RemoteStartupValues = z
   .object({
     role: Role,
+    paused: z.boolean(),
     endpoint: z.string().nullable(),
     audience: z.string().nullable(),
     pollIntervalMs: z.number().int().min(0).max(3600000),
@@ -39,7 +40,12 @@ export const StartupSettings = z.object({
   applies: z.literal("plugin-restart"),
   task: z.object({ entryId: z.string(), values: TaskStartupValues }).nullable(),
   remote: z
-    .object({ entryId: z.string(), values: RemoteStartupValues })
+    .object({
+      entryId: z.string(),
+      loaded: z.boolean(),
+      loaderDisabled: z.boolean(),
+      values: RemoteStartupValues,
+    })
     .nullable(),
 });
 export const SaveStartupInput = z.discriminatedUnion("target", [
@@ -64,7 +70,8 @@ export const SaveStartupResult = z.object({
 });
 type Raw = Record<string, unknown>;
 interface Entry {
-  options: { id: string; name: string; config?: Raw };
+  readonly disabled?: boolean;
+  options: { id: string; name: string; config?: Raw; disabled?: boolean };
 }
 interface ConfigEditor {
   entries(): Entry[];
@@ -134,6 +141,8 @@ function remoteValues(raw: Raw, remote: RemoteExecutionService | undefined) {
     coordinator = record(raw.coordinator),
     target = record(coordinator?.trustedNetwork);
   return RemoteStartupValues.parse({
+    paused:
+      typeof raw.paused === "boolean" ? raw.paused : (current?.paused ?? false),
     role:
       typeof raw.role === "string" ? raw.role : (current?.role ?? "executor"),
     endpoint: coordinator
@@ -199,6 +208,8 @@ export function readStartupSettings(ctx: Context) {
     remote: b
       ? {
           entryId: b.options.id,
+          loaded: !!remote,
+          loaderDisabled: b.disabled === true || b.options.disabled === true,
           values: remoteValues(b.options.config ?? {}, remote),
         }
       : null,
@@ -220,6 +231,14 @@ export async function saveStartupSettings(ctx: Context, value: unknown) {
     reject(
       "STARTUP_ENTRY_MISSING",
       "The selected task plugin entry is not present in this profile",
+    );
+  if (
+    input.target === "remote" &&
+    (entry.disabled === true || entry.options.disabled === true)
+  )
+    reject(
+      "STARTUP_REMOTE_DISABLED",
+      "This remote plugin is Loader-disabled. Migrate its unchanged configuration with paused=true before loading it; do not enable an unpaused connection merely to edit settings",
     );
   const profile = ctx.get("profileContext") as
     | { overlays?: unknown[] }
@@ -376,6 +395,32 @@ export async function saveStartupSettings(ctx: Context, value: unknown) {
           );
         }
         next.coordinator = nextCoordinator;
+      }
+      // Resume is the user's explicit connection action. Keep a plainly
+      // unconfigured executor paused instead of stranding a failed Loader row.
+      if (
+        input.changes.paused === false &&
+        input.expected.paused &&
+        (next.role ?? input.expected.role) === "executor"
+      ) {
+        const connection = record(next.coordinator);
+        if (
+          !connection ||
+          typeof next.nodeId !== "string" ||
+          next.nodeId === "unconfigured"
+        )
+          reject(
+            "STARTUP_CONNECTION_REQUIRED",
+            "Configure an authenticated scheduler connection and node identity before resuming",
+          );
+        if (
+          (connection.authMode ?? next.authMode) !== "trusted-network" &&
+          (!connection.keyId || !connection.privateKeyEnv)
+        )
+          reject(
+            "STARTUP_CONNECTION_REQUIRED",
+            "Resuming a signed connection requires existing operator-provisioned signing references",
+          );
       }
       if (
         input.changes.pollIntervalMs !== undefined &&
