@@ -96,7 +96,7 @@ test("both dictionaries state local-vs-remote and restart/override boundaries wi
   assert.deepEqual(Object.keys(ui.en).sort(), Object.keys(ui.zh).sort());
   assert.match(ui.en.safety, /does not pause remote claims/);
   assert.match(ui.zh.safety, /不会暂停远程领取/);
-  assert.match(ui.en.remoteHint, /no remote-pause switch/);
+  assert.match(ui.en.remoteHint, /separate pause control/);
   assert.match(ui.en.overlayWarning, /entire task-system config/);
   for (const key of ui.keys)
     for (const locale of [ui.en, ui.zh])
@@ -486,6 +486,19 @@ test("executor identity is queried only by its explicit button, with no polling 
       .disabled,
     true,
   );
+  const paused = ui.ExecutorIdentity({
+    ...props,
+    remote: { ...props.remote, paused: true },
+  });
+  const pausedButton = paused.children.find(
+    (child) => child?.type === "FixtureButton",
+  );
+  assert.equal(pausedButton.props.disabled, true);
+  assert.equal(pausedButton.props.onClick, undefined);
+  assert.equal(calls, 1);
+  assert.ok(
+    paused.children.some((child) => child?.children?.includes("identityNone")),
+  );
 });
 
 test("startup drafts contain only approved fields; unchanged values and reset do not create writes", () => {
@@ -519,6 +532,7 @@ test("connection draft validates limits and excludes identity, auth and grant ch
   const ui = client();
   const values = {
     role: "executor",
+    paused: false,
     endpoint: "http://fixture.invalid:8443/commands",
     audience: "fixture-audience",
     pollIntervalMs: 0,
@@ -756,6 +770,7 @@ test("unconfigured connection requires explicit source and target and starts wit
   const ui = client(),
     values = {
       role: "executor",
+      paused: false,
       endpoint: null,
       audience: null,
       pollIntervalMs: 5000,
@@ -764,7 +779,7 @@ test("unconfigured connection requires explicit source and target and starts wit
       trustedNetworkTarget: null,
     };
   const draft = ui.startupDraft("remote", values);
-  assert.equal(draft.pollIntervalMs, "0");
+  assert.equal(draft.pollIntervalMs, "5000");
   assert.ok(
     ui.startupChanges("remote", values, draft).invalid.includes("targetPort"),
   );
@@ -785,4 +800,199 @@ test("unconfigured connection requires explicit source and target and starts wit
   );
   assert.equal(parsed.changes.nodeId, undefined);
   assert.equal(parsed.changes.authMode, undefined);
+});
+
+test("paused remote snapshots retain incomplete connection values and require public loading metadata", () => {
+  const ui = client();
+  const values = {
+    role: "executor",
+    paused: true,
+    endpoint: null,
+    audience: null,
+    pollIntervalMs: 5000,
+    concurrency: 1,
+    taskSessionsEnabled: false,
+    trustedNetworkTarget: null,
+  };
+  const draft = ui.startupDraft("remote", values);
+  const unchanged = ui.startupChanges("remote", values, draft);
+  assert.equal(unchanged.dirty, false);
+  assert.equal(unchanged.invalid.length, 0);
+  const edited = ui.startupChanges("remote", values, {
+    ...draft,
+    concurrency: "2",
+  });
+  assert.equal(edited.invalid.length, 0);
+  assert.deepEqual(Object.keys(edited.changes), ["concurrency"]);
+  assert.equal(edited.changes.concurrency, 2);
+  const resume = ui.startupChanges("remote", values, {
+    ...draft,
+    paused: false,
+  });
+  assert.ok(resume.invalid.includes("endpoint"));
+  const partialConnection = ui.startupChanges("remote", values, {
+    ...draft,
+    endpoint: "http://fixture.invalid:8443/commands",
+  });
+  assert.ok(partialConnection.invalid.includes("audience"));
+  const view = {
+    writable: true,
+    applies: "plugin-restart",
+    task: null,
+    remote: {
+      entryId: "task-remote-execution",
+      loaded: true,
+      loaderDisabled: false,
+      values,
+    },
+  };
+  const browserSchema = ui.startupDescriptor.result.create(),
+    hostSchema = startupDescriptor.result.create();
+  assert.equal(browserSchema.parse(view), view);
+  assert.equal(hostSchema.parse(view).remote.values.paused, true);
+  for (const key of ["loaded", "loaderDisabled"]) {
+    const invalid = { ...view, remote: { ...view.remote } };
+    delete invalid.remote[key];
+    assert.throws(
+      () => browserSchema.parse(invalid),
+      /Invalid startup remote loading state/,
+    );
+    assert.throws(() => hostSchema.parse(invalid));
+  }
+  const request = {
+    target: "remote",
+    expected: values,
+    changes: { paused: false },
+  };
+  assert.equal(
+    ui.saveStartupDescriptor.parameters[0].codec.create().parse(request),
+    request,
+  );
+  assert.equal(
+    saveStartupDescriptor.parameters[0].codec.create().parse(request).changes
+      .paused,
+    false,
+  );
+  assert.throws(
+    () =>
+      ui.saveStartupDescriptor.parameters[0].codec
+        .create()
+        .parse({ ...request, changes: { paused: "false" } }),
+    /Invalid startup value/,
+  );
+});
+
+test("remote pause stages, discards and saves through the loaded configuration; Loader-disabled entries cannot write", async () => {
+  const states = [];
+  let index = 0;
+  const ui = client(
+    { Button: "FixtureButton", Switch: "FixtureSwitch" },
+    {
+      useState(initial) {
+        const slot = index++;
+        if (!(slot in states))
+          states[slot] = typeof initial === "function" ? initial() : initial;
+        return [
+          states[slot],
+          (value) => {
+            states[slot] =
+              typeof value === "function" ? value(states[slot]) : value;
+          },
+        ];
+      },
+    },
+  );
+  const writes = [],
+    order = [];
+  const row = {
+    entryId: "task-remote-execution",
+    loaded: true,
+    loaderDisabled: false,
+    values: {
+      role: "executor",
+      paused: true,
+      endpoint: "http://fixture.invalid:8443/commands",
+      audience: "fixture-authority",
+      pollIntervalMs: 0,
+      concurrency: 1,
+      taskSessionsEnabled: true,
+      trustedNetworkTarget: {
+        address: "fixture.invalid",
+        port: 8443,
+        localAddress: "fixture.local",
+        allowHttp: true,
+      },
+    },
+  };
+  const props = {
+    t: (key) => key,
+    target: "remote",
+    row,
+    writable: true,
+    saveStartup: async (input) => {
+      writes.push(input);
+      order.push("save");
+    },
+    onSaved: async () => order.push("read-after-save"),
+  };
+  const find = (node, predicate) => {
+    if (!node || typeof node !== "object") return;
+    if (predicate(node)) return node;
+    for (const child of node.children ?? []) {
+      const value = find(child, predicate);
+      if (value) return value;
+    }
+  };
+  const render = () => {
+    index = 0;
+    return ui.StartupRow(props);
+  };
+  const toggle = (tree) =>
+    find(
+      tree,
+      (node) => node.type === "FixtureSwitch" && node.props.label === "paused",
+    );
+  const button = (tree, label) =>
+    find(
+      tree,
+      (node) => node.type === "FixtureButton" && node.children.includes(label),
+    );
+  let tree = render();
+  assert.equal(toggle(tree).props.checked, true);
+  assert.equal(toggle(tree).props.disabled, false);
+  toggle(tree).props.onChange(false);
+  assert.equal(writes.length, 0);
+  tree = render();
+  assert.equal(toggle(tree).props.checked, false);
+  button(tree, "discardDraft").props.onClick();
+  tree = render();
+  assert.equal(toggle(tree).props.checked, true);
+  assert.equal(writes.length, 0);
+  toggle(tree).props.onChange(false);
+  tree = render();
+  await button(tree, "startupSave").props.onClick();
+  assert.equal(writes[0].expected, row.values);
+  assert.deepEqual(Object.keys(writes[0].changes), ["paused"]);
+  assert.equal(writes[0].changes.paused, false);
+  assert.deepEqual(order, ["save", "read-after-save"]);
+  for (const metadata of [
+    { loaded: false, loaderDisabled: true },
+    { loaded: false, loaderDisabled: false },
+    { loaded: true, loaderDisabled: true },
+  ]) {
+    Object.assign(row, metadata);
+    tree = render();
+    assert.equal(toggle(tree).props.disabled, true);
+    assert.equal(button(tree, "startupSave").props.disabled, true);
+    assert.ok(
+      find(
+        tree,
+        (node) =>
+          node.props?.role === "note" &&
+          node.children.includes("startupRemoteDisabled"),
+      ),
+    );
+    await button(tree, "startupSave").props.onClick();
+    assert.equal(writes.length, 1);
+  }
 });

@@ -55,6 +55,13 @@ window.__ModuleLoader__.load({
       startupMigrationHint:
         "Upgrade only after this existing peer has been explicitly granted executorIdentity, sessionContext and selectTaskSession. This action does not grant those permissions.",
       startupInvalid: "Enter valid values before saving.",
+      paused: "Pause remote operation",
+      pausedHint:
+        "Save and restart with this on to keep connection settings loaded while remote requests, workers and polling are paused. Turn it off and save to resume with the configured connection and permissions.",
+      startupLoaded: "Connection settings loaded",
+      startupLoaderDisabled: "Plugin disabled",
+      startupRemoteDisabled:
+        "This connection configuration is not loaded for editing. Load it paused through the approved setup before saving here.",
       audience: "Scheduler audience",
       targetAddress: "Trusted target address",
       targetPort: "Trusted target port",
@@ -150,7 +157,7 @@ window.__ModuleLoader__.load({
       taskSessionHint:
         "Existing connections retain their current session protocol until an explicit authorized migration. This page does not upgrade permissions.",
       remoteHint:
-        "Automatic remote polling is controlled by task-remote-execution.pollIntervalMs: 0 disables polling after restart. Already claimed work and direct/manual dispatch are separate. This page has no remote-pause switch.",
+        "Remote operation uses the separate pause control in startup settings. A poll interval of 0 disables automatic polling after restart while direct requests remain available. Changes may be blocked by active or uncertain work.",
       loading: "Reading current deployment…",
       loadFailed:
         "Could not read deployment details. Retry; no values were changed.",
@@ -195,6 +202,13 @@ window.__ModuleLoader__.load({
       startupMigrationHint:
         "仅在此已有 peer 已获 executorIdentity、sessionContext、selectTaskSession 明确授权后升级。此操作不会授予这些权限。",
       startupInvalid: "请先填写有效值再保存。",
+      paused: "暂停远程运行",
+      pausedHint:
+        "开启并保存重启后，连接配置保持加载，远程请求、执行器和轮询暂停。关闭并保存后，按已配置的连接与权限恢复运行。",
+      startupLoaded: "连接配置已加载",
+      startupLoaderDisabled: "插件已停用",
+      startupRemoteDisabled:
+        "此连接配置尚未加载，当前不能编辑。请按已批准的配置流程以暂停状态加载，再在此保存。",
       audience: "调度端受众标识（audience）",
       targetAddress: "已授权目标地址",
       targetPort: "已授权目标端口",
@@ -288,7 +302,7 @@ window.__ModuleLoader__.load({
       taskSessionHint:
         "旧连接继续使用原会话流程；显式授权迁移后才能升级。此页不扩展远端授权。",
       remoteHint:
-        "自动远程领取由 task-remote-execution.pollIntervalMs 控制：设为 0 并重启后停用轮询。已领取任务与直接／手动派发独立处理。此页没有远程暂停开关。",
+        "远程运行由启动配置中的独立暂停开关控制。领取间隔设为 0 并重启后只停用自动轮询，直接请求仍可用；存在活动工作或状态未确认的执行时可能无法保存。",
       loading: "正在读取当前部署…",
       loadFailed: "未能读取部署详情，请重试；没有修改任何配置。",
       refresh: "刷新部署详情",
@@ -433,6 +447,7 @@ window.__ModuleLoader__.load({
       task: ["role", "defaultWorkspaceId", "sessionDecisionEnabled"],
       remote: [
         "role",
+        "paused",
         "endpoint",
         "audience",
         "pollIntervalMs",
@@ -456,7 +471,9 @@ window.__ModuleLoader__.load({
         if (
           (key === "role" &&
             !["planner", "executor", "both"].includes(entry)) ||
-          (["sessionDecisionEnabled", "taskSessionsEnabled"].includes(key) &&
+          (["sessionDecisionEnabled", "taskSessionsEnabled", "paused"].includes(
+            key,
+          ) &&
             typeof entry !== "boolean") ||
           (["defaultWorkspaceId", "endpoint", "audience"].includes(key) &&
             entry !== null &&
@@ -514,6 +531,12 @@ window.__ModuleLoader__.load({
               if (row === null) continue;
               if (!row || typeof row.entryId !== "string")
                 throw new Error("Invalid startup settings row");
+              if (
+                target === "remote" &&
+                (typeof row.loaded !== "boolean" ||
+                  typeof row.loaderDisabled !== "boolean")
+              )
+                throw new Error("Invalid startup remote loading state");
               parseStartupValues(row.values, target);
             }
             return value;
@@ -715,7 +738,7 @@ window.__ModuleLoader__.load({
               h("h3", { style: headingStyle }, t("identityTitle")),
               h("p", { style: hintStyle }, t("identityHint")),
               h(ExecutorIdentity, {
-                key: `${state.value.remote?.endpoint ?? "none"}:${state.value.remote?.executorIdentity?.schedulerId ?? "unresolved"}`,
+                key: `${state.value.remote?.endpoint ?? "none"}:${state.value.remote?.paused ?? false}:${state.value.remote?.executorIdentity?.schedulerId ?? "unresolved"}`,
                 t,
                 fields,
                 remote: state.value.remote,
@@ -737,6 +760,7 @@ window.__ModuleLoader__.load({
                     "nodeId",
                     "role",
                     "endpoint",
+                    "paused",
                     "polling",
                     "pollIntervalMs",
                     "concurrency",
@@ -761,7 +785,9 @@ window.__ModuleLoader__.load({
     function ExecutorIdentity({ t, fields, remote, queryIdentity }) {
       // Query only on the explicit button. It neither polls nor upgrades grants.
       const { state, refresh } = useReadSnapshot(queryIdentity, false);
-      const value = state.value ?? remote?.executorIdentity;
+      const value = remote?.paused
+        ? null
+        : (state.value ?? remote?.executorIdentity);
       return h(
         React.Fragment,
         null,
@@ -780,8 +806,8 @@ window.__ModuleLoader__.load({
           Button,
           {
             variant: "outline",
-            disabled: !remote?.endpoint || state.loading,
-            onClick: refresh,
+            disabled: !remote?.endpoint || remote.paused || state.loading,
+            onClick: remote?.paused ? undefined : refresh,
           },
           t("queryIdentity"),
         ),
@@ -924,11 +950,10 @@ window.__ModuleLoader__.load({
           }
         : {
             role: values.role,
+            paused: values.paused,
             endpoint: values.endpoint ?? "",
             audience: values.audience ?? "",
-            pollIntervalMs: String(
-              values.endpoint === null ? 0 : values.pollIntervalMs,
-            ),
+            pollIntervalMs: String(values.pollIntervalMs),
             concurrency: String(values.concurrency),
             ...(values.trustedNetworkTarget
               ? {
@@ -953,15 +978,59 @@ window.__ModuleLoader__.load({
         if (typeof next.sessionDecisionEnabled !== "boolean")
           invalid.push("sessionDecisionEnabled");
       } else {
-        next.endpoint = String(draft.endpoint).trim();
-        next.audience = String(draft.audience).trim();
-        if (!next.endpoint) invalid.push("endpoint");
-        if (!next.audience) invalid.push("audience");
+        next.paused = draft.paused;
+        if (typeof next.paused !== "boolean") invalid.push("paused");
+        next.endpoint = String(draft.endpoint).trim() || null;
+        next.audience = String(draft.audience).trim() || null;
+        if (values.trustedNetworkTarget || values.endpoint === null) {
+          const address = String(draft.targetAddress).trim(),
+            localAddress = String(draft.targetLocalAddress).trim(),
+            portText = String(draft.targetPort).trim();
+          next.trustedNetworkTarget =
+            !address && !localAddress && !portText
+              ? null
+              : {
+                  ...values.trustedNetworkTarget,
+                  address,
+                  port: Number(portText),
+                  localAddress,
+                  allowHttp: true,
+                };
+        }
+        const connectionChanged = [
+          "endpoint",
+          "audience",
+          "trustedNetworkTarget",
+        ].some(
+          (key) =>
+            Object.hasOwn(next, key) &&
+            JSON.stringify(next[key]) !== JSON.stringify(values[key]),
+        );
+        if (!next.paused || connectionChanged) {
+          if (!next.endpoint) invalid.push("endpoint");
+          if (!next.audience) invalid.push("audience");
+          if (values.trustedNetworkTarget || values.endpoint === null) {
+            const binding = next.trustedNetworkTarget;
+            if (!binding?.address) invalid.push("targetAddress");
+            if (!binding?.localAddress) invalid.push("targetLocalAddress");
+            if (
+              !Number.isSafeInteger(binding?.port) ||
+              binding.port < 1 ||
+              binding.port > 65535
+            )
+              invalid.push("targetPort");
+          }
+        }
         for (const [key, min, max] of [
           ["pollIntervalMs", 100, 3600000],
           ["concurrency", 1, 16],
         ]) {
-          next[key] = Number(draft[key]);
+          next[key] =
+            key === "pollIntervalMs" &&
+            values.endpoint === null &&
+            connectionChanged
+              ? 0
+              : Number(draft[key]);
           if (
             String(draft[key]).trim() === "" ||
             !Number.isSafeInteger(next[key]) ||
@@ -970,22 +1039,6 @@ window.__ModuleLoader__.load({
               : next[key] < min || next[key] > max)
           )
             invalid.push(key);
-        }
-        if (values.trustedNetworkTarget || values.endpoint === null) {
-          const address = String(draft.targetAddress).trim(),
-            localAddress = String(draft.targetLocalAddress).trim(),
-            port = Number(draft.targetPort);
-          if (!address) invalid.push("targetAddress");
-          if (!localAddress) invalid.push("targetLocalAddress");
-          if (!Number.isSafeInteger(port) || port < 1 || port > 65535)
-            invalid.push("targetPort");
-          next.trustedNetworkTarget = {
-            ...values.trustedNetworkTarget,
-            address,
-            port,
-            localAddress,
-            allowHttp: true,
-          };
         }
         if (migrate) next.taskSessionsEnabled = true;
       }
@@ -1003,11 +1056,28 @@ window.__ModuleLoader__.load({
       );
       const [status, setStatus] = React.useState({ saving: false });
       const edit = (key, value) => {
-        setDraft((old) => ({ ...old, [key]: value }));
+        setDraft((old) => ({
+          ...old,
+          [key]: value,
+          ...(target === "remote" &&
+          row.values.endpoint === null &&
+          [
+            "endpoint",
+            "audience",
+            "targetAddress",
+            "targetPort",
+            "targetLocalAddress",
+          ].includes(key)
+            ? { pollIntervalMs: "0" }
+            : {}),
+        }));
         setStatus({ saving: false });
       };
       const parsed = startupChanges(target, row.values, draft);
-      const disabled = !writable || status.saving;
+      const disabled =
+        !writable ||
+        status.saving ||
+        (target === "remote" && (!row.loaded || row.loaderDisabled));
       const save = async (migrate = false) => {
         const update = startupChanges(target, row.values, draft, migrate);
         if (disabled || !update.dirty || update.invalid.length) return;
@@ -1092,6 +1162,24 @@ window.__ModuleLoader__.load({
           { style: headingStyle },
           t(target === "task" ? "startupTask" : "startupRemote"),
         ),
+        target === "remote"
+          ? h(
+              React.Fragment,
+              null,
+              h(
+                "p",
+                { style: hintStyle },
+                `${t("startupLoaded")}: ${t(row.loaded ? "yes" : "no")} · ${t("startupLoaderDisabled")}: ${t(row.loaderDisabled ? "yes" : "no")}`,
+              ),
+              !row.loaded || row.loaderDisabled
+                ? h(
+                    "p",
+                    { role: "note", style: hintStyle },
+                    t("startupRemoteDisabled"),
+                  )
+                : null,
+            )
+          : null,
         field("role"),
         target === "task"
           ? h(
@@ -1123,6 +1211,26 @@ window.__ModuleLoader__.load({
           : h(
               React.Fragment,
               null,
+              h(
+                "label",
+                {
+                  style: {
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 20,
+                    margin: "12px 0",
+                  },
+                },
+                t("paused"),
+                h(Switch, {
+                  label: t("paused"),
+                  checked: draft.paused,
+                  disabled,
+                  onChange: (value) => edit("paused", value),
+                }),
+              ),
+              h("p", { style: hintStyle }, t("pausedHint")),
               ...["endpoint", "audience", "pollIntervalMs", "concurrency"].map(
                 (key) => field(key),
               ),
@@ -1141,7 +1249,8 @@ window.__ModuleLoader__.load({
                 ? h("p", { style: hintStyle }, t("startupUnconfigured"))
                 : null,
               h("p", { style: hintStyle }, t("startupEndpointHint")),
-              row.values.taskSessionsEnabled === false
+              row.values.taskSessionsEnabled === false &&
+                row.values.endpoint !== null
                 ? h(
                     React.Fragment,
                     null,
