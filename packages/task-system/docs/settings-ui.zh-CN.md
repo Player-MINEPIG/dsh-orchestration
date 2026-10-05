@@ -2,7 +2,7 @@
 
 DSH 自带 WebUI；入口是 `dsh web` 或 `dsh --profile web`。自定义名称的 profile 必须由 Web 模板创建，并且在同一 profile 安装任务插件，才会同时有聊天界面和插件管理入口。只有 base/headless profile 不会自动变成 WebUI。
 
-本包的直接设置入口是：侧栏 **设置 → 任务系统**。原 **插件 → 已安装的 @dsh-task/task-system → task-system → 配置** 入口仍可使用；两处复用同一六字段表单和官方配置保存机制。浏览器伴生组件由同包的 `task-system-settings` 行提供。任务管理面板仍是 VPS 上独立访问的网页；此页只管理插件运行设置，不搬运任务列表、数据库或业务逻辑。
+本包的直接设置入口是：侧栏 **设置 → 任务系统**。原 **插件 → 已安装的 @dsh-task/task-system → task-system → 配置** 入口仍可使用；两处复用同一六字段表单和官方配置保存机制。浏览器伴生组件由同包的 `task-system-settings` 行提供。任务管理面板仍是 VPS 上独立访问的网页；此页管理插件运行设置和本机运行队列摘要；完整任务管理和数据库仍由各自的宿主持有。
 
 ## 可保存的设置
 
@@ -24,6 +24,16 @@ DSH 自带 WebUI；入口是 `dsh web` 或 `dsh --profile web`。自定义名称
 关闭 autoExecute 不会停止 `task-remote-execution` 的远程轮询，也不会取消正在运行的任务。已配置的安全重试同样独立。只读区明确显示远端地址、角色、轮询间隔、远程并发以及自动领取状态。
 
 当前 GUI 没有“暂停远程节点”按钮。远程轮询由启动配置 pollIntervalMs 控制：设为 0 并重启后不自动轮询；已经领取的任务和显式调用仍需分别处理。此页不编辑远端授权、节点身份、密钥或登录凭据。
+
+## 本机队列与会话摘要
+
+本机队列通过独立公开读 API `taskPluginSettings.queue()` 读取有界快照，仅显示 Task/Run 标识、标题、状态、Session/Workspace 标识、读取时间及截断提示。页面首次打开和点击刷新时读取；没有后台领取、执行、取消或数据库写入。读取失败明确显示失败，不能解释为队列为空；刷新失败保留上次样本及其读取时间。
+
+新版后端 `describe()` 顶层提供 schedulerId、defaultWorkspaceId 和 sessionDecisionEnabled，remote 提供 executorIdentity 和 taskSessionsEnabled。执行端身份只读显示调度端与分配的 executorId；nodeId 明确标为内部 ID，不提供文本编辑器。旧连接沿用原会话协议，界面不扩展 peer grant。
+
+默认工作区须已在本机登记，启动配置改变后重启生效。决策使用已有 typed-decisions 适配器及其 provider/model 配置，本 GUI 增量没有新增 JEV 协议或凭据输入。当前新增字段是只读摘要；配置编辑与显式身份查询由后续后端合同整合，不能把只读摘要当作已完成的配置表单。
+
+队列及新版会话摘要需要配套后端。旧宿主不具备队列接口时会显示读取失败；缺少新版启动字段时明确提示接口未加载。仅更新浏览器脚本不能激活新的后端接口。
 
 ## 启动配置和覆盖层
 

@@ -84,7 +84,7 @@ const mountedConsumer = root.plugin({
   async apply(ctx) {
     await ctx.remote.$mount({
       package: "@dsh-task/task-system",
-      descriptors: [ui.descriptor],
+      descriptors: [ui.descriptor, ui.queueDescriptor],
     });
     consumer = ctx;
   },
@@ -114,9 +114,25 @@ await assert.rejects(
   ui.readRemote(consumer, "describe", ui.descriptor.result.create()),
   (e) => e.code === "gateway/internal",
 );
+result = {
+  ok: true,
+  value: {
+    sampledAt: "2026-10-05T00:00:00.000Z",
+    nodeId: "fixture",
+    items: [],
+    truncated: false,
+  },
+};
+assert.equal(
+  (await ui.readRemote(consumer, "queue", ui.queueDescriptor.result.create()))
+    .items.length,
+  0,
+);
+assert.equal(calls.at(-1).method, "taskPluginSettings/queue");
+assert.deepEqual(Object.keys(calls.at(-1).payload.args), []);
 await mountedConsumer.dispose();
 await mountedGateway.dispose();
 await core.dispose();
 console.log(
-  "PASS: real official Remote mount reproduces undeclared namespace failure; Context.get and RemoteResult unwrap succeed; carrier failure remains an error.",
+  "PASS: real official Remote mount reproduces undeclared namespace failure; Context.get and RemoteResult unwrap succeed; carrier failure remains an error; queue uses its no-argument read-only route.",
 );

@@ -63,7 +63,41 @@ window.__ModuleLoader__.load({
       deployment: "Current deployment · read only",
       startupHint:
         "These are startup settings. Edit the existing profile patch and restart DSH. This page never writes identity, database paths, tool permissions, endpoints or credentials.",
-      nodeId: "Node ID",
+      nodeId: "Internal node ID",
+      schedulerId: "Scheduler ID",
+      executorId: "Assigned executor ID",
+      identityTitle: "Scheduler-bound executor identity · read only",
+      identityHint:
+        "The scheduler assigns a stable executor ID to an already authorized peer. A connection to another scheduler has its own identity; this page does not edit IDs or grant access.",
+      identityNone: "No scheduler-confirmed executor identity is available.",
+      rolePlanner: "Scheduler",
+      roleExecutor: "Executor",
+      roleBoth: "Scheduler and executor",
+      workspaceTitle: "Sessions and workspace",
+      defaultWorkspaceId: "Default workspace ID",
+      sessionDecisionEnabled: "Use session/workspace decisions",
+      workspaceHint:
+        "The default workspace must already be registered locally. Changes apply after restart. Without a valid decision, execution uses the default Task session and workspace policy.",
+      decisionHint:
+        "Decision adapters reuse @dsh-task/typed-decisions: DSH LLM, Typesafe Jev, or a registered AnyJev adapter. Configure the existing typed-decisions profile entry; this page does not create provider credentials.",
+      settingsPending:
+        "This Host has not loaded the session/workspace settings interface yet.",
+      queueTitle: "Local task queue · read only",
+      queueHint:
+        "Runs recorded for this local node. Refresh only reads the queue; it does not claim, execute or cancel work.",
+      queueLoading: "Reading the local queue…",
+      queueFailed:
+        "Could not read the local queue. Refresh to retry; an unavailable queue is not an empty queue.",
+      queueRefresh: "Refresh local queue",
+      queueEmpty: "No queued or running work was recorded at this sample.",
+      queueSampledAt: "Sampled at",
+      queueTruncated: "The result is bounded. Additional runs are not shown.",
+      queueTask: "Task / Run",
+      queueState: "State",
+      sessionId: "Session ID",
+      workspaceId: "Workspace ID",
+      stateQueued: "Queued",
+      stateRunning: "Running",
       role: "Role",
       databasePath: "Task database",
       profilePatch: "Profile configuration",
@@ -78,6 +112,9 @@ window.__ModuleLoader__.load({
       concurrency: "Remote-worker concurrency",
       polling: "Automatic remote polling",
       authMode: "Authentication mode",
+      taskSessionsEnabled: "Task session protocol enabled",
+      taskSessionHint:
+        "Existing connections retain their current session protocol until an explicit authorized migration. This page does not upgrade permissions.",
       remoteHint:
         "Automatic remote polling is controlled by task-remote-execution.pollIntervalMs: 0 disables polling after restart. Already claimed work and direct/manual dispatch are separate. This page has no remote-pause switch.",
       loading: "Reading current deployment…",
@@ -134,7 +171,39 @@ window.__ModuleLoader__.load({
       deployment: "当前部署 · 只读",
       startupHint:
         "以下为启动配置。请编辑现有 profile 配置文件并重启 DSH。此页不会写入节点身份、数据库路径、工具授权、远端地址或凭据。",
-      nodeId: "节点 ID",
+      nodeId: "内部节点 ID",
+      schedulerId: "调度端 ID",
+      executorId: "调度端分配的执行端 ID",
+      identityTitle: "调度端绑定的执行端身份 · 只读",
+      identityHint:
+        "调度端为已授权的执行端分配固定 ID。连接到不同调度端使用各自的身份；此页不编辑 ID，也不授予访问权限。",
+      identityNone: "尚无调度端确认的执行端身份。",
+      rolePlanner: "调度端",
+      roleExecutor: "执行端",
+      roleBoth: "调度端和执行端",
+      workspaceTitle: "会话与工作区",
+      defaultWorkspaceId: "默认工作区 ID",
+      sessionDecisionEnabled: "使用会话／工作区决策",
+      workspaceHint:
+        "默认工作区须已在本机登记；改变后重启生效。没有有效决策时，执行采用默认的 Task 会话和工作区策略。",
+      decisionHint:
+        "决策复用 @dsh-task/typed-decisions：普通 DSH LLM、Typesafe Jev 或已注册的 AnyJev adapter。请配置已有 typed-decisions profile 条目；此页不新建 provider 凭据。",
+      settingsPending: "当前宿主尚未加载会话／工作区设置接口。",
+      queueTitle: "本机任务队列 · 只读",
+      queueHint:
+        "查看当前宿主记录的本机运行。刷新只读取队列，不领取、执行或取消任务。",
+      queueLoading: "正在读取本机队列…",
+      queueFailed: "未能读取本机队列，请刷新重试；接口不可用不表示队列为空。",
+      queueRefresh: "刷新本机队列",
+      queueEmpty: "本次读取没有已排队或运行中的本机任务。",
+      queueSampledAt: "读取时间",
+      queueTruncated: "返回数量有限，另有运行未显示。",
+      queueTask: "任务／运行",
+      queueState: "状态",
+      sessionId: "会话 ID",
+      workspaceId: "工作区 ID",
+      stateQueued: "已排队",
+      stateRunning: "运行中",
       role: "角色",
       databasePath: "任务数据库",
       profilePatch: "Profile 配置文件",
@@ -149,6 +218,9 @@ window.__ModuleLoader__.load({
       concurrency: "远程执行并发",
       polling: "自动远程领取",
       authMode: "认证方式",
+      taskSessionsEnabled: "Task 会话协议已启用",
+      taskSessionHint:
+        "旧连接继续使用原会话流程；显式授权迁移后才能升级。此页不扩展远端授权。",
       remoteHint:
         "自动远程领取由 task-remote-execution.pollIntervalMs 控制：设为 0 并重启后停用轮询。已领取任务与直接／手动派发独立处理。此页没有远程暂停开关。",
       loading: "正在读取当前部署…",
@@ -231,6 +303,42 @@ window.__ModuleLoader__.load({
         }),
       },
     };
+    const queueDescriptor = {
+      id: "@dsh-task/task-system#taskPluginSettings/queue",
+      service: "taskPluginSettings",
+      namespace: "taskPluginSettings",
+      method: "queue",
+      invocation: { kind: "direct" },
+      parameters: [],
+      result: {
+        mode: "strict",
+        typeSymbol: "@dsh-task/task-system#LocalQueue",
+        create: () => ({
+          parse(value) {
+            if (
+              !value ||
+              typeof value.nodeId !== "string" ||
+              !["string", "number"].includes(typeof value.sampledAt) ||
+              !Array.isArray(value.items) ||
+              typeof value.truncated !== "boolean" ||
+              value.items.some(
+                (item) =>
+                  !item ||
+                  ["taskId", "runId", "title", "state"].some(
+                    (key) => typeof item[key] !== "string",
+                  ) ||
+                  ["sessionId", "workspaceId"].some(
+                    (key) =>
+                      item[key] !== null && typeof item[key] !== "string",
+                  ),
+              )
+            )
+              throw new Error("Invalid local task queue snapshot");
+            return value;
+          },
+        }),
+      },
+    };
     const hintStyle = {
       color: "var(--dsw-text-secondary)",
       fontSize: 13,
@@ -242,7 +350,7 @@ window.__ModuleLoader__.load({
       fontWeight: 600,
       margin: "24px 0 12px",
     };
-    function ReadOnly({ t, read }) {
+    function useReadSnapshot(read) {
       const [state, setState] = React.useState({ loading: true });
       const generation = React.useRef(0);
       const refresh = React.useCallback(() => {
@@ -255,9 +363,18 @@ window.__ModuleLoader__.load({
               if (generation.current === current)
                 setState({ value, loading: false });
             },
-            () => {
+            (error) => {
               if (generation.current === current)
-                setState((old) => ({ ...old, loading: false, failed: true }));
+                setState((old) => ({
+                  ...old,
+                  loading: false,
+                  failed: true,
+                  errorCode:
+                    typeof error?.code === "string" &&
+                    /^[a-z0-9_/-]{1,100}$/i.test(error.code)
+                      ? error.code
+                      : null,
+                }));
             },
           );
       }, [read]);
@@ -267,6 +384,10 @@ window.__ModuleLoader__.load({
           generation.current++;
         };
       }, [refresh]);
+      return { state, refresh };
+    }
+    function ReadOnly({ t, read }) {
+      const { state, refresh } = useReadSnapshot(read);
       const fields = (value, names) =>
         h(
           "dl",
@@ -296,11 +417,19 @@ window.__ModuleLoader__.load({
                   },
                   "data-setting": key,
                 },
-                typeof value[key] === "boolean"
-                  ? t(value[key] ? "yes" : "no")
-                  : Array.isArray(value[key])
-                    ? value[key].join(", ") || t("none")
-                    : (value[key] ?? t("none")),
+                key === "role"
+                  ? t(
+                      {
+                        planner: "rolePlanner",
+                        executor: "roleExecutor",
+                        both: "roleBoth",
+                      }[value[key]],
+                    )
+                  : typeof value[key] === "boolean"
+                    ? t(value[key] ? "yes" : "no")
+                    : Array.isArray(value[key])
+                      ? value[key].join(", ") || t("none")
+                      : (value[key] ?? t("none")),
               ),
             ),
           ),
@@ -313,7 +442,14 @@ window.__ModuleLoader__.load({
         state.loading && !state.value
           ? h("p", { role: "status" }, t("loading"))
           : null,
-        state.failed ? h("p", { role: "alert" }, t("loadFailed")) : null,
+        state.failed
+          ? h(
+              "p",
+              { role: "alert" },
+              t("loadFailed"),
+              state.errorCode ? ` (${state.errorCode})` : "",
+            )
+          : null,
         state.value
           ? h(
               React.Fragment,
@@ -340,6 +476,27 @@ window.__ModuleLoader__.load({
                 "leaseTtlMs",
                 "executionTools",
               ]),
+              Object.hasOwn(state.value, "schedulerId")
+                ? fields(state.value, ["schedulerId"])
+                : null,
+              h("h3", { style: headingStyle }, t("identityTitle")),
+              h("p", { style: hintStyle }, t("identityHint")),
+              state.value.remote?.executorIdentity
+                ? fields(state.value.remote.executorIdentity, [
+                    "schedulerId",
+                    "executorId",
+                  ])
+                : h("p", { style: hintStyle }, t("identityNone")),
+              h("h3", { style: headingStyle }, t("workspaceTitle")),
+              Object.hasOwn(state.value, "defaultWorkspaceId") &&
+                Object.hasOwn(state.value, "sessionDecisionEnabled")
+                ? fields(state.value, [
+                    "defaultWorkspaceId",
+                    "sessionDecisionEnabled",
+                  ])
+                : h("p", { style: hintStyle }, t("settingsPending")),
+              h("p", { style: hintStyle }, t("workspaceHint")),
+              h("p", { style: hintStyle }, t("decisionHint")),
               h("h3", { style: headingStyle }, t("remoteTitle")),
               state.value.remote
                 ? fields(state.value.remote, [
@@ -352,6 +509,11 @@ window.__ModuleLoader__.load({
                     "authMode",
                   ])
                 : h("p", { style: hintStyle }, t("remoteNone")),
+              state.value.remote &&
+                Object.hasOwn(state.value.remote, "taskSessionsEnabled")
+                ? fields(state.value.remote, ["taskSessionsEnabled"])
+                : null,
+              h("p", { style: hintStyle }, t("taskSessionHint")),
               h("p", { style: hintStyle }, t("remoteHint")),
             )
           : null,
@@ -359,6 +521,124 @@ window.__ModuleLoader__.load({
           Button,
           { variant: "outline", onClick: refresh, disabled: state.loading },
           t("refresh"),
+        ),
+      );
+    }
+    function QueueContents({ t, value }) {
+      const cellStyle = {
+        textAlign: "left",
+        padding: "8px 12px",
+        borderBottom: "1px solid var(--dsw-border)",
+        verticalAlign: "top",
+        overflowWrap: "anywhere",
+      };
+      return h(
+        React.Fragment,
+        null,
+        h(
+          "p",
+          { style: hintStyle },
+          `${t("nodeId")}: ${value.nodeId} · ${t("queueSampledAt")}: ${value.sampledAt}`,
+        ),
+        value.items.length === 0
+          ? h("p", { role: "status" }, t("queueEmpty"))
+          : h(
+              "div",
+              { style: { overflowX: "auto" } },
+              h(
+                "table",
+                {
+                  style: {
+                    width: "100%",
+                    borderCollapse: "collapse",
+                    fontSize: 13,
+                  },
+                },
+                h(
+                  "thead",
+                  null,
+                  h(
+                    "tr",
+                    null,
+                    ...[
+                      "queueTask",
+                      "queueState",
+                      "sessionId",
+                      "workspaceId",
+                    ].map((key) =>
+                      h("th", { key, scope: "col", style: cellStyle }, t(key)),
+                    ),
+                  ),
+                ),
+                h(
+                  "tbody",
+                  null,
+                  ...value.items.map((item) =>
+                    h(
+                      "tr",
+                      { key: item.runId, "data-queue-run": item.runId },
+                      h(
+                        "td",
+                        { style: cellStyle },
+                        h("strong", null, item.title),
+                        h(
+                          "div",
+                          { style: hintStyle },
+                          `${item.taskId} / ${item.runId}`,
+                        ),
+                      ),
+                      h(
+                        "td",
+                        { style: cellStyle },
+                        item.state === "queued"
+                          ? t("stateQueued")
+                          : item.state === "running"
+                            ? t("stateRunning")
+                            : item.state,
+                      ),
+                      h(
+                        "td",
+                        { style: cellStyle },
+                        item.sessionId ?? t("none"),
+                      ),
+                      h(
+                        "td",
+                        { style: cellStyle },
+                        item.workspaceId ?? t("none"),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        value.truncated
+          ? h("p", { role: "status", style: hintStyle }, t("queueTruncated"))
+          : null,
+      );
+    }
+    function LocalQueue({ t, readQueue }) {
+      const { state, refresh } = useReadSnapshot(readQueue);
+      return h(
+        "section",
+        { "data-task-local-queue": true },
+        h("h3", { style: headingStyle }, t("queueTitle")),
+        h("p", { style: hintStyle }, t("queueHint")),
+        state.loading && !state.value
+          ? h("p", { role: "status" }, t("queueLoading"))
+          : null,
+        state.failed
+          ? h(
+              "p",
+              { role: "alert" },
+              t("queueFailed"),
+              state.errorCode ? ` (${state.errorCode})` : "",
+            )
+          : null,
+        state.value ? h(QueueContents, { t, value: state.value }) : null,
+        h(
+          Button,
+          { variant: "outline", onClick: refresh, disabled: state.loading },
+          t("queueRefresh"),
         ),
       );
     }
@@ -454,6 +734,7 @@ window.__ModuleLoader__.load({
           ),
         ),
         h(ReadOnly, { t, read: props.read }),
+        h(LocalQueue, { t, readQueue: props.readQueue }),
       );
     }
     async function readRemote(ctx, method, codec) {
@@ -482,15 +763,17 @@ window.__ModuleLoader__.load({
       ctx.effect(() => () => controller.dispose(), "task settings form");
       const unmount = await ctx.remote.$mount({
         package: "@dsh-task/task-system",
-        descriptors: [descriptor],
+        descriptors: [descriptor, queueDescriptor],
       });
       ctx.effect(() => unmount, "task settings read-only remote");
       const read = () =>
         readRemote(ctx, "describe", descriptor.result.create());
+      const readQueue = () =>
+        readRemote(ctx, "queue", queueDescriptor.result.create());
       ctx.effect(
         () =>
           ctx.configForms.whileServed(["task-system"], () => {
-            const inject = () => ({ ...controller.inject(), read });
+            const inject = () => ({ ...controller.inject(), read, readQueue });
             const section = ctx.slots.inject("settings.section", () =>
               ctx.slots.register(
                 {
@@ -530,6 +813,10 @@ window.__ModuleLoader__.load({
       fieldSpec,
       descriptor,
       readRemote,
+      queueDescriptor,
+      QueueContents,
+      LocalQueue,
+      ReadOnly,
       Page,
       en,
       zh,

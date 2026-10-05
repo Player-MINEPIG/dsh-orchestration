@@ -6,7 +6,7 @@ import { Config, LIVE_SETTING_KEYS } from "../dist/dsh-plugin.js";
 import { settingsDescriptor, hasTaskConfigOverride } from "../dist/settings.js";
 import { RemoteExecutionService } from "../dist/remote/index.js";
 
-function client(primitives = {}) {
+function client(primitives = {}, react = {}) {
   let module;
   vm.runInNewContext(
     readFileSync(
@@ -26,6 +26,7 @@ function client(primitives = {}) {
                       props,
                       children,
                     }),
+                    ...react,
                   }
                 : primitives,
             );
@@ -187,7 +188,7 @@ test("browser companion exposes the same served form in Settings and its install
     },
     remote: {
       $mount: async (contribution) => (
-        assert.equal(contribution.descriptors.length, 1),
+        assert.equal(contribution.descriptors.length, 2),
         () => {}
       ),
     },
@@ -300,4 +301,114 @@ test("read-only client consumes the official RemoteResult without inventing a su
     ui.readRemote(ctx, "describe", codec),
     /Invalid task settings snapshot/,
   );
+});
+
+test("local queue uses a separate no-argument read and rejects malformed queue snapshots", async () => {
+  const ui = client();
+  assert.equal(ui.queueDescriptor.namespace, "taskPluginSettings");
+  assert.equal(ui.queueDescriptor.method, "queue");
+  assert.equal(ui.queueDescriptor.parameters.length, 0);
+  const value = {
+    sampledAt: "2026-10-05T00:00:00.000Z",
+    nodeId: "fixture",
+    items: [
+      {
+        taskId: "task-fixture",
+        runId: "run-fixture",
+        title: "Fixture task",
+        state: "queued",
+        sessionId: null,
+        workspaceId: "workspace-fixture",
+      },
+    ],
+    truncated: false,
+  };
+  const methods = [];
+  const ctx = {
+    get: () => ({
+      queue: async (...args) => {
+        methods.push(args);
+        return { ok: true, value };
+      },
+    }),
+  };
+  assert.equal(
+    (await ui.readRemote(ctx, "queue", ui.queueDescriptor.result.create()))
+      .items[0].runId,
+    "run-fixture",
+  );
+  assert.equal(methods.length, 1);
+  assert.equal(methods[0].length, 0);
+  assert.throws(
+    () =>
+      ui.queueDescriptor.result
+        .create()
+        .parse({ ...value, items: [{ ...value.items[0], taskId: null }] }),
+    /Invalid local task queue snapshot/,
+  );
+  assert.throws(
+    () =>
+      ui.queueDescriptor.result
+        .create()
+        .parse({ ...value, items: [{ ...value.items[0], sessionId: {} }] }),
+    /Invalid local task queue snapshot/,
+  );
+});
+
+test("queue failure remains visible, retains the last sample and ignores responses after unmount", async () => {
+  let snapshot = { loading: true },
+    cleanup;
+  const ref = { current: 0 };
+  const react = {
+    useState: () => [
+      snapshot,
+      (value) => {
+        snapshot = typeof value === "function" ? value(snapshot) : value;
+      },
+    ],
+    useRef: () => ref,
+    useCallback: (callback) => callback,
+    useEffect: (callback) => {
+      cleanup = callback();
+    },
+  };
+  const ui = client({ Button: "FixtureButton" }, react);
+  let settle;
+  const readQueue = () =>
+    new Promise((resolve, reject) => {
+      settle = { resolve, reject };
+    });
+  ui.LocalQueue({ t: (key) => key, readQueue });
+  await new Promise((resolve) => setImmediate(resolve));
+  settle.reject({ code: "gateway/internal" });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(snapshot.failed, true);
+  assert.equal(snapshot.value, undefined);
+  let rendered = ui.LocalQueue({ t: (key) => key, readQueue });
+  assert.ok(
+    rendered.children.some(
+      (child) =>
+        child?.props?.role === "alert" &&
+        child.children.includes("queueFailed"),
+    ),
+  );
+  const sample = {
+    sampledAt: "fixture",
+    nodeId: "fixture",
+    items: [],
+    truncated: false,
+  };
+  snapshot = { loading: false, value: sample };
+  rendered = ui.LocalQueue({ t: (key) => key, readQueue });
+  await new Promise((resolve) => setImmediate(resolve));
+  settle.reject({ code: "gateway/internal" });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(snapshot.value, sample);
+  ui.LocalQueue({ t: (key) => key, readQueue });
+  await new Promise((resolve) => setImmediate(resolve));
+  cleanup();
+  const before = snapshot;
+  settle.resolve(sample);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(snapshot, before);
 });
