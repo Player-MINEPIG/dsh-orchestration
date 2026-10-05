@@ -31,6 +31,27 @@ window.__ModuleLoader__.load({
     ]);
     const NS = "taskPluginSettings";
     const en = {
+      simpleMode: "Simple",
+      advancedMode: "Advanced",
+      settingsMode: "Settings mode",
+      simpleHint:
+        "Choose your role, connection and default workspace. Advanced settings keep the same draft.",
+      openAdvanced: "Open advanced settings",
+      decisionModelEntry: "Decision model settings",
+      decisionModelStatus:
+        "Uses the existing decision-model configuration. If no valid decision is available, the default Task session/workspace policy applies.",
+      decisionModelSetup:
+        "Open Plugins and configure the existing @dsh-task/typed-decisions entry with your existing model/provider. This switch enables its use for session/workspace decisions.",
+      schedulerConnection: "Scheduler connection",
+      executorConnections: "Executor connections",
+      executorSetupStatus:
+        "Executor registrations and permissions use the existing task-system plugin configuration. Review them in Plugins before remote dispatch.",
+      connectionSetupStatus:
+        "Connection not ready. Complete its existing authentication, target binding and permissions in advanced settings or Plugins.",
+      connectionUnconfirmed:
+        "Connection configured; scheduler identity and permissions have not been confirmed here.",
+      remotePausedStatus:
+        "Remote operation is paused; connection settings remain editable.",
       startupEditable: "Role, workspace and scheduler connection",
       startupTask: "Task-service startup settings",
       startupRemote: "Scheduler connection",
@@ -180,6 +201,24 @@ window.__ModuleLoader__.load({
         "Edits are staged until Save. Leaving this page discards unsaved changes. Saved runtime settings persist in this profile and do not restart the task service.",
     };
     const zh = {
+      simpleMode: "简单",
+      advancedMode: "高级",
+      settingsMode: "设置模式",
+      simpleHint: "选择本机角色、连接与默认工作区。高级设置沿用同一份草稿。",
+      openAdvanced: "打开高级设置",
+      decisionModelEntry: "决策模型配置",
+      decisionModelStatus:
+        "使用已有决策模型配置；没有有效决策时，采用默认 Task 会话与工作区策略。",
+      decisionModelSetup:
+        "打开“插件”，配置已有 @dsh-task/typed-decisions 条目并使用已有模型／provider；此开关控制是否将它用于会话与工作区决策。",
+      schedulerConnection: "调度端连接",
+      executorConnections: "执行端连接信息",
+      executorSetupStatus:
+        "执行端注册与权限沿用已有 task-system 插件配置；远程派发前请在“插件”中确认。",
+      connectionSetupStatus:
+        "连接尚未就绪。请在高级设置或“插件”中完成已有认证、目标绑定与权限配置。",
+      connectionUnconfirmed: "连接已配置；此处尚未确认调度端身份与权限。",
+      remotePausedStatus: "远程运行已暂停，连接配置仍可编辑。",
       startupEditable: "角色、工作区与调度端连接",
       startupTask: "任务服务启动配置",
       startupRemote: "调度端连接",
@@ -813,7 +852,7 @@ window.__ModuleLoader__.load({
         ),
       );
     }
-    function QueueContents({ t, value }) {
+    function QueueContents({ t, value, advanced = true }) {
       const cellStyle = {
         textAlign: "left",
         padding: "8px 12px",
@@ -826,7 +865,7 @@ window.__ModuleLoader__.load({
         null,
         h(
           "p",
-          { style: hintStyle },
+          { style: hintStyle, hidden: !advanced },
           `${t("nodeId")}: ${value.nodeId} · ${t("queueSampledAt")}: ${value.sampledAt}`,
         ),
         value.items.length === 0
@@ -852,8 +891,7 @@ window.__ModuleLoader__.load({
                     ...[
                       "queueTask",
                       "queueState",
-                      "sessionId",
-                      "workspaceId",
+                      ...(advanced ? ["sessionId", "workspaceId"] : []),
                     ].map((key) =>
                       h("th", { key, scope: "col", style: cellStyle }, t(key)),
                     ),
@@ -872,7 +910,7 @@ window.__ModuleLoader__.load({
                         h("strong", null, item.title),
                         h(
                           "div",
-                          { style: hintStyle },
+                          { style: hintStyle, hidden: !advanced },
                           `${item.taskId} / ${item.runId}`,
                         ),
                       ),
@@ -897,12 +935,12 @@ window.__ModuleLoader__.load({
                       ),
                       h(
                         "td",
-                        { style: cellStyle },
+                        { style: cellStyle, hidden: !advanced },
                         item.sessionId ?? t("none"),
                       ),
                       h(
                         "td",
-                        { style: cellStyle },
+                        { style: cellStyle, hidden: !advanced },
                         item.workspaceId ?? t("none"),
                       ),
                     ),
@@ -915,7 +953,7 @@ window.__ModuleLoader__.load({
           : null,
       );
     }
-    function LocalQueue({ t, readQueue }) {
+    function LocalQueue({ t, readQueue, advanced = true }) {
       const { state, refresh } = useReadSnapshot(readQueue);
       return h(
         "section",
@@ -933,7 +971,9 @@ window.__ModuleLoader__.load({
               state.errorCode ? ` (${state.errorCode})` : "",
             )
           : null,
-        state.value ? h(QueueContents, { t, value: state.value }) : null,
+        state.value
+          ? h(QueueContents, { t, value: state.value, advanced })
+          : null,
         h(
           Button,
           { variant: "outline", onClick: refresh, disabled: state.loading },
@@ -1050,12 +1090,25 @@ window.__ModuleLoader__.load({
       );
       return { changes, invalid, dirty: Object.keys(changes).length > 0 };
     }
-    function StartupRow({ t, target, row, writable, saveStartup, onSaved }) {
+    function StartupRow({
+      t,
+      target,
+      row,
+      writable,
+      saveStartup,
+      onSaved,
+      advanced = true,
+      visible = true,
+      onRoleChange,
+      openAdvanced,
+      openPlugins,
+    }) {
       const [draft, setDraft] = React.useState(() =>
         startupDraft(target, row.values),
       );
       const [status, setStatus] = React.useState({ saving: false });
       const edit = (key, value) => {
+        if (key === "role") onRoleChange?.(value);
         setDraft((old) => ({
           ...old,
           [key]: value,
@@ -1108,13 +1161,17 @@ window.__ModuleLoader__.load({
         padding: "7px 10px",
         color: "var(--dsw-alias-label-primary, currentColor)",
         background: "var(--dsw-alias-bg-layer-1, transparent)",
-        border: "1px solid var(--dsw-alias-border-l4, #8a8a8a)",
+        border: "1px solid var(--dsw-alias-border-l3, #8a8a8a)",
         borderRadius: 6,
       };
       const field = (key, label = key) =>
         h(
           "label",
-          { key, style: { display: "block", margin: "12px 0" } },
+          {
+            key,
+            hidden: target === "remote" && !advanced && key !== "endpoint",
+            style: { display: "block", margin: "12px 0" },
+          },
           h("span", { style: { display: "block", marginBottom: 6 } }, t(label)),
           key === "role"
             ? h(
@@ -1156,11 +1213,17 @@ window.__ModuleLoader__.load({
         );
       return h(
         "section",
-        { "data-startup-target": target },
+        { "data-startup-target": target, hidden: !visible },
         h(
           "h4",
-          { style: headingStyle },
-          t(target === "task" ? "startupTask" : "startupRemote"),
+          { style: headingStyle, hidden: target === "task" && !advanced },
+          t(
+            target === "task"
+              ? "startupTask"
+              : advanced
+                ? "startupRemote"
+                : "schedulerConnection",
+          ),
         ),
         target === "remote"
           ? h(
@@ -1168,7 +1231,7 @@ window.__ModuleLoader__.load({
               null,
               h(
                 "p",
-                { style: hintStyle },
+                { style: hintStyle, hidden: !advanced },
                 `${t("startupLoaded")}: ${t(row.loaded ? "yes" : "no")} · ${t("startupLoaderDisabled")}: ${t(row.loaderDisabled ? "yes" : "no")}`,
               ),
               !row.loaded || row.loaderDisabled
@@ -1206,7 +1269,34 @@ window.__ModuleLoader__.load({
                 }),
               ),
               h("p", { style: hintStyle }, t("workspaceHint")),
-              h("p", { style: hintStyle }, t("decisionHint")),
+              draft.sessionDecisionEnabled
+                ? h(
+                    "div",
+                    { "data-task-decision-entry": true },
+                    h("p", { style: hintStyle }, t("decisionModelStatus")),
+                    h(
+                      Button,
+                      {
+                        variant: "outline",
+                        onClick: () => {
+                          if (!openPlugins?.())
+                            openAdvanced?.("task-decision-model");
+                        },
+                      },
+                      t("decisionModelEntry"),
+                    ),
+                    h(
+                      "div",
+                      {
+                        id: "task-decision-model",
+                        hidden: !advanced,
+                        tabIndex: -1,
+                      },
+                      h("p", { style: hintStyle }, t("decisionModelSetup")),
+                      h("p", { style: hintStyle }, t("decisionHint")),
+                    ),
+                  )
+                : null,
             )
           : h(
               React.Fragment,
@@ -1221,6 +1311,7 @@ window.__ModuleLoader__.load({
                     gap: 20,
                     margin: "12px 0",
                   },
+                  hidden: !advanced,
                 },
                 t("paused"),
                 h(Switch, {
@@ -1230,7 +1321,14 @@ window.__ModuleLoader__.load({
                   onChange: (value) => edit("paused", value),
                 }),
               ),
-              h("p", { style: hintStyle }, t("pausedHint")),
+              draft.paused
+                ? h(
+                    "p",
+                    { role: "status", style: hintStyle },
+                    t("remotePausedStatus"),
+                  )
+                : null,
+              h("p", { style: hintStyle, hidden: !advanced }, t("pausedHint")),
               ...["endpoint", "audience", "pollIntervalMs", "concurrency"].map(
                 (key) => field(key),
               ),
@@ -1246,19 +1344,58 @@ window.__ModuleLoader__.load({
                   )
                 : null,
               row.values.endpoint === null
-                ? h("p", { style: hintStyle }, t("startupUnconfigured"))
+                ? h(
+                    "p",
+                    { style: hintStyle, hidden: !advanced },
+                    t("startupUnconfigured"),
+                  )
                 : null,
-              h("p", { style: hintStyle }, t("startupEndpointHint")),
+              h(
+                "p",
+                { style: hintStyle, hidden: !advanced },
+                t("startupEndpointHint"),
+              ),
+              !advanced
+                ? h(
+                    "div",
+                    { "data-task-connection-status": true },
+                    h(
+                      "p",
+                      { role: "status", style: hintStyle },
+                      t(
+                        row.values.endpoint === null ||
+                          !row.loaded ||
+                          row.loaderDisabled
+                          ? "connectionSetupStatus"
+                          : "connectionUnconfirmed",
+                      ),
+                    ),
+                    h(
+                      Button,
+                      {
+                        variant: "outline",
+                        onClick: () =>
+                          openAdvanced?.("task-startup-remote-endpoint"),
+                      },
+                      t("openAdvanced"),
+                    ),
+                  )
+                : null,
               row.values.taskSessionsEnabled === false &&
                 row.values.endpoint !== null
                 ? h(
                     React.Fragment,
                     null,
-                    h("p", { style: hintStyle }, t("startupMigrationHint")),
+                    h(
+                      "p",
+                      { style: hintStyle, hidden: !advanced },
+                      t("startupMigrationHint"),
+                    ),
                     h(
                       Button,
                       {
                         variant: "outline",
+                        hidden: !advanced,
                         disabled: disabled || parsed.invalid.length > 0,
                         onClick: () => save(true),
                       },
@@ -1268,7 +1405,11 @@ window.__ModuleLoader__.load({
                 : null,
             ),
         parsed.invalid.length
-          ? h("p", { role: "alert" }, t("startupInvalid"))
+          ? h(
+              "p",
+              { role: "alert", hidden: !advanced && target === "remote" },
+              t("startupInvalid"),
+            )
           : null,
         status.failed
           ? h(
@@ -1298,6 +1439,7 @@ window.__ModuleLoader__.load({
               disabled: disabled || !parsed.dirty,
               onClick: () => {
                 setDraft(startupDraft(target, row.values));
+                onRoleChange?.(row.values.role);
                 setStatus({ saving: false });
               },
             },
@@ -1306,8 +1448,25 @@ window.__ModuleLoader__.load({
         ),
       );
     }
-    function StartupSettings({ t, startup, saveStartup, onSaved }) {
+    function StartupSettings({
+      t,
+      startup,
+      saveStartup,
+      onSaved,
+      advanced = true,
+      openAdvanced,
+      openPlugins,
+    }) {
       const { state, refresh, replace } = useReadSnapshot(startup);
+      const [taskRole, setTaskRole] = React.useState(null);
+      const savedRoleKey =
+        state.value?.task?.entryId + JSON.stringify(state.value?.task?.values);
+      React.useEffect(() => {
+        setTaskRole(state.value?.task?.values.role ?? null);
+      }, [savedRoleKey]);
+      const role = taskRole ?? state.value?.task?.values.role;
+      const executor = role === "executor" || role === "both";
+      const planner = role === "planner" || role === "both";
       const afterSave = async () => {
         // Clear the old connection summary before reading the new plugin state.
         onSaved();
@@ -1318,7 +1477,11 @@ window.__ModuleLoader__.load({
         "section",
         { "data-task-startup-settings": true },
         h("h3", { style: headingStyle }, t("startupEditable")),
-        h("p", { style: hintStyle }, t("startupRestartHint")),
+        h(
+          "p",
+          { style: hintStyle, hidden: !advanced },
+          t("startupRestartHint"),
+        ),
         state.failed
           ? h(
               "p",
@@ -1344,12 +1507,36 @@ window.__ModuleLoader__.load({
                       JSON.stringify(state.value.task.values),
                     t,
                     target: "task",
+                    advanced,
+                    openAdvanced,
+                    openPlugins,
+                    onRoleChange: setTaskRole,
                     row: state.value.task,
                     writable: state.value.writable,
                     saveStartup,
                     onSaved: afterSave,
                   })
                 : h("p", { style: hintStyle }, t("startupUnavailable")),
+              !advanced && planner
+                ? h(
+                    "section",
+                    { "data-task-executor-connections": true },
+                    h("h4", { style: headingStyle }, t("executorConnections")),
+                    h(
+                      "p",
+                      { role: "status", style: hintStyle },
+                      t("executorSetupStatus"),
+                    ),
+                    h(
+                      Button,
+                      {
+                        variant: "outline",
+                        onClick: () => openAdvanced?.("task-startup-task-role"),
+                      },
+                      t("openAdvanced"),
+                    ),
+                  )
+                : null,
               state.value.remote
                 ? h(StartupRow, {
                     key:
@@ -1357,12 +1544,34 @@ window.__ModuleLoader__.load({
                       JSON.stringify(state.value.remote.values),
                     t,
                     target: "remote",
+                    advanced,
+                    visible: advanced || executor,
+                    openAdvanced,
                     row: state.value.remote,
                     writable: state.value.writable,
                     saveStartup,
                     onSaved: afterSave,
                   })
-                : h("p", { style: hintStyle }, t("startupUnconfigured")),
+                : executor || advanced
+                  ? h(
+                      "div",
+                      null,
+                      h(
+                        "p",
+                        { role: "status", style: hintStyle },
+                        t("connectionSetupStatus"),
+                      ),
+                      h(
+                        Button,
+                        {
+                          variant: "outline",
+                          onClick: () =>
+                            openAdvanced?.("task-startup-task-role"),
+                        },
+                        t("openAdvanced"),
+                      ),
+                    )
+                  : null,
             )
           : null,
         h(
@@ -1375,6 +1584,11 @@ window.__ModuleLoader__.load({
     function Page(props) {
       const { t } = props;
       const [refreshKey, setRefreshKey] = React.useState(0);
+      const [advanced, setAdvanced] = React.useState(false);
+      const openAdvanced = (id) => {
+        setAdvanced(true);
+        requestAnimationFrame(() => document.getElementById(id)?.focus());
+      };
       const state = props.useTaskSettings((snapshot) => snapshot);
       if (props.view === "summary") return t("summary");
       return h(
@@ -1383,102 +1597,156 @@ window.__ModuleLoader__.load({
         h(
           "style",
           null,
-          '[data-task-plugin-settings] button:not([role="switch"]) { border: 1px solid var(--dsw-alias-border-l3, #8a8a8a); border-radius: 6px; }',
+          `[data-task-plugin-settings] [hidden] { display: none !important; }
+          [data-task-plugin-settings] button { border: 1px solid var(--dsw-alias-border-l3, #8a8a8a) !important; }
+          [data-task-plugin-settings] button:not([role="switch"]) { border-radius: 6px; background: var(--dsw-alias-bg-layer-2, #e9e9e9); padding: 7px 12px; }
+          [data-task-plugin-settings] button:focus-visible, [data-task-plugin-settings] input:focus-visible, [data-task-plugin-settings] select:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+          [data-task-plugin-settings] section, [data-task-plugin-settings] [data-task-runtime] { border-top: 1px solid var(--dsw-alias-border-l3, #8a8a8a); padding-top: 18px; margin-top: 22px; }
+          [data-task-plugin-settings] [data-task-startup-settings] > [data-startup-target="task"] { border-top: 0; padding-top: 0; margin-top: 0; }
+          [data-task-plugin-settings] [data-task-mode] { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+          [data-task-plugin-settings] [data-task-mode] [aria-pressed="true"] { font-weight: 600; box-shadow: inset 0 -2px currentColor; }`,
         ),
         h(
-          "p",
+          "div",
           {
-            role: "note",
-            style: {
-              ...hintStyle,
-              padding: 12,
-              border: "1px solid var(--dsw-alias-border-l3, #8a8a8a)",
-              borderRadius: 8,
+            "data-task-mode": true,
+            role: "group",
+            "aria-label": t("settingsMode"),
+          },
+          h(
+            Button,
+            {
+              variant: "outline",
+              "aria-pressed": !advanced,
+              onClick: () => setAdvanced(false),
             },
-          },
-          t("safety"),
-        ),
-        h("h3", { style: headingStyle }, t("runtime")),
-        h("p", { style: hintStyle }, t("savedHint")),
-        h(
-          SettingsForm,
-          {
-            state,
-            labels: Object.fromEntries(
-              ["unavailable", "readOnly", "save", "saving", "saveFailed"].map(
-                (k) => [k, t(k)],
-              ),
-            ),
-            onSave: props.save,
-            onDiscard: props.discard,
-          },
-          ...keys.map((key) =>
-            booleanKeys.has(key)
-              ? h(
-                  "div",
-                  { key, style: { margin: "12px 0 20px" } },
-                  h(
-                    "div",
-                    {
-                      style: {
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "space-between",
-                        gap: 20,
-                      },
-                    },
-                    h("span", null, t(key)),
-                    h(Switch, {
-                      label: t(key),
-                      checked: state.fields[key].text === "true",
-                      disabled: !state.writable || state.saving,
-                      onChange: (value) => props.edit(key, String(value)),
-                    }),
-                  ),
-                  h("p", { style: hintStyle }, t(`${key}Hint`)),
-                  state.fields[key].overridden
-                    ? h(
-                        Button,
-                        {
-                          variant: "outline",
-                          disabled: !state.writable || state.saving,
-                          onClick: () => props.resetField(key),
-                        },
-                        t("reset"),
-                      )
-                    : null,
-                )
-              : h(SettingsValueField, {
-                  key,
-                  id: `task-setting-${key}`,
-                  label: t(key),
-                  hint: `${t(`${key}Hint`)} (${ranges[key][0]}–${ranges[key][1]})`,
-                  overriddenLabel: t("overridden"),
-                  resetLabel: t("reset"),
-                  invalidLabel: t("invalidNumber"),
-                  numeric: true,
-                  disabled: !state.writable || state.saving,
-                  ...state.fields[key],
-                  onEdit: (text) => props.edit(key, text),
-                  onReset: () => props.resetField(key),
-                }),
+            t("simpleMode"),
+          ),
+          h(
+            Button,
+            {
+              variant: "outline",
+              "aria-pressed": advanced,
+              onClick: () => setAdvanced(true),
+            },
+            t("advancedMode"),
           ),
         ),
-        h(ReadOnly, {
-          key: refreshKey,
-          t,
-          read: props.read,
-          queryIdentity: props.queryIdentity,
-        }),
-        h(LocalQueue, { key: refreshKey, t, readQueue: props.readQueue }),
+        h("p", { style: hintStyle }, t("simpleHint")),
         props.startup
           ? h(StartupSettings, {
               t,
               startup: props.startup,
               saveStartup: props.saveStartup,
               onSaved: () => setRefreshKey((value) => value + 1),
+              advanced,
+              openAdvanced,
+              openPlugins: props.openPlugins,
             })
           : null,
+        h(LocalQueue, {
+          key: refreshKey,
+          t,
+          readQueue: props.readQueue,
+          advanced,
+        }),
+        h(
+          "div",
+          { hidden: !advanced, "data-task-advanced": true },
+          h(
+            "p",
+            {
+              role: "note",
+              style: {
+                ...hintStyle,
+                padding: 12,
+                border: "1px solid var(--dsw-alias-border-l3, #8a8a8a)",
+                borderRadius: 8,
+              },
+            },
+            t("safety"),
+          ),
+          h(
+            "section",
+            { "data-task-runtime": true },
+            h("h3", { style: headingStyle }, t("runtime")),
+            h("p", { style: hintStyle }, t("savedHint")),
+            h(
+              SettingsForm,
+              {
+                state,
+                labels: Object.fromEntries(
+                  [
+                    "unavailable",
+                    "readOnly",
+                    "save",
+                    "saving",
+                    "saveFailed",
+                  ].map((k) => [k, t(k)]),
+                ),
+                onSave: props.save,
+                onDiscard: props.discard,
+              },
+              ...keys.map((key) =>
+                booleanKeys.has(key)
+                  ? h(
+                      "div",
+                      { key, style: { margin: "12px 0 20px" } },
+                      h(
+                        "div",
+                        {
+                          style: {
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "space-between",
+                            gap: 20,
+                          },
+                        },
+                        h("span", null, t(key)),
+                        h(Switch, {
+                          label: t(key),
+                          checked: state.fields[key].text === "true",
+                          disabled: !state.writable || state.saving,
+                          onChange: (value) => props.edit(key, String(value)),
+                        }),
+                      ),
+                      h("p", { style: hintStyle }, t(`${key}Hint`)),
+                      state.fields[key].overridden
+                        ? h(
+                            Button,
+                            {
+                              variant: "outline",
+                              disabled: !state.writable || state.saving,
+                              onClick: () => props.resetField(key),
+                            },
+                            t("reset"),
+                          )
+                        : null,
+                    )
+                  : h(SettingsValueField, {
+                      key,
+                      id: `task-setting-${key}`,
+                      label: t(key),
+                      hint: `${t(`${key}Hint`)} (${ranges[key][0]}–${ranges[key][1]})`,
+                      overriddenLabel: t("overridden"),
+                      resetLabel: t("reset"),
+                      invalidLabel: t("invalidNumber"),
+                      numeric: true,
+                      disabled: !state.writable || state.saving,
+                      ...state.fields[key],
+                      onEdit: (text) => props.edit(key, text),
+                      onReset: () => props.resetField(key),
+                    }),
+              ),
+            ),
+          ),
+          h(ReadOnly, {
+            key: refreshKey,
+            t,
+            read: props.read,
+            queryIdentity: props.queryIdentity,
+          }),
+        ),
       );
     }
     async function readRemote(ctx, method, codec, ...args) {
@@ -1496,6 +1764,15 @@ window.__ModuleLoader__.load({
           code: "client/invalid-result",
         });
       return codec.parse(result.value);
+    }
+    function openPlugins(ctx) {
+      const shell = ctx.slots
+        .entries?.("sidebar.settings")
+        .find((entry) => entry.options.store)
+        ?.options.store.create();
+      if (!shell?.actions?.openSection) return false;
+      shell.actions.openSection("plugins");
+      return true;
     }
     async function apply(ctx) {
       const t = ctx.locale.bind(NS);
@@ -1545,6 +1822,7 @@ window.__ModuleLoader__.load({
               queryIdentity,
               startup,
               saveStartup,
+              openPlugins: () => openPlugins(ctx),
             });
             const section = ctx.slots.inject("settings.section", () =>
               ctx.slots.register(
@@ -1582,6 +1860,7 @@ window.__ModuleLoader__.load({
       inject: ["slots", "locale", "configForms", "remote"],
       apply,
       Controller,
+      openPlugins,
       fieldSpec,
       descriptor,
       readRemote,
