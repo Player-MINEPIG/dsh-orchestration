@@ -566,7 +566,7 @@ window.__ModuleLoader__.load({
       },
     };
     const hintStyle = {
-      color: "var(--dsw-text-secondary)",
+      color: "var(--dsw-alias-label-secondary, currentColor)",
       fontSize: 13,
       lineHeight: 1.65,
       margin: "5px 0 12px",
@@ -635,7 +635,7 @@ window.__ModuleLoader__.load({
                   gridTemplateColumns: "minmax(130px, 1fr) minmax(0, 2fr)",
                   gap: 16,
                   padding: "8px 0",
-                  borderBottom: "1px solid var(--dsw-border)",
+                  borderBottom: "1px solid var(--dsw-alias-border-l3, #8a8a8a)",
                 },
               },
               h("dt", { style: hintStyle }, t(key)),
@@ -791,7 +791,7 @@ window.__ModuleLoader__.load({
       const cellStyle = {
         textAlign: "left",
         padding: "8px 12px",
-        borderBottom: "1px solid var(--dsw-border)",
+        borderBottom: "1px solid var(--dsw-alias-border-l3, #8a8a8a)",
         verticalAlign: "top",
         overflowWrap: "anywhere",
       };
@@ -1036,9 +1036,9 @@ window.__ModuleLoader__.load({
         width: "100%",
         boxSizing: "border-box",
         padding: "7px 10px",
-        color: "var(--dsw-text-primary)",
-        background: "var(--dsw-bg-secondary)",
-        border: "1px solid var(--dsw-border)",
+        color: "var(--dsw-alias-label-primary, currentColor)",
+        background: "var(--dsw-alias-bg-layer-1, transparent)",
+        border: "1px solid var(--dsw-alias-border-l4, #8a8a8a)",
         borderRadius: 6,
       };
       const field = (key, label = key) =>
@@ -1283,7 +1283,7 @@ window.__ModuleLoader__.load({
             style: {
               ...hintStyle,
               padding: 12,
-              border: "1px solid var(--dsw-border)",
+              border: "1px solid var(--dsw-alias-border-l3, #8a8a8a)",
               borderRadius: 8,
             },
           },
