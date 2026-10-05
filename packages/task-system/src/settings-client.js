@@ -31,6 +31,35 @@ window.__ModuleLoader__.load({
     ]);
     const NS = "taskPluginSettings";
     const en = {
+      startupEditable: "Role, workspace and scheduler connection",
+      startupTask: "Task-service startup settings",
+      startupRemote: "Existing scheduler connection",
+      startupSave: "Save and restart plugin",
+      startupSaving: "Saving and restarting…",
+      startupSaved: "Saved; current configuration was read again.",
+      startupSaveFailed:
+        "Save or configuration read could not be confirmed. Refresh to check; your draft is retained. Running work or a changed configuration may block this save.",
+      startupReadFailed:
+        "Could not read editable startup settings. Refresh to retry.",
+      startupRefresh: "Refresh startup settings",
+      startupUnavailable: "This profile has no editable task-service entry.",
+      startupReadonly:
+        "This Host does not allow startup edits from this connection.",
+      startupRestartHint:
+        "Startup edits use a separate save. Saving restarts the affected plugin; it does not restart DSH. Identity, credentials and remote permissions stay under their existing owners.",
+      startupUnconfigured:
+        "No existing authenticated scheduler connection is configured. Set up an authorized connection through the official secure configuration flow before editing it here.",
+      startupEndpointHint:
+        "For an existing trusted-network connection, the endpoint must match the exact target address and port. Connection changes are blocked while work is active, claimed or uncertain.",
+      startupMigration: "Save and restart: enable Task session protocol",
+      startupMigrationHint:
+        "Upgrade only after this existing peer has been explicitly granted executorIdentity, sessionContext and selectTaskSession. This action does not grant those permissions.",
+      startupInvalid: "Enter valid values before saving.",
+      audience: "Scheduler audience",
+      targetAddress: "Trusted target address",
+      targetPort: "Trusted target port",
+      targetLocalAddress: "Local connection address",
+      discardDraft: "Discard draft",
       title: "Task system",
       summary: "Local runtime settings and read-only deployment details.",
       runtime: "Local runtime",
@@ -62,7 +91,7 @@ window.__ModuleLoader__.load({
         "A home-level patch exists. If it overrides task-system.config, it takes precedence and the Host refuses saves. The profile path below is the save destination.",
       deployment: "Current deployment · read only",
       startupHint:
-        "These are startup settings. Edit the existing profile patch and restart DSH. This page never writes identity, database paths, tool permissions, endpoints or credentials.",
+        "This section shows effective startup settings. Role, workspace and existing connection changes use the separate startup form. Identity, database paths, tool permissions and credentials remain read only.",
       nodeId: "Internal node ID",
       schedulerId: "Scheduler ID",
       executorId: "Assigned executor ID",
@@ -89,7 +118,7 @@ window.__ModuleLoader__.load({
       queueFailed:
         "Could not read the local queue. Refresh to retry; an unavailable queue is not an empty queue.",
       queueRefresh: "Refresh local queue",
-      queueEmpty: "No queued or running work was recorded at this sample.",
+      queueEmpty: "No pending local runs were recorded at this sample.",
       queueSampledAt: "Sampled at",
       queueTruncated: "The result is bounded. Additional runs are not shown.",
       queueTask: "Task / Run",
@@ -98,6 +127,11 @@ window.__ModuleLoader__.load({
       workspaceId: "Workspace ID",
       stateQueued: "Queued",
       stateRunning: "Running",
+      stateBlocked: "Blocked",
+      stateUncertain: "Uncertain",
+      queryIdentity: "Query my executor ID from the scheduler",
+      identityFailed:
+        "Could not confirm the executor identity. Check the existing scheduler connection and its explicit authorization; no access was granted.",
       role: "Role",
       databasePath: "Task database",
       profilePatch: "Profile configuration",
@@ -139,6 +173,33 @@ window.__ModuleLoader__.load({
         "Edits are staged until Save. Leaving this page discards unsaved changes. Saved runtime settings persist in this profile and do not restart the task service.",
     };
     const zh = {
+      startupEditable: "角色、工作区与调度端连接",
+      startupTask: "任务服务启动配置",
+      startupRemote: "已有调度端连接",
+      startupSave: "保存并重启插件",
+      startupSaving: "保存并重启中…",
+      startupSaved: "已保存，并已重新读取当前配置。",
+      startupSaveFailed:
+        "未能确认保存或重新读取，请刷新核对；草稿已保留。运行中的工作或已变化的配置可能阻止保存。",
+      startupReadFailed: "未能读取可编辑启动配置，请刷新重试。",
+      startupRefresh: "刷新启动配置",
+      startupUnavailable: "此 profile 没有可编辑的任务服务条目。",
+      startupReadonly: "当前宿主不允许通过此连接编辑启动配置。",
+      startupRestartHint:
+        "启动配置单独保存；保存会重启受影响的插件，不会重启 DSH。身份、凭据和远端权限由原配置流程管理。",
+      startupUnconfigured:
+        "尚未配置已有认证的调度端连接。请先通过官方安全配置流程登记已授权连接，再在此编辑。",
+      startupEndpointHint:
+        "已有 trusted-network 连接的调度端地址须与精确目标地址和端口一致。存在运行中、已领取或状态未确认的工作时不能改变连接。",
+      startupMigration: "保存并重启：启用 Task 会话协议",
+      startupMigrationHint:
+        "仅在此已有 peer 已获 executorIdentity、sessionContext、selectTaskSession 明确授权后升级。此操作不会授予这些权限。",
+      startupInvalid: "请先填写有效值再保存。",
+      audience: "调度端受众标识（audience）",
+      targetAddress: "已授权目标地址",
+      targetPort: "已授权目标端口",
+      targetLocalAddress: "本机连接地址",
+      discardDraft: "丢弃草稿",
       title: "任务系统",
       summary: "管理本机运行设置，查看当前部署与远程领取配置。",
       runtime: "本机运行设置",
@@ -170,7 +231,7 @@ window.__ModuleLoader__.load({
         "检测到 Home 级配置文件。如其中覆写 task-system.config，其优先级高于 profile，宿主会拒绝保存。下方 profile 路径是正常保存位置。",
       deployment: "当前部署 · 只读",
       startupHint:
-        "以下为启动配置。请编辑现有 profile 配置文件并重启 DSH。此页不会写入节点身份、数据库路径、工具授权、远端地址或凭据。",
+        "以下显示实际启动配置。角色、工作区和已有连接由独立启动表单保存；节点身份、数据库路径、工具授权和凭据仍为只读。",
       nodeId: "内部节点 ID",
       schedulerId: "调度端 ID",
       executorId: "调度端分配的执行端 ID",
@@ -195,7 +256,7 @@ window.__ModuleLoader__.load({
       queueLoading: "正在读取本机队列…",
       queueFailed: "未能读取本机队列，请刷新重试；接口不可用不表示队列为空。",
       queueRefresh: "刷新本机队列",
-      queueEmpty: "本次读取没有已排队或运行中的本机任务。",
+      queueEmpty: "本次读取没有待处理的本机运行。",
       queueSampledAt: "读取时间",
       queueTruncated: "返回数量有限，另有运行未显示。",
       queueTask: "任务／运行",
@@ -204,6 +265,11 @@ window.__ModuleLoader__.load({
       workspaceId: "工作区 ID",
       stateQueued: "已排队",
       stateRunning: "运行中",
+      stateBlocked: "已阻塞",
+      stateUncertain: "状态未确认",
+      queryIdentity: "向调度端查询本机执行端 ID",
+      identityFailed:
+        "未能确认执行端身份。请检查现有调度端连接及明确授权；没有授予任何新权限。",
       role: "角色",
       databasePath: "任务数据库",
       profilePatch: "Profile 配置文件",
@@ -312,13 +378,13 @@ window.__ModuleLoader__.load({
       parameters: [],
       result: {
         mode: "strict",
-        typeSymbol: "@dsh-task/task-system#LocalQueue",
+        typeSymbol: "@dsh-task/task-system#QueueSnapshot",
         create: () => ({
           parse(value) {
             if (
               !value ||
               typeof value.nodeId !== "string" ||
-              !["string", "number"].includes(typeof value.sampledAt) ||
+              typeof value.sampledAt !== "string" ||
               !Array.isArray(value.items) ||
               typeof value.truncated !== "boolean" ||
               value.items.some(
@@ -339,6 +405,30 @@ window.__ModuleLoader__.load({
         }),
       },
     };
+    const executorIdentityDescriptor = {
+      id: "@dsh-task/task-system#taskPluginSettings/executorIdentity",
+      service: "taskPluginSettings",
+      namespace: "taskPluginSettings",
+      method: "executorIdentity",
+      invocation: { kind: "direct" },
+      parameters: [],
+      result: {
+        mode: "strict",
+        typeSymbol: "@dsh-task/task-system#ExecutorIdentity",
+        create: () => ({
+          parse(value) {
+            if (
+              !value ||
+              ["schedulerId", "executorId", "nodeId"].some(
+                (key) => typeof value[key] !== "string",
+              )
+            )
+              throw new Error("Invalid executor identity");
+            return value;
+          },
+        }),
+      },
+    };
     const hintStyle = {
       color: "var(--dsw-text-secondary)",
       fontSize: 13,
@@ -350,8 +440,8 @@ window.__ModuleLoader__.load({
       fontWeight: 600,
       margin: "24px 0 12px",
     };
-    function useReadSnapshot(read) {
-      const [state, setState] = React.useState({ loading: true });
+    function useReadSnapshot(read, automatic = true) {
+      const [state, setState] = React.useState({ loading: automatic });
       const generation = React.useRef(0);
       const refresh = React.useCallback(() => {
         const current = ++generation.current;
@@ -379,14 +469,21 @@ window.__ModuleLoader__.load({
           );
       }, [read]);
       React.useEffect(() => {
-        refresh();
+        if (automatic) refresh();
         return () => {
           generation.current++;
         };
-      }, [refresh]);
-      return { state, refresh };
+      }, [refresh, automatic]);
+      return {
+        state,
+        refresh,
+        replace(value) {
+          generation.current++;
+          setState({ value, loading: false });
+        },
+      };
     }
-    function ReadOnly({ t, read }) {
+    function ReadOnly({ t, read, queryIdentity }) {
       const { state, refresh } = useReadSnapshot(read);
       const fields = (value, names) =>
         h(
@@ -481,12 +578,13 @@ window.__ModuleLoader__.load({
                 : null,
               h("h3", { style: headingStyle }, t("identityTitle")),
               h("p", { style: hintStyle }, t("identityHint")),
-              state.value.remote?.executorIdentity
-                ? fields(state.value.remote.executorIdentity, [
-                    "schedulerId",
-                    "executorId",
-                  ])
-                : h("p", { style: hintStyle }, t("identityNone")),
+              h(ExecutorIdentity, {
+                key: `${state.value.remote?.endpoint ?? "none"}:${state.value.remote?.executorIdentity?.schedulerId ?? "unresolved"}`,
+                t,
+                fields,
+                remote: state.value.remote,
+                queryIdentity,
+              }),
               h("h3", { style: headingStyle }, t("workspaceTitle")),
               Object.hasOwn(state.value, "defaultWorkspaceId") &&
                 Object.hasOwn(state.value, "sessionDecisionEnabled")
@@ -521,6 +619,35 @@ window.__ModuleLoader__.load({
           Button,
           { variant: "outline", onClick: refresh, disabled: state.loading },
           t("refresh"),
+        ),
+      );
+    }
+    function ExecutorIdentity({ t, fields, remote, queryIdentity }) {
+      // Query only on the explicit button. It neither polls nor upgrades grants.
+      const { state, refresh } = useReadSnapshot(queryIdentity, false);
+      const value = state.value ?? remote?.executorIdentity;
+      return h(
+        React.Fragment,
+        null,
+        value
+          ? fields(value, ["schedulerId", "executorId"])
+          : h("p", { style: hintStyle }, t("identityNone")),
+        state.failed
+          ? h(
+              "p",
+              { role: "alert" },
+              t("identityFailed"),
+              state.errorCode ? ` (${state.errorCode})` : "",
+            )
+          : null,
+        h(
+          Button,
+          {
+            variant: "outline",
+            disabled: !remote?.endpoint || state.loading,
+            onClick: refresh,
+          },
+          t("queryIdentity"),
         ),
       );
     }
@@ -590,11 +717,21 @@ window.__ModuleLoader__.load({
                       h(
                         "td",
                         { style: cellStyle },
-                        item.state === "queued"
-                          ? t("stateQueued")
-                          : item.state === "running"
-                            ? t("stateRunning")
-                            : item.state,
+                        {
+                          queued: "stateQueued",
+                          running: "stateRunning",
+                          blocked: "stateBlocked",
+                          uncertain: "stateUncertain",
+                        }[item.state]
+                          ? t(
+                              {
+                                queued: "stateQueued",
+                                running: "stateRunning",
+                                blocked: "stateBlocked",
+                                uncertain: "stateUncertain",
+                              }[item.state],
+                            )
+                          : item.state,
                       ),
                       h(
                         "td",
@@ -642,8 +779,345 @@ window.__ModuleLoader__.load({
         ),
       );
     }
+    function startupDraft(target, values) {
+      return target === "task"
+        ? {
+            role: values.role,
+            defaultWorkspaceId: values.defaultWorkspaceId ?? "",
+            sessionDecisionEnabled: values.sessionDecisionEnabled,
+          }
+        : {
+            role: values.role,
+            endpoint: values.endpoint ?? "",
+            audience: values.audience ?? "",
+            pollIntervalMs: String(values.pollIntervalMs),
+            concurrency: String(values.concurrency),
+            ...(values.trustedNetworkTarget
+              ? {
+                  targetAddress: values.trustedNetworkTarget.address,
+                  targetPort: String(values.trustedNetworkTarget.port),
+                  targetLocalAddress: values.trustedNetworkTarget.localAddress,
+                }
+              : {}),
+          };
+    }
+    function startupChanges(target, values, draft, migrate = false) {
+      const invalid = [],
+        next = { role: draft.role };
+      if (!["planner", "executor", "both"].includes(draft.role))
+        invalid.push("role");
+      if (target === "task") {
+        next.defaultWorkspaceId =
+          String(draft.defaultWorkspaceId).trim() || null;
+        next.sessionDecisionEnabled = draft.sessionDecisionEnabled;
+        if (typeof next.sessionDecisionEnabled !== "boolean")
+          invalid.push("sessionDecisionEnabled");
+      } else {
+        next.endpoint = String(draft.endpoint).trim();
+        next.audience = String(draft.audience).trim();
+        if (!next.endpoint) invalid.push("endpoint");
+        if (!next.audience) invalid.push("audience");
+        for (const [key, min, max] of [
+          ["pollIntervalMs", 100, 3600000],
+          ["concurrency", 1, 16],
+        ]) {
+          next[key] = Number(draft[key]);
+          if (
+            String(draft[key]).trim() === "" ||
+            !Number.isSafeInteger(next[key]) ||
+            (key === "pollIntervalMs" && next[key] === 0
+              ? false
+              : next[key] < min || next[key] > max)
+          )
+            invalid.push(key);
+        }
+        if (values.trustedNetworkTarget) {
+          const address = String(draft.targetAddress).trim(),
+            localAddress = String(draft.targetLocalAddress).trim(),
+            port = Number(draft.targetPort);
+          if (!address) invalid.push("targetAddress");
+          if (!localAddress) invalid.push("targetLocalAddress");
+          if (!Number.isSafeInteger(port) || port < 1 || port > 65535)
+            invalid.push("targetPort");
+          next.trustedNetworkTarget = {
+            ...values.trustedNetworkTarget,
+            address,
+            port,
+            localAddress,
+          };
+        }
+        if (migrate) next.taskSessionsEnabled = true;
+      }
+      const changes = Object.fromEntries(
+        Object.entries(next).filter(
+          ([key, value]) =>
+            JSON.stringify(value) !== JSON.stringify(values[key]),
+        ),
+      );
+      return { changes, invalid, dirty: Object.keys(changes).length > 0 };
+    }
+    function StartupRow({ t, target, row, writable, saveStartup, onSaved }) {
+      const [draft, setDraft] = React.useState(() =>
+        startupDraft(target, row.values),
+      );
+      const [status, setStatus] = React.useState({ saving: false });
+      const edit = (key, value) => {
+        setDraft((old) => ({ ...old, [key]: value }));
+        setStatus({ saving: false });
+      };
+      const parsed = startupChanges(target, row.values, draft);
+      const disabled = !writable || status.saving;
+      const save = async (migrate = false) => {
+        const update = startupChanges(target, row.values, draft, migrate);
+        if (disabled || !update.dirty || update.invalid.length) return;
+        setStatus({ saving: true });
+        try {
+          await saveStartup({
+            target,
+            expected: row.values,
+            changes: update.changes,
+          });
+          await onSaved();
+          setStatus({ saving: false, saved: true });
+        } catch (error) {
+          setStatus({
+            saving: false,
+            failed: true,
+            errorCode:
+              typeof error?.code === "string" &&
+              /^[a-z0-9_/-]{1,100}$/i.test(error.code)
+                ? error.code
+                : null,
+          });
+        }
+      };
+      const controlStyle = {
+        width: "100%",
+        boxSizing: "border-box",
+        padding: "7px 10px",
+        color: "var(--dsw-text-primary)",
+        background: "var(--dsw-bg-secondary)",
+        border: "1px solid var(--dsw-border)",
+        borderRadius: 6,
+      };
+      const field = (key, label = key) =>
+        h(
+          "label",
+          { key, style: { display: "block", margin: "12px 0" } },
+          h("span", { style: { display: "block", marginBottom: 6 } }, t(label)),
+          key === "role"
+            ? h(
+                "select",
+                {
+                  id: `task-startup-${target}-${key}`,
+                  style: controlStyle,
+                  value: draft[key],
+                  disabled,
+                  onChange: (event) => edit(key, event.target.value),
+                },
+                ...[
+                  ["planner", "rolePlanner"],
+                  ["executor", "roleExecutor"],
+                  ["both", "roleBoth"],
+                ].map(([value, text]) =>
+                  h("option", { key: value, value }, t(text)),
+                ),
+              )
+            : h("input", {
+                id: `task-startup-${target}-${key}`,
+                style: controlStyle,
+                value: draft[key],
+                disabled,
+                "aria-invalid": parsed.invalid.includes(key),
+                inputMode: [
+                  "pollIntervalMs",
+                  "concurrency",
+                  "targetPort",
+                ].includes(key)
+                  ? "numeric"
+                  : undefined,
+                onChange: (event) => edit(key, event.target.value),
+              }),
+        );
+      return h(
+        "section",
+        { "data-startup-target": target },
+        h(
+          "h4",
+          { style: headingStyle },
+          t(target === "task" ? "startupTask" : "startupRemote"),
+        ),
+        field("role"),
+        target === "task"
+          ? h(
+              React.Fragment,
+              null,
+              field("defaultWorkspaceId"),
+              h(
+                "label",
+                {
+                  style: {
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 20,
+                    margin: "12px 0",
+                  },
+                },
+                t("sessionDecisionEnabled"),
+                h(Switch, {
+                  label: t("sessionDecisionEnabled"),
+                  checked: draft.sessionDecisionEnabled,
+                  disabled,
+                  onChange: (value) => edit("sessionDecisionEnabled", value),
+                }),
+              ),
+              h("p", { style: hintStyle }, t("workspaceHint")),
+              h("p", { style: hintStyle }, t("decisionHint")),
+            )
+          : h(
+              React.Fragment,
+              null,
+              ...["endpoint", "audience", "pollIntervalMs", "concurrency"].map(
+                (key) => field(key),
+              ),
+              row.values.trustedNetworkTarget
+                ? h(
+                    React.Fragment,
+                    null,
+                    ...[
+                      "targetAddress",
+                      "targetPort",
+                      "targetLocalAddress",
+                    ].map((key) => field(key)),
+                  )
+                : null,
+              h("p", { style: hintStyle }, t("startupEndpointHint")),
+              row.values.taskSessionsEnabled === false
+                ? h(
+                    React.Fragment,
+                    null,
+                    h("p", { style: hintStyle }, t("startupMigrationHint")),
+                    h(
+                      Button,
+                      {
+                        variant: "outline",
+                        disabled: disabled || parsed.invalid.length > 0,
+                        onClick: () => save(true),
+                      },
+                      t("startupMigration"),
+                    ),
+                  )
+                : null,
+            ),
+        parsed.invalid.length
+          ? h("p", { role: "alert" }, t("startupInvalid"))
+          : null,
+        status.failed
+          ? h(
+              "p",
+              { role: "alert" },
+              t("startupSaveFailed"),
+              status.errorCode ? ` (${status.errorCode})` : "",
+            )
+          : null,
+        status.saved ? h("p", { role: "status" }, t("startupSaved")) : null,
+        h(
+          "div",
+          { style: { display: "flex", gap: 12, marginTop: 14 } },
+          h(
+            Button,
+            {
+              variant: "outline",
+              disabled: disabled || !parsed.dirty || parsed.invalid.length > 0,
+              onClick: () => save(),
+            },
+            t(status.saving ? "startupSaving" : "startupSave"),
+          ),
+          h(
+            Button,
+            {
+              variant: "outline",
+              disabled: disabled || !parsed.dirty,
+              onClick: () => {
+                setDraft(startupDraft(target, row.values));
+                setStatus({ saving: false });
+              },
+            },
+            t("discardDraft"),
+          ),
+        ),
+      );
+    }
+    function StartupSettings({ t, startup, saveStartup, onSaved }) {
+      const { state, refresh, replace } = useReadSnapshot(startup);
+      const afterSave = async () => {
+        // Clear the old connection summary before reading the new plugin state.
+        onSaved();
+        const value = await startup();
+        replace(value);
+      };
+      return h(
+        "section",
+        { "data-task-startup-settings": true },
+        h("h3", { style: headingStyle }, t("startupEditable")),
+        h("p", { style: hintStyle }, t("startupRestartHint")),
+        state.failed
+          ? h(
+              "p",
+              { role: "alert" },
+              t("startupReadFailed"),
+              state.errorCode ? ` (${state.errorCode})` : "",
+            )
+          : null,
+        state.loading && !state.value
+          ? h("p", { role: "status" }, t("loading"))
+          : null,
+        state.value
+          ? h(
+              React.Fragment,
+              null,
+              !state.value.writable
+                ? h("p", { role: "note" }, t("startupReadonly"))
+                : null,
+              state.value.task
+                ? h(StartupRow, {
+                    key:
+                      state.value.task.entryId +
+                      JSON.stringify(state.value.task.values),
+                    t,
+                    target: "task",
+                    row: state.value.task,
+                    writable: state.value.writable,
+                    saveStartup,
+                    onSaved: afterSave,
+                  })
+                : h("p", { style: hintStyle }, t("startupUnavailable")),
+              state.value.remote?.values.endpoint
+                ? h(StartupRow, {
+                    key:
+                      state.value.remote.entryId +
+                      JSON.stringify(state.value.remote.values),
+                    t,
+                    target: "remote",
+                    row: state.value.remote,
+                    writable: state.value.writable,
+                    saveStartup,
+                    onSaved: afterSave,
+                  })
+                : h("p", { style: hintStyle }, t("startupUnconfigured")),
+            )
+          : null,
+        h(
+          Button,
+          { variant: "outline", onClick: refresh, disabled: state.loading },
+          t("startupRefresh"),
+        ),
+      );
+    }
     function Page(props) {
       const { t } = props;
+      const [refreshKey, setRefreshKey] = React.useState(0);
       const state = props.useTaskSettings((snapshot) => snapshot);
       if (props.view === "summary") return t("summary");
       return h(
@@ -733,8 +1207,21 @@ window.__ModuleLoader__.load({
                 }),
           ),
         ),
-        h(ReadOnly, { t, read: props.read }),
-        h(LocalQueue, { t, readQueue: props.readQueue }),
+        h(ReadOnly, {
+          key: refreshKey,
+          t,
+          read: props.read,
+          queryIdentity: props.queryIdentity,
+        }),
+        h(LocalQueue, { key: refreshKey, t, readQueue: props.readQueue }),
+        props.startup
+          ? h(StartupSettings, {
+              t,
+              startup: props.startup,
+              saveStartup: props.saveStartup,
+              onSaved: () => setRefreshKey((value) => value + 1),
+            })
+          : null,
       );
     }
     async function readRemote(ctx, method, codec) {
@@ -763,17 +1250,28 @@ window.__ModuleLoader__.load({
       ctx.effect(() => () => controller.dispose(), "task settings form");
       const unmount = await ctx.remote.$mount({
         package: "@dsh-task/task-system",
-        descriptors: [descriptor, queueDescriptor],
+        descriptors: [descriptor, queueDescriptor, executorIdentityDescriptor],
       });
       ctx.effect(() => unmount, "task settings read-only remote");
       const read = () =>
         readRemote(ctx, "describe", descriptor.result.create());
       const readQueue = () =>
         readRemote(ctx, "queue", queueDescriptor.result.create());
+      const queryIdentity = () =>
+        readRemote(
+          ctx,
+          "executorIdentity",
+          executorIdentityDescriptor.result.create(),
+        );
       ctx.effect(
         () =>
           ctx.configForms.whileServed(["task-system"], () => {
-            const inject = () => ({ ...controller.inject(), read, readQueue });
+            const inject = () => ({
+              ...controller.inject(),
+              read,
+              readQueue,
+              queryIdentity,
+            });
             const section = ctx.slots.inject("settings.section", () =>
               ctx.slots.register(
                 {
@@ -814,6 +1312,12 @@ window.__ModuleLoader__.load({
       descriptor,
       readRemote,
       queueDescriptor,
+      executorIdentityDescriptor,
+      ExecutorIdentity,
+      startupDraft,
+      startupChanges,
+      StartupRow,
+      StartupSettings,
       QueueContents,
       LocalQueue,
       ReadOnly,

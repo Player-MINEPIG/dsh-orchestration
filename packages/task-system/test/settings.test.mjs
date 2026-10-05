@@ -3,7 +3,12 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
 import { Config, LIVE_SETTING_KEYS } from "../dist/dsh-plugin.js";
-import { settingsDescriptor, hasTaskConfigOverride } from "../dist/settings.js";
+import {
+  settingsDescriptor,
+  queueDescriptor,
+  executorIdentityDescriptor,
+  hasTaskConfigOverride,
+} from "../dist/settings.js";
 import { RemoteExecutionService } from "../dist/remote/index.js";
 
 function client(primitives = {}, react = {}) {
@@ -191,7 +196,7 @@ test("browser companion exposes the same served form in Settings and its install
     },
     remote: {
       $mount: async (contribution) => (
-        assert.equal(contribution.descriptors.length, 2),
+        assert.equal(contribution.descriptors.length, 3),
         () => {}
       ),
     },
@@ -414,4 +419,268 @@ test("queue failure remains visible, retains the last sample and ignores respons
   settle.resolve(sample);
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(snapshot, before);
+});
+
+test("queue and explicit identity-query descriptors match the frozen backend", () => {
+  const ui = client();
+  for (const [actual, expected] of [
+    [ui.queueDescriptor, queueDescriptor],
+    [ui.executorIdentityDescriptor, executorIdentityDescriptor],
+  ]) {
+    for (const key of ["id", "namespace", "service", "method"])
+      assert.equal(actual[key], expected[key]);
+    assert.equal(actual.result.typeSymbol, expected.result.typeSymbol);
+    assert.equal(actual.parameters.length, 0);
+  }
+});
+
+test("executor identity is queried only by its explicit button, with no polling or grant mutation", async () => {
+  let state = { loading: false },
+    action;
+  const react = {
+    useState: () => [
+      state,
+      (value) => {
+        state = typeof value === "function" ? value(state) : value;
+      },
+    ],
+    useRef: () => ({ current: 0 }),
+    useCallback: (callback) => callback,
+    useEffect: (callback) => {
+      callback();
+    },
+  };
+  const ui = client({ Button: "FixtureButton" }, react);
+  let calls = 0;
+  const props = {
+    t: (key) => key,
+    fields: () => ({}),
+    remote: {
+      endpoint: "https://fixture.invalid/commands",
+      executorIdentity: null,
+    },
+    queryIdentity: async () => {
+      calls++;
+      return {
+        schedulerId: "fixture-scheduler",
+        executorId: "fixture-executor",
+        nodeId: "fixture-node",
+      };
+    },
+  };
+  const rendered = ui.ExecutorIdentity(props);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(calls, 0);
+  action = rendered.children.find((child) => child?.type === "FixtureButton")
+    .props.onClick;
+  action();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(calls, 1);
+  assert.equal(state.value.executorId, "fixture-executor");
+  const unconfigured = ui.ExecutorIdentity({ ...props, remote: null });
+  assert.equal(
+    unconfigured.children.find((child) => child?.type === "FixtureButton").props
+      .disabled,
+    true,
+  );
+});
+
+test("startup drafts contain only approved fields; unchanged values and reset do not create writes", () => {
+  const ui = client();
+  const values = {
+    role: "executor",
+    defaultWorkspaceId: "fixture-workspace",
+    sessionDecisionEnabled: false,
+    nodeId: "must-not-edit",
+    credentials: "must-not-copy",
+  };
+  const draft = ui.startupDraft("task", values);
+  assert.deepEqual(Object.keys(draft).sort(), [
+    "defaultWorkspaceId",
+    "role",
+    "sessionDecisionEnabled",
+  ]);
+  assert.equal(ui.startupChanges("task", values, draft).dirty, false);
+  draft.defaultWorkspaceId = "";
+  draft.sessionDecisionEnabled = true;
+  draft.role = "both";
+  const changes = ui.startupChanges("task", values, draft).changes;
+  assert.equal(changes.defaultWorkspaceId, null);
+  assert.equal(changes.sessionDecisionEnabled, true);
+  assert.equal(changes.role, "both");
+  assert.equal(changes.nodeId, undefined);
+  assert.equal(changes.credentials, undefined);
+});
+
+test("connection draft validates limits and excludes identity, auth and grant changes; Task migration is explicit", () => {
+  const ui = client();
+  const values = {
+    role: "executor",
+    endpoint: "http://fixture.invalid:8443/commands",
+    audience: "fixture-audience",
+    pollIntervalMs: 0,
+    concurrency: 1,
+    taskSessionsEnabled: false,
+    trustedNetworkTarget: {
+      address: "fixture.invalid",
+      port: 8443,
+      localAddress: "fixture.local",
+      allowHttp: true,
+    },
+    nodeId: "must-not-edit",
+    authMode: "must-not-edit",
+    grants: [],
+  };
+  const draft = ui.startupDraft("remote", values);
+  assert.equal(ui.startupChanges("remote", values, draft).dirty, false);
+  assert.equal(
+    ui.startupChanges("remote", values, draft).changes.taskSessionsEnabled,
+    undefined,
+  );
+  assert.equal(
+    ui.startupChanges("remote", values, draft, true).changes
+      .taskSessionsEnabled,
+    true,
+  );
+  for (const invalid of ["", "1.5", "-1", "32"]) {
+    assert.ok(
+      ui
+        .startupChanges("remote", values, { ...draft, concurrency: invalid })
+        .invalid.includes("concurrency"),
+    );
+  }
+  assert.ok(
+    ui
+      .startupChanges("remote", values, { ...draft, pollIntervalMs: "50" })
+      .invalid.includes("pollIntervalMs"),
+  );
+  assert.equal(
+    ui.startupChanges("remote", values, { ...draft, pollIntervalMs: "100" })
+      .invalid.length,
+    0,
+  );
+  assert.ok(
+    ui
+      .startupChanges("remote", values, { ...draft, targetPort: "65536" })
+      .invalid.includes("targetPort"),
+  );
+  const changes = ui.startupChanges("remote", values, {
+    ...draft,
+    audience: "changed-fixture",
+    role: "planner",
+  }).changes;
+  for (const key of ["nodeId", "authMode", "grants", "credentials"])
+    assert.equal(changes[key], undefined);
+});
+
+test("startup form stages a role edit, sends its exact expected snapshot, reads after save and retains conflicts", async () => {
+  const states = [];
+  let index = 0;
+  const react = {
+    useState(initial) {
+      const slot = index++;
+      if (!(slot in states))
+        states[slot] = typeof initial === "function" ? initial() : initial;
+      return [
+        states[slot],
+        (value) => {
+          states[slot] =
+            typeof value === "function" ? value(states[slot]) : value;
+        },
+      ];
+    },
+  };
+  const ui = client(
+    { Button: "FixtureButton", Switch: "FixtureSwitch" },
+    react,
+  );
+  const row = {
+    entryId: "task-system",
+    values: {
+      role: "executor",
+      defaultWorkspaceId: "fixture-workspace",
+      sessionDecisionEnabled: false,
+    },
+  };
+  const order = [],
+    writes = [];
+  let reject = false;
+  const props = {
+    t: (key) => key,
+    target: "task",
+    row,
+    writable: true,
+    saveStartup: async (request) => {
+      order.push("save");
+      writes.push(request);
+      if (reject) throw new Error("fixture conflict");
+    },
+    onSaved: async () => {
+      order.push("read-after-save");
+    },
+  };
+  const render = () => {
+    index = 0;
+    return ui.StartupRow(props);
+  };
+  const find = (node, predicate) => {
+    if (!node || typeof node !== "object") return;
+    if (predicate(node)) return node;
+    for (const child of node.children ?? []) {
+      const result = find(child, predicate);
+      if (result) return result;
+    }
+  };
+  let tree = render();
+  const role = find(tree, (node) => node.type === "select");
+  role.props.onChange({ target: { value: "planner" } });
+  assert.equal(writes.length, 0);
+  tree = render();
+  const save = find(
+    tree,
+    (node) =>
+      node.type === "FixtureButton" && node.children.includes("startupSave"),
+  );
+  assert.equal(save.props.disabled, false);
+  await save.props.onClick();
+  assert.equal(writes[0].target, "task");
+  assert.equal(writes[0].expected, row.values);
+  assert.deepEqual(Object.keys(writes[0].changes), ["role"]);
+  assert.equal(writes[0].changes.role, "planner");
+  assert.deepEqual(order, ["save", "read-after-save"]);
+  reject = true;
+  tree = render();
+  find(tree, (node) => node.type === "select").props.onChange({
+    target: { value: "both" },
+  });
+  tree = render();
+  await find(
+    tree,
+    (node) =>
+      node.type === "FixtureButton" && node.children.includes("startupSave"),
+  ).props.onClick();
+  tree = render();
+  assert.equal(
+    find(tree, (node) => node.type === "select").props.value,
+    "both",
+  );
+  assert.ok(
+    find(
+      tree,
+      (node) =>
+        node.props?.role === "alert" &&
+        node.children.includes("startupSaveFailed"),
+    ),
+  );
+  props.writable = false;
+  tree = render();
+  const count = writes.length;
+  const readonlySave = find(
+    tree,
+    (node) =>
+      node.type === "FixtureButton" && node.children.includes("startupSave"),
+  );
+  assert.equal(readonlySave.props.disabled, true);
+  await readonlySave.props.onClick();
+  assert.equal(writes.length, count);
 });
