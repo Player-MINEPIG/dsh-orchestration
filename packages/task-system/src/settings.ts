@@ -19,7 +19,7 @@ import {
   type InvocationDescriptor,
 } from "@deepseek-ai/dsh-typert-protocol";
 import { z } from "zod";
-import { resolve, join } from "node:path";
+import { resolve, join, basename } from "node:path";
 import { existsSync } from "node:fs";
 import type { TaskSystemService } from "./dsh-plugin.js";
 import type { RemoteExecutionService } from "./remote/index.js";
@@ -73,12 +73,21 @@ export const workspaceCatalogDescriptor: InvocationDescriptor = {
     create: () => WorkspaceCatalog,
   },
 };
+interface OfficialWorkspaceMetadata {
+  // rc.2 entities expose title/path; sparse descriptors can omit them.
+  path?: string;
+  title?: string;
+  name?: string;
+  status?(): Promise<"ok" | "missing-dir">;
+}
 interface WorkspaceRegistryPort {
-  list(): readonly {
-    path: string;
-    title: string;
-    status?(): Promise<"ok" | "missing-dir">;
-  }[];
+  list(): readonly OfficialWorkspaceMetadata[];
+  resolveByPath?(path: string): Promise<OfficialWorkspaceMetadata | undefined>;
+}
+function workspaceTitle(...values: unknown[]): string {
+  for (const value of values)
+    if (typeof value === "string" && value.trim()) return value.trim();
+  return "未命名";
 }
 const ReadonlySettings = z.object({
   schedulerId: z.string(),
@@ -268,7 +277,10 @@ export class TaskPluginSettings extends TypertRemoteService {
       | WorkspaceRegistryPort
       | undefined;
     const official = registry?.list();
-    const byPath = new Map(official?.map((item) => [resolve(item.path), item]));
+    const byPath = new Map<string, OfficialWorkspaceMetadata>();
+    for (const item of official ?? [])
+      if (typeof item.path === "string" && item.path.trim())
+        byPath.set(resolve(item.path), item);
     const nodeId = task.config.nodeId;
     let node: ReturnType<TaskSystemService["ledger"]["getNode"]> | undefined;
     try {
@@ -278,11 +290,30 @@ export class TaskPluginSettings extends TypertRemoteService {
     }
     const items = await Promise.all(
       task.ledger.registeredWorkspaces(nodeId).map(async (item) => {
-        const directory = byPath.get(resolve(item.path));
-        const status = directory?.status ? await directory.status() : "ok";
+        let directory = byPath.get(resolve(item.path));
+        let status: "ok" | "missing-dir" = "ok";
+        if (!directory && registry?.resolveByPath) {
+          try {
+            directory = await registry.resolveByPath(item.path);
+          } catch (error) {
+            if (
+              !["ENOENT", "ENOTDIR"].includes(
+                (error as { code?: string }).code ?? "",
+              )
+            )
+              throw error;
+            status = "missing-dir";
+          }
+        }
+        if (directory?.status) status = await directory.status();
         return {
           workspaceId: item.workspaceId,
-          title: directory?.title || item.label,
+          title: workspaceTitle(
+            directory?.title,
+            directory?.name,
+            item.label,
+            basename(item.path),
+          ),
           path: item.path,
           available:
             item.state === "ready" &&
