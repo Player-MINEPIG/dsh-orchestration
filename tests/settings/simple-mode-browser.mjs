@@ -260,7 +260,7 @@ try {
       ),
       true,
     );
-    await click(btn("决策模型配置"));
+    await click(btn("执行端决策模型配置"));
     assert.equal(
       await run(
         `document.querySelector('[data-task-mode] button[aria-pressed="true"]').textContent.trim()`,
@@ -269,7 +269,7 @@ try {
     );
     assert.equal(await run(`document.activeElement.id`), "task-decision-model");
     await run(`window.fixtureNavigationAvailable=true`);
-    await click(btn("决策模型配置"));
+    await click(btn("执行端决策模型配置"));
     assert.equal(await run(`window.fixturePluginSection`), "plugins");
     await click(btn("简单"));
     await click(scopedBtn('[data-startup-target="task"]', "保存并重启插件"));

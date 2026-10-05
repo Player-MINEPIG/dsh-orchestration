@@ -37,7 +37,20 @@ window.__ModuleLoader__.load({
       simpleHint:
         "Choose your role, connection and default workspace. Advanced settings keep the same draft.",
       openAdvanced: "Open advanced settings",
-      decisionModelEntry: "Decision model settings",
+      schedulerDecisionTitle: "Scheduler · executor selection",
+      schedulerDecisionHint:
+        "The scheduler uses the existing task_plan decision tool to propose an executor. Applying a proposal checks the authoritative executor catalog and permissions.",
+      schedulerDecisionStatus:
+        "Requires the existing decision plugin to be loaded and configured. There is currently no separate scheduler decision on/off switch.",
+      schedulerDecisionModelEntry: "Scheduler decision model settings",
+      schedulerDecisionSetup:
+        "Open Plugins and configure the existing @dsh-task/typed-decisions entry. The executor session/workspace switch does not control task_plan.",
+      executorDecisionTitle: "Executor · workspace and session",
+      executorDecisionHint:
+        "After receiving a task, the executor selects its workspace and creates or reuses a Task session within the task's constraints.",
+      executorDecisionInactive:
+        "These execution settings are retained but inactive for the Scheduler role.",
+      decisionModelEntry: "Executor decision model settings",
       decisionModelStatus:
         "Uses the existing decision-model configuration. If no valid decision is available, the default Task session/workspace policy applies.",
       decisionModelSetup:
@@ -133,9 +146,9 @@ window.__ModuleLoader__.load({
       rolePlanner: "Scheduler",
       roleExecutor: "Executor",
       roleBoth: "Scheduler and executor",
-      workspaceTitle: "Sessions and workspace",
+      workspaceTitle: "Executor · sessions and workspace",
       defaultWorkspaceId: "Default workspace ID",
-      sessionDecisionEnabled: "Use session/workspace decisions",
+      sessionDecisionEnabled: "Enable executor workspace/session decisions",
       workspaceHint:
         "The default workspace must already be registered locally. Changes apply after restart. Without a valid decision, execution uses the default Task session and workspace policy.",
       decisionHint:
@@ -209,7 +222,20 @@ window.__ModuleLoader__.load({
       settingsMode: "设置模式",
       simpleHint: "选择本机角色、连接与默认工作区。高级设置沿用同一份草稿。",
       openAdvanced: "打开高级设置",
-      decisionModelEntry: "决策模型配置",
+      schedulerDecisionTitle: "调度端 · 选择执行者",
+      schedulerDecisionHint:
+        "调度端使用现有 task_plan 决策工具提出执行者建议；应用建议时校验权威执行端目录与权限。",
+      schedulerDecisionStatus:
+        "需加载并配置已有决策插件；目前没有独立的调度决策启停开关。",
+      schedulerDecisionModelEntry: "调度端决策模型配置",
+      schedulerDecisionSetup:
+        "打开“插件”，配置已有 @dsh-task/typed-decisions 条目。执行端的工作区／会话开关不控制 task_plan。",
+      executorDecisionTitle: "执行端 · 工作区与会话",
+      executorDecisionHint:
+        "任务派过来后，由执行端在任务约束内选择工作区，并新建或复用 Task 会话。",
+      executorDecisionInactive:
+        "这些执行配置予以保留，但在“调度端”角色下不生效。",
+      decisionModelEntry: "执行端决策模型配置",
       decisionModelStatus:
         "使用已有决策模型配置；没有有效决策时，采用默认 Task 会话与工作区策略。",
       decisionModelSetup:
@@ -301,9 +327,9 @@ window.__ModuleLoader__.load({
       rolePlanner: "调度端",
       roleExecutor: "执行端",
       roleBoth: "调度端和执行端",
-      workspaceTitle: "会话与工作区",
+      workspaceTitle: "执行端 · 会话与工作区",
       defaultWorkspaceId: "默认工作区 ID",
-      sessionDecisionEnabled: "使用会话／工作区决策",
+      sessionDecisionEnabled: "启用执行端工作区／会话决策",
       workspaceHint:
         "默认工作区须已在本机登记；改变后重启生效。没有有效决策时，执行采用默认的 Task 会话和工作区策略。",
       decisionHint:
@@ -790,6 +816,9 @@ window.__ModuleLoader__.load({
                 queryIdentity,
               }),
               h("h3", { style: headingStyle }, t("workspaceTitle")),
+              state.value.role === "planner"
+                ? h("p", { style: hintStyle }, t("executorDecisionInactive"))
+                : null,
               Object.hasOwn(state.value, "defaultWorkspaceId") &&
                 Object.hasOwn(state.value, "sessionDecisionEnabled")
                 ? fields(state.value, [
@@ -1169,6 +1198,8 @@ window.__ModuleLoader__.load({
         !writable ||
         status.saving ||
         (target === "remote" && (!row.loaded || row.loaderDisabled));
+      const executor = draft.role === "executor" || draft.role === "both";
+      const planner = draft.role === "planner" || draft.role === "both";
       const save = async (migrate = false) => {
         const update = startupChanges(target, row.values, draft, migrate);
         if (disabled || !update.dirty || update.invalid.length) return;
@@ -1242,6 +1273,9 @@ window.__ModuleLoader__.load({
                     : draft[key],
                 disabled:
                   disabled ||
+                  (target === "task" &&
+                    key === "defaultWorkspaceId" &&
+                    !executor) ||
                   (target === "remote" &&
                     row.values.endpoint === null &&
                     key === "pollIntervalMs"),
@@ -1305,55 +1339,95 @@ window.__ModuleLoader__.load({
           ? h(
               React.Fragment,
               null,
-              field("defaultWorkspaceId"),
               h(
-                "label",
-                {
-                  style: {
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    gap: 20,
-                    margin: "12px 0",
+                "div",
+                { "data-task-scheduler-decision": true, hidden: !planner },
+                h("h4", { style: headingStyle }, t("schedulerDecisionTitle")),
+                h("p", { style: hintStyle }, t("schedulerDecisionHint")),
+                h("p", { style: hintStyle }, t("schedulerDecisionStatus")),
+                h(
+                  Button,
+                  {
+                    variant: "outline",
+                    onClick: () => {
+                      if (!openPlugins?.())
+                        openAdvanced?.("task-scheduler-decision-model");
+                    },
                   },
-                },
-                t("sessionDecisionEnabled"),
-                h(Switch, {
-                  label: t("sessionDecisionEnabled"),
-                  checked: draft.sessionDecisionEnabled,
-                  disabled,
-                  onChange: (value) => edit("sessionDecisionEnabled", value),
-                }),
+                  t("schedulerDecisionModelEntry"),
+                ),
+                h(
+                  "div",
+                  {
+                    id: "task-scheduler-decision-model",
+                    hidden: !advanced,
+                    tabIndex: -1,
+                  },
+                  h("p", { style: hintStyle }, t("schedulerDecisionSetup")),
+                  h("p", { style: hintStyle }, t("decisionHint")),
+                ),
               ),
-              h("p", { style: hintStyle }, t("workspaceHint")),
-              draft.sessionDecisionEnabled
-                ? h(
-                    "div",
-                    { "data-task-decision-entry": true },
-                    h("p", { style: hintStyle }, t("decisionModelStatus")),
-                    h(
-                      Button,
-                      {
-                        variant: "outline",
-                        onClick: () => {
-                          if (!openPlugins?.())
-                            openAdvanced?.("task-decision-model");
-                        },
-                      },
-                      t("decisionModelEntry"),
-                    ),
-                    h(
+              h(
+                "div",
+                {
+                  "data-task-executor-decision": true,
+                  hidden: !executor && !advanced,
+                },
+                h("h4", { style: headingStyle }, t("executorDecisionTitle")),
+                h("p", { style: hintStyle }, t("executorDecisionHint")),
+                !executor
+                  ? h("p", { style: hintStyle }, t("executorDecisionInactive"))
+                  : null,
+                field("defaultWorkspaceId"),
+                h(
+                  "label",
+                  {
+                    style: {
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: 20,
+                      margin: "12px 0",
+                    },
+                  },
+                  t("sessionDecisionEnabled"),
+                  h(Switch, {
+                    label: t("sessionDecisionEnabled"),
+                    checked: draft.sessionDecisionEnabled,
+                    disabled: disabled || !executor,
+                    onChange: (value) => edit("sessionDecisionEnabled", value),
+                  }),
+                ),
+                h("p", { style: hintStyle }, t("workspaceHint")),
+                executor && draft.sessionDecisionEnabled
+                  ? h(
                       "div",
-                      {
-                        id: "task-decision-model",
-                        hidden: !advanced,
-                        tabIndex: -1,
-                      },
-                      h("p", { style: hintStyle }, t("decisionModelSetup")),
-                      h("p", { style: hintStyle }, t("decisionHint")),
-                    ),
-                  )
-                : null,
+                      { "data-task-decision-entry": true },
+                      h("p", { style: hintStyle }, t("decisionModelStatus")),
+                      h(
+                        Button,
+                        {
+                          variant: "outline",
+                          onClick: () => {
+                            if (!openPlugins?.())
+                              openAdvanced?.("task-decision-model");
+                          },
+                        },
+                        t("decisionModelEntry"),
+                      ),
+                      h(
+                        "div",
+                        {
+                          id: "task-decision-model",
+                          hidden: !advanced,
+                          tabIndex: -1,
+                        },
+                        h("p", { style: hintStyle }, t("decisionModelSetup")),
+                        h("p", { style: hintStyle }, t("decisionHint")),
+                      ),
+                    )
+                  : null,
+              ),
             )
           : h(
               React.Fragment,

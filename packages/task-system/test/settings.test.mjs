@@ -1048,3 +1048,184 @@ test("simple scheduler addresses preserve existing paths and never infer audienc
   assert.ok(pending.invalid.includes("audience"));
   assert.equal(pending.changes.audience, undefined);
 });
+
+function startupRoleFixture(values) {
+  const states = [];
+  let index = 0;
+  const ui = client(
+    { Button: "FixtureButton", Switch: "FixtureSwitch" },
+    {
+      useState(initial) {
+        const slot = index++;
+        if (!(slot in states))
+          states[slot] = typeof initial === "function" ? initial() : initial;
+        return [
+          states[slot],
+          (value) => {
+            states[slot] =
+              typeof value === "function" ? value(states[slot]) : value;
+          },
+        ];
+      },
+    },
+  );
+  const writes = [],
+    navigation = [];
+  const props = {
+    t: (key) => key,
+    target: "task",
+    row: { entryId: "task-system", values },
+    writable: true,
+    advanced: false,
+    saveStartup: async (input) => writes.push(input),
+    onSaved: async () => {},
+    openPlugins: () => {
+      navigation.push("plugins");
+      return true;
+    },
+    openAdvanced: (id) => navigation.push(id),
+  };
+  const find = (node, predicate) => {
+    if (!node || typeof node !== "object") return;
+    if (predicate(node)) return node;
+    for (const child of node.children ?? []) {
+      const result = find(child, predicate);
+      if (result) return result;
+    }
+  };
+  return {
+    props,
+    writes,
+    navigation,
+    find,
+    render() {
+      index = 0;
+      return ui.StartupRow(props);
+    },
+  };
+}
+
+test("decision controls distinguish scheduler executor selection from executor workspace/session choice for all roles", () => {
+  for (const role of ["planner", "executor", "both"]) {
+    for (const advanced of [false, true]) {
+      const fixture = startupRoleFixture({
+        role,
+        defaultWorkspaceId: "fixture-workspace",
+        sessionDecisionEnabled: true,
+      });
+      fixture.props.advanced = advanced;
+      const tree = fixture.render(),
+        { find } = fixture;
+      const scheduler = find(
+        tree,
+        (node) => node.props?.["data-task-scheduler-decision"],
+      );
+      const executor = find(
+        tree,
+        (node) => node.props?.["data-task-executor-decision"],
+      );
+      assert.equal(scheduler.props.hidden, role === "executor");
+      assert.equal(executor.props.hidden, role === "planner" && !advanced);
+      assert.equal(
+        find(scheduler, (node) => node.type === "FixtureSwitch"),
+        undefined,
+      );
+      const sessionSwitch = find(
+        executor,
+        (node) => node.type === "FixtureSwitch",
+      );
+      assert.equal(sessionSwitch.props.label, "sessionDecisionEnabled");
+      assert.equal(sessionSwitch.props.checked, true);
+      assert.equal(sessionSwitch.props.disabled, role === "planner");
+      assert.equal(
+        find(executor, (node) => node.type === "input").props.disabled,
+        role === "planner",
+      );
+      assert.equal(
+        !!find(executor, (node) => node.props?.["data-task-decision-entry"]),
+        role !== "planner",
+      );
+      if (role === "planner")
+        assert.ok(
+          find(executor, (node) =>
+            node.children?.includes("executorDecisionInactive"),
+          ),
+        );
+    }
+  }
+});
+
+test("scheduler model entry is independent of executor switch; role and mode edits preserve the existing CAS draft", async () => {
+  const values = {
+    role: "both",
+    defaultWorkspaceId: "fixture-workspace",
+    sessionDecisionEnabled: false,
+  };
+  const fixture = startupRoleFixture(values),
+    { find, props, writes, navigation } = fixture;
+  let tree = fixture.render();
+  const button = (node, label) =>
+    find(
+      node,
+      (item) => item.type === "FixtureButton" && item.children.includes(label),
+    );
+  const scheduler = find(
+    tree,
+    (node) => node.props?.["data-task-scheduler-decision"],
+  );
+  button(scheduler, "schedulerDecisionModelEntry").props.onClick();
+  assert.deepEqual(navigation, ["plugins"]);
+  props.openPlugins = () => false;
+  button(fixture.render(), "schedulerDecisionModelEntry").props.onClick();
+  assert.deepEqual(navigation, ["plugins", "task-scheduler-decision-model"]);
+  assert.equal(writes.length, 0);
+  assert.equal(
+    find(tree, (node) => node.props?.["data-task-decision-entry"]),
+    undefined,
+  );
+  find(tree, (node) => node.type === "input").props.onChange({
+    target: { value: "draft-workspace" },
+  });
+  tree = fixture.render();
+  find(tree, (node) => node.type === "FixtureSwitch").props.onChange(true);
+  tree = fixture.render();
+  find(tree, (node) => node.type === "select").props.onChange({
+    target: { value: "planner" },
+  });
+  for (const advanced of [true, false, true]) {
+    props.advanced = advanced;
+    tree = fixture.render();
+    assert.equal(
+      find(tree, (node) => node.type === "input").props.value,
+      "draft-workspace",
+    );
+    assert.equal(
+      find(tree, (node) => node.type === "FixtureSwitch").props.checked,
+      true,
+    );
+    assert.equal(
+      find(tree, (node) => node.type === "FixtureSwitch").props.disabled,
+      true,
+    );
+    assert.equal(writes.length, 0);
+  }
+  find(tree, (node) => node.type === "select").props.onChange({
+    target: { value: "executor" },
+  });
+  tree = fixture.render();
+  assert.equal(
+    find(tree, (node) => node.type === "FixtureSwitch").props.disabled,
+    false,
+  );
+  assert.ok(find(tree, (node) => node.props?.["data-task-decision-entry"]));
+  await button(tree, "startupSave").props.onClick();
+  assert.equal(writes[0].expected, values);
+  assert.deepEqual(Object.keys(writes[0].changes).sort(), [
+    "defaultWorkspaceId",
+    "role",
+    "sessionDecisionEnabled",
+  ]);
+  assert.equal(writes[0].changes.role, "executor");
+  assert.equal(writes[0].changes.defaultWorkspaceId, "draft-workspace");
+  assert.equal(writes[0].changes.sessionDecisionEnabled, true);
+});
