@@ -22,7 +22,8 @@
     "test:legacy": "node --test tests/legacy/readers.test.mjs tests/legacy/reporting.test.mjs tests/legacy/quota.test.mjs tests/legacy/compatibility.test.mjs tests/legacy/configured-sources.test.mjs tests/legacy/ad-hoc.test.mjs tests/legacy/diagnostics.test.mjs tests/legacy/context-contract.test.mjs",
     "test:legacy-reference": "node --test tests/legacy/differential-reference.test.mjs",
     "test:management": "node --test tests/management/*.test.mjs",
-    "test:settings:official": "node --expose-internals tests/settings/official-settings-smoke.mjs && node tests/settings/staged-form-smoke.mjs && node --expose-internals tests/settings/official-startup-smoke.mjs && node tests/settings/remote-snapshot-smoke.mjs && node --expose-internals tests/settings/disabled-remote-config-editor.mjs"
+    "test:settings:official": "node --expose-internals tests/settings/official-settings-smoke.mjs && node tests/settings/staged-form-smoke.mjs && node --expose-internals tests/settings/official-startup-smoke.mjs && node tests/settings/remote-snapshot-smoke.mjs && node --expose-internals tests/settings/disabled-remote-config-editor.mjs",
+    "prototype:projects": "python3 -m http.server 8127 --bind 127.0.0.1 --directory dashboard/prototypes"
   },
   "devDependencies": {
     "@deepseek-ai/cordis-plugin-loader": "1.0.5",
