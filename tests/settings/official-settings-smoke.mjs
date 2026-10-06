@@ -321,7 +321,7 @@ try {
   assert.equal(
     ctx.typert.local.list().filter((d) => d.namespace === "taskPluginSettings")
       .length,
-    5,
+    8,
   );
   assert.equal(
     ctx.typert.local.get("taskPluginSettings/describe").parameters.length,
@@ -331,7 +331,7 @@ try {
     Object.keys(info).some((key) => /key|secret|token|password/i.test(key)),
     false,
   );
-  pass("allowlisted deployment data and five typed settings Remote methods");
+  pass("allowlisted deployment data and eight typed settings Remote methods");
   assert.deepEqual(
     await ctx.typertGateway.invoke({
       namespace: "taskPluginSettings",

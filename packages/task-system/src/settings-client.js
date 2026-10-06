@@ -523,6 +523,91 @@ window.__ModuleLoader__.load({
         this.form.dispose();
       }
     }
+    // Task deployment settings belong to the authenticated Host. The shipped
+    // shared preference provider deliberately uses browser memory off loopback;
+    // use the public settings RPC for this namespace without changing that policy.
+    class RemoteTaskSettingsScope {
+      constructor(api) {
+        this.api = api;
+        this.listeners = new Set();
+        this.snapshot = { status: "loading", writable: false, mode: "host" };
+        this.tail = Promise.resolve();
+        this.disposed = false;
+      }
+      getSnapshot = () => this.snapshot;
+      subscribe = (listener) => {
+        this.listeners.add(listener);
+        return () => this.listeners.delete(listener);
+      };
+      publish(snapshot) {
+        if (this.disposed) return;
+        this.snapshot = snapshot;
+        for (const listener of this.listeners) listener();
+      }
+      accept(view, writable) {
+        if (!view || view.ns !== "task-system" || !view.value ||
+            !Number.isSafeInteger(view.revision)) throw new Error("Invalid task settings response");
+        const pick = (value) => Object.fromEntries(keys.filter(key =>
+          value && Object.hasOwn(value, key)).map(key => [key, value[key]]));
+        this.publish({ status: "ready", mode: "host", writable: writable === true,
+          value: pick(view.value), base: pick(view.base), user: pick(view.user), revision: view.revision });
+      }
+      load() {
+        if (this.disposed) return Promise.resolve();
+        if (this.inFlight) { this.rerun = true; return this.inFlight; }
+        this.inFlight = (async () => {
+          do {
+            this.rerun = false;
+            try {
+              const response = await this.api.describe();
+              if (!response.ok) throw new Error("Task settings unavailable");
+              const view = response.value.namespaces.find(row => row.ns === "task-system");
+              if (view) this.accept(view, response.value.writable);
+              else this.publish({ status: "unavailable", writable: false, mode: "host" });
+            } catch {
+              this.publish({ ...this.snapshot, writable: false,
+                status: this.snapshot.value ? "ready" : "unavailable" });
+            }
+          } while (this.rerun && !this.disposed);
+        })().finally(() => { this.inFlight = undefined; });
+        return this.inFlight;
+      }
+      mutate(ops, revision) {
+        if (!Array.isArray(ops) || !ops.length || ops.some(op =>
+          !["set", "unset"].includes(op.op) || !Array.isArray(op.path) ||
+          op.path.length !== 1 || !keys.includes(op.path[0]) ||
+          (op.op === "set" && typeof op.value !== (booleanKeys.has(op.path[0]) ? "boolean" : "number")) ||
+          (op.op === "set" && !fieldSpec(op.path[0]).parse(String(op.value)))))
+          return Promise.resolve(false);
+        const owned = structuredClone(ops);
+        const task = this.tail.then(async () => {
+          if (this.disposed || !this.snapshot.writable || !Number.isSafeInteger(revision)) return false;
+          try {
+            const response = await this.api.mutate("task-system", owned, revision);
+            if (response.ok) { this.accept(response.value, true); return true; }
+          } catch { /* Recover authoritative values; keep the form's draft. */ }
+          await this.load();
+          return false;
+        });
+        this.tail = task.catch(() => {});
+        return task;
+      }
+      whileServed(register) {
+        let off;
+        const sync = () => {
+          if (this.snapshot.status === "ready" && !off) off = register();
+          else if (this.snapshot.status !== "ready" && off) { off(); off = undefined; }
+        };
+        const unsubscribe = this.subscribe(sync);
+        sync();
+        return () => { unsubscribe(); off?.(); };
+      }
+      async dispose() {
+        this.disposed = true;
+        this.listeners.clear();
+        await Promise.allSettled([this.tail, this.inFlight]);
+      }
+    }
     const descriptor = {
       id: "@dsh-task/task-system#taskPluginSettings/describe",
       service: "taskPluginSettings",
@@ -879,6 +964,7 @@ window.__ModuleLoader__.load({
               "div",
               {
                 key,
+                "data-task-detail-row": true,
                 style: {
                   display: "grid",
                   gridTemplateColumns: "minmax(130px, 1fr) minmax(0, 2fr)",
@@ -1896,7 +1982,7 @@ window.__ModuleLoader__.load({
         status.saved ? h("p", { role: "status" }, t("startupSaved")) : null,
         h(
           "div",
-          { style: { display: "flex", gap: 12, marginTop: 14 } },
+          { style: { display: "flex", flexWrap: "wrap", gap: 12, marginTop: 14 } },
           h(
             Button,
             {
@@ -2469,7 +2555,7 @@ window.__ModuleLoader__.load({
             : null,
         h(
           "div",
-          { style: { display: "flex", gap: 8, marginTop: 12 } },
+          { style: { display: "flex", flexWrap: "wrap", gap: 8, marginTop: 12 } },
           h(
             Button,
             { variant: "outline", onClick: refresh, disabled: state.loading },
@@ -2503,7 +2589,10 @@ window.__ModuleLoader__.load({
         h(
           "style",
           null,
-          `[data-task-plugin-settings] [hidden] { display: none !important; }
+          `[data-task-plugin-settings] { min-width: 0; overflow-wrap: anywhere; }
+          [data-task-plugin-settings] [hidden] { display: none !important; }
+          [data-task-plugin-settings] input, [data-task-plugin-settings] select { min-width: 0; max-width: 100%; }
+          [data-task-plugin-settings] [role="switch"] { flex-shrink: 0; }
           [data-task-plugin-settings] button { border: 1px solid var(--dsw-alias-border-l3, #8a8a8a) !important; }
           [data-task-plugin-settings] button:not([role="switch"]) { border-radius: 6px; background: var(--dsw-alias-bg-layer-2, #e9e9e9); padding: 7px 12px; }
           [data-task-plugin-settings] button:focus-visible, [data-task-plugin-settings] input:focus-visible, [data-task-plugin-settings] select:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
@@ -2511,7 +2600,20 @@ window.__ModuleLoader__.load({
           [data-task-plugin-settings] [data-task-startup-settings] > [data-startup-target="task"] { border-top: 0; padding-top: 0; margin-top: 0; }
           [data-task-plugin-settings] section > h3:first-child, [data-task-plugin-settings] section > h4:first-child { margin-top: 0 !important; }
           [data-task-plugin-settings] [data-task-mode] { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-          [data-task-plugin-settings] [data-task-mode] [aria-pressed="true"] { font-weight: 600; box-shadow: inset 0 -2px currentColor; }`,
+          [data-task-plugin-settings] [data-task-mode] [aria-pressed="true"] { font-weight: 600; box-shadow: inset 0 -2px currentColor; }
+          @media (max-width: 640px) {
+            /* Scope the Host shell adaptation to the active task page. */
+            [role="dialog"]:has([data-task-plugin-settings]) { flex-direction: column; position: relative; width: calc(100vw - 24px); max-height: calc(100dvh - 24px); }
+            [role="dialog"]:has([data-task-plugin-settings]) > nav { width: 100%; height: auto; box-sizing: border-box; padding: 12px 16px; flex: 0 0 auto; }
+            [role="dialog"]:has([data-task-plugin-settings]) > nav > div:last-child { display: flex; flex-direction: row; flex-wrap: wrap; gap: 4px; padding-top: 8px; }
+            [role="dialog"]:has([data-task-plugin-settings]) > nav > div:last-child > button { flex: 0 0 auto; width: auto; min-height: 44px; padding: 6px 10px; }
+            [role="dialog"]:has([data-task-plugin-settings]) > nav + div { width: 100%; min-width: 0; min-height: 0; flex: 1 1 auto; }
+            [role="dialog"]:has([data-task-plugin-settings]) > nav + div > div:first-child { position: static; height: 0; padding: 0; flex: 0 0 auto; }
+            [role="dialog"]:has([data-task-plugin-settings]) > nav + div > div:first-child button { position: absolute; top: 12px; right: 12px; }
+            [role="dialog"]:has([data-task-plugin-settings]) > nav + div > div:last-child { padding: 16px; }
+            [data-task-plugin-settings] [data-task-detail-row] { display: block !important; }
+            [data-task-plugin-settings] button:not([role="switch"]), [data-task-plugin-settings] input, [data-task-plugin-settings] select { min-height: 44px; }
+          }`,
         ),
         h(
           "div",
@@ -2700,8 +2802,17 @@ window.__ModuleLoader__.load({
         () => ctx.locale.register(NS, { en, zh }),
         "task settings dictionaries",
       );
-      const controller = new Controller(ctx.configForms.get("task-system"));
+      const remoteScope = ctx.remote.$host.isLoopback ? undefined :
+        new RemoteTaskSettingsScope(ctx.remote.settings);
+      const controller = new Controller(remoteScope ?? ctx.configForms.get("task-system"));
       ctx.effect(() => () => controller.dispose(), "task settings form");
+      if (remoteScope) ctx.effect(() => {
+        const refresh = () => { void remoteScope.load(); };
+        const disposers = [ctx.remote.$on("settings/document-updated", refresh),
+          ctx.on("connection/reset", refresh)];
+        refresh();
+        return async () => { for (const off of disposers) off(); await remoteScope.dispose(); };
+      }, "remote task deployment settings");
       const unmount = await ctx.remote.$mount({
         package: "@dsh-task/task-system",
         descriptors: [
@@ -2756,7 +2867,8 @@ window.__ModuleLoader__.load({
         );
       ctx.effect(
         () =>
-          ctx.configForms.whileServed(["task-system"], () => {
+          (remoteScope ? (register) => remoteScope.whileServed(register) :
+            (register) => ctx.configForms.whileServed(["task-system"], register))(() => {
             const inject = () => ({
               ...controller.inject(),
               read,
@@ -2803,9 +2915,10 @@ window.__ModuleLoader__.load({
       );
     }
     return {
-      inject: ["slots", "locale", "configForms", "remote"],
+      inject: ["slots", "locale", "configForms", "remote", "remote.settings"],
       apply,
       Controller,
+      RemoteTaskSettingsScope,
       openPlugins,
       openModels,
       decisionSettingsDescriptor,

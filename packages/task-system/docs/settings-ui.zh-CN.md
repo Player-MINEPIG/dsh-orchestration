@@ -67,7 +67,11 @@ Task 允许 role、defaultWorkspaceId、planningDecisionEnabled、sessionDecisio
 
 使用独立测试 profile 时，应把完整 task-system 配置原样放入该 profile，让 profile 拥有这条配置；保留原安全值。task-remote-execution 可继续独立放在既有固定覆盖层里。界面显示命令行覆写是否存在，并在存在 Home patch 时提示其可能覆盖配置；最终拒绝由官方 ConfigEditor 判断。
 
-官方 rc.2 的持久配置表单仅用于受支持的 loopback Host 连接。推荐在运行 DSH 的机器上打开它打印的本机 URL；远程非 loopback 连接可能不提供可编辑表单。不要为此把 WebUI 暴露到公网或新建凭据。
+官方 rc.2 的共享 configForms 在非 loopback 连接使用内存作用域。任务页为这种连接提供专用适配器，通过已认证的公开 Settings.describe/mutate 读取和保存上述六个字段；保存仍使用宿主 revision 校验、字段白名单和 ConfigEditor。它不会改变宿主的 loopback 判定、其他插件的设置页、认证或授权。缺少命名空间、只读宿主和读取失败均禁止保存。
+
+远程访问可使用已有私有网络中的 HTTPS 反向代理，DSH 继续监听 loopback，并配置精确 trustedHosts。首次访问使用运行中的 DSH 打印的登录链接；服务重启会更换该入口 token，已建立的登录 cookie 按宿主规则保留。登录链接属于访问凭据，不应提交到仓库。
+
+任务页在 640px 以下将宿主设置导航改为横向换行，详情和操作区可换行，表单控件保留可触摸高度。规则只作用于正在显示任务页的对话框。实际 VPS 页面已检查 320、390、430、768 和 1280px 视口，记录见仓库手机验收文档；这不等同于物理手机或 Safari 验收。
 
 ## 为什么需要浏览器伴生组件
 

@@ -202,6 +202,7 @@ test("browser companion exposes the same served form in Settings and its install
       ),
     },
     remote: {
+      $host: { isLoopback: true },
       $mount: async (contribution) => (
         assert.equal(contribution.descriptors.length, 8),
         () => {}
