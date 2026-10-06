@@ -8,6 +8,7 @@ import {
   type ToolExecution,
 } from "@deepseek-ai/dsh-tools";
 import type { Agent, AgentHandle } from "@deepseek-ai/dsh-agent";
+import type {} from "@deepseek-ai/dsh-system-prompt";
 import { SessionId } from "@deepseek-ai/dsh-session";
 import { createUserMessage, ReasoningEffortId } from "@deepseek-ai/dsh-llm";
 import { createHash, randomUUID } from "node:crypto";
@@ -1898,6 +1899,17 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
 
   if (config.role !== "executor") {
     const planningCtx = ctx;
+    planningCtx.inject(["systemPrompt"], (promptCtx) => {
+      promptCtx.systemPrompt.section({
+        name: "dsh-task-orchestration",
+        order: 90,
+        interpolate: false,
+        text: ({ agent }) =>
+          agent && !service.native?.scopeFor(agent)
+            ? "You coordinate work across registered execution nodes. For an authorized user request that requires task execution, prefer dispatching to a suitable executor over doing the workload in this conversation. When available, use task_nodes to inspect executor capabilities and runtime health, then task_plan action=propose with the task title and complete instructions in description. The user need not specify an executor, provider, model, or reasoning effort: omit route to let the configured planning decision service choose an eligible executor and execution model/effort tuple. task_plan provider/model/reasoningEffort configure the decision call itself, not the workload model; normally omit them. Review routingStatus and the recorded proposal; apply a ready proposal using task_plan action=apply with the same requestId when the user has authorized execution. Apply already creates the assigned Run; do not create a duplicate task_run. If routing is pending or the decision abstains, report the missing configuration or clarification instead of inventing a route or silently performing the workload locally. Follow host and channel tool permissions. Track the actual Run/report outcome with task_query, task_history or task_wait; an applied proposal or delivery ACK alone does not prove task success. Brief conversation and planning explanations can be answered here."
+            : "",
+      });
+    });
     // Planning itself is available without a decision plugin. Only its model
     // branch dynamically imports the optional typed-decision consumer.
     const { TaskPlanner, taskDecisionCatalog } = await import("./planning.js");
@@ -1990,7 +2002,7 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
       defineTool({
         name: "task_plan",
         description:
-          "Propose or apply task planning. Scheduler decisions select executor/model route, never workspace/session. With planning decisions disabled or unavailable, keep an explicit route or leave the task pending routing. Observation alone never invokes apply.",
+          "Prefer this tool to dispatch an authorized user task to an eligible executor. Propose with title/description; no caller-specified execution model or route is required when planning decisions are configured. Scheduler decisions select executor/provider/model/effort, never workspace/session. Apply the same requestId to create the assigned Run; do not dispatch it twice. With planning decisions disabled or unavailable, keep an explicit route or leave routing pending. Observation alone never invokes apply.",
         parameters: {
           action: {
             type: "string",
@@ -2000,11 +2012,32 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
           requestId: { type: "string", required: true },
           title: { type: "string" },
           description: { type: "string" },
-          route: { type: "object", additionalProperties: true },
-          workspaceId: { type: "string" },
-          provider: { type: "string" },
-          model: { type: "string" },
-          reasoningEffort: { type: "string" },
+          route: {
+            type: "object",
+            additionalProperties: true,
+            description:
+              "Optional complete execution assignment. Omit to let planning select the executor and workload model.",
+          },
+          workspaceId: {
+            type: "string",
+            description:
+              "Optional explicit user workspace constraint. Omit unless the user specified a workspace; the executor owns workspace selection.",
+          },
+          provider: {
+            type: "string",
+            description:
+              "Optional decision-provider override, not the workload provider.",
+          },
+          model: {
+            type: "string",
+            description:
+              "Optional decision-model override, not the workload model.",
+          },
+          reasoningEffort: {
+            type: "string",
+            description:
+              "Optional decision-call reasoning effort, not the workload effort.",
+          },
         },
         output,
         execute: async (args, exec) => {
@@ -2102,7 +2135,7 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
     defineTool({
       name: "task_nodes",
       description:
-        "Read catalog and sampled runtime health. Owned execution and executor profiles see only their own node; provider readiness remains explicitly unprobed.",
+        "Discover registered execution nodes, supported provider/model/effort tuples, capabilities, and sampled runtime health before dispatching work with task_plan. Owned execution and executor profiles see only their own node; provider readiness remains explicitly unprobed.",
       parameters: {},
       output,
       execute: async (_args, exec) => {
@@ -2113,7 +2146,20 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
         return json(
           ledger
             .nodeStatuses()
-            .filter((node) => !nodeId || node.nodeId === nodeId),
+            .filter((node) => !nodeId || node.nodeId === nodeId)
+            .map((status) => {
+              const node = ledger.getNode(status.nodeId);
+              return {
+                ...status,
+                roles: node.roles,
+                capabilities: node.capabilities,
+                models: node.models,
+                workspaceIds: node.workspaceIds,
+                ...(node.defaultWorkspaceId
+                  ? { defaultWorkspaceId: node.defaultWorkspaceId }
+                  : {}),
+              };
+            }),
         );
       },
     }),

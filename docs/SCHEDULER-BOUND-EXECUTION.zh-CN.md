@@ -91,6 +91,14 @@
 
 当前调度模型的请求删除 workspace 问题，不提供工作区候选；仍保留原 modelEffort 功能。返回额外 workspace 答案会被拒。调度模型建议不再写入 Task.workspaceId；该字段只接受明确输入或保留现有 Task 值。尚未应用的旧模型 workspace 回执返回 `WORKSPACE_REPLAN_REQUIRED`，需新 requestId 重新规划；已存历史和已应用结果不清洗。
 
+### 自然语言任务与优先派发
+
+用户只提供任务描述时，调度会话通过 `task_nodes` 读取已登记的执行端能力、模型/强度目录和采样健康状态，再调用 `task_plan(action='propose')`，无需传 `route`。启用规划决策且配置可用决策服务时，模型选择执行端和模型/强度组合；`task_plan(action='apply')` 使用同一 requestId 应用提案并创建 Run，不需要再次调用 task_run。完整 route 是执行领取阶段的要求，不是用户消息的必填项。
+
+planner/both 宿主在可用的原生 systemPrompt 中增加优先派发提示：已授权的执行任务优先交给合适的执行端，简短对话可本地回答；pending-route 或 abstain 时说明缺失条件，不静默改成本地执行。提示不加入 Task 拥有的工作负载 Agent。`task_plan` 顶层 provider/model/reasoningEffort 是决策调用覆盖项，执行模型选择来自目录或明确 route；工具参数说明已区分两者。
+
+飞书原生入口允许 task_nodes 作为 operator 的 plannerTools。宿主仍需配置 taskIntegration、operatorUserIds 和 plannerTools；模型只看到该入口实际允许的工具，普通发送者不会因提示获得调度权限。
+
 新 Run 的可选 `workspaceConstraint` 固定明确 Task/Run/Schedule 的 workspace。执行端候选和权威 selectTaskSession 同时验证它；自动补全的执行端默认/已有 Task session workspace 不标为约束。继续旧 Run 只保留已有 constraint，不倒推来源。该字段是原 claim 数据中的兼容可选字段，没有新增操作或 grant。
 
 ExecutionRoute.workspaceId 类型本来可选，newRun 可从明确 Task、已有 Task session 或该节点已登记的 defaultWorkspaceId 补全。远程 gateway 仍要求领取前存在具体授权 workspace；若节点没配置合法默认且任务无明确工作区，应补配置后派活，不能让调度模型代选。

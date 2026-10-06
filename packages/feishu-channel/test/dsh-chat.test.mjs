@@ -12,6 +12,7 @@ import { SessionId } from '@deepseek-ai/dsh-session';
 import * as channelPlugin from '../dist/dsh-plugin.js';
 import * as chatPlugin from '../dist/dsh-chat.js';
 import { digest } from '../dist/store.js';
+import { DecisionEngine, StructuredModelProvider } from '@dsh-task/typed-decisions/core';
 
 // Actual pinned DSH Loader, AgentLoop, session persistence and tools. Only the
 // model provider and Feishu network transport are stubs; no live credentials.
@@ -34,7 +35,7 @@ async function host({ dir = join(scratch, `host-${++serial}`), script = [], task
     ['tools', '@deepseek-ai/dsh-tools'], ['agents', '@deepseek-ai/dsh-agent'],
     ['persistence', '@deepseek-ai/dsh-session-persistence-jsonl', { root: join(dir, 'sessions'), compression: 'none' }],
     ['loop', '@deepseek-ai/dsh-agent-loop', { agents: [] }],
-    ...(task ? [['task', '@dsh-task/task-system/plugin', { databasePath: join(dir, 'tasks.sqlite'), keepAlive: false, schedulerEnabled: false, role: 'both' }]] : []),
+    ...(task ? [['task', new URL('../../task-system/dist/dsh-plugin.js', import.meta.url).href, { databasePath: join(dir, 'tasks.sqlite'), keepAlive: false, schedulerEnabled: false, role: 'both' }]] : []),
   ];
   await ctx.loader.root.update(definitions.map(([id, name, config]) => ({ id, name, config })));
   await ctx.loader.await();
@@ -137,6 +138,38 @@ test('explicit operator planner policy invokes actual task tools with current re
     assert.equal(h.chat.inspect().requests[0].state, 'completed', 'chat reply completion is separate from task outcome');
     assert.equal(h.transport.calls.at(-1).body.text, 'I created the task');
   } finally { await h.dispose(); }
+});
+
+test('an operator message discovers remote executors and applies planning without specifying an execution model', async () => {
+  const incoming = message('请安排执行端生成一份简短报告');
+  const requestId = `feishu:${digest(`message:${incoming.messageId}`)}:plan`;
+  const h = await host({ task: true, config: { taskIntegration: true, plannerTools: ['task_nodes', 'task_plan', 'task_query'] }, script: [
+    { name: 'task_nodes', args: {} },
+    { name: 'task_plan', args: { action: 'propose', requestId, title: incoming.text, description: incoming.text } },
+    { name: 'task_plan', args: { action: 'apply', requestId } },
+    '已安排执行端，等待报告',
+  ] });
+  const decisions = new DecisionEngine([new StructuredModelProvider('judge', [{ model: 'router', version: 'fixture', reasoningEfforts: [] }], { complete: async ({ input }) => {
+    const route = input.context.catalog.modelRoutes.find(row => row.executorId === 'remote-worker' && row.reasoningEffort === 'off');
+    const choices = { persist: 'create', attach: 'none', executor: 'remote-worker', modelEffort: route.id, reporting: 'summary' };
+    return { output: { answers: Object.fromEntries(input.questions.map(q => [q.questionId, { type: 'choice', choice: choices[q.questionId] }])) }, modelVersion: 'fixture' };
+  } })], { defaultProvider: 'judge', maxAttempts: 1 });
+  h.ctx.provide('typedDecisions', decisions);
+  try {
+    const ledger = h.ctx.taskSystem.ledger;
+    ledger.registerNode('remote-worker', { nodeId: 'remote-worker', roles: ['executor'], models: [{ provider: 'remote-provider', model: 'small', reasoningEfforts: ['off'] }], capabilities: [], workspaceIds: [], enabled: true, lastSeenAt: new Date().toISOString() });
+    h.transport.receive(incoming); await h.channel.tick();
+    const names = h.model.requests[0].tools.map(tool => tool.name);
+    assert.ok(names.includes('task_nodes')); assert.ok(names.includes('task_plan'));
+    const record = ledger.getDecision(requestId);
+    assert.equal(record.receipt.status, 'answered'); assert.equal(record.input.route, undefined);
+    const runs = ledger.snapshot().runs;
+    assert.equal(runs.length, 1); assert.equal(runs[0].route.nodeId, 'remote-worker');
+    assert.equal(runs[0].route.provider, 'remote-provider'); assert.equal(runs[0].route.model, 'small'); assert.equal(runs[0].route.reasoningEffort, 'off');
+    assert.equal(runs[0].state, 'queued'); assert.equal(ledger.snapshot().attempts.length, 0);
+    assert.match(JSON.stringify(h.model.requests[0].messages.filter(row => row.role === 'system')), /prefer dispatching to a suitable executor/);
+    assert.equal(h.chat.inspect().requests.at(-1).state, 'completed');
+  } finally { await h.dispose(); await decisions.close(); }
 });
 
 test('task_curate is opt-in for authenticated planner operators and never grants confirmation authority', async () => {

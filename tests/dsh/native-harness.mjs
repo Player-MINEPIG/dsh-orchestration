@@ -25,7 +25,9 @@ export async function createNativeHarness({ config = {}, script = [], dir } = {}
     ['task', pathToFileURL(join(project, 'packages/task-system/dist/dsh-plugin.js')).href, { role: 'both', nodeId: 'local', databasePath: join(dir, 'tasks.sqlite'), keepAlive: false, leaseTtlMs: 10000, ...config }],
   ].map(([id, name, config]) => ({ id, name, config })));
   await ctx.loader.await();
-  assert.ok(ctx.taskSystem?.native, 'real Loader must provide native execution');
+  assert.ok(ctx.taskSystem, 'real Loader must provide the task service');
+  if (config.role === 'planner') assert.equal(ctx.taskSystem.native, undefined, 'planner must not mount native workload execution');
+  else assert.ok(ctx.taskSystem.native, 'real Loader must provide native execution');
   const adapter = new ScriptedModel(script);
   ctx.llm.registerAdapter(['test-offline'], adapter);
   return {

@@ -73,6 +73,26 @@ The append-only task/report history is the durable memory. Query/search/summary 
 
 Scheduler model requests retain task admission, executor, provider/model/effort and reporting choices, but never ask for a workspace or session. Those choices belong to the executor under its independent `sessionDecisionEnabled` setting. Explicit Task/Run/Schedule workspace constraints remain binding; derived defaults do not become user constraints. Old unapplied scheduler workspace recommendations require replanning instead of changing stored history. Receipts persist before effects, and current-catalog, capability and workspace checks remain mandatory.
 
+For an ad hoc user message, no execution model or node is required in the input.
+Planner/both conversations receive an orchestration prompt that prefers dispatch
+to an eligible executor. `task_nodes` exposes each visible node's roles,
+capabilities, supported provider/model/effort tuples and sampled runtime health.
+Use `task_plan` with `action: "propose"`, a stable `requestId`, `title` and complete
+task instructions in `description`; omit `route`. With planning decisions
+enabled and a configured decision provider, the planner selects a catalog route.
+Apply a ready proposal with `action: "apply"` and the same `requestId`; application
+creates the assigned Run, so a second `task_run` would duplicate dispatch.
+The top-level `provider`, `model` and `reasoningEffort` parameters of `task_plan`
+override the decision call, not the workload route. Normally leave them unset.
+Without a usable decision service, routing stays pending. Brief conversation
+can still be answered locally. Owned workload agents do not receive the
+conversation's dispatch preference.
+
+Channel tool restrictions still apply. Feishu planner operators must enable
+task integration and include `task_nodes`, `task_plan` and the desired task
+query tools in `plannerTools`; installing the task package does not grant
+channel planning authority.
+
 ## Private WebUI and migration
 
 The WebUI consumes `snapshot()` and has no second task database. Explicit imports retain their real observation time; static published exports identify their snapshot time and do not pretend to poll live agents. `readLegacyHermes` opens a selected legacy database read-only and produces a reviewable import snapshot. It preserves task/run/submission identities and unknown provenance; running legacy work is not resumed automatically. See the root migration guide.

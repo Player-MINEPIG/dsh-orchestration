@@ -23,6 +23,7 @@ export interface PlanningInput {
   requestId: string;
   title: string;
   description: string;
+  /** Optional decision-call overrides. Workload routing is selected from the catalog unless route is explicit. */
   provider?: string;
   model?: string;
   reasoningEffort?: string;
@@ -333,7 +334,11 @@ export function taskDecisionCatalog(
     .filter(
       (n) => n.enabled && n.roles.some((r) => r === "executor" || r === "both"),
     )
-    .map((n) => ({ id: n.nodeId, description: n.nodeId, eligible: true }));
+    .map((n) => ({
+      id: n.nodeId,
+      description: `${n.nodeId}; capabilities: ${n.capabilities.join(", ") || "none"}; models: ${n.models.map((model) => `${model.provider}/${model.model}`).join(", ") || "none"}`,
+      eligible: true,
+    }));
   const modelRoutes = catalog.nodes.flatMap((n) =>
     n.models.flatMap((model) =>
       [undefined, ...model.reasoningEfforts].map((reasoningEffort) => ({

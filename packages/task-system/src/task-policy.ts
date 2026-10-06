@@ -179,10 +179,10 @@ export function buildTaskDecisionRequest(
     questions: [
       question(
         "persist",
-        "Should this become a durable task? Brief chat and one-off lookups can be ignored. Attach only if the same stable task is present.",
+        "Choose create for a new authorized request to execute work on an executor, including one-off tasks and short result reports: dispatch requires a durable task. Attach only if the same stable task is present. Choose ignore only for conversation or lookups that need no executor work; when ignoring, executor and modelEffort must both be none.",
         {
-          ignore: "No durable task",
-          create: "Create a durable task",
+          ignore: "Conversation only; no task or execution",
+          create: "Create a durable task, including one-off execution",
           ...(snapshot.tasks.length
             ? { attach: "Attach to an existing stable task" }
             : {}),
@@ -195,7 +195,7 @@ export function buildTaskDecisionRequest(
       ),
       question(
         "executor",
-        "Select a suitable already eligible executor, or none if no execution is needed.",
+        "For an authorized execution request, select a suitable already eligible executor. Choose none only when no executor work is needed or no suitable executor is available. Ignored conversation must choose none.",
         { none: "No execution", ...candidateMap(executors) },
       ),
       question(

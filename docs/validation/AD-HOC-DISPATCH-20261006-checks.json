@@ -1,0 +1,93 @@
+{
+  "sampledAt": "2026-10-06T00:54:58.325Z",
+  "status": "passed",
+  "scope": "bounded real VPS planner -> MBP executor, ad hoc natural-language request",
+  "taskId": "2eb7efee-11c6-454b-b79a-cf4c11190d62",
+  "runId": "04e1cdae-d213-4239-9fe3-ed859a99c281",
+  "callerExecutionRoute": null,
+  "callerDecisionOverrides": {
+    "provider": null,
+    "model": null,
+    "reasoningEffort": null
+  },
+  "conversationSteps": 4,
+  "conversationTools": [
+    "task_nodes",
+    "task_plan",
+    "task_query"
+  ],
+  "actualDispatchCalls": [
+    "task_nodes",
+    "task_plan:propose",
+    "task_plan:apply"
+  ],
+  "decisionStatus": "answered",
+  "decisionProvider": "live-native",
+  "decisionModelVersion": "deepseek-flash",
+  "executionRoute": {
+    "model": "deepseek-flash",
+    "nodeId": "mbp-executor",
+    "provider": "deepseek-official",
+    "requiredCapabilities": [],
+    "workspaceId": "acceptance"
+  },
+  "resolvedExecutionConfig": {
+    "config": {
+      "provider": "deepseek-official",
+      "model": "deepseek-flash",
+      "reasoningEffort": "high",
+      "maxTokens": 256000
+    },
+    "adapterDefaults": {
+      "reasoningEffort": true,
+      "maxTokens": true
+    }
+  },
+  "workloadTools": [
+    "task_settle"
+  ],
+  "resultReports": [
+    {
+      "kind": "result",
+      "body": "验收标记：ORCH-ADHOC-20261006-97。\n计算内容：39 加 58。\n计算结果：97，与预期一致。\n结论：本次最小验收执行通过。"
+    }
+  ],
+  "sessionDecisionStatus": "answered",
+  "executorAck": {
+    "attemptId": "0c627181-5109-480e-82cc-368ee9fc55ca",
+    "runId": "04e1cdae-d213-4239-9fe3-ed859a99c281",
+    "taskId": "2eb7efee-11c6-454b-b79a-cf4c11190d62",
+    "state": "acknowledged",
+    "receiptState": "succeeded",
+    "sessionId": "task-d7b6acb3-2406-4878-a62b-63dc680fce0a"
+  },
+  "checks": [
+    "real conversation model received dispatch tools and preferred a remote executor",
+    "real decision model selected execution route without caller model/node/effort",
+    "task_plan apply created exactly one assigned Run",
+    "MBP native workload succeeded with the expected report"
+  ],
+  "localFinal": {
+    "health": "passed",
+    "paused": true,
+    "queueCount": 0
+  },
+  "regression": {
+    "taskAndChatPassed": 304,
+    "existingFixtureSkipped": 1,
+    "nativePassed": 71,
+    "finalFocusedPassed": 27
+  },
+  "limits": [
+    "only VPS -> MBP topology",
+    "real model selection had one configured physical executor; multiple candidates verified offline",
+    "MBP official API direct TLS reset; successful workload used temporary model-only SSH egress, then removed",
+    "tests restored pause and original persistent configuration; no continuous production dispatch enabled"
+  ],
+  "diagnostics": [
+    "old planner prompt could ignore explicitly requested one-off execution; clarified admission instructions",
+    "same-path/version tarball installation reused old code; final unique package path and installed source verified",
+    "decision high default response exceeded small output budgets; bounded test cap increased to 8192",
+    "two zero-tool uncertain test runs reconciled as failed after inspection and executor quiescence; no blind replay"
+  ]
+}
