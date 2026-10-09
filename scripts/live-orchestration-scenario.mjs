@@ -3,7 +3,7 @@ import { pathToFileURL } from 'node:url';
 import { join } from 'node:path';
 
 export const name = 'live-orchestration-scenario';
-export const inject = ['taskSystem', 'typedDecisions', 'loader'];
+export const inject = ['taskSystem', 'decisionModels', 'loader'];
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 export function apply(ctx, config) {
   const controller = new AbortController();
@@ -23,7 +23,7 @@ async function run(ctx, config, signal) {
     require(ctx.taskSystem.config.nodeId === 'vps-planner', 'WRONG_NODE');
     require(!ctx.taskSystem.config.autoExecute && !ctx.taskSystem.config.schedulerEnabled, 'UNBOUNDED_ADMISSION');
     const {TaskPlanner, taskDecisionCatalog} = await import(pathToFileURL(join(config.packageRoot,'dist/planning.js')));
-    const planner = new TaskPlanner(ledger, ctx.typedDecisions, () => taskDecisionCatalog(ledger, {scope:'authorized two-device acceptance'}, 60000), () => {});
+    const planner = new TaskPlanner(ledger, ctx.decisionModels, () => taskDecisionCatalog(ledger, {scope:'authorized two-device acceptance'}, 60000), () => {});
     const decision = await planner.plan({requestId:'live-20261006-plan', title:'独立的双端真实验收报告任务', description:'Create a new Task to produce a short report comparing task result, report validity, and delivery acknowledgement. Execute on the only eligible mbp-executor using deepseek-flash off. This is a new authorized request, not an observation or an old negative test. Workspace is acceptance.', provider:'live-native', model:'live-judge', reasoningEffort:'off', workspaceId:'acceptance'}, {signal});
     result.planning = decision;
     save();

@@ -24,7 +24,7 @@ function fixture(t) {
   const remote=new RemoteExecutionService(new Context(),remoteRaw,ledger,store)
   const profile={overlays:[]}
   const decisions={};
-  const ctx={get:key=>({configEditor:host,taskSystem:task,remoteExecution:remote,profileContext:profile,typedDecisions:decisions.enabled===false?undefined:decisions})[key]}
+  const ctx={get:key=>({configEditor:host,taskSystem:task,remoteExecution:remote,profileContext:profile,decisionModels:decisions.enabled===false?undefined:decisions})[key]}
   return {ctx,host,task,remote,store,ledger,taskRow,remoteRow,writes,profile,decisions}
 }
 const input=(f,target,changes)=>({target,expected:readStartupSettings(f.ctx)[target].values,changes})

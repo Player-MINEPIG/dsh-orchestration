@@ -104,7 +104,7 @@ window.__ModuleLoader__.load({
         "Save could not be confirmed. Your draft is retained; refresh to check current configuration.",
       decisionReadFailed: "Could not read model settings. Refresh to retry.",
       decisionUnavailable:
-        "The typed-decisions plugin is not installed or has no editable entry.",
+        "The Jev plugin is not installed or has no editable entry.",
       decisionClose: "Close model settings",
       simpleMode: "Simple",
       advancedMode: "Advanced",
@@ -112,8 +112,8 @@ window.__ModuleLoader__.load({
       simpleHint:
         "Choose your role, connection and default workspace. Advanced settings keep the same draft.",
       openAdvanced: "Open advanced settings",
-      decisionDependencyRequired: "Install and enable the @dsh-task/typed-decisions decision plugin to use this feature. Refresh startup configuration after enabling it.",
-      startupError_STARTUP_DECISION_REQUIRED: "Install and enable @dsh-task/typed-decisions before enabling decisions.",
+      decisionDependencyRequired: "Install and enable the dsh-jev-plugin decision plugin to use this feature. Refresh startup configuration after enabling it.",
+      startupError_STARTUP_DECISION_REQUIRED: "Install and enable dsh-jev-plugin before enabling decisions.",
       schedulerDecisionTitle: "Scheduler · executor selection",
       schedulerDecisionHint:
         "The scheduler uses the existing task_plan decision tool to propose an executor. Applying a proposal checks the authoritative executor catalog and permissions.",
@@ -254,7 +254,7 @@ window.__ModuleLoader__.load({
       workspaceHint:
         "The default workspace must already be registered locally. Saved changes apply to future tasks immediately. Without a valid decision, execution uses the default Task session and workspace policy.",
       decisionHint:
-        "Decision adapters reuse @dsh-task/typed-decisions: DSH LLM, Typesafe Jev, or a registered AnyJev adapter. Select the model in this form; manage credentials through Models.",
+        "Decision adapters reuse dsh-jev-plugin: DSH LLM, Typesafe Jev, or a registered AnyJev adapter. Select the model in this form; manage credentials through Models.",
       settingsPending:
         "This Host has not loaded the session/workspace settings interface yet.",
       queueTitle: "Local task queue · read only",
@@ -384,15 +384,15 @@ window.__ModuleLoader__.load({
         "配置已变化，草稿保留。刷新并取消草稿以载入当前值后重试。",
       decisionSaveFailed: "保存未能确认，草稿保留；请刷新检查当前配置。",
       decisionReadFailed: "无法读取决策模型配置，请刷新重试。",
-      decisionUnavailable: "typed-decisions 插件未安装或没有可编辑条目。",
+      decisionUnavailable: "Jev 插件未安装或没有可编辑条目。",
       decisionClose: "关闭模型配置",
       simpleMode: "简单",
       advancedMode: "高级",
       settingsMode: "设置模式",
       simpleHint: "选择本机角色、连接与默认工作区。高级设置沿用同一份草稿。",
       openAdvanced: "打开高级设置",
-      decisionDependencyRequired: "需要安装并启用 @dsh-task/typed-decisions 决策插件后才能使用。启用后请刷新启动配置。",
-      startupError_STARTUP_DECISION_REQUIRED: "请先安装并启用 @dsh-task/typed-decisions 决策插件，再开启决策功能。",
+      decisionDependencyRequired: "需要安装并启用 dsh-jev-plugin 决策插件后才能使用。启用后请刷新启动配置。",
+      startupError_STARTUP_DECISION_REQUIRED: "请先安装并启用 dsh-jev-plugin 决策插件，再开启决策功能。",
       schedulerDecisionTitle: "调度端 · 选择执行者",
       schedulerDecisionHint:
         "调度端使用现有 task_plan 决策工具提出执行者建议；应用建议时校验权威执行端目录与权限。",
@@ -2954,17 +2954,17 @@ window.__ModuleLoader__.load({
       useSaveParticipant(saveCoordinator,`preset-${consumer}`,{meta:{dirty:choice!==current,invalid:!state.value?.writable,busy:saving,restart:false},save:savePreset,discard:()=>{select(null);setMessage(null);}});
       return h("section", {"data-decision-model-settings": true, id:"task-decision-model-form", tabIndex:-1},
         h("h4", {style:headingStyle}, "决策预设"),
-        h("p", {style:hintStyle}, "在本插件选择预设。规则、供应商、模型与思考强度在独立的“决策”设置中管理。"),
-        state.failed ? h("p", {role:"alert"}, "无法读取决策预设，请检查 typed-decisions 是否启用。") : null,
+        h("p", {style:hintStyle}, "在本插件选择预设。服务商、模型与思考强度在“插件 → Jev”中管理。此处只选择任务调用的模型配置。"),
+        state.failed ? h("p", {role:"alert"}, "无法读取决策预设，请检查 Jev 是否启用。") : null,
         state.value ? h(React.Fragment, null,
           h("label", {htmlFor:"task-preset-select",style:{display:"block",margin:"12px 0 6px"}}, role === "planner" ? "选择执行者使用的预设" : "选择工作区与会话使用的预设"),
           h("select", {id:"task-preset-select", value:choice, disabled:saving || !state.value.writable, style:controlStyle, onChange:e=>{select(e.target.value);setMessage(null);}},
-            h("option", {value:""}, "跟随决策页默认预设"),
+            h("option", {value:""}, "跟随 Jev 默认服务商与模型"),
             ...(state.value.presets ?? []).map(p => h("option", {key:p.id,value:p.id}, p.name))),
           message ? h("p", {role:"status",style:hintStyle}, message) : null,
           !saveCoordinator ? h(Button, {variant:"outline",disabled:saving || !state.value.writable || choice===current,onClick:savePreset}, saving ? "保存中…" : "保存预设选择") : null) : h("p", {style:hintStyle}, "正在读取预设…"),
         h("div", {style:{display:"flex",flexWrap:"wrap",gap:8,marginTop:12}},
-          h(Button, {variant:"outline",onClick:()=>{if(!openDecisions())setMessage("请在设置左侧打开“决策”。");}}, "打开独立决策设置"),
+          h(Button, {variant:"outline",onClick:()=>{if(!openDecisions())setMessage("请打开设置 → 插件 → Jev。");}}, "打开插件中的 Jev 设置"),
           h(Button, {variant:"outline",disabled:state.loading,onClick:refresh}, "刷新预设"),
           h(Button, {variant:"outline",onClick:close}, "关闭预设选择")));
     }
@@ -3627,7 +3627,7 @@ window.__ModuleLoader__.load({
               saveDecisionSettings,
               readDecisionConsole,
               setDecisionPreset,
-              openDecisions: () => openSettingsSection(ctx,"typed-decisions"),
+              openDecisions: () => openSettingsSection(ctx,"plugins"),
               openModels: () => openModels(ctx),
               queryIdentity,
               startup,

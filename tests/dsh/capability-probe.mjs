@@ -7,26 +7,27 @@ import { ScriptedModel } from './scripted-model.mjs';
 
 export const name = 'independent-capability-probe';
 const capability = process.env.DSH_TEST_CAPABILITY;
-export const inject = capability === 'typed' ? ['typedDecisions', 'typedDecisionCompletion', 'llm'] : capability === 'feishu' ? ['feishuChannel', 'agents', 'agentLoop'] : ['remoteExecution', 'taskSystem'];
+export const inject = capability === 'jev' ? ['decisionModels', 'llm', 'tools'] : capability === 'feishu' ? ['feishuChannel', 'agents', 'agentLoop'] : ['remoteExecution', 'taskSystem'];
 
 export async function apply(ctx) {
   let result;
-  if (capability === 'typed') {
-    assert.equal(ctx.get('taskSystem'), undefined, 'typed rules provider must not require task system');
+  if (capability === 'jev') {
+    assert.equal(ctx.get('taskSystem'), undefined, 'model service must not require task system');
     assert.equal(ctx.get('remoteExecution'), undefined);
-    const receipt = await ctx.typedDecisions.evaluate({ requestId: 'installed-rules', stateHash: 'fixture-1', context: { approved: true }, questions: [{ questionId: 'persist', questionVersion: '1', type: 'noul', instructions: 'Is the fixture approved?' }] });
-    assert.equal(receipt.status, 'answered');
-    assert.equal(receipt.answers.persist.noul, 1);
-    assert.equal(receipt.evidence.kind, 'deterministic');
-    assert.ok(ctx.get('typedDecisionCompletion'), 'installed optional ordinary-model bridge must boot');
-    const adapter = new ScriptedModel(['{"verified":true}']);
+    assert.equal(ctx.get('typedDecisions'), undefined);
+    assert.equal(ctx.get('typedDecisionCompletion'), undefined);
+    const adapter = new ScriptedModel(['{"answers":{"persist":{"type":"noul","noul":1}}}', '{"answers":{"persist":{"type":"noul","noul":0}}}']);
     ctx.llm.registerAdapter(['installed-offline'], adapter);
-    const completion = await ctx.typedDecisionCompletion.complete({ model: 'offline-judge', modelVersion: 'script', system: 'Offline installed module test', input: { verify: true }, responseSchema: { type: 'object', properties: { verified: { type: 'boolean' } }, required: ['verified'], additionalProperties: false }, signal: new AbortController().signal });
-    assert.equal(completion.output, '{"verified":true}');
-    assert.equal(completion.modelVersionSource, 'configured-pin');
-    assert.equal(adapter.requests.length, 1);
+    const request = {state:'Approved fixture', questions:{persist:{type:'noul',instructions:'Is it approved?'}}};
+    const answer = await ctx.decisionModels.ask(request);
+    assert.equal(answer.provider, 'native');
+    assert.equal(answer.model, 'script');
+    assert.equal(answer.answers.persist.noul, 1);
+    const tool = await ctx.tools.execute({callId:'installed-jev-tool',name:'jev',arguments:request,signal:new AbortController().signal});
+    assert.equal(tool.isError,false);
+    assert.equal(adapter.requests.length, 2);
     assert.deepEqual(adapter.requests[0].tools, []);
-    result = { independent: true, service: 'typedDecisions', status: receipt.status, evidence: receipt.evidence, ordinaryModelBridge: 'installed-native-service-scripted-model' };
+    result = { independent: true, service: 'decisionModels', ordinaryModel: 'installed-native-service-scripted-model', sharedTool: true, liveModelCall: false };
   } else if (capability === 'feishu') {
     assert.equal(ctx.get('taskSystem'), undefined, 'standalone channel must not require task system');
     assert.equal(ctx.get('typedDecisions'), undefined);
@@ -39,7 +40,7 @@ export async function apply(ctx) {
     assert.equal(ctx.get('feishuChat'), undefined, 'installed optional chat module remains disabled without explicit opt-in');
     result = { independent: true, service: 'feishuChannel', enabled: false, consumerLifecycle: true, optionalNativeChat: 'installed-and-disabled', liveDelivery: false };
   } else {
-    assert.equal(ctx.get('typedDecisions'), undefined, 'remote bridge must not require typed decisions');
+    assert.equal(ctx.get('decisionModels'), undefined, 'remote bridge must not require model service');
     const gateway = ctx.remoteExecution.gateway;
     assert.ok(gateway);
     const ledger = ctx.taskSystem.ledger;

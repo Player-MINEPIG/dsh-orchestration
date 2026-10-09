@@ -35,7 +35,7 @@ if (process.env.DSH_TASK_SETTINGS_PACKAGE) {
     join(modules, "@dsh-task", "task-system"),
     "dir",
   );
-  symlinkSync(resolve("packages/typed-decisions"),join(modules,"@dsh-task","typed-decisions"),"dir");
+  symlinkSync(resolve("packages/jev"),join(modules,"dsh-jev-plugin"),"dir");
 } else symlinkSync(resolve("node_modules"), join(dir, "node_modules"), "dir");
 const profile = {
   name: "startup-fixture",
@@ -84,7 +84,7 @@ const rows = [
   ["typert", "@deepseek-ai/dsh-typert-registry"],
   ["gateway", "@deepseek-ai/dsh-api-gateway"],
 ].map(([id, p, config]) => ({ id, name: url(p), config }));
-rows.push({id:"typed-decisions",name:"@dsh-task/typed-decisions",config:{providers:[{id:"rules",kind:"rules",rules:[]}],presets:[{id:"a",name:"A",provider:"rules"},{id:"b",name:"B",provider:"rules"}]}});
+rows.push({id:"jev",name:"dsh-jev-plugin",config:{provider:"native",nativeProvider:"test-offline",model:"script",profiles:[{id:"a",name:"A",provider:"native",nativeProvider:"test-offline",model:"script"},{id:"b",name:"B",provider:"native",nativeProvider:"test-offline",model:"script"}]}});
 rows.push({
   id: "task-system",
   name: "@dsh-task/task-system/plugin",
@@ -260,13 +260,13 @@ try {
   const limitsResult=await invoke("saveStartup",{input:{target:"remote",expected:remoteBefore.remote.values,changes:{concurrency:2,pollIntervalMs:1100}}});
   assert.equal(limitsResult.applies,"live");assert.equal(remoteEntry.fiber,remoteFiber);
   assert.equal(ctx.get("remoteExecution").settingsSnapshot().concurrency,2);assert.equal(ctx.get("remoteExecution").settingsSnapshot().pollIntervalMs,1100);
-  const decisionEntry=ctx.get("configEditor").entries().find(entry=>entry.options.id==="typed-decisions"), decisionFiber=decisionEntry.fiber;
-  const {readDecisionConsole,decisionConsoleCommand}=await import("../../packages/typed-decisions/dist/console.js");
-  const view=await readDecisionConsole(ctx);
-  const bindingResult=await decisionConsoleCommand(ctx,{action:"setBinding",expected:view.revision,consumer:"task-planning",id:"b"});
-  assert.equal(bindingResult.applies,"live");assert.equal(decisionEntry.fiber,decisionFiber);assert.equal(ctx.get("typedDecisions").presetFor("task-planning"),"b");
+  const decisionEntry=ctx.get("configEditor").entries().find(entry=>entry.options.id==="jev"), decisionFiber=decisionEntry.fiber;
+  const {readDecisionPreferences,saveDecisionPreference}=await import("../../packages/task-system/dist/decision-preferences.js");
+  const view=readDecisionPreferences(ctx);
+  const bindingResult=await saveDecisionPreference(ctx,{expected:view.revision,consumer:"task-planning",id:"b"});
+  assert.equal(bindingResult.applies,"live");assert.equal(decisionEntry.fiber,decisionFiber);assert.equal(ctx.get("taskSystem").config.decisionBindings["task-planning"],"b");
   await ctx.fiber.dispose();ctx=await start();
-  assert.equal(ctx.get("remoteExecution").settingsSnapshot().concurrency,2);assert.equal(ctx.get("typedDecisions").presetFor("task-planning"),"b");
+  assert.equal(ctx.get("remoteExecution").settingsSnapshot().concurrency,2);assert.equal(ctx.get("taskSystem").config.decisionBindings["task-planning"],"b");
   pass("official ConfigEditor hot-updates remote execution limits and decision bindings without replacing fibers; both persist across boot");
   pass("public capacity RPC updates the ledger without replacing either service and remains effective after a fresh host boot");
   console.log(

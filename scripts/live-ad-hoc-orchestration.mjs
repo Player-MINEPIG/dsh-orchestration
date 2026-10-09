@@ -21,12 +21,12 @@ async function run(ctx,config,signal) {
     const ledger=ctx.taskSystem.ledger;
     require(ctx.taskSystem.config.role==='planner'&&!ctx.taskSystem.config.autoExecute&&!ctx.taskSystem.config.schedulerEnabled,'WRONG_OR_UNBOUNDED_HOST');
     require(!ledger.snapshot().runs.some(run=>['queued','running','uncertain'].includes(run.state)&&!run.historyOnly&&!run.observationOnly),'EXISTING_ACTIVE_RUN');
-    completion=ctx.get('typedDecisionCompletion');originalComplete=completion?.complete;
-    if(completion) completion.complete=async function(input){
+    completion=ctx.get('decisionModels');originalComplete=completion?.ask;
+    if(completion) completion.ask=async function(input,options){
       try {
-        const value=await originalComplete.call(this,input);
-        let parseable=true;try{if(typeof value.output==='string')JSON.parse(value.output)}catch{parseable=false}
-        result.decisionCompletion={usage:value.usage,outputBytes:Buffer.byteLength(JSON.stringify(value.output)),parseable};save();return value;
+        const value=await originalComplete.call(this,input,options);
+        const parseable=!!value.answers&&typeof value.answers==='object';
+        result.decisionCompletion={usage:value.usage,outputBytes:Buffer.byteLength(JSON.stringify(value.answers)),parseable};save();return value;
       }catch(error){result.decisionCompletionError={name:error.name,code:typeof error.code==='string'?error.code:'unknown'};save();throw error}
     };
     const {createUserMessage}=await import(pathToFileURL(config.llmEntry));
@@ -71,6 +71,6 @@ async function run(ctx,config,signal) {
     require(result.attempts.length===1&&result.reports.some(row=>row.kind==='result'&&row.body.includes(marker)&&row.body.includes(String(config.expected??95))),'INVALID_REAL_REPORT');
     result.checks.push('MBP native workload succeeded with the expected report');result.status='passed';
   } catch(error) {result.status='failed';result.errorCode=error.code??error.name}
-  finally {clearTimeout(timeout);await handle?.dispose();if(completion&&originalComplete)completion.complete=originalComplete}
+  finally {clearTimeout(timeout);await handle?.dispose();if(completion&&originalComplete)completion.ask=originalComplete}
   result.finishedAt=new Date().toISOString();save();
 }

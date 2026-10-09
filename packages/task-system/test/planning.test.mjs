@@ -5,7 +5,7 @@ import { TaskPlanner, taskDecisionCatalog } from "../dist/planning.js";
 import {
   DecisionEngine,
   RulesProvider,
-} from "../../typed-decisions/dist/core.js";
+} from "./legacy-model-fixture.mjs";
 function provider() {
   return {
     id: "fixture",
@@ -149,11 +149,11 @@ test('planner consumes its configured preset without changing explicit decision 
   const ledger=TaskLedger.open(':memory:');
   const engine=new DecisionEngine([provider()],{defaultProvider:'fixture',presets:[{id:'planner-work',name:'Planner work',provider:'fixture',model:'test'}]});
   const requests=[];
-  const service={presetFor:consumer=>{assert.equal(consumer,'task-planning');return 'planner-work';},evaluate:async(request,options)=>{requests.push(request);return engine.evaluate(request,options);}};
+  const service={ask:async(request,options)=>{requests.push(request);return engine.ask(request,options);}};
   try {
-    const planner=new TaskPlanner(ledger,service,()=>taskDecisionCatalog(ledger,{channel:'fixture'}),()=>{});
+    const planner=new TaskPlanner(ledger,service,()=>taskDecisionCatalog(ledger,{channel:'fixture'}),()=>{},Date.now,()=>true,()=> 'planner-work');
     assert.equal((await planner.plan({requestId:'preset-plan',title:'Plan',description:'Use saved preset'})).proposal.kind,'proposal');
-    assert.equal(requests[0].preset,'planner-work');assert.equal(requests[0].provider,undefined);
+    assert.equal(requests[0].provider,'planner-work');assert.equal(requests[0].model,undefined);
     assert.equal((await planner.plan({requestId:'explicit-plan',title:'Explicit',description:'Pinned route',provider:'fixture'})).proposal.kind,'proposal');
     assert.equal(requests[1].preset,undefined);assert.equal(requests[1].provider,'fixture');
   } finally {await engine.close();ledger.close();}

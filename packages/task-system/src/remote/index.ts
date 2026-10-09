@@ -65,7 +65,7 @@ export const Config = z.object({...PlainConfig.dict, executionLimits:PlainConfig
 interface HostWebServer { register(route: { kind: 'exact'; path: string; handler: (req: IncomingMessage,res: ServerResponse) => Promise<void> }): () => void }
 /** An independently replaceable taskSystem service supplies only this structural ledger seam. */
 export interface TaskSystemPort {
-  ledger: LedgerPort; native?: NativeExecutionPort; config?: { autoAdmitObservations?: boolean; defaultWorkspaceId?: string | null; sessionDecisionEnabled?: boolean; decisionTtlMs?: number };
+  ledger: LedgerPort; native?: NativeExecutionPort; config?: { decisionBindings?: Record<string,string>; autoAdmitObservations?: boolean; defaultWorkspaceId?: string | null; sessionDecisionEnabled?: boolean; decisionTtlMs?: number };
   subscribeObservations?(sink: (candidate: ObservationCandidate, options: { signal: AbortSignal }) => Promise<unknown> | unknown): () => void;
 }
 export class RemoteExecutionService extends Service {
@@ -257,7 +257,7 @@ export class RemoteExecutionService extends Service {
       ...(this.config.taskSessionsEnabled && this.client ? { prepare: async () => { await this.client!.executorIdentity() } } : {}),
       chooseSession: async (claim,context,signal,refresh) => {
         const task = this.ctx.get('taskSystem') as TaskSystemPort | undefined
-        return await chooseExecutionSession({ claim,context,defaultWorkspaceId: task?.config?.defaultWorkspaceId,workspaces: this.config.workspaces.map(workspace => ({ workspaceId: workspace.workspaceId,nodeId: workspace.nodeId,description: workspace.workspaceId,eligible: true })),...(task?.config?.sessionDecisionEnabled && this.ctx.get('typedDecisions') ? { decisions: this.ctx.get('typedDecisions') } : {}),signal,ttlMs: task?.config?.decisionTtlMs,refresh })
+        return await chooseExecutionSession({ claim,context,defaultWorkspaceId: task?.config?.defaultWorkspaceId,workspaces: this.config.workspaces.map(workspace => ({ workspaceId: workspace.workspaceId,nodeId: workspace.nodeId,description: workspace.workspaceId,eligible: true })),...(task?.config?.sessionDecisionEnabled && this.ctx.get('decisionModels') ? { decisions: this.ctx.get('decisionModels'), decisionProvider: task?.config?.decisionBindings?.['task-session'] } : {}),signal,ttlMs: task?.config?.decisionTtlMs,refresh })
       },
     })
     this.workers.add(worker)

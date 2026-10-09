@@ -1,3 +1,4 @@
+import { readDecisionPreferences, saveDecisionPreference } from "./decision-preferences.js";
 import {
   DecisionSettings,
   SaveDecisionInput,
@@ -585,21 +586,16 @@ export class TaskPluginSettings extends TypertRemoteService {
     );
   }
   async decisionConsole() {
-    const owner = await import("@dsh-task/typed-decisions/console");
-    return owner.readDecisionConsole(this.ctx);
+    return readDecisionPreferences(this.ctx);
   }
   async setDecisionPreset(value: unknown) {
     const input = SetDecisionPresetInput.parse(value);
     try {
-      const owner = await import("@dsh-task/typed-decisions/console");
-      return await owner.decisionConsoleCommand(this.ctx, {
-        action: "setBinding",
-        ...input,
-      });
+      return await saveDecisionPreference(this.ctx, input);
     } catch (error) {
       const reason =
-        error instanceof Error && error.name === "DecisionSettingsError"
-          ? (error as unknown as { code: string }).code
+        error instanceof Error && error.message.startsWith("DECISION_")
+          ? error.message
           : "DECISION_SAVE_REJECTED";
       throw new RemoteError(
         "task/startup",

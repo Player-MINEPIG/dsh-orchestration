@@ -1,7 +1,7 @@
 import type {
   DecisionRequest,
   DecisionReceipt,
-} from "@dsh-task/typed-decisions/core";
+} from "./decision-types.js";
 import type {
   TaskDecisionSnapshot,
   TaskDecisionProposal,
@@ -13,13 +13,8 @@ import type { ExecutionRoute, Json } from "./contracts.js";
 // Same canonical JSON digest as the decision contract, without loading its optional runtime.
 const digest = (value: unknown): string =>
   createHash("sha256").update(canonical(value)).digest("hex");
-export interface DecisionServicePort {
-  presetFor?(consumer: string): string | undefined;
-  evaluate(
-    request: DecisionRequest,
-    options?: { signal?: AbortSignal },
-  ): Promise<DecisionReceipt>;
-}
+import { askTaskDecision, type DecisionServicePort } from "./decision-call.js";
+export type { DecisionServicePort } from "./decision-call.js";
 export interface PlanningInput {
   requestId: string;
   title: string;
@@ -51,6 +46,7 @@ export class TaskPlanner {
     private authorize: (proposal: TaskDecisionProposal) => void,
     private now: () => number = Date.now,
     private enabled: () => boolean = () => true,
+    private decisionProvider: () => string | undefined = () => undefined,
   ) {}
   async planObservation(
     candidateId: string,
@@ -232,7 +228,7 @@ export class TaskPlanner {
       await import("./task-policy.js");
     const preset =
       !input.provider && !input.model && !input.reasoningEffort
-        ? decisions.presetFor?.("task-planning")
+        ? this.decisionProvider()
         : undefined;
     const route = {
       ...(preset ? { preset } : {}),
@@ -248,7 +244,7 @@ export class TaskPlanner {
       route,
       this.now(),
     );
-    const receipt = await decisions.evaluate(request, options);
+    const receipt = await askTaskDecision(decisions, request, options);
     const current = this.snapshot(input);
     const proposal = consumeTaskDecisionReceipt(
       receipt,

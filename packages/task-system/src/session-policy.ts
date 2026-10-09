@@ -2,7 +2,7 @@ import type {
   DecisionReceipt,
   DecisionRequest,
   Json,
-} from "@dsh-task/typed-decisions/core";
+} from "./decision-types.js";
 import {
   digest,
   json,
@@ -11,7 +11,7 @@ import {
   stableStringify,
   validateAnswer,
   validateRequest,
-} from "@dsh-task/typed-decisions/validation";
+} from "./decision-validation.js";
 import {
   defaultTaskSessionSelection,
   taskSessionCatalog,
@@ -19,13 +19,8 @@ import {
   type TaskSessionSnapshot,
 } from "./session-default.js";
 
-export interface TaskSessionDecisionService {
-  presetFor?(consumer: string): string | undefined;
-  evaluate(
-    request: DecisionRequest,
-    options?: { signal?: AbortSignal },
-  ): Promise<DecisionReceipt>;
-}
+import { askTaskDecision, type DecisionServicePort } from "./decision-call.js";
+export type TaskSessionDecisionService = DecisionServicePort;
 export type TaskSessionDecisionRoute = Pick<
   DecisionRequest,
   "provider" | "model" | "reasoningEffort" | "preset"
@@ -195,10 +190,10 @@ export async function resolveTaskSessionDecision(
       initial,
       options.route && Object.values(options.route).some(v => v !== undefined)
         ? options.route
-        : options.decisions.presetFor?.("task-session") ? { preset: options.decisions.presetFor("task-session") } : {},
+        : {},
       now(),
     );
-    receipt = await options.decisions.evaluate(request, {
+    receipt = await askTaskDecision(options.decisions, request, {
       signal: options.signal,
     });
   } catch {

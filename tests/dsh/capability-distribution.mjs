@@ -24,7 +24,7 @@ const dsh = args => run(process.execPath, [bin, ...args]);
 function stage(name, facts = {}) { receipt.stages.push({ name, ok: true, ...facts }); process.stderr.write(`Passed: ${name}\n`); }
 function pack(directory) {
   const output = JSON.parse(run('npm', ['pack', '--json', '--pack-destination', scratch], { cwd: join(root, 'packages', directory) }))[0];
-  assert.ok(output.files.some(file => file.path.startsWith('dist/')));
+  assert.ok(output.files.some(file => file.path.startsWith(directory === 'jev' ? 'lib/' : 'dist/')));
   receipt.packages.push({ name: output.name, filename: output.filename, integrity: output.integrity });
   return join(scratch, output.filename);
 }
@@ -60,18 +60,19 @@ try {
   assert.equal(JSON.parse(readFileSync(dshPackage)).version, '0.2.0-rc.2');
   bin = join(dirname(dshPackage), 'lib/bin.js');
   stage('official-pinned-runtime');
-  const typed = '@dsh-task/typed-decisions';
-  const typedProfile = 'typed-only-acceptance';
-  dsh(['plugin', '--profile', typedProfile, 'add', pack('typed-decisions')]);
-  stage('typed-actual-plugin-add');
-  const typedPatch = `- id: task-typed-decisions\n  config:\n    defaultProvider: rules\n    providers:\n      - id: rules\n        kind: rules\n        rulesVersion: '1'\n        rules:\n          - questionId: persist\n            questionVersion: '1'\n            path: [approved]\n            equals: true\n            answer: { type: noul, noul: 1 }\n`;
-  assert.match(dsh(['--profile', typedProfile, '--dump-config']), /@dsh-task\/typed-decisions/);
-  JSON.parse(dsh(['--profile', typedProfile, '--dump-config-schema']));
-  await boot(typedProfile, 'typed', typedPatch + `- insert:\n    - id: installed-ordinary-completion\n      name: '@dsh-task/typed-decisions/dsh-completion'\n      config:\n        routes:\n          - model: offline-judge\n            modelVersion: script\n            provider: installed-offline\n            reasoningEfforts: []\n        maxOutputTokens: 256\n        maxInputBytes: 16384\n        maxOutputBytes: 16384\n        maxRuntimeMs: 2000\n        maxConcurrent: 1\n`);
-  dsh(['plugin', '--profile', typedProfile, 'remove', typed]);
-  assert.doesNotMatch(dsh(['--profile', typedProfile, '--dump-config']), /@dsh-task\/typed-decisions/);
-  stage('typed-actual-plugin-remove');
-  await boot(typedProfile, 'typed', '', true);
+  const jev = 'dsh-jev-plugin';
+  const jevProfile = 'jev-only-acceptance';
+  dsh(['plugin', '--profile', jevProfile, 'add', pack('jev')]);
+  stage('jev-actual-plugin-add');
+  const jevPatch = `- id: jev\n  config:\n    provider: native\n    nativeProvider: installed-offline\n    model: script\n    dailyCallLimit: 0\n    dailyTokenLimit: 0\n`;
+  assert.match(dsh(['--profile', jevProfile, '--dump-config']), /dsh-jev-plugin/);
+  assert.doesNotMatch(dsh(['--profile', jevProfile, '--dump-config']), /typed-decisions/);
+  JSON.parse(dsh(['--profile', jevProfile, '--dump-config-schema']));
+  await boot(jevProfile, 'jev', jevPatch);
+  dsh(['plugin', '--profile', jevProfile, 'remove', jev]);
+  assert.doesNotMatch(dsh(['--profile', jevProfile, '--dump-config']), /dsh-jev-plugin/);
+  stage('jev-actual-plugin-remove');
+  await boot(jevProfile, 'jev', '', true);
 
   const remote = '@dsh-task/task-system';
   const remoteProfile = 'remote-no-decisions-acceptance';

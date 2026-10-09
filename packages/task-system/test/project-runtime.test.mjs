@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {mkdirSync,existsSync,readFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {createNativeHarness} from '../../../tests/dsh/native-harness.mjs';
-import {DecisionEngine,StructuredModelProvider} from '@dsh-task/typed-decisions/core';
+import {DecisionEngine,StructuredModelProvider} from './legacy-model-fixture.mjs';
 
 const worker={nodeId:'worker',roles:['executor'],models:[{provider:'worker-model',model:'small',reasoningEfforts:['off']}],capabilities:[],workspaceIds:[],enabled:true,lastSeenAt:new Date().toISOString()};
 async function settle(h,command){for(let i=0;i<100;i++){const turn=h.ledger.managementDatabase().prepare('SELECT state FROM pr_turns WHERE command=?').get(command);if(['completed','failed'].includes(turn.state))return turn;await new Promise(r=>setTimeout(r,20));}throw Error('Turn timeout');}
@@ -35,7 +35,7 @@ test('project creation provisions a durable native session, rejects root conflic
 
 test('a project message uses real native dispatch tools and persists offline queued work once, with project association and handoff',async()=>{
   const h=await createNativeHarness({config:{role:'planner',projectAgentOptions:{provider:'test-offline',model:'script'}}});
-  const engine=decisions();h.ctx.provide('typedDecisions',engine);
+  const engine=decisions();h.ctx.provide('decisionModels',engine);
   try{const runtime=h.ctx.taskSystem.projects;h.ledger.registerNode('worker',worker);runtime.saveSettings({root:join(h.dir,'projects'),expectedRevision:0});
     const {projectId}=await runtime.create({commandId:'new',title:'Phone task',goal:'Small real dispatch'});
     const command='message1',requestId='project-message:'+command;
@@ -82,7 +82,7 @@ test('ordered candidate admission skips offline primary, persists fallback order
   const backup=input.context.catalog.modelRoutes.find(r=>r.executorId==='backup'&&r.reasoningEffort==='off');
   const choices={persist:'create',attach:'none',executor:'worker',modelEffort:primary.id,reporting:'summary',fallbackRoute1:backup.id};
   return {output:{answers:Object.fromEntries(input.questions.map(q=>[q.questionId,{type:'choice',choice:choices[q.questionId]}]))},modelVersion:'fixture'};
- }} )],{defaultProvider:'judge',maxAttempts:1});h.ctx.provide('typedDecisions',engine);
+ }} )],{defaultProvider:'judge',maxAttempts:1});h.ctx.provide('decisionModels',engine);
  try {
   h.ledger.registerNode('one',worker);h.ledger.registerNode('two',{...worker,nodeId:'backup'});
   h.ledger.recordNodeHeartbeat('backup-online',{nodeId:'backup',runtimeReady:true,activeExecutions:0});
@@ -180,7 +180,7 @@ test('cancellation respects executor stop acknowledgement, queued tasks and unkn
 });
 
 test('continue dispatch reuses a safe project recommendation, queues offline and creates one new Run without replaying old effects',async()=>{
- const h=await createNativeHarness({config:{role:'planner',projectAgentOptions:{provider:'test-offline',model:'script'}}});const engine=decisions();h.ctx.provide('typedDecisions',engine);
+ const h=await createNativeHarness({config:{role:'planner',projectAgentOptions:{provider:'test-offline',model:'script'}}});const engine=decisions();h.ctx.provide('decisionModels',engine);
  try {
   h.ledger.registerNode('node',worker);const runtime=h.ctx.taskSystem.projects;runtime.saveSettings({root:join(h.dir,'projects'),expectedRevision:0});
   const {projectId}=await runtime.create({commandId:'retry-project',title:'Retry project',goal:'Compute externally'}),requestId='project-message:retry-message';
@@ -202,7 +202,7 @@ test('continue dispatch reuses a safe project recommendation, queues offline and
 
 
 test('legacy unassigned tasks have isolated durable planning sessions and safe retry preserves task/run/report/attention history',async()=>{
- const h=await createNativeHarness({config:{role:'planner',projectAgentOptions:{provider:'test-offline',model:'script'}}});const engine=decisions();h.ctx.provide('typedDecisions',engine);
+ const h=await createNativeHarness({config:{role:'planner',projectAgentOptions:{provider:'test-offline',model:'script'}}});const engine=decisions();h.ctx.provide('decisionModels',engine);
  try{
   const runtime=h.ctx.taskSystem.projects;h.ledger.registerNode('node',worker);runtime.saveSettings({root:join(h.dir,'projects'),expectedRevision:0});
   const one=fixtureRun(h,'legacy-one'),two=fixtureRun(h,'legacy-two');
@@ -224,7 +224,7 @@ test('legacy unassigned tasks have isolated durable planning sessions and safe r
 });
 
 test('temporary conversation applies to the host-owned inbox task and cannot bypass operator retry or attach another task',async()=>{
- const h=await createNativeHarness({config:{role:'planner',projectAgentOptions:{provider:'test-offline',model:'script'}}});const engine=decisions();h.ctx.provide('typedDecisions',engine);
+ const h=await createNativeHarness({config:{role:'planner',projectAgentOptions:{provider:'test-offline',model:'script'}}});const engine=decisions();h.ctx.provide('decisionModels',engine);
  try{
   const runtime=h.ctx.taskSystem.projects;runtime.saveSettings({root:join(h.dir,'projects'),expectedRevision:0});h.ledger.registerNode('node',worker);
   const task=h.ledger.createTask('inbox-temporary',{title:'Temporary',description:'Compute externally'}).value;
@@ -275,7 +275,7 @@ test('existing project session schema migrates to explicit conversation ownershi
 
 
 test('new temporary task plans and dispatches the same Task once, with independent context and no project',async()=>{
- const h=await createNativeHarness({config:{role:'planner',projectAgentOptions:{provider:'test-offline',model:'script'}}}),engine=decisions();h.ctx.provide('typedDecisions',engine);
+ const h=await createNativeHarness({config:{role:'planner',projectAgentOptions:{provider:'test-offline',model:'script'}}}),engine=decisions();h.ctx.provide('decisionModels',engine);
  try {
   const runtime=h.ctx.taskSystem.projects;h.ledger.registerNode('worker',worker);runtime.saveSettings({root:join(h.dir,'projects'),expectedRevision:0});
   const input={commandId:'temporary-new',title:'Calculate',description:'Compute 1+1 and report'};
@@ -351,7 +351,7 @@ test('retry skips model decisions for a valid route and keeps capabilities and w
   const route={nodeId:'worker',provider:'worker-model',model:'small',reasoningEffort:'off',requiredCapabilities:['filesystem'],workspaceId:'original'};
   const run=h.ledger.createRun('run',{taskId:task.taskId,route}).value,a=h.ledger.claim('claim',{runId:run.runId,nodeId:'worker',ttlMs:10000}).value.attempt;
   h.ledger.submit('fail',{runId:a.runId,attemptId:a.attemptId,nodeId:a.nodeId,fence:a.fence,outcome:'failure',summary:'Stopped'});
-  let calls=0;h.ctx.provide('typedDecisions',{presetFor:()=>undefined,decide:async()=>{calls++;throw Error('Retry must not ask a model');}});
+  let calls=0;h.ctx.provide('decisionModels',{presetFor:()=>undefined,decide:async()=>{calls++;throw Error('Retry must not ask a model');}});
   const runtime=h.ctx.taskSystem.projects;await runtime.actOnTask(operator(runtime,task.taskId,'retry','cached'));
   assert.equal(calls,0);assert.deepEqual(runtime.snapshot().tasks[0].recommendation,[route]);assert.equal(h.ledger.snapshot().runs.length,1);
   h.ledger.recordNodeHeartbeat('online',{nodeId:'worker',runtimeReady:true,activeExecutions:0});runtime.tick();runtime.tick();

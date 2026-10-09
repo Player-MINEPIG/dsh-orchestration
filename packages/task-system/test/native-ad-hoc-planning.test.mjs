@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {createNativeHarness} from '../../../tests/dsh/native-harness.mjs'
-import {DecisionEngine,StructuredModelProvider} from '@dsh-task/typed-decisions/core'
+import {DecisionEngine,StructuredModelProvider} from './legacy-model-fixture.mjs'
 import {createUserMessage} from '@deepseek-ai/dsh-llm'
 import {SessionId} from '@deepseek-ai/dsh-session'
 
@@ -18,7 +18,7 @@ test('a native user message exposes orchestration tools and applies an executor/
     return {output:{answers:Object.fromEntries(input.questions.map(q=>[q.questionId,{type:'choice',choice:choices[q.questionId]}]))},modelVersion:'fixture'}
   }})],{defaultProvider:'judge',maxAttempts:1})
   const h=await createNativeHarness({config:{planningDecisionEnabled:true,sessionDecisionEnabled:false,autoExecute:false}})
-  h.ctx.provide('typedDecisions',decisions)
+  h.ctx.provide('decisionModels',decisions)
   try {
     for(const [nodeId,model,reasoningEfforts] of [['fast-worker','small',['off']],['quality-worker','large',['high']]]) h.ledger.registerNode(`register-${nodeId}`,{nodeId,roles:['executor'],models:[{provider:'worker-provider',model,reasoningEfforts}],capabilities:['text'],workspaceIds:[],enabled:true,lastSeenAt:new Date().toISOString()})
     const discovery=await h.ctx.tools.execute({name:'task_nodes',callId:'discover',arguments:{},signal:new AbortController().signal})

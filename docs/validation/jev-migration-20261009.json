@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-09",
+  "baselineCommit": "ea4cd0d845c91aff50f41a8def8d10c6c77a44c6",
+  "fork": "https://github.com/Player-MINEPIG/dsh-jev-plugin",
+  "forkBranch": "codex/shared-decision-models",
+  "forkCommit": "3cac9515d5d36b9bffa7a9ce7830ac5025672443",
+  "upstreamCommit": "0c2dd315a7e4ba85cad638c041985941f088487c",
+  "node": "24.19.0",
+  "checks": {
+    "full": {
+      "pass": 737,
+      "skip": 5,
+      "fail": 0
+    },
+    "sharedService": {
+      "pass": 60,
+      "fail": 0
+    },
+    "officialCliDistribution": {
+      "ok": true,
+      "liveModel": false,
+      "model": "ScriptedModel"
+    },
+    "officialConfigEditorStartup": {
+      "pass": 6,
+      "modelCalls": 0
+    }
+  },
+  "optionalLegacySettingsSuite": "First legacy official-settings-smoke case still expects executionTimeoutMs and six runtime fields. It predates the validated removal of task runtime budgets, and is not evidence for the new service. Dedicated official startup, full check and real distribution passed.",
+  "decisionBoundary": "Provider/model management, transport, cancellation and protocol parsing only; caller owns policy, audit, task state and effects."
+}

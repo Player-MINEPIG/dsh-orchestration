@@ -879,7 +879,7 @@ test('planning tool keeps a deterministic path before provider load and after un
     assert.ok(h.ctx.tools.get('task_plan'));
     const before = await tool(h.ctx, 'task_plan', { action: 'propose', requestId: 'before-provider', title: 'Await assignment without a model' });
     assert.equal(before.isError, false); assert.equal(h.ledger.getDecision('before-provider').receipt.kind, 'deterministic-planning-v1');
-    await h.ctx.loader.create({ id: 'decisions', name: pathToFileURL(resolve('packages/typed-decisions/dist/index.js')).href, config: {} });
+    await h.ctx.loader.create({ id: 'decisions', name: pathToFileURL(resolve('packages/jev/lib/index.js')).href, config: {provider:'native',nativeProvider:'test-offline',model:'script'} });
     await h.ctx.loader.await();
     await until(() => h.ctx.tools.get('task_plan'));
     assert.ok(h.ctx.tools.get('task_plan'));
@@ -970,7 +970,8 @@ test('optional automatic typed observation admission creates observe-only histor
   const config = { observationEnabled: true, autoAdmitObservations: true, maintenanceIntervalMs: 100 };
   const rules = Object.entries({ persist: 'create', attach: 'none', executor: 'none', modelEffort: 'none', workspace: 'none', reporting: 'none' }).map(([questionId, choice]) => ({ questionId, questionVersion: '1', path: ['state', 'request', 'mode'], equals: 'observe-existing-no-dispatch', answer: { type: 'choice', choice } }));
   const mountRules = async h => {
-    await h.ctx.loader.create({ id: 'observation-decisions', name: pathToFileURL(resolve('packages/typed-decisions/dist/index.js')).href, config: { providers: [{ id: 'rules', kind: 'rules', rulesVersion: '1', rules }] } });
+    h.ctx.llm.registerAdapter(['observation-offline'], new ScriptedModel([JSON.stringify({answers:{persist:{type:'choice',choice:'create'},reporting:{type:'choice',choice:'none'}}})]));
+    await h.ctx.loader.create({ id: 'observation-decisions', name: pathToFileURL(resolve('packages/jev/lib/index.js')).href, config: {provider:'native',nativeProvider:'observation-offline',model:'script'} });
     await h.ctx.loader.await();
     await until(() => h.ctx.tools.get('task_plan'));
   };

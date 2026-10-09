@@ -110,35 +110,14 @@ export const SaveDecisionResult = z
   .object({ saved: z.literal(true), applies: z.literal("plugin-restart") })
   .strict();
 export async function readDecisionSettings(ctx: Context) {
-  let owner: typeof import("@dsh-task/typed-decisions/settings");
-  try {
-    owner = await import("@dsh-task/typed-decisions/settings");
-  } catch {
-    return DecisionSettings.parse({
-      available: false,
-      writable: false,
-      snapshot: null,
-      catalog: [],
-      readiness: [],
-    });
-  }
-  return DecisionSettings.parse(await owner.readDecisionSettings(ctx));
+  const service = ctx.get('decisionModels');
+  const cfg = service?.config();
+  return DecisionSettings.parse({available:!!service,writable:false,snapshot:cfg ? {
+    entryId:'jev',defaultProvider:cfg.provider ?? 'typesafe',providers:[{id:cfg.provider ?? 'typesafe',kind:cfg.provider === 'native' ? 'structured' : 'jev',...(cfg.model ? {model:cfg.model,modelVersion:cfg.model} : {})}],completion:null,
+  } : null,catalog:[],readiness:[]});
 }
-export async function saveDecisionSettings(ctx: Context, value: unknown) {
-  const input = SaveDecisionInput.parse(value);
-  const owner = await import("@dsh-task/typed-decisions/settings");
-  const task = ctx.get("taskSystem") as TaskSystemService | undefined;
-  const remote = ctx.get("remoteExecution") as
-    | RemoteExecutionService
-    | undefined;
-  const release: (() => void)[] = [];
-  try {
-    if (task) release.push(task.beginConfigurationEdit());
-    if (remote) release.push(remote.beginConfigurationEdit());
-    return SaveDecisionResult.parse(
-      await owner.saveDecisionSettings(ctx, input),
-    );
-  } finally {
-    for (const done of release.reverse()) done();
-  }
+/** Provider/model configuration is edited in the JEV plugin's own Settings card. */
+export async function saveDecisionSettings(_ctx: Context, value: unknown) {
+  SaveDecisionInput.parse(value);
+  throw new Error('DECISION_PROVIDER_SETTINGS: configure providers and models in Plugins → Jev');
 }

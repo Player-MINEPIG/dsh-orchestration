@@ -1,230 +1,27 @@
-import test from "node:test";
-import assert from "node:assert/strict";
-import { Context } from "@deepseek-ai/cordis";
-import {
-  readDecisionSettings,
-  saveDecisionSettings,
-} from "../../typed-decisions/dist/settings.js";
-import { DshCompletionService } from "../../typed-decisions/dist/dsh-completion.js";
-import { SaveDecisionInput } from "../dist/decision-settings.js";
-const native = "@dsh-task/typed-decisions/dsh-completion",
-  decision = "@dsh-task/typed-decisions";
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {readDecisionSettings,saveDecisionSettings} from '../dist/decision-settings.js';
+import {readDecisionPreferences,saveDecisionPreference} from '../dist/decision-preferences.js';
 function fixture() {
-  const entries = [
-    {
-      options: {
-        id: "decisions",
-        name: decision,
-        config: {
-          defaultProvider: "rules",
-          providers: [
-            { id: "rules", kind: "rules", rulesVersion: "1", rules: [] },
-            {
-              id: "other",
-              kind: "structured",
-              models: [
-                {
-                  model: "other",
-                  version: "old",
-                  reasoningEfforts: [],
-                  hidden: "preserved",
-                },
-              ],
-              envRef: "do-not-change",
-            },
-          ],
-          unknown: "preserved",
-        },
-      },
-    },
-    {
-      options: {
-        id: "completion",
-        name: native,
-        config: {
-          routes: [
-            {
-              model: "other",
-              provider: "offline",
-              modelVersion: "old",
-              reasoningEfforts: [],
-              hidden: "preserved",
-            },
-          ],
-          maxOutputTokens: 20,
-          maxInputBytes: 1024,
-          maxOutputBytes: 1024,
-          maxRuntimeMs: 100,
-          maxConcurrent: 1,
-          unknown: "preserved",
-        },
-      },
-    },
-  ];
-  const writes = [];
-  let refuseDecision = false,
-    refuseRollback = false;
-  const editor = {
-    entries: () => entries,
-    async edit(entry, change) {
-      if (entry.options.name === decision && refuseDecision)
-        throw Error("synthetic persistence failure");
-      if (entry.options.name === native && refuseRollback && writes.length)
-        throw Error("synthetic rollback failure");
-      const next = change(structuredClone(entry.options.config), {});
-      entries.find((e) => e === entry).options.config = next;
-      writes.push(entry.options.name);
-    },
-  };
-  const services = {
-    configEditor: editor,
-    llm: {
-      listProviders: () => [{ id: "offline", name: "Offline" }],
-      listModels: async () => [
-        { id: "old", name: "Old" },
-        { id: "new", name: "New" },
-      ],
-      resolveModelInfo: async () => ({
-        reasoning: {
-          efforts: [{ id: "low", name: "Low" }],
-          defaultEffort: "low",
-        },
-      }),
-      listConfigurableProviders: () => [
-        {
-          provider: "offline",
-          settingsNs: "provider-config",
-          settingsPath: [],
-        },
-      ],
-    },
-    settings: {
-      describe: () => [
-        { ns: "provider-config", value: { apiKeyEnv: "FIXTURE_MISSING_KEY" } },
-      ],
-    },
-    credentials: {
-      describe: async (ref) => {
-        assert.equal(ref, "FIXTURE_MISSING_KEY");
-        return { configured: false };
-      },
-    },
-  };
-  return {
-    ctx: { get: (key) => services[key] },
-    entries,
-    writes,
-    fail: (rollback = false) => {
-      refuseDecision = true;
-      refuseRollback = rollback;
-    },
-  };
+ const raw={decisionBindings:{'task-planning':'local'},other:'preserved'};
+ const task={config:raw};let writes=0;
+ const entry={options:{id:'task-system',name:'@dsh-task/task-system/plugin',config:raw}};
+ const services={taskSystem:task,decisionModels:{config:()=>({provider:'native',nativeProvider:'host',model:'judge',profiles:[{id:'local',name:'Local decision model',provider:'native',nativeProvider:'host',model:'judge'}]})},configEditor:{entries:()=>[entry],async edit(e,change){Object.assign(raw,change(structuredClone(raw)));writes++;}},profileContext:{overlays:[]}};
+ return {ctx:{get:key=>services[key]},services,raw,writes:()=>writes};
 }
-test("official local catalog joins only credential metadata and exposes missing readiness", async () => {
-  const f = fixture(),
-    view = await readDecisionSettings(f.ctx);
-  assert.equal(view.catalog[0].credential, "missing");
-  assert.equal(
-    view.readiness.find((r) => r.providerId === "other").status,
-    "credential-missing",
-  );
-  assert.ok(!JSON.stringify(view).includes("FIXTURE_MISSING_KEY"));
-  assert.ok(!JSON.stringify(view).includes("hidden"));
-  assert.equal(f.writes.length, 0);
+test('task preferences select model profiles; provider configuration remains owned by JEV',async()=>{
+ const f=fixture();const view=await readDecisionSettings(f.ctx);assert.equal(view.available,true);assert.equal(view.writable,false);assert.equal(view.snapshot.defaultProvider,'native');
+ await assert.rejects(saveDecisionSettings(f.ctx,{expected:view.snapshot,selection:{kind:'rules',providerId:'unused'}}),/Plugins → Jev/);
+ const preferences=readDecisionPreferences(f.ctx);assert.equal(preferences.bindings['task-planning'],'local');assert.equal(preferences.presets[0].id,'local');
+ await saveDecisionPreference(f.ctx,{expected:preferences.revision,consumer:'task-planning',id:''});assert.equal(f.raw.decisionBindings['task-planning'],'');assert.equal(f.raw.other,'preserved');assert.equal(f.writes(),1);
 });
-test("strict save accepts configured Models selections, rejects secrets and unavailable models, preserves unknown provider/route fields", async () => {
-  const f = fixture(),
-    view = await readDecisionSettings(f.ctx);
-  const input = {
-    expected: view.snapshot,
-    selection: {
-      kind: "structured",
-      providerId: "other",
-      nativeProvider: "offline",
-      modelVersion: "new",
-    },
-  };
-  assert.throws(() =>
-    SaveDecisionInput.parse({
-      ...input,
-      selection: { ...input.selection, apiKey: "rejected" },
-    }),
-  );
-  await assert.rejects(
-    saveDecisionSettings(f.ctx, {
-      ...input,
-      selection: { ...input.selection, modelVersion: "unknown" },
-    }),
-    /DECISION_MODEL_UNAVAILABLE/,
-  );
-  assert.equal(f.writes.length, 0);
-  await saveDecisionSettings(f.ctx, input);
-  const provider = f.entries[0].options.config.providers.find(
-    (p) => p.id === "other",
-  );
-  assert.equal(provider.models[0].version, "new");
-  assert.deepEqual(provider.models[0].reasoningEfforts, ["low"]);
-  assert.deepEqual(f.entries[1].options.config.routes[1].reasoningEfforts, [
-    "low",
-  ]);
-  assert.deepEqual(f.entries[1].options.config.routes[0].reasoningEfforts, []);
-  assert.equal(provider.models[1].hidden, "preserved");
-  assert.equal(provider.envRef, "do-not-change");
-  assert.equal(f.entries[1].options.config.routes[0].hidden, "preserved");
-  assert.equal(f.entries[1].options.config.unknown, "preserved");
-  await assert.rejects(saveDecisionSettings(f.ctx, input), /DECISION_CONFLICT/);
+test('stale or unknown profile selections and overlay-owned config never overwrite preferences',async()=>{
+ const f=fixture(),view=readDecisionPreferences(f.ctx);
+ await assert.rejects(saveDecisionPreference(f.ctx,{expected:'stale',consumer:'task-session',id:'local'}),/DECISION_CONFLICT/);
+ await assert.rejects(saveDecisionPreference(f.ctx,{expected:view.revision,consumer:'task-session',id:'missing'}),/DECISION_PROFILE_MISSING/);
+ f.services.profileContext.overlays=[{id:'task-system',config:{}}];
+ await assert.rejects(saveDecisionPreference(f.ctx,{expected:view.revision,consumer:'task-session',id:'local'}),/DECISION_OVERRIDE/);assert.equal(f.writes(),0);
 });
-test("a failed second ConfigEditor save rolls back only this bridge addition; failed rollback is accurately partial", async () => {
-  for (const rollbackFails of [false, true]) {
-    const f = fixture(),
-      before = structuredClone(f.entries[1].options.config),
-      view = await readDecisionSettings(f.ctx);
-    f.fail(rollbackFails);
-    await assert.rejects(
-      saveDecisionSettings(f.ctx, {
-        expected: view.snapshot,
-        selection: {
-          kind: "structured",
-          providerId: "ordinary",
-          nativeProvider: "offline",
-          modelVersion: "new",
-        },
-      }),
-      rollbackFails ? /DECISION_PARTIAL_SAVE/ : /DECISION_SAVE_REJECTED/,
-    );
-    assert.equal(f.entries[0].options.config.defaultProvider, "rules");
-    if (!rollbackFails) assert.deepEqual(f.entries[1].options.config, before);
-  }
-});
-test("missing bridge does not fall back to an invented adapter and empty installed bridge stays idle", async () => {
-  const f = fixture();
-  f.entries.pop();
-  const view = await readDecisionSettings(f.ctx);
-  await assert.rejects(
-    saveDecisionSettings(f.ctx, {
-      expected: view.snapshot,
-      selection: {
-        kind: "structured",
-        providerId: "ordinary",
-        nativeProvider: "offline",
-        modelVersion: "new",
-      },
-    }),
-    /DECISION_BRIDGE_MISSING/,
-  );
-  const ctx = new Context();
-  try {
-    const service = new DshCompletionService(ctx, {
-      routes: [],
-      maxOutputTokens: 20,
-      maxInputBytes: 1024,
-      maxOutputBytes: 1024,
-      maxRuntimeMs: 100,
-      maxConcurrent: 1,
-    });
-    assert.equal(service.routes.length, 0);
-    assert.equal(service.activeCount, 0);
-  } finally {
-    await ctx.fiber.dispose();
-  }
+test('absence of the optional JEV service is explicit and leaves caller deterministic defaults usable',async()=>{
+ const f=fixture();delete f.services.decisionModels;assert.equal((await readDecisionSettings(f.ctx)).available,false);assert.equal(readDecisionPreferences(f.ctx).writable,false);
 });

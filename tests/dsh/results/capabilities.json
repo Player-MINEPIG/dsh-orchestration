@@ -1,22 +1,22 @@
 {
   "ok": true,
   "dshVersion": "0.2.0-rc.2",
-  "scratch": "/var/folders/1p/0r3r_j49633fr1f0r0q6wyt80000gn/T/dsh-capability-distribution-qbVJxQ",
+  "scratch": "/var/folders/1p/0r3r_j49633fr1f0r0q6wyt80000gn/T/dsh-capability-distribution-wzPrIR",
   "packages": [
     {
-      "name": "@dsh-task/typed-decisions",
-      "filename": "dsh-task-typed-decisions-0.2.0.tgz",
-      "integrity": "sha512-xUV7nj2r9KJyvrEDIFn28+w0SoK6t7bIJ62jU+dyLwS9oX+PD58V3BRvKqwvoiXNvM2AynpCWZAbcIjIv4YW5A=="
+      "name": "dsh-jev-plugin",
+      "filename": "dsh-jev-plugin-0.3.0.tgz",
+      "integrity": "sha512-uOH/am43I//P4Vp3BLDvjSUXUFa/k3IgUekhjfGslyooMk4wh0bn8CVCnYdgp/W9skKMfRJyYSjUYAxB8vtlSg=="
     },
     {
       "name": "@dsh-task/task-system",
-      "filename": "dsh-task-task-system-0.2.0.tgz",
-      "integrity": "sha512-bmmZngc07yzTcuNC1iLsDrmbajgARs6Ic2TlOW2cAW7zpkYBAnQbh00YwX1hubT2gc+RHdZhV1sPJ9F1iKEmmg=="
+      "filename": "dsh-task-task-system-0.2.1.tgz",
+      "integrity": "sha512-F4uRMOsxNIIgD/uQmxmhKy90ENK8svHsK4qnKWgZZJcPJ3Uy01B19xKezctOaGqOp+cERydnAFFc3Yp63w9fFg=="
     },
     {
       "name": "@dsh-task/feishu-channel",
       "filename": "dsh-task-feishu-channel-0.1.1.tgz",
-      "integrity": "sha512-Hf+S9dyJpsnGkdI6wY/fm6H+YAqg727G9XU6VlJobiRpMvs4nZgnlfC30f7YtWpLbkpxaUgwAMz/7QLnEgxTTA=="
+      "integrity": "sha512-ZS0idtFLrVc7f+XzoLBKMuEf9m1JWhIIwi2m88jEOwQLu/oG3L7Gr6AfilvKiYiuCyyLDGWqLHka4FoyzD1qDg=="
     }
   ],
   "stages": [
@@ -25,29 +25,26 @@
       "ok": true
     },
     {
-      "name": "typed-actual-plugin-add",
+      "name": "jev-actual-plugin-add",
       "ok": true
     },
     {
-      "name": "typed-real-cli-boot",
+      "name": "jev-real-cli-boot",
       "ok": true,
       "independent": true,
-      "service": "typedDecisions",
-      "status": "answered",
-      "evidence": {
-        "kind": "deterministic",
-        "calibration": "not-applicable"
-      },
-      "ordinaryModelBridge": "installed-native-service-scripted-model"
+      "service": "decisionModels",
+      "ordinaryModel": "installed-native-service-scripted-model",
+      "sharedTool": true,
+      "liveModelCall": false
     },
     {
-      "name": "typed-actual-plugin-remove",
+      "name": "jev-actual-plugin-remove",
       "ok": true
     },
     {
-      "name": "typed-boot-after-remove",
+      "name": "jev-boot-after-remove",
       "ok": true,
-      "removed": "typedDecisions"
+      "removed": "decisionModels"
     },
     {
       "name": "remote-actual-plugin-add",

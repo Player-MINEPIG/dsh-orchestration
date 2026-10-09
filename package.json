@@ -5,18 +5,20 @@
   "type": "module",
   "description": "DSH decisions and durable task/remote execution suite with optional channel adapters",
   "workspaces": [
-    "packages/*",
+    "packages/task-system",
+    "packages/feishu-channel",
+    "packages/jev",
     "dashboard"
   ],
   "engines": {
     "node": ">=24.0.0"
   },
   "scripts": {
-    "build": "npm run build -w @dsh-task/typed-decisions && npm run build -w @dsh-task/task-system && npm run build -w @dsh-task/feishu-channel",
+    "build": "npm run build -w @dsh-task/task-system && npm run build -w @dsh-task/feishu-channel",
     "test": "npm run build && npm run test --workspaces --if-present",
     "check": "npm run build && npm run test:unit && npm run test:native && npm run test:legacy && npm run test:management",
-    "test:unit": "npm run test --workspaces --if-present",
-    "test:native": "node --test tests/dsh/native-loader.test.mjs tests/dsh/remote-native.test.mjs tests/dsh/trusted-network-native.test.mjs tests/dsh/context-contract.test.mjs tests/dsh/pre-dispatch.test.mjs tests/dsh/executor-switch.test.mjs tests/dsh/project-executor.test.mjs",
+    "test:unit": "tsc -p packages/typed-decisions/tsconfig.json && npm run test --workspaces --if-present",
+    "test:native": "node --test tests/dsh/native-loader.test.mjs tests/dsh/remote-native.test.mjs tests/dsh/trusted-network-native.test.mjs tests/dsh/context-contract.test.mjs tests/dsh/pre-dispatch.test.mjs tests/dsh/executor-switch.test.mjs tests/dsh/project-executor.test.mjs tests/dsh/jev-native.test.mjs",
     "test:distribution": "node tests/dsh/distribution-acceptance.mjs && node tests/dsh/capability-distribution.mjs",
     "format:check": "prettier --check packages/task-system/src/*.ts",
     "test:legacy": "node --test tests/legacy/readers.test.mjs tests/legacy/reporting.test.mjs tests/legacy/quota.test.mjs tests/legacy/compatibility.test.mjs tests/legacy/configured-sources.test.mjs tests/legacy/ad-hoc.test.mjs tests/legacy/diagnostics.test.mjs tests/legacy/context-contract.test.mjs",

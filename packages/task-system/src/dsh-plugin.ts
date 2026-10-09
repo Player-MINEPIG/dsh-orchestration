@@ -1,3 +1,4 @@
+import type {} from "dsh-jev-plugin";
 import { ProjectRuntime, type ProjectAgentOptions } from "./project-runtime.js";
 import { chooseExecutionSession } from "./execution-session.js";
 import { Context, Service } from "@deepseek-ai/cordis";
@@ -74,6 +75,7 @@ export interface SafeRetryConfig {
 
 export interface Config {
   databasePath: string;
+  decisionBindings?: Record<string,string>;
   projectAgentOptions?: ProjectAgentOptions | null;
   nodeId?: string;
   role?: Role;
@@ -130,6 +132,7 @@ const nodeCatalogFields = {
 };
 
 const PlainConfig: z<Config> = z.object({
+  decisionBindings: z.dict(String).default({}),
   projectAgentOptions: z
     .union([
       z.const(null),
@@ -224,6 +227,7 @@ export const LIVE_SETTING_KEYS = [
   "localHeartbeatIntervalMs",
 ] as const;
 export const LIVE_STARTUP_KEYS = [
+  "decisionBindings",
   "defaultWorkspaceId",
   "planningDecisionEnabled",
   "sessionDecisionEnabled",
@@ -1591,8 +1595,8 @@ export class NativeExecutionProvider {
             }),
           ),
           ...(this.owner.config.sessionDecisionEnabled &&
-          this.ctx.get("typedDecisions")
-            ? { decisions: this.ctx.get("typedDecisions") }
+          this.ctx.get("decisionModels")
+            ? { decisions: this.ctx.get("decisionModels"), decisionProvider: this.owner.config.decisionBindings?.["task-session"] }
             : {}),
           signal: owned.creation.signal,
           ttlMs: this.owner.config.decisionTtlMs,
@@ -2410,7 +2414,7 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
     // Planning itself is available without a decision plugin. Only its model
     // branch dynamically imports the optional typed-decision consumer.
     const { TaskPlanner, taskDecisionCatalog } = await import("./planning.js");
-    const decisions = () => planningCtx.get("typedDecisions");
+    const decisions = () => planningCtx.get("decisionModels");
     const planner = new TaskPlanner(
       ledger,
       decisions,
@@ -2426,6 +2430,7 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
       },
       Date.now,
       () => config.planningDecisionEnabled,
+      () => config.decisionBindings?.["task-planning"],
     );
     if (service.projects) service.projects.planner = planner;
     const lifecycle = new AbortController();
@@ -2458,7 +2463,7 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
           lifecycle.signal.aborted ||
           observationJob ||
           !config.planningDecisionEnabled ||
-          !planningCtx.get("typedDecisions")
+          !planningCtx.get("decisionModels")
         )
           return;
         const candidate = ledger

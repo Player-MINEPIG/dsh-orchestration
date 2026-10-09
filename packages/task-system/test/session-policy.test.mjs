@@ -4,7 +4,7 @@ import { mkdtempSync, copyFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { DecisionEngine, StructuredModelProvider, JevProvider, AnyJevCompatibleProvider } from '@dsh-task/typed-decisions/core';
+import { DecisionEngine, StructuredModelProvider, JevProvider, AnyJevCompatibleProvider } from './legacy-model-fixture.mjs';
 import { defaultTaskSessionSelection, TaskSessionConfigurationError } from '../dist/session-default.js';
 import { buildTaskSessionDecisionRequest, consumeTaskSessionDecisionReceipt, resolveTaskSessionDecision } from '../dist/session-policy.js';
 
@@ -75,7 +75,7 @@ test('ordinary model uses typed questions and validated Jev-shaped choices for r
   assert.equal(reused.workspaceId, 'alternate');
   assert.equal(observed.responseSchema.additionalProperties, false);
   assert.deepEqual(observed.responseSchema.required, ['answers']);
-  assert.equal(reused.receipt.evidence.calibration, 'none');
+  assert.equal(reused.receipt.provider, 'ordinary');
   const created = await resolve(ordinary({ answers: answers('new', 'alternate') }));
   assert.equal(created.source, 'decision');
   assert.deepEqual(created.session, { mode: 'new' });
@@ -131,7 +131,7 @@ test('engine timeout falls back, with no extra retry or provider substitution', 
   try {
     const result = await resolveTaskSessionDecision(base, { requestId: 'timeout', decisions, now: () => 1000 });
     assert.equal(result.source, 'default');
-    assert.equal(result.receipt.error.code, 'timeout');
+    assert.equal(result.receipt.error.code, 'provider-error');
     assert.equal(calls, 1);
   } finally { await decisions.close(); }
 });
@@ -161,7 +161,7 @@ test('caller cancellation never converts to a fallback execution', async () => {
   const midCall = new AbortController();
   await assert.rejects(resolveTaskSessionDecision(base, {
     requestId: 'cancel-during-call', now: () => 1000, signal: midCall.signal,
-    decisions: { evaluate: async () => { midCall.abort(); throw Error('provider aborted'); } },
+    decisions: { ask: async () => { midCall.abort(); throw Error('provider aborted'); } },
   }), { name: 'AbortError' });
 });
 
@@ -169,7 +169,7 @@ test('executor uses its selected preset and verifies the original preset request
   const decisions = new DecisionEngine([ordinary({answers:answers('new','alternate')})], {defaultProvider:'ordinary',presets:[{id:'executor-work',name:'Executor work',provider:'ordinary',model:'judge'}]});
   const consumers=[];
   try {
-    const result=await resolveTaskSessionDecision(base,{requestId:'preset-selection',now:()=>1000,decisions:{presetFor(consumer){consumers.push(consumer);return 'executor-work';},evaluate(request,options){assert.equal(request.preset,'executor-work');assert.equal(request.provider,undefined);return decisions.evaluate(request,options);}}});
-    assert.equal(result.source,'decision');assert.equal(result.workspaceId,'alternate');assert.deepEqual(result.session,{mode:'new'});assert.deepEqual(consumers,['task-session','task-session']);
+    const result=await resolveTaskSessionDecision(base,{requestId:'preset-selection',now:()=>1000,route:{provider:'executor-work'},decisions:{ask(request,options){consumers.push('task-session');assert.equal(request.provider,'executor-work');return decisions.ask(request,options);}}});
+    assert.equal(result.source,'decision');assert.equal(result.workspaceId,'alternate');assert.deepEqual(result.session,{mode:'new'});assert.deepEqual(consumers,['task-session']);
   } finally {await decisions.close();}
 });

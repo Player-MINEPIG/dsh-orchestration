@@ -28,6 +28,7 @@ export async function chooseExecutionSession(input: {
     eligible: boolean;
   }[];
   decisions?: TaskSessionDecisionService;
+  decisionProvider?: string;
   signal?: AbortSignal;
   ttlMs?: number;
   refresh?: () => TaskSessionContext | Promise<TaskSessionContext>;
@@ -125,6 +126,7 @@ export async function chooseExecutionSession(input: {
         await import("./session-policy.js")
       ).resolveTaskSessionDecision(snapshot, {
         decisions: input.decisions,
+    route: input.decisionProvider ? {provider:input.decisionProvider} : {},
         requestId: `task-session-${claim.attempt.attemptId}`,
         signal: input.signal,
         ...(input.refresh

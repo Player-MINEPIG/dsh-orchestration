@@ -8,7 +8,7 @@ import { TaskLedger } from '../dist/ledger.js'
 import { chooseExecutionSession } from '../dist/execution-session.js'
 import { RecoveryStore, IdentityVerifier, TrustedNetworkVerifier, RemoteGateway, RemoteClient, RemoteLedgerClient, ExecutorWorker, signEnvelope } from '../dist/remote/api.js'
 import { TaskPluginSettings, queueDescriptor, executorIdentityDescriptor } from '../dist/settings.js'
-import { DecisionEngine, StructuredModelProvider } from '@dsh-task/typed-decisions/core'
+import { DecisionEngine, StructuredModelProvider } from './legacy-model-fixture.mjs'
 const operations = ['executorIdentity','sessionContext','selectTaskSession','claim','markRunning','bindSession','submit','getRun','getAttempt','listWork','renew']
 function fixture(t, path) {
   const dir = mkdtempSync(join(tmpdir(),'scheduler-sessions-'))

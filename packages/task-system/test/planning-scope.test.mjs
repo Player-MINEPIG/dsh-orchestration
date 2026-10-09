@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import {TaskLedger} from '../dist/ledger.js'
 import {TaskPlanner,taskDecisionCatalog} from '../dist/planning.js'
 import {chooseExecutionSession} from '../dist/execution-session.js'
-import {DecisionEngine,StructuredModelProvider} from '@dsh-task/typed-decisions/core'
+import {DecisionEngine,StructuredModelProvider} from './legacy-model-fixture.mjs'
 import {Config} from '../dist/dsh-plugin.js'
 import {SaveStartupInput} from '../dist/startup-settings.js'
 

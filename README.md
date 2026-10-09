@@ -9,11 +9,11 @@ This monorepo targets **DeepSeek Harness 0.2.0-rc.2** and **Node 24+**. The TLS 
 | Package | Independent use inside DSH |
 |---|---|
 | [Task and Remote Execution Suite](packages/task-system/README.md) | Durable task configuration, history, execution, observation, scheduling and optional authenticated remote peers; useful without decisions or channels |
-| [Typed Decisions](packages/typed-decisions/README.md) | Bounded choice/classification/scoring for any consumer; rules, ordinary native DSH models, Jev and compatible typed APIs |
+| [JEV shared model service](packages/jev/README.md) | Provider/model management and typed calls for any consumer; System One APIs and ordinary models through DSH |
 | [Optional Feishu adapter](packages/feishu-channel/README.md) | Separate optional channel SDK and authorized chat/message delivery; replaceable through public consumer/delivery contracts |
 | [WebUI](dashboard/README.md) | Portable read-only consumer of the same TaskLedger, with timestamped private snapshot export |
 
-There are two core installation packages: `@dsh-task/typed-decisions` and `@dsh-task/task-system`. Remote coordination ships inside the task suite and is explicitly mounted through its `/remote` export. Feishu is an optional adapter. See the [boundary and upstream reuse assessment](docs/PLUGIN-BOUNDARIES.zh-CN.md) and [0.2 package migration](docs/PACKAGE-MIGRATION.md).
+The active installation packages are `dsh-jev-plugin` and `@dsh-task/task-system`; the task suite is useful without a model service. Remote coordination ships inside the task suite and is explicitly mounted through its `/remote` export. Feishu is an optional adapter. See the [boundary and upstream reuse assessment](docs/PLUGIN-BOUNDARIES.zh-CN.md) and [JEV replacement migration](docs/JEV-MIGRATION.zh-CN.md).
 
 Role profiles, protocol types, task templates and the WebUI are not presented as extra dependency-only runtime plugins. Plugin independence means useful installation and lifecycle within a host, not a separate daemon.
 
@@ -26,7 +26,7 @@ npm run check
 npm run test:distribution
 ```
 
-`check` runs core/provider/protocol/WebUI tests and actual DSH Loader/AgentLoop integration. Distribution tests install tarballs into isolated profiles using the pinned official DSH CLI, boot them, remove them and verify retained-state behavior. The tests use disposable credentials and fixtures. Live Feishu/Jev/model calls and production machines are not needed or exercised.
+`check` runs task/provider/protocol/WebUI tests and actual DSH Loader/AgentLoop integration. Distribution tests install tarballs into isolated profiles using the pinned official DSH CLI, boot them, remove them and verify retained-state behavior. The tests use disposable credentials and fixtures. Live Feishu/Jev/model calls and production machines are not needed or exercised.
 
 For a runnable offline native example, see [the DSH integration guide](docs/dsh-integration.md) and `tests/dsh/demo-local.mjs`. It uses a deterministic model fixture, visibly labeled as such.
 
@@ -46,7 +46,7 @@ Cancelling a run does not cancel other runs of the same task. Cancellation resou
 
 [Example task types](examples/README.md) show daily review, game-daily and a third unrelated workflow using one template/schema contract. Define source adapters, normalization, validation and presentation through reviewed host code; task configuration selects capabilities but does not grant credentials or executable permissions.
 
-[Workspace provisioning](packages/task-system/README.md) creates actual directories under explicit roots. Typed decisions can recommend reuse or creation, but physical provisioning and final execution policy remain deterministic host responsibilities. [Host delegation](examples/host-delegation.AGENTS.md) illustrates optional local specialist/Codex delegation without a dedicated backend or self-maintenance plugin.
+[Workspace provisioning](packages/task-system/README.md) creates actual directories under explicit roots. Model answers can recommend reuse or creation, but physical provisioning and final execution policy remain deterministic host responsibilities. [Host delegation](examples/host-delegation.AGENTS.md) illustrates optional local specialist/Codex delegation without a dedicated backend or self-maintenance plugin.
 
 ## Review material
 
@@ -60,3 +60,5 @@ Cancelling a run does not cancel other runs of the same task. Cancellation resou
 - [Open-source and awesome-list preparation](docs/AWESOME-CHECKLIST.md)
 
 The deliverable is private. Public repository visibility, npm publishing and awesome-list submission are separate actions. Real-browser visual checks, live integrations, remote GitHub CI and OS deployment are reported separately from local code tests; a passing local suite does not imply those checks passed.
+
+The former typed-decisions source is retained for rollback and historical test fixtures, excluded from active workspaces and package dependencies. It is compiled only for those fixtures during unit verification. No old decision service or ordinary-model bridge is installed by the current bundles.

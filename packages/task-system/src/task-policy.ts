@@ -3,7 +3,7 @@ import type {
   DecisionReceipt,
   DecisionRequest,
   Json,
-} from "@dsh-task/typed-decisions/core";
+} from "./decision-types.js";
 import {
   digest,
   fail,
@@ -15,7 +15,7 @@ import {
   text,
   validateAnswer,
   validateRequest,
-} from "@dsh-task/typed-decisions/validation";
+} from "./decision-validation.js";
 
 export interface TaskCandidate {
   id: string;

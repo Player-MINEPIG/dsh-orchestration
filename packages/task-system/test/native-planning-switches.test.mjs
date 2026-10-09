@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {createNativeHarness} from '../../../tests/dsh/native-harness.mjs'
-import {DecisionEngine,StructuredModelProvider} from '@dsh-task/typed-decisions/core'
+import {DecisionEngine,StructuredModelProvider} from './legacy-model-fixture.mjs'
 
 for (const planningDecisionEnabled of [false,true]) for(const sessionDecisionEnabled of [false,true]) test(`native scheduler=${planningDecisionEnabled} and executor=${sessionDecisionEnabled} decision switches are independent`,async()=>{
   let plannerCalls=0,executorCalls=0
@@ -16,11 +16,13 @@ for (const planningDecisionEnabled of [false,true]) for(const sessionDecisionEna
   }})
   const decisions=new DecisionEngine([decisionProvider],{defaultProvider:'ordinary',maxAttempts:1})
   const h=await createNativeHarness({config:{planningDecisionEnabled,sessionDecisionEnabled},script:[{name:'task_settle',args:{outcome:'success',summary:'Fixture-only independent decisions'}}]})
-  h.ctx.provide('typedDecisions',decisions)
+  h.ctx.provide('decisionModels',decisions)
   try {
     const l=h.ledger
     l.registerWorkspace('workspace',{workspaceId:'default',nodeId:'local',path:h.dir,label:'Fixture',state:'ready',createdAt:new Date().toISOString()})
     l.registerNode('node',{nodeId:'local',roles:['both'],models:[{provider:'test-offline',model:'script',reasoningEfforts:[]}],capabilities:[],workspaceIds:['default'],defaultWorkspaceId:'default',enabled:true,lastSeenAt:new Date().toISOString()})
+    l.registerWorkspace('alternate-workspace',{workspaceId:'other',nodeId:'local',path:h.dir,label:'other fixture',state:'ready',createdAt:new Date().toISOString()});
+    l.registerNode('expanded-node',{...l.getNode('local'),workspaceIds:['default','other']});
     const invoke=async(action)=>h.ctx.tools.execute({callId:`plan-${action}`,name:'task_plan',arguments:{action,requestId:'plan',title:'Independent switches',description:''},signal:new AbortController().signal})
     assert.equal((await invoke('propose')).isError,false)
     assert.equal(plannerCalls,planningDecisionEnabled?1:0)

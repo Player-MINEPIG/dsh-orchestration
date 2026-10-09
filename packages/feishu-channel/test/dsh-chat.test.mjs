@@ -12,7 +12,7 @@ import { SessionId } from '@deepseek-ai/dsh-session';
 import * as channelPlugin from '../dist/dsh-plugin.js';
 import * as chatPlugin from '../dist/dsh-chat.js';
 import { digest } from '../dist/store.js';
-import { DecisionEngine, StructuredModelProvider } from '@dsh-task/typed-decisions/core';
+import { DecisionEngine, StructuredModelProvider } from '../../task-system/test/legacy-model-fixture.mjs';
 
 // Actual pinned DSH Loader, AgentLoop, session persistence and tools. Only the
 // model provider and Feishu network transport are stubs; no live credentials.
@@ -154,7 +154,7 @@ test('an operator message discovers remote executors and applies planning withou
     const choices = { persist: 'create', attach: 'none', executor: 'remote-worker', modelEffort: route.id, reporting: 'summary' };
     return { output: { answers: Object.fromEntries(input.questions.map(q => [q.questionId, { type: 'choice', choice: choices[q.questionId] }])) }, modelVersion: 'fixture' };
   } })], { defaultProvider: 'judge', maxAttempts: 1 });
-  h.ctx.provide('typedDecisions', decisions);
+  h.ctx.provide('decisionModels', decisions);
   try {
     const ledger = h.ctx.taskSystem.ledger;
     ledger.registerNode('remote-worker', { nodeId: 'remote-worker', roles: ['executor'], models: [{ provider: 'remote-provider', model: 'small', reasoningEfforts: ['off'] }], capabilities: [], workspaceIds: [], enabled: true, lastSeenAt: new Date().toISOString() });

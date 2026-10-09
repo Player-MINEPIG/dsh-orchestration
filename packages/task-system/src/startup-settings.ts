@@ -270,7 +270,7 @@ export function readStartupSettings(ctx: Context) {
     task: a
       ? {
           entryId: a.options.id,
-          decisionAvailable: !!ctx.get("typedDecisions"),
+          decisionAvailable: !!ctx.get("decisionModels"),
           values: taskValues(a.options.config ?? {}, task),
           ...(task
             ? {
@@ -380,13 +380,13 @@ export async function saveStartupSettings(ctx: Context, value: unknown) {
   if (!task) reject("STARTUP_UNAVAILABLE", "Task service is not available");
   if (
     input.target === "task" &&
-    !ctx.get("typedDecisions") &&
+    !ctx.get("decisionModels") &&
     (input.changes.planningDecisionEnabled === true ||
       input.changes.sessionDecisionEnabled === true)
   )
     reject(
       "STARTUP_DECISION_REQUIRED",
-      "Install and enable @dsh-task/typed-decisions before enabling decisions",
+      "Install and enable dsh-jev-plugin before enabling decisions",
     );
   const restart = Object.keys(input.changes).some(key => !(input.target === "task" ? ["nodeCapacities", "defaultWorkspaceId", "planningDecisionEnabled", "sessionDecisionEnabled"] : ["concurrency", "pollIntervalMs"]).includes(key));
   const releases: (() => void)[] = [];

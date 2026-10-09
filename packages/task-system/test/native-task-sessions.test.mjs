@@ -41,14 +41,16 @@ test('resuming an attempt cannot adopt a session whose immutable workspace is di
 })
 
 test('native decision wait renews the lease before evaluating and still finishes after its initial expiry',async()=>{
-  const {DecisionEngine,StructuredModelProvider}=await import('@dsh-task/typed-decisions/core')
+  const {DecisionEngine,StructuredModelProvider}=await import('./legacy-model-fixture.mjs')
   const provider=new StructuredModelProvider('ordinary',[{model:'judge',version:'fixture',reasoningEfforts:[]}],{complete:async()=>{await new Promise(resolve=>setTimeout(resolve,1200));return {output:{answers:{session:{type:'choice',choice:'new'},workspace:{type:'choice',choice:'default'}}},modelVersion:'fixture'}}})
   const decisions=new DecisionEngine([provider],{defaultProvider:'ordinary',maxAttempts:1,timeoutMs:3000})
   const h=await createNativeHarness({config:{leaseTtlMs:1000,executionTimeoutMs:4000,sessionDecisionEnabled:true},script:[{name:'task_settle',args:{outcome:'success',summary:'fixture after delayed decision'}}]})
-  h.ctx.provide('typedDecisions',decisions)
+  h.ctx.provide('decisionModels',decisions)
   try {
     const l=h.ledger;l.registerWorkspace('workspace',{workspaceId:'default',nodeId:'local',path:h.dir,label:'fixture',state:'ready',createdAt:new Date().toISOString()})
     l.registerNode('node',{nodeId:'local',roles:['both'],models:[{provider:'test-offline',model:'script',reasoningEfforts:[]}],capabilities:[],workspaceIds:['default'],defaultWorkspaceId:'default',enabled:true,lastSeenAt:new Date().toISOString()})
+    l.registerWorkspace('alternate-workspace',{workspaceId:'other',nodeId:'local',path:h.dir,label:'other fixture',state:'ready',createdAt:new Date().toISOString()});
+    l.registerNode('expanded-node',{...l.getNode('local'),workspaceIds:['default','other']});
     const task=l.createTask('task',{title:'Delayed choice'}).value,run=l.createRun('run',{taskId:task.taskId,route:{nodeId:'local',provider:'test-offline',model:'script',requiredCapabilities:[]}}).value
     const claim=l.claim('claim',{runId:run.runId,nodeId:'local',ttlMs:1000}).value,originalExpiry=Date.parse(claim.attempt.leaseExpiresAt)
     const result=await h.ctx.taskSystem.native.execute(claim)

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { DecisionEngine, StructuredModelProvider } from '@dsh-task/typed-decisions/core';
+import { DecisionEngine, StructuredModelProvider } from './legacy-model-fixture.mjs';
 import { buildTaskDecisionRequest, consumeTaskDecisionReceipt } from '../dist/task-policy.js';
 const model = { model: 'small', version: 'small-2026-09', reasoningEfforts: ['low', 'high'] };
 function structured(output) { return new StructuredModelProvider('model', [model], { complete: async () => ({ output, modelVersion: model.version }) }); }

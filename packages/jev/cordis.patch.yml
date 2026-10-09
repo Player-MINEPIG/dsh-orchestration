@@ -1,0 +1,17 @@
+# dsh-jev — ask Jev (TypeSafe System One) typed questions from DSH.
+#
+# Registers the `jev` tool plus a Settings card (Settings → Plugins → Jev)
+# where each user picks the provider and stores their own API key.
+#
+# Provider and model can also be set here / in ~/.dsh/settings.yaml under the
+# `jev` namespace; the API key is never stored in settings — it goes to the DSH
+# credentials store from the Settings card, or comes from the environment:
+#   typesafe        -> TYPESAFE_API_KEY
+#   vercel-gateway  -> AI_GATEWAY_API_KEY
+#   custom          -> JEV_API_KEY
+- insert:
+    - id: jev
+      name: dsh-jev-plugin
+      config:
+        enabled: true
+        provider: typesafe
