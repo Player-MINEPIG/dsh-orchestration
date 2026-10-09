@@ -1,7 +1,7 @@
 /**
  * dsh-jev-plugin — browser half.
  *
- * Registers one card in Settings → Plugins (`settings.plugin.item`) that lets
+ * Registers a JEV page in Settings (`settings.section`) that lets
  * each user pick the provider, point at a custom endpoint, and store their own
  * API key in the DSH credentials service.
  *
@@ -99,8 +99,8 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function JevCard() {
-      const [open, setOpen] = React.useState(false)
+    function JevCard({ expanded = false } = {}) {
+      const [open, setOpen] = React.useState(expanded)
       const [view, setView] = React.useState(null)
       const [draft, setDraft] = React.useState(null)
       const [key, setKey] = React.useState('')
@@ -452,16 +452,16 @@ window.__ModuleLoader__.load({
 
     function apply(ctx) {
       adoptStyles()
-      ctx.slots.inject('settings.plugin.item', () =>
+      ctx.slots.inject('settings.section', () =>
         ctx.slots.register(
           {
-            name: 'settings.plugin.item',
-            key: NS,
-            id: PACKAGE,
-            order: 130,
+            name: 'settings.section',
+            id: NS,
+            label: 'JEV',
+            order: 31,
             inject: () => ({}),
           },
-          JevCard,
+          () => h(JevCard, { expanded: true }),
         ),
       )
     }

@@ -2954,7 +2954,7 @@ window.__ModuleLoader__.load({
       useSaveParticipant(saveCoordinator,`preset-${consumer}`,{meta:{dirty:choice!==current,invalid:!state.value?.writable,busy:saving,restart:false},save:savePreset,discard:()=>{select(null);setMessage(null);}});
       return h("section", {"data-decision-model-settings": true, id:"task-decision-model-form", tabIndex:-1},
         h("h4", {style:headingStyle}, "决策预设"),
-        h("p", {style:hintStyle}, "在本插件选择预设。服务商、模型与思考强度在“插件 → Jev”中管理。此处只选择任务调用的模型配置。"),
+        h("p", {style:hintStyle}, "在本插件选择预设。服务商、模型与思考强度在“JEV”中管理。此处只选择任务调用的模型配置。"),
         state.failed ? h("p", {role:"alert"}, "无法读取决策预设，请检查 Jev 是否启用。") : null,
         state.value ? h(React.Fragment, null,
           h("label", {htmlFor:"task-preset-select",style:{display:"block",margin:"12px 0 6px"}}, role === "planner" ? "选择执行者使用的预设" : "选择工作区与会话使用的预设"),
@@ -2964,7 +2964,7 @@ window.__ModuleLoader__.load({
           message ? h("p", {role:"status",style:hintStyle}, message) : null,
           !saveCoordinator ? h(Button, {variant:"outline",disabled:saving || !state.value.writable || choice===current,onClick:savePreset}, saving ? "保存中…" : "保存预设选择") : null) : h("p", {style:hintStyle}, "正在读取预设…"),
         h("div", {style:{display:"flex",flexWrap:"wrap",gap:8,marginTop:12}},
-          h(Button, {variant:"outline",onClick:()=>{if(!openDecisions())setMessage("请打开设置 → 插件 → Jev。");}}, "打开插件中的 Jev 设置"),
+          h(Button, {variant:"outline",onClick:()=>{if(!openDecisions())setMessage("请打开设置 → JEV。");}}, "打开 JEV 设置"),
           h(Button, {variant:"outline",disabled:state.loading,onClick:refresh}, "刷新预设"),
           h(Button, {variant:"outline",onClick:close}, "关闭预设选择")));
     }
@@ -3627,7 +3627,7 @@ window.__ModuleLoader__.load({
               saveDecisionSettings,
               readDecisionConsole,
               setDecisionPreset,
-              openDecisions: () => openSettingsSection(ctx,"plugins"),
+              openDecisions: () => openSettingsSection(ctx,"jev"),
               openModels: () => openModels(ctx),
               queryIdentity,
               startup,

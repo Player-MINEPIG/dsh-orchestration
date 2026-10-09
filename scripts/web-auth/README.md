@@ -11,6 +11,7 @@ Example configuration (store on the VPS, outside Git):
 ```json
 {
   "port": 3084,
+  "hostSettings": true,
   "publicOrigin": "https://your-vps.your-tailnet.ts.net:10000",
   "upstream": "http://127.0.0.1:3082",
   "allowedLogin": "your-account@example.com",
@@ -43,3 +44,16 @@ node --test tests/management/web-auth-proxy.test.mjs
 ```
 
 The suite covers clean-URL/no-cookie login, incorrect and missing identities, spoofed forwarding chains, hostile Host/Origin, identity-service failure, token rollover, bidirectional upgrade transport, non-replayed writes and large startup logs. Deployment acceptance additionally checks real DSH HTTP and WebSocket handshakes through Serve, a DSH restart and a proxy restart, and a direct upstream request without credentials still returning 401.
+
+## Host settings through this entry
+
+With `hostSettings: true`, the owner-authenticated proxy adapts the pinned DSH
+0.2.0-rc.2 settings client to read and edit the VPS Host document. Upstream DSH
+otherwise selects memory-only settings whenever the browser hostname is not
+loopback, leaving the native Models page unavailable. Only the settings mirror's
+persistence selection changes; connection loopback classification, Tailscale
+identity checks, native DSH authentication and RPC authorization remain intact.
+The adapter bypasses asset validators, requests uncompressed JavaScript, updates
+its length and disables caching. An unexpected settings client returns 502 so a
+DSH upgrade requires revalidation. Set `hostSettings: false` to remove this
+adaptation; no upstream package files are modified.

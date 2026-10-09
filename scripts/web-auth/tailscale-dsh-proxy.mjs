@@ -43,6 +43,21 @@ export async function latestLaunchToken(logPath) {
   } finally { await file.close(); }
 }
 
+// DSH 0.2.0-rc.2 skips its Host settings mirror on non-loopback pages.
+// This opt-in applies only to assets served through the owner-authenticated
+// proxy. Keep connection.isLoopback and every server authentication fence intact.
+const settingsMirrorGate = 'const persistence = ctx.remote.$host.isLoopback ? "host" : "memory";';
+export function enableHostSettings(source) {
+  if (source.split(settingsMirrorGate).length !== 2) throw new Error('Unsupported DSH settings client');
+  return source.replace(settingsMirrorGate, 'const persistence = "host";');
+}
+function settingsAsset(req, config) {
+  if (config.hostSettings !== true || !['GET', 'HEAD'].includes(req.method)) return false;
+  try {
+    return req.url.startsWith('/plugins/??') && decodeURIComponent(req.url).includes('@deepseek-ai/dsh-client-ui-settings/client.js');
+  } catch { return false; }
+}
+
 export function createAuthProxy(config, dependencies = {}) {
   const origin = new URL(config.publicOrigin);
   const upstream = new URL(config.upstream);
@@ -110,6 +125,10 @@ export function createAuthProxy(config, dependencies = {}) {
     for (const key of Object.keys(result)) if (key.startsWith('tailscale-') || key.startsWith('x-forwarded-')) delete result[key];
     result.host = origin.host;
     result.cookie = value;
+    if (settingsAsset(req, config)) {
+      result['accept-encoding'] = 'identity';
+      delete result['if-none-match']; delete result['if-modified-since'];
+    }
     if (upgrade) { result.connection = 'Upgrade'; result.upgrade = 'websocket'; }
     return result;
   }
@@ -131,6 +150,28 @@ export function createAuthProxy(config, dependencies = {}) {
           forward(req, res, true).catch(() => finish(res, 503, 'DSH 正在恢复连接，请稍后刷新。\n')); return;
         }
         finish(res, 503, 'DSH 认证正在恢复，本次请求未自动重发，请稍后重试。\n'); return;
+      }
+      if (settingsAsset(req, config) && req.method === 'GET' && response.statusCode === 200) {
+        const chunks = []; let size = 0;
+        response.setTimeout(10000, () => response.destroy(new Error('Settings asset timeout')));
+        response.on('data', chunk => {
+          size += chunk.length;
+          if (size > 32 * 1024 * 1024) response.destroy(new Error('Settings asset too large'));
+          else chunks.push(chunk);
+        });
+        response.on('error', () => finish(res, 502, '无法读取 DSH 设置客户端。\n'));
+        response.on('end', () => {
+          if (res.destroyed || res.headersSent) return;
+          try {
+            if (response.headers['content-encoding'] && response.headers['content-encoding'] !== 'identity') throw new Error('Compressed settings asset');
+            const body = Buffer.from(enableHostSettings(Buffer.concat(chunks).toString('utf8')));
+            const output = responseHeaders(response.headers);
+            delete output.etag; delete output['last-modified'];
+            output['cache-control'] = 'no-store'; output['content-length'] = body.length;
+            res.writeHead(200, output); res.end(body);
+          } catch { finish(res, 502, '当前 DSH 设置客户端不兼容此入口，请检查版本。\n'); }
+        });
+        return;
       }
       res.writeHead(response.statusCode ?? 502, responseHeaders(response.headers));
       response.on('error', () => res.destroy()); response.pipe(res);

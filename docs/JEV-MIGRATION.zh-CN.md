@@ -30,7 +30,7 @@ const result = await ctx.decisionModels.ask({
 
 ## 配置
 
-Settings → Plugins → Jev 编辑默认提供商和模型。普通模型使用 `provider: native`、`nativeProvider`、`model` 和可选 `reasoningEffort`；凭证仍由 DSH Models 管理。JEV/兼容接口凭证从 DSH credentials 或已有环境变量解析，配置只存引用。
+Settings → JEV 编辑默认提供商和模型。普通模型使用 `provider: native`、`nativeProvider`、`model` 和可选 `reasoningEffort`；凭证仍由 DSH Models 管理。JEV/兼容接口凭证从 DSH credentials 或已有环境变量解析，配置只存引用。
 
 可在插件标准配置编辑器中维护 `profiles`（`id/name/provider/model` 与可选端点、凭证引用、nativeProvider/effort）。任务配置 `decisionBindings` 仅保存 `task-planning`、`task-session` 对应的 profile ID；空字符串跟随插件默认。模型选择不替换调度聊天或执行聊天的模型。
 
@@ -47,3 +47,11 @@ Settings → Plugins → Jev 编辑默认提供商和模型。普通模型使用
 `npm run check` 覆盖共享服务、取消、超时、协议解析、调用方业务拒绝及现有任务/互联回归。`npm run test:distribution` 使用固定官方 DSH 0.2.0-rc.2，将实际 tarball 安装进隔离 profile，boot、调用服务/工具、卸载并验证状态保留。发行测试使用 ScriptedModel：原生接口实际调用，远程付费模型调用未发生。真实服务商探测与部署状态应单独报告，不能由离线测试推断成功。
 
 最终源码回归：738 通过、5 跳过。MBP 与 VPS 已安装 JEV 0.3.1 / task-system 0.2.2，移除旧插件和临时探测行；原生 DeepSeek 探测实际成功（补丁只修复不同提供商凭证引用，原生实现未变），重启后服务、设置接口与原任务数据一致性检查通过。见 [代码验证](validation/jev-migration-20261009.json) 与 [部署证据](validation/jev-deployment-20261009.json)。TypeSafe 等外部 JEV 提供商未做真实付费调用，需按所选服务商配置凭证后测试。
+
+## 远程浏览器设置修复
+
+JEV 0.3.2 改用 DSH rc.2 的 `settings.section` 注册独立 JEV 设置页；task-system 0.2.3 的快捷入口同步跳转到该页。原始 `settings.plugin.item` 槽位已不存在。
+
+VPS 的 Tailscale 身份代理启用 `hostSettings: true`，只调整官方设置镜像的持久化选择。DSH 的非 localhost 页面原本选择内存设置，导致 Models 无法读取主机配置；代理的身份、Origin、Host 校验及 DSH 原生认证保持原有行为。DSH 升级后需重新验证该兼容点。
+
+已通过 MBP Chrome 访问实际 HTTPS 入口验证 Models、JEV 页和任务设置跳转；没有保存模型配置或再次发起付费连接测试。741 项回归通过、5 项跳过，双端配置语义与受保护任务记录保留。安装器将旧平铺配置转为 bundles + cordis.patch.yml；已使用 DSH 配置合成逻辑和原启动覆盖层核对。见 [浏览器验证记录](validation/jev-browser-settings-20261009.json)。

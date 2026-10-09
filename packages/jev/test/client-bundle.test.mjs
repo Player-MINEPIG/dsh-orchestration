@@ -20,6 +20,7 @@
  *
  * Run: node --test
  */
+import vm from 'node:vm'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
@@ -81,3 +82,21 @@ test('the bridge path and the settings namespace match between the two halves', 
   assert.ok(ns, 'no NS constant in lib/client.js')
   assert.equal(ns[1], NS)
 })
+
+// Exercise the real client entry against the slots declared by DSH rc.2.
+test('JEV mounts an expanded page on the current settings section slot', () => {
+  let entry, registered;
+  const React = {createElement: (component, props) => ({component, props})};
+  vm.runInNewContext(client, {
+    window: {__ModuleLoader__: {load: value => {entry = value}}},
+    document: {getElementById: () => ({} )},
+  });
+  const plugin = entry.factory(id => {assert.equal(id, 'react'); return React});
+  plugin.apply({slots: {
+    inject(name, callback) {assert.equal(name, 'settings.section'); return callback()},
+    register(options, component) {registered = {options, component}; return () => {}},
+  }});
+  assert.equal(registered.options.id, 'jev');
+  assert.equal(registered.options.label, 'JEV');
+  assert.equal(registered.component().props.expanded, true);
+});

@@ -1,0 +1,55 @@
+{
+  "date": "2026-10-09",
+  "issue": {
+    "jev": "removed settings.plugin.item slot in DSH 0.2.0-rc.2",
+    "models": "non-loopback browser selects memory-only settings mirror"
+  },
+  "fix": {
+    "jev": "current settings.section registration; expanded JEV page",
+    "task": "settings shortcut opens jev section",
+    "proxy": "hostSettings opt-in changes only settings mirror persistence behind existing Tailscale owner authentication"
+  },
+  "forkCommit": "d7d9235711c8d47a64bad477c05eef89d5fcb7c1",
+  "versions": {
+    "jev": "0.3.2",
+    "taskSystem": "0.2.3"
+  },
+  "checks": {
+    "command": "npm run check",
+    "passed": 741,
+    "skipped": 5,
+    "failed": 0
+  },
+  "browser": {
+    "origin": "https://izbp11roeflhmn04yssxm4z.tail435ecd.ts.net:10000",
+    "nativeModelsDirectoryLoaded": true,
+    "jevSettingsLoaded": true,
+    "taskSettingsShortcutVerified": true,
+    "configurationSavedDuringVerification": false,
+    "paidConnectionTestDuringVerification": false
+  },
+  "deployment": {
+    "mbp": {
+      "profile": "executor",
+      "effectiveTaskRemoteAndModelConfigsPreserved": true,
+      "protectedTaskRecordsPreserved": true,
+      "backup": "/Users/pmp/AI/deepseek-harness/test-env/dsh-task-management-candidate-3-ece68974/backups/jev-settings-20261009"
+    },
+    "vps": {
+      "profile": "planner",
+      "effectiveTaskRemoteAndModelConfigsPreserved": true,
+      "protectedTaskRecordsPreserved": true,
+      "backup": "/opt/dsh-task-management-test/candidate-3-ece68974/backups/jev-settings-20261009",
+      "servicesActive": [
+        "dsh-orchestration-web.service",
+        "dsh-web-auth-proxy.service"
+      ]
+    },
+    "configurationLayoutNote": "DSH installer migrated the legacy flat cordis.yml to canonical profile bundles and cordis.patch.yml; DSH composeEntries and unchanged launch overlays confirm effective task, remote, JEV and model configurations are preserved."
+  },
+  "tarballs": {
+    "dsh-jev-plugin-0.3.2.tgz": "d62d2ba478762104944786358d272ea61a34766696dc84b525c81c59e4437116",
+    "dsh-task-task-system-0.2.3.tgz": "8a11dc561950176f2deba587fca2c1589648c11fdcb482bd198b0984b8c68192"
+  },
+  "limitation": "The proxy compatibility adapter is pinned to the rc.2 settings mirror expression and returns 502 for an unexpected client. Revalidate on DSH upgrade."
+}

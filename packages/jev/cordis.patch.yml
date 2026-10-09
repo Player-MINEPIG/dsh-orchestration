@@ -1,6 +1,6 @@
 # dsh-jev — ask Jev (TypeSafe System One) typed questions from DSH.
 #
-# Registers the `jev` tool plus a Settings card (Settings → Plugins → Jev)
+# Registers the `jev` tool plus a Settings card (Settings → JEV)
 # where each user picks the provider and stores their own API key.
 #
 # Provider and model can also be set here / in ~/.dsh/settings.yaml under the

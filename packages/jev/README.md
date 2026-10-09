@@ -34,7 +34,7 @@ Configure `provider: native`, `nativeProvider: <DSH provider ID>` and
 `maxOutputTokens` are forwarded to DSH. Provider profiles in `profiles` carry
 `id`, `name`, `provider`, `model` and optional endpoint, credential reference or
 native-provider fields. Passing a profile ID as `provider` selects it. Passing
-`model` overrides that selection. Settings → Plugins → Jev selects the default,
+`model` overrides that selection. Settings → JEV selects the default,
 configures provider fields and runs a probe; edit multiple profiles through the
 standard plugin configuration editor.
 
@@ -87,7 +87,7 @@ refusal, is in [`docs/DECISIONS.md`](docs/DECISIONS.md).
 | Surface | What it does |
 | --- | --- |
 | The `jev` tool | Sends `state` + `questions` and returns the typed answers, probabilities and confidence. |
-| Settings → Plugins → **Jev** | Per-user provider choice, model override, custom endpoint, API key, and a **Test connection** button. |
+| Settings → **JEV** | Per-user provider choice, model override, custom endpoint, API key, and a **Test connection** button. |
 
 ## Install
 
@@ -122,7 +122,7 @@ To remove it again: `dsh plugin --profile web remove dsh-jev-plugin`.
 
 ## Configure
 
-Open **Settings → Plugins → Jev**.
+Open **Settings → JEV**.
 
 1. **Provider** — where Jev is served from (see below).
 2. **Model override** — optional; empty means the provider's default.
@@ -274,7 +274,7 @@ sort by and not to compare against a fixed number. See
 
 After the restart, in order:
 
-1. **The card is there.** Settings → Plugins → **Jev** should appear with a
+1. **The card is there.** Settings → **JEV** should appear with a
    `key set` / `no key` badge.
 2. **The key round-trips.** Pick the provider, paste the key, **Save key**, then
    **Test connection**. You get the resolved provider, model, latency, input

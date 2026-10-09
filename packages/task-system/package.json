@@ -1,6 +1,6 @@
 {
   "name": "@dsh-task/task-system",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "type": "module",
   "license": "MIT",
   "description": "Durable task management and authenticated multi-device execution inside DSH",
@@ -81,7 +81,7 @@
     "@deepseek-ai/dsh-tools": "0.2.0-rc.2",
     "@deepseek-ai/dsh-user-approval": "0.2.0-rc.2",
     "@deepseek-ai/schemastery": "3.18.4",
-    "dsh-jev-plugin": "0.3.1"
+    "dsh-jev-plugin": "0.3.2"
   },
   "dependencies": {
     "ajv": "8.17.1",
