@@ -108,6 +108,7 @@ window.__ModuleLoader__.load({
       const [busy, setBusy] = React.useState(false)
       const [note, setNote] = React.useState(null)
       const [test, setTest] = React.useState(null)
+      const [keyStatus, setKeyStatus] = React.useState(null)
       const [catalog, setCatalog] = React.useState({providers:[], models:[], provider:'', loading:false, error:null})
 
       const load = React.useCallback(async () => {
@@ -174,10 +175,20 @@ window.__ModuleLoader__.load({
         className:'dshjev-select dshjev-compact', value:value ?? '', disabled:busy || catalog.loading || disabled,
         onChange:event => onChange(event.target.value),
       },
-        h('option', {value:''}, defaultLabel),
+        h('option', {value:'', disabled:defaultLabel.startsWith('Select ')}, defaultLabel),
         value && !choices.some(c => c.id === value) ? h('option', {value, disabled:true}, `${value} (currently configured; unavailable)`) : null,
         choices.map(c => h('option', {key:c.id, value:c.id}, c.name || c.id)),
       )
+      const selectedKey = keyStatus?.provider === draft?.provider ? keyStatus : null
+      React.useEffect(() => {
+        setKeyStatus(null)
+        if (!open || !draft || !view || nativeMode || provider?.nativeProvider) return
+        let disposed = false
+        post('key-describe',{provider:draft.provider, expectedRevision:view.revision}).then(result => {
+          if (!disposed && result?.ok) setKeyStatus(result.value)
+        }).catch(() => {})
+        return () => {disposed = true}
+      }, [open, draft?.provider, view?.revision])
       const dirty =
         draft !== null &&
         view !== null &&
@@ -223,24 +234,26 @@ window.__ModuleLoader__.load({
 
       const saveKey = () =>
         run(async () => {
-          const result = await post('key-set', { value: key })
+          const result = await post('key-set', {value:key, provider:draft.provider, expectedRevision:view.revision})
           if (!result?.ok) {
             setNote({ bad: true, text: result?.message ?? 'the key was rejected' })
             return
           }
           setKey('')
           setView(result.value)
-          setNote({ text: `Key saved for ${result.value.credential}.` })
+          setKeyStatus(result.key)
+          setNote({ text: `Key saved for ${result.key.credential}. Save the provider settings to use it.` })
         })
 
       const clearKey = () =>
         run(async () => {
-          const result = await post('key-unset')
+          const result = await post('key-unset', {provider:draft.provider, expectedRevision:view.revision})
           if (!result?.ok) {
             setNote({ bad: true, text: result?.message ?? 'the key could not be removed' })
             return
           }
           setView(result.value)
+          setKeyStatus(result.key)
           setNote({ text: 'Key removed.' })
         })
 
@@ -253,6 +266,7 @@ window.__ModuleLoader__.load({
 
       const status = () => {
         if (view === null) return h('span', { className: 'dshjev-badge' }, '…')
+        if (dirty) return h('span', {className:'dshjev-badge dshjev-badgeWarn'}, 'Unsaved settings')
         if (view.nativeProvider) return h('span', {className:'dshjev-badge dshjev-badgeOk'}, 'DSH Models')
         if (view.keyConfigured) return h('span', { className: 'dshjev-badge dshjev-badgeOk' }, 'key set')
         if (view.envFallback) return h('span', { className: 'dshjev-badge dshjev-badgeOk' }, 'env var')
@@ -296,7 +310,7 @@ window.__ModuleLoader__.load({
                     className: 'dshjev-select',
                     value: draft?.provider ?? 'typesafe',
                     disabled: busy || draft === null,
-                    onChange: (event) => setDraft({ ...draft, provider: event.target.value }),
+                    onChange: (event) => {setDraft({...draft, provider:event.target.value, model:'', reasoningEffort:''});setKey('');setNote(null);setTest(null)},
                   },
                   providers.map((p) => h('option', { key: p.id, value: p.id }, p.label)),
                 ),
@@ -338,10 +352,10 @@ window.__ModuleLoader__.load({
               h(
                 Field,
                 {
-                  label: 'Model override',
-                  hint: 'Leave empty to use the provider default shown above.',
+                  label: nativeMode ? 'Model' : 'Model override',
+                  hint: nativeMode ? 'Choose a model from the selected DSH provider.' : 'Leave empty to use the provider default shown above.',
                 },
-                nativeMode ? select(draft.model,models,value=>setDraft({...draft,model:value,reasoningEffort:''}),'Provider default',!draft.nativeProvider) : h('input', {
+                nativeMode ? select(draft.model,models,value=>setDraft({...draft,model:value,reasoningEffort:''}),'Select model',!draft.nativeProvider) : h('input', {
                   className: 'dshjev-input',
                   value: draft?.model ?? '',
                   disabled: busy || draft === null,
@@ -352,7 +366,7 @@ window.__ModuleLoader__.load({
               (provider?.id === 'native' || provider?.nativeProvider) ? h('p', {className:'dshjev-hint'}, 'Credentials and billing for ordinary models are managed by DSH Models and the selected provider.') : h(
                 Field,
                 {
-                  label: `API key for ${view?.credential ?? 'the selected provider'}`,
+                  label: `API key for ${provider?.label ?? 'the selected provider'}`,
                   hint: provider?.keyHint
                     ? `${provider.keyHint}. Stored in the DSH credentials store, never in settings.yaml.`
                     : 'Stored in the DSH credentials store.',
@@ -367,7 +381,7 @@ window.__ModuleLoader__.load({
                     value: key,
                     disabled: busy,
                     autoComplete: 'off',
-                    placeholder: view?.keyConfigured ? '•••• (configured — type to replace)' : 'paste the key',
+                    placeholder: selectedKey?.configured ? '•••• (configured — type to replace)' : 'paste the key',
                     onChange: (event) => setKey(event.target.value),
                   }),
                   h(
@@ -385,7 +399,7 @@ window.__ModuleLoader__.load({
                     {
                       className: 'dshjev-btn',
                       type: 'button',
-                      disabled: busy || !view?.keyConfigured,
+                      disabled: busy || !selectedKey?.configured,
                       onClick: clearKey,
                     },
                     'Remove',
@@ -441,7 +455,7 @@ window.__ModuleLoader__.load({
                   {
                     className: 'dshjev-btn dshjev-primary',
                     type: 'button',
-                    disabled: busy || !dirty,
+                    disabled: busy || !dirty || (nativeMode && (!draft.nativeProvider || !draft.model)),
                     onClick: save,
                   },
                   busy ? 'Working…' : 'Save',
@@ -466,7 +480,7 @@ window.__ModuleLoader__.load({
                 ),
                 h(
                   'button',
-                  { className: 'dshjev-btn', type: 'button', disabled: busy, onClick: runTest },
+                  { className: 'dshjev-btn', type: 'button', disabled: busy || dirty, onClick: runTest },
                   'Test connection',
                 ),
                 h(

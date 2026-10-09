@@ -167,3 +167,29 @@ test('missing or failed catalog reports availability without exposing provider e
   const result=await catalogBridge({listProviders:()=>{throw Error('private transport detail')}});
   assert.equal(result.ok,false);assert.doesNotMatch(result.message,/private transport/);
 });
+
+async function keyBridge(action,body,deps) {
+  const route=makeBridgeRoutes(deps).find(r=>r.path.endsWith('/key-'+action));
+  const req=Readable.from([Buffer.from(JSON.stringify(body))]);req.method='POST';req.socket={remoteAddress:'127.0.0.1'};
+  let status,result;await route.handler(req,{writeHead:code=>{status=code},end:value=>{result=JSON.parse(value)}});return {status,...result};
+}
+test('key operations target the selected provider while saved configuration remains native',async()=>{
+  const writes=[],removed=[];const values=new Map();
+  const cfg={provider:'native',nativeProvider:'host',model:'chat',credential:'NATIVE_ONLY',profiles:[{id:'judge',provider:'custom',credential:'JUDGE_REF'}]};
+  const deps={getConfig:()=>cfg,getSettings:()=>({describe:()=>[{ns:'jev',revision:7}]}),getCredentials:()=>({
+    describe:async ref=>({configured:values.has(ref)}),set:async(ref,value)=>{writes.push(ref);values.set(ref,value)},unset:async ref=>{removed.push(ref);values.delete(ref)},
+  })};
+  const target={provider:'typesafe',expectedRevision:7};
+  assert.equal((await keyBridge('set',{...target,value:'fixture-key'},deps)).ok,true);
+  assert.deepEqual(writes,['TYPESAFE_API_KEY']);assert.equal(cfg.provider,'native');
+  assert.deepEqual((await keyBridge('describe',target,deps)).value,{provider:'typesafe',credential:'TYPESAFE_API_KEY',configured:true,envFallback:!!process.env.TYPESAFE_API_KEY});
+  assert.equal((await keyBridge('unset',target,deps)).ok,true);assert.deepEqual(removed,['TYPESAFE_API_KEY']);
+  assert.equal((await keyBridge('set',{provider:'judge',expectedRevision:7,value:'fixture-key'},deps)).ok,true);assert.equal(writes.at(-1),'JUDGE_REF');
+});
+test('key operations reject native ownership, unknown providers and stale configuration before writing',async()=>{
+  let wrote=false;const deps={getConfig:()=>({provider:'native',nativeProvider:'host',model:'chat'}),getSettings:()=>({describe:()=>[{ns:'jev',revision:4}]}),getCredentials:()=>({set:async()=>{wrote=true}})};
+  for(const [provider,expectedRevision,code] of [['native',4,'provider-owned'],['not-registered',4,'provider-invalid'],['typesafe',3,'settings-conflict']]) {
+    const result=await keyBridge('set',{provider,expectedRevision,value:'fixture-key'},deps);assert.equal(result.ok,false);assert.equal(result.code,code);
+  }
+  assert.equal(wrote,false);
+});

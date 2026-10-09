@@ -1,0 +1,44 @@
+{
+  "date": "2026-10-09",
+  "version": "0.3.4",
+  "forkCommit": "d0d8ab8a671100d9f29e0b6431a1983850d56898",
+  "fixes": [
+    "Declare six browser-editable JEV fields volatile for official DSH settings.mutate",
+    "Unwrap live configuration references for runtime updates without remount",
+    "Explicit selected provider and revision for credential set/unset; selected-provider credential metadata",
+    "Clear model/effort/key draft when provider changes; require native catalog model selection"
+  ],
+  "validation": {
+    "projectCheck": {
+      "passed": 746,
+      "skipped": 5,
+      "failed": 0
+    },
+    "officialDshSettingsSmoke": [
+      "six editable fields exposed",
+      "settings.mutate persisted provider and updated existing plugin",
+      "noneditable path and stale revision rejected",
+      "saved provider survived host restart"
+    ],
+    "browserOrigin": "https://izbp11roeflhmn04yssxm4z.tail435ecd.ts.net:10000",
+    "browserSaveReturnedSavedTwice": true,
+    "originalEnabledAndNativeSelectionRestored": true,
+    "typeSafeDraftClearedPreviousModel": true,
+    "typeSafeKeyLabelMatchesSelection": true,
+    "realCredentialWrites": false,
+    "modelGenerationCalls": false
+  },
+  "deployment": {
+    "vps": {
+      "installed": true,
+      "backup": "/opt/dsh-task-management-test/candidate-3-ece68974/backups/jev-save-20261009",
+      "protectedTaskStateUnchanged": true
+    },
+    "mbp": {
+      "installed": true,
+      "backup": "/Users/pmp/AI/deepseek-harness/test-env/dsh-task-management-candidate-3-ece68974/backups/jev-save-20261009",
+      "protectedTaskStateUnchanged": true
+    }
+  },
+  "tarballSha256": "fb21033e1b3285cfad93518fa4edf5c853da6a645aa702c77000826bb29fa879"
+}

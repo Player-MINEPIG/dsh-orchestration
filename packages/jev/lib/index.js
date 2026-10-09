@@ -122,16 +122,16 @@ export const PROVIDER_IDS = Object.keys(PROVIDERS)
 
 /** Loader schema. Secrets never live here; the key goes to the credentials store. */
 export const Config = z.object({
-  enabled: z.boolean().default(true),
-  provider: z.string().default('typesafe'),
-  model: z.string(),
-  nativeProvider: z.string(),
-  reasoningEffort: z.string(),
+  enabled: z.boolean().default(true).volatile(),
+  provider: z.string().default('typesafe').volatile(),
+  model: z.string().volatile(),
+  nativeProvider: z.string().volatile(),
+  reasoningEffort: z.string().volatile(),
   credential: z.string(),
   profiles: z.array(z.object({ id: z.string().required(), name: z.string(), provider: z.string().required(), model: z.string(), baseUrl: z.string(), nativeProvider: z.string(), reasoningEffort: z.string(), credential: z.string() })).default([]),
   maxOutputTokens: z.number().default(2048),
   maxOutputBytes: z.number().default(1048576),
-  baseUrl: z.string(),
+  baseUrl: z.string().volatile(),
   timeoutMs: z.number().default(60000),
   maxStateChars: z.number().default(40000),
   maxQuestions: z.number().default(200),
@@ -649,6 +649,20 @@ export function makeBridgeRoutes(deps) {
     }
   }
 
+  const keyTarget = (body) => {
+    const cfg = getConfig()
+    const selected = body?.provider ?? cfg?.provider ?? 'typesafe'
+    const profile = cfg?.profiles?.find(p => p.id === selected)
+    const provider = PROVIDERS[profile?.provider ?? selected]
+    if (!provider) throw Object.assign(new Error('Unknown selected provider'), {code:'provider-invalid'})
+    const descriptor = getSettings?.()?.describe?.({redactSecrets:true})?.find(row => String(row.ns) === NS)
+    if (body?.expectedRevision !== undefined && body.expectedRevision !== descriptor?.revision)
+      throw Object.assign(new Error('Settings changed; reload before saving the key.'), {code:'settings-conflict'})
+    if (provider.id === 'native') throw Object.assign(new Error('Manage native credentials in DSH Models'), {code:'provider-owned'})
+    return {provider:selected, credential:profile?.credential || (selected === cfg?.provider ? cfg?.credential : '') || provider.credential}
+  }
+  const rejectKey = (res, error) => writeJson(res, 200, {ok:false, code:error.code ?? 'credentials-write-failed', message:String(error.message ?? error)})
+
   return [
     {
       kind: 'exact',
@@ -719,53 +733,45 @@ export function makeBridgeRoutes(deps) {
       },
     },
     {
-      kind: 'exact',
-      path: `${BRIDGE_PREFIX}/key-set`,
+      kind: 'exact', path: `${BRIDGE_PREFIX}/key-describe`,
       handler: async (req, res) => {
         if (!guard(req, res)) return
-        const credentials = getCredentials()
-        if (!credentials) {
-          writeJson(res, 200, { ok: false, code: 'credentials-unavailable', message: 'the credentials service is not available' })
-          return
-        }
         const body = await readJsonBody(req)
-        const value = typeof body?.value === 'string' ? body.value.trim() : ''
-        if (value.length === 0) {
-          writeJson(res, 400, { ok: false, code: 'malformed', message: 'value is required' })
-          return
-        }
-        const endpoint = resolveEndpoint(getConfig())
-        if (endpoint.id === 'native') { writeJson(res, 200, {ok:false,code:'provider-owned',message:'Manage native credentials in DSH Models'}); return }
-        const ref = endpoint.credential ?? PROVIDERS.typesafe.credential
         try {
-          await credentials.set(ref, value)
-        } catch (error) {
-          writeJson(res, 200, { ok: false, code: 'credentials-write-failed', message: String(error?.message ?? error) })
-          return
-        }
-        writeJson(res, 200, { ok: true, value: await view() })
+          const target = keyTarget(body)
+          const info = await getCredentials()?.describe(target.credential)
+          writeJson(res, 200, {ok:true, value:{...target, configured:info?.configured === true, envFallback:!!process.env[target.credential]}})
+        } catch (error) {rejectKey(res, error)}
       },
     },
     {
-      kind: 'exact',
-      path: `${BRIDGE_PREFIX}/key-unset`,
+      kind: 'exact', path: `${BRIDGE_PREFIX}/key-set`,
       handler: async (req, res) => {
         if (!guard(req, res)) return
-        const credentials = getCredentials()
-        if (!credentials) {
-          writeJson(res, 200, { ok: false, code: 'credentials-unavailable', message: 'the credentials service is not available' })
-          return
-        }
-        const endpoint = resolveEndpoint(getConfig())
-        if (endpoint.id === 'native') { writeJson(res, 200, {ok:false,code:'provider-owned',message:'Manage native credentials in DSH Models'}); return }
-        const ref = endpoint.credential ?? PROVIDERS.typesafe.credential
+        const body = await readJsonBody(req)
+        const value = typeof body?.value === 'string' ? body.value.trim() : ''
+        if (!value) {writeJson(res, 400, {ok:false, code:'malformed', message:'value is required'});return}
         try {
-          await credentials.unset(ref)
-        } catch (error) {
-          writeJson(res, 200, { ok: false, code: 'credentials-write-failed', message: String(error?.message ?? error) })
-          return
-        }
-        writeJson(res, 200, { ok: true, value: await view() })
+          const target = keyTarget(body)
+          const credentials = getCredentials()
+          if (!credentials) throw new Error('The credentials service is not available')
+          await credentials.set(target.credential, value)
+          writeJson(res, 200, {ok:true, value:await view(), key:{...target, configured:true}})
+        } catch (error) {rejectKey(res, error)}
+      },
+    },
+    {
+      kind: 'exact', path: `${BRIDGE_PREFIX}/key-unset`,
+      handler: async (req, res) => {
+        if (!guard(req, res)) return
+        const body = await readJsonBody(req)
+        try {
+          const target = keyTarget(body)
+          const credentials = getCredentials()
+          if (!credentials) throw new Error('The credentials service is not available')
+          await credentials.unset(target.credential)
+          writeJson(res, 200, {ok:true, value:await view(), key:{...target, configured:false}})
+        } catch (error) {rejectKey(res, error)}
       },
     },
     {
@@ -799,7 +805,10 @@ export function makeBridgeRoutes(deps) {
 }
 
 export function apply(ctx, config) {
-  let current = () => config ?? {}
+  let currentSource = () => config ?? {}
+  const current = () => Object.fromEntries(Object.entries(currentSource()).map(([key, value]) =>
+    [key, typeof value?.get === 'function' ? value.get() : value],
+  ))
   const logger = ctx.logger
   // The credentials service can mount after this plugin (cross-bundle order),
   // so read it lazily instead of caching it during apply.
@@ -835,12 +844,11 @@ export function apply(ctx, config) {
 
   ctx.inject(['settings'], (sctx) => {
     if (typeof sctx.settings.installSection !== 'function') {
-      sctx.logger?.warn?.('jev: this dsh-settings build has no installSection; Settings → Jev will not appear')
       return
     }
     sctx.settings.installSection(ctx, NS, Config, config ?? {}, {
       setSource: (source) => {
-        current = source
+        currentSource = source
       },
       onChange: () => {},
     })
