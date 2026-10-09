@@ -2,13 +2,14 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
-import { Config, LIVE_SETTING_KEYS } from "../dist/dsh-plugin.js";
+import { Config, LIVE_SETTING_KEYS, LIVE_STARTUP_KEYS } from "../dist/dsh-plugin.js";
 import {
   settingsDescriptor,
   queueDescriptor,
   executorIdentityDescriptor,
   startupDescriptor,
   saveStartupDescriptor,
+  checkConnectionDescriptor,
   hasTaskConfigOverride,
   workspaceCatalogDescriptor,
   TaskPluginSettings,
@@ -53,7 +54,7 @@ test("only operation-boundary settings are volatile; boot identity and permissio
   const actual = Object.entries(Config.dict)
     .filter(([, s]) => s.meta.volatile)
     .map(([k]) => k);
-  assert.deepEqual(actual.sort(), [...LIVE_SETTING_KEYS].sort());
+  assert.deepEqual(actual.sort(), [...LIVE_SETTING_KEYS,...LIVE_STARTUP_KEYS].sort());
   for (const key of [
     "databasePath",
     "nodeId",
@@ -80,7 +81,6 @@ test("browser numeric and boolean schemas reject invalid drafts, retain resets a
   }
   for (const field of [
     "maxConcurrent",
-    "executionTimeoutMs",
     "localHeartbeatIntervalMs",
   ]) {
     const spec = ui.fieldSpec(field),
@@ -100,7 +100,7 @@ test("both dictionaries state local-vs-remote and restart/override boundaries wi
   assert.deepEqual(Object.keys(ui.en).sort(), Object.keys(ui.zh).sort());
   assert.match(ui.en.safety, /does not pause remote claims/);
   assert.match(ui.zh.safety, /不会暂停远程领取/);
-  assert.match(ui.en.remoteHint, /separate pause control/);
+  assert.match(ui.en.remoteHint, /executor switch controls heartbeats and task reception/);
   assert.match(ui.en.overlayWarning, /entire task-system config/);
   for (const key of ui.keys)
     for (const locale of [ui.en, ui.zh])
@@ -204,7 +204,7 @@ test("browser companion exposes the same served form in Settings and its install
     remote: {
       $host: { isLoopback: true },
       $mount: async (contribution) => (
-        assert.equal(contribution.descriptors.length, 8),
+        assert.equal(contribution.descriptors.length, 27),
         () => {}
       ),
     },
@@ -234,7 +234,7 @@ test("browser companion exposes the same served form in Settings and its install
     },
   };
   await ui.apply(ctx);
-  assert.equal(registrations.length, 2);
+  assert.equal(registrations.length, 4);
   const section = registrations.find(
     (r) => r.options.name === "settings.section",
   );
@@ -251,13 +251,13 @@ test("browser companion exposes the same served form in Settings and its install
     row.options.inject().hooks.taskSettings,
   );
   for (const cleanup of effects.splice(0).reverse()) cleanup?.();
-  assert.equal(disposed.length, 2);
+  assert.equal(disposed.length, 4);
   registrations.length = 0;
   ctx.configForms.whileServed = () => () => {};
   await ui.apply(ctx);
   assert.equal(
     registrations.length,
-    0,
+    2,
     "hide both entries while the Host does not serve task-system settings",
   );
   for (const cleanup of effects.splice(0).reverse()) cleanup?.();
@@ -909,7 +909,7 @@ test("paused remote snapshots retain incomplete connection values and require pu
   );
 });
 
-test("remote pause stages, discards and saves through the loaded configuration; Loader-disabled entries cannot write", async () => {
+test("executor switch is visible in simple mode and immediately persists availability; Loader-disabled entries cannot write", async () => {
   const states = [];
   let index = 0;
   const ui = client(
@@ -955,6 +955,7 @@ test("remote pause stages, discards and saves through the loaded configuration; 
     t: (key) => key,
     target: "remote",
     row,
+    advanced: false,
     writable: true,
     saveStartup: async (input) => {
       writes.push(input);
@@ -977,7 +978,7 @@ test("remote pause stages, discards and saves through the loaded configuration; 
   const toggle = (tree) =>
     find(
       tree,
-      (node) => node.type === "FixtureSwitch" && node.props.label === "paused",
+      (node) => node.type === "FixtureSwitch" && node.props.label === "executorEnabled",
     );
   const button = (tree, label) =>
     find(
@@ -985,19 +986,13 @@ test("remote pause stages, discards and saves through the loaded configuration; 
       (node) => node.type === "FixtureButton" && node.children.includes(label),
     );
   let tree = render();
-  assert.equal(toggle(tree).props.checked, true);
-  assert.equal(toggle(tree).props.disabled, false);
-  toggle(tree).props.onChange(false);
-  assert.equal(writes.length, 0);
-  tree = render();
   assert.equal(toggle(tree).props.checked, false);
-  button(tree, "discardDraft").props.onClick();
+  assert.equal(toggle(tree).props.disabled, false);
+  const label = find(tree, node => node.props?.["data-task-availability-switch"]);
+  assert.notEqual(label.props.hidden, true);
+  await toggle(tree).props.onChange(true);
   tree = render();
   assert.equal(toggle(tree).props.checked, true);
-  assert.equal(writes.length, 0);
-  toggle(tree).props.onChange(false);
-  tree = render();
-  await button(tree, "startupSave").props.onClick();
   assert.equal(writes[0].expected, row.values);
   assert.deepEqual(Object.keys(writes[0].changes), ["paused"]);
   assert.equal(writes[0].changes.paused, false);
@@ -1148,7 +1143,7 @@ function startupRoleFixture(values) {
     find,
     render() {
       index = 0;
-      return ui.StartupRow(props);
+      return ui.StartupRow({...props,decisionAvailable:props.decisionAvailable ?? true});
     },
   };
 }
@@ -1478,3 +1473,76 @@ test("workspace selector retains missing values, distinguishes names by path and
   assert.equal(writes[0].changes.defaultWorkspaceId, "draft-workspace");
   assert.equal(writes[0].expected, props.row.values);
 });
+
+test('simple address typing retains a trailing colon, carries the exact port into save and checks an unsaved draft', async () => {
+  const states = []; let index = 0;
+  const ui = client({ Button: 'FixtureButton', Switch: 'FixtureSwitch' }, {
+    useState(initial) { const slot=index++; if (!(slot in states)) states[slot]=typeof initial==='function'?initial():initial; return [states[slot],value=>{states[slot]=typeof value==='function'?value(states[slot]):value;}]; },
+  });
+  const row={entryId:'remote',loaded:true,loaderDisabled:false,values:{role:'executor',paused:true,endpoint:'http://100.123.230.75:18440/dsh-task/v1/commands',audience:'planner',pollIntervalMs:1000,concurrency:1,taskSessionsEnabled:true,trustedNetworkTarget:{address:'100.123.230.75',port:18440,localAddress:'100.111.163.32',allowHttp:true}}};
+  const checks=[],writes=[];
+  const props={t:k=>k,target:'remote',row,writable:true,advanced:false,saveStartup:async input=>writes.push(input),onSaved:async()=>{},checkConnection:async input=>{checks.push(input);return {connected:true,paused:true,identity:{nodeId:'worker',executorId:'executor-fixture'}};}};
+  const render=()=>{index=0;return ui.StartupRow(props);};
+  const find=(node,predicate)=>{if(!node||typeof node!=='object')return; if(predicate(node))return node; for(const child of node.children??[]){const result=find(child,predicate);if(result)return result;}};
+  for(const text of ['http://100.123.230.75','http://100.123.230.75:', 'http://100.123.230.75:1', 'http://100.123.230.75:18441']) {
+    find(render(),n=>n.props?.id==='task-startup-remote-endpoint').props.onChange({target:{value:text}});
+    assert.equal(find(render(),n=>n.props?.id==='task-startup-remote-endpoint').props.value,text);
+  }
+  await find(render(),n=>n.type==='FixtureButton'&&n.children.includes('connectionCheck')).props.onClick();
+  assert.equal(writes.length,0);assert.equal(checks.length,1);assert.equal(checks[0].endpoint,'http://100.123.230.75:18441/dsh-task/v1/commands');assert.equal(checks[0].trustedNetworkTarget.port,18441);assert.equal(checks[0].trustedNetworkTarget.localAddress,row.values.trustedNetworkTarget.localAddress);
+  await find(render(),n=>n.type==='FixtureButton'&&n.children.includes('startupSave')).props.onClick();
+  assert.equal(writes[0].changes.endpoint,checks[0].endpoint);assert.equal(writes[0].changes.trustedNetworkTarget.port,18441);
+});
+
+
+test('connection result codec accepts the native identity response and rejects an invalid success', () => {
+  const ui=client(),value={connected:true,checkedAt:new Date().toISOString(),endpoint:'http://127.0.0.1:1234/commands',paused:true,code:null,identity:{nodeId:'worker',schedulerId:'scheduler-5b933515-b3ae-43ec-bf5b-e7c6b1bfaebd',executorId:'executor-17bed9a3-a4a3-4db7-916c-a5e45b491ed6'}};
+  assert.deepEqual(ui.checkConnectionDescriptor.result.create().parse(value),checkConnectionDescriptor.result.create().parse(value));
+  assert.throws(()=>ui.checkConnectionDescriptor.result.create().parse({...value,identity:null}));
+  assert.throws(()=>ui.checkConnectionDescriptor.result.create().parse({...value,identity:{nodeId:'worker'}}));
+  const failure={...value,connected:false,identity:null,code:'OPERATION_DENIED'};
+  assert.equal(ui.checkConnectionDescriptor.result.create().parse(failure).connected,false);
+});
+
+test('model settings shortcut uses the official root store seat, sharing the current dialog', () => {
+  const ui=client(),selected=[];
+  const shell={actions:{openSection:id=>selected.push(id)}};
+  const ctx={slots:{entries:key=>{assert.equal(key,'sidebar.settings');return [{options:{id:'unrelated'}},{options:{},store:{create:()=>shell}}];}}};
+  assert.equal(ui.openModels(ctx),true);assert.deepEqual(selected,['models']);
+  assert.equal(ui.openPlugins(ctx),true);assert.deepEqual(selected,['models','plugins']);
+  assert.equal(ui.openModels({slots:{entries:()=>[]}}),false);
+  assert.equal(ui.openModels({slots:{entries:()=>[{options:{},store:{create:()=>({actions:{}})}}]}}),false);
+});
+
+test("decision switches stay disabled and show dependency instructions when the decision plugin is absent",()=>{
+ const f=startupRoleFixture({role:"both",defaultWorkspaceId:"fixture-workspace",planningDecisionEnabled:true,sessionDecisionEnabled:true});
+ f.props.decisionAvailable=false;
+ const tree=f.render();
+ for(const label of ["planningDecisionEnabled","sessionDecisionEnabled"]){
+  const control=f.find(tree,n=>n.type==="FixtureSwitch"&&n.props.label===label);
+  assert.equal(control.props.disabled,true);assert.equal(control.props.checked,false);
+ }
+ assert.ok(f.find(tree,n=>n.props?.role==="note"&&n.children?.includes("decisionDependencyRequired")));
+ assert.equal(f.find(tree,n=>n.props?.["data-task-decision-entry"]),undefined);
+});
+
+test('scheduler node capacity draft stays clean and validates each registered node independently',()=>{
+  const ui=client(),values={role:'planner',defaultWorkspaceId:null,planningDecisionEnabled:true,sessionDecisionEnabled:false,nodeCapacities:[{nodeId:'a',maxConcurrent:1},{nodeId:'b',maxConcurrent:3}]};
+  const draft=ui.startupDraft('task',values);
+  assert.equal(ui.startupChanges('task',values,draft).dirty,false);
+  draft.nodeCapacities[0].maxConcurrent='2';
+  assert.deepEqual(JSON.parse(JSON.stringify(ui.startupChanges('task',values,draft).changes.nodeCapacities)),[{nodeId:'a',maxConcurrent:2},{nodeId:'b',maxConcurrent:3}]);
+  for(const value of ['', '0', '1.5', '33', 'NaN']) {
+    draft.nodeCapacities[0].maxConcurrent=value;
+    assert.ok(ui.startupChanges('task',values,draft).invalid.includes('nodeCapacities'));
+  }
+});
+
+ test('unified save validates drafts, saves live owners before restart and retains unsaved owners on failure',async()=>{
+ const {SettingsSaveCoordinator}=client();const saves=[];const c=new SettingsSaveCoordinator();
+ c.register('restart',{meta:{dirty:true,restart:true},save:async()=>{saves.push('restart');return false},discard:()=>saves.push('discard')});
+ c.register('live',{meta:{dirty:true,invalid:true,restart:false},save:async()=>{saves.push('live');return true},discard:()=>saves.push('discard-live')});
+ assert.equal(await c.saveAll(),false);assert.deepEqual(saves,[]);
+ c.update('live',{dirty:true,restart:false});assert.equal(await c.saveAll(),false);assert.deepEqual(saves,['live','restart']);assert.match(c.snapshot().message,/部分/);assert.equal(c.snapshot().busy,false);
+ c.discardAll();assert.deepEqual(saves,['live','restart','discard','discard-live']);
+ });

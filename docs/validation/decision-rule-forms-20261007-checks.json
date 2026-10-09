@@ -1,0 +1,58 @@
+{
+  "date": "2026-10-07",
+  "feature": "Nested rule-set/rule cards and typed forms",
+  "repositoryCommit": "8b8e30db133522826a8776826c560d21395068a0",
+  "package": "typed-decisions-settings-9.tgz",
+  "mbp": {
+    "pid": 16285,
+    "record": ".runtime/project-runtime-20261006/mbp-decisions-21-host.json",
+    "port": 3082,
+    "taskSystemVersion": "project-runtime-15",
+    "role": "executor",
+    "remotePaused": true
+  },
+  "tests": {
+    "standalone": {
+      "total": 45,
+      "passed": 45,
+      "failed": 0
+    },
+    "workspace": {
+      "total": 461,
+      "passed": 460,
+      "skipped": 1,
+      "failed": 0
+    }
+  },
+  "liveChecks": {
+    "ruleEditorInsideRuleCard": true,
+    "ruleCardInsideRulesetCard": true,
+    "actionsGap": "16px",
+    "collapsePreservesDraft": true,
+    "objectAndListSavedAndReopened": {
+      "enabled": false,
+      "items": [
+        3,
+        "3"
+      ]
+    },
+    "duplicateObjectKeyRejected": true,
+    "savedRuleset": "rules-form-smoke",
+    "savedRulesVersion": "ce9586538fba2414",
+    "testRulesetBoundToPreset": false,
+    "existingRulesGuiSmokeVersionPreserved": "11bc6e78be0a3059"
+  },
+  "phone390": {
+    "bodyWidth": 341,
+    "scrollWidth": 341,
+    "ruleCardWidth": 273,
+    "manualJsonLabel": false,
+    "padding": "16px 16px 24px"
+  },
+  "screenshots": [
+    ".runtime/project-runtime-20261006/mbp-nested-rule-cards-21.png",
+    ".runtime/project-runtime-20261006/mbp-rule-form-controls-21.png"
+  ],
+  "vpsUpdated": false,
+  "realModelRequestsThisTurn": 0
+}

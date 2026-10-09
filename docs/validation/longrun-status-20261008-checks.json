@@ -1,0 +1,44 @@
+{
+  "date": "2026-10-08",
+  "runtimeRevision": 35,
+  "changes": [
+    "Remove local/native/remote task wall-clock cutoffs and elapsed-time safe retry restriction; retain lease authority and explicit cancellation",
+    "Display elapsed run time in task cards, lists and task details, updated each second",
+    "Request a bounded progress snapshot through the authenticated current attempt renewal without extra model turns or dispatch",
+    "Forward native progress through both standalone adapter and mounted remote plugin"
+  ],
+  "checks": {
+    "tests": 711,
+    "pass": 706,
+    "fail": 0,
+    "skipped": 5
+  },
+  "realAcceptance": {
+    "firstRun": "longrun-status-run-20261008",
+    "firstRunCancelled": true,
+    "finalRun": "longrun-status-run-20261008c",
+    "finalRunVerification": "blocked: renew command did not yield an acknowledged receipt; executor aborted and authority lease expired; detailed live response not received",
+    "secondRun": "longrun-status-run-20261008b",
+    "secondRunResult": "sessionContext uncertain before native provider dispatch; executor durable record verified before reconciliation",
+    "finalRunNativeTool": "bash (sleep only)",
+    "finalRunNativeTermination": "turn/end reason=aborted verified in execution session",
+    "finalRunCleanup": "Authority reconciled to cancelled after verified native stop; first acceptance cancelled, negotiation failure reconciled to failed. No acceptance run remains active.",
+    "limitations": [
+      "No multi-hour live soak test was performed",
+      "Chrome blocked scheduler URL; task UI behavior verified by regression tests instead"
+    ]
+  },
+  "deployment": {
+    "package": "task-system-longrun-status-35-20261008.tgz",
+    "mbpPid": 67669,
+    "vpsVerification": "active/running; NRestarts=0",
+    "vpsPid": 2990292,
+    "mbpHttpUnauthenticatedStatus": 401,
+    "backupDirectoryName": "longrun-status35-20261008"
+  },
+  "browserVerification": {
+    "status": "blocked",
+    "reason": "Chrome ERR_BLOCKED_BY_CLIENT for existing scheduler URL; no browser security settings changed"
+  },
+  "originalTaskNotReexecuted": true
+}

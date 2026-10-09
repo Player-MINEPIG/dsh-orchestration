@@ -19,6 +19,16 @@ const Target = z
 export const TaskStartupValues = z
   .object({
     role: Role,
+    nodeCapacities: z
+      .array(
+        z
+          .object({
+            nodeId: z.string().min(1),
+            maxConcurrent: z.number().int().min(1).max(32),
+          })
+          .strict(),
+      )
+      .optional(),
     defaultWorkspaceId: z.string().min(1).nullable(),
     sessionDecisionEnabled: z.boolean(),
     planningDecisionEnabled: z.boolean(),
@@ -42,17 +52,26 @@ export const StartupSettings = z.object({
   task: z
     .object({
       entryId: z.string(),
+      decisionAvailable: z.boolean(),
       values: TaskStartupValues,
       workspaceScope: z
         .object({ nodeId: z.string(), schedulerId: z.string() })
         .optional(),
     })
     .nullable(),
+  restartBlockers: z.array(z.object({runId:z.string(), title:z.string(), state:z.string()})).optional(),
   remote: z
     .object({
       entryId: z.string(),
       loaded: z.boolean(),
       loaderDisabled: z.boolean(),
+      heartbeat: z
+        .object({
+          state: z.enum(["disabled", "waiting", "acknowledged", "failed"]),
+          intervalMs: z.number(),
+          acknowledgedAt: z.string().nullable(),
+        })
+        .optional(),
       values: RemoteStartupValues,
     })
     .nullable(),
@@ -75,8 +94,32 @@ export const SaveStartupInput = z.discriminatedUnion("target", [
 ]);
 export const SaveStartupResult = z.object({
   saved: z.literal(true),
-  applies: z.literal("plugin-restart"),
+  applies: z.enum(["live", "plugin-restart"]),
 });
+export const CheckConnectionInput = z
+  .object({
+    expected: RemoteStartupValues,
+    endpoint: z.string().min(1).max(2048),
+    trustedNetworkTarget: Target.nullable(),
+  })
+  .strict();
+export const CheckConnectionResult = z
+  .object({
+    connected: z.boolean(),
+    checkedAt: z.string(),
+    endpoint: z.string().nullable(),
+    paused: z.boolean(),
+    code: z.string().nullable(),
+    identity: z
+      .object({
+        nodeId: z.string(),
+        schedulerId: z.string(),
+        executorId: z.string(),
+      })
+      .strict()
+      .nullable(),
+  })
+  .strict();
 type Raw = Record<string, unknown>;
 interface Entry {
   readonly disabled?: boolean;
@@ -134,6 +177,13 @@ function taskValues(raw: Raw, task: TaskSystemService | undefined) {
   return TaskStartupValues.parse({
     role:
       typeof raw.role === "string" ? raw.role : (task?.config.role ?? "both"),
+    nodeCapacities: (Array.isArray(raw.remoteNodes)
+      ? raw.remoteNodes
+      : (task?.config.remoteNodes ?? [])
+    ).map((value) => {
+      const node = record(value);
+      return { nodeId: node?.nodeId, maxConcurrent: record(raw.nodeCapacityOverrides)?.[String(node?.nodeId)] ?? node?.maxConcurrent ?? 1 };
+    }),
     defaultWorkspaceId:
       raw.defaultWorkspaceId === null ||
       typeof raw.defaultWorkspaceId === "string"
@@ -151,6 +201,7 @@ function taskValues(raw: Raw, task: TaskSystemService | undefined) {
 }
 function remoteValues(raw: Raw, remote: RemoteExecutionService | undefined) {
   const current = remote?.settingsSnapshot(),
+    limits = record(raw.executionLimits),
     coordinator = record(raw.coordinator),
     target = record(coordinator?.trustedNetwork);
   return RemoteStartupValues.parse({
@@ -164,11 +215,11 @@ function remoteValues(raw: Raw, remote: RemoteExecutionService | undefined) {
     audience:
       typeof coordinator?.audience === "string" ? coordinator.audience : null,
     pollIntervalMs:
-      typeof raw.pollIntervalMs === "number"
+      typeof limits?.pollIntervalMs === "number" ? limits.pollIntervalMs : typeof raw.pollIntervalMs === "number"
         ? raw.pollIntervalMs
         : (current?.pollIntervalMs ?? 0),
     concurrency:
-      typeof raw.concurrency === "number"
+      typeof limits?.concurrency === "number" ? limits.concurrency : typeof raw.concurrency === "number"
         ? raw.concurrency
         : (current?.concurrency ?? 1),
     taskSessionsEnabled:
@@ -211,10 +262,15 @@ export function readStartupSettings(ctx: Context) {
     b = row(host, "remote");
   return StartupSettings.parse({
     writable: true,
+    restartBlockers: [
+      ...(task?.ledger.configurationBlockers() ?? []),
+      ...(remote?.queueSnapshot().items ?? []).filter(run => ["dispatching","uncertain","result","cancellation","retry_pending","running"].includes(run.state)).map(run => ({runId:run.runId,title:run.title,state:run.state})),
+    ].filter((run,index,all) => all.findIndex(other => other.runId===run.runId)===index),
     applies: "plugin-restart",
     task: a
       ? {
           entryId: a.options.id,
+          decisionAvailable: !!ctx.get("typedDecisions"),
           values: taskValues(a.options.config ?? {}, task),
           ...(task
             ? {
@@ -232,9 +288,59 @@ export function readStartupSettings(ctx: Context) {
           loaded: !!remote,
           loaderDisabled: b.disabled === true || b.options.disabled === true,
           values: remoteValues(b.options.config ?? {}, remote),
+          ...(remote ? { heartbeat: remote.heartbeatSnapshot() } : {}),
         }
       : null,
   });
+}
+export async function checkStartupConnection(ctx: Context, value: unknown) {
+  const input = CheckConnectionInput.parse(value);
+  const current = readStartupSettings(ctx).remote;
+  const remote = ctx.get("remoteExecution") as
+    | RemoteExecutionService
+    | undefined;
+  const base = {
+    checkedAt: new Date().toISOString(),
+    endpoint: publicEndpoint(input.endpoint),
+    paused: current?.values.paused ?? true,
+  };
+  try {
+    if (!current || !remote)
+      reject("COORDINATOR_REQUIRED", "Connection is not loaded");
+    if (!isDeepStrictEqual(current.values, input.expected))
+      reject("STARTUP_CONFLICT", "Refresh before checking this connection");
+    const url = new URL(input.endpoint);
+    if (url.username || url.password || url.search || url.hash)
+      reject("STARTUP_ENDPOINT_SECRET", "Endpoint cannot contain credentials");
+    const identity = await remote.checkConnection(
+      input.endpoint,
+      input.trustedNetworkTarget,
+    );
+    return CheckConnectionResult.parse({
+      ...base,
+      connected: true,
+      code: null,
+      identity,
+    });
+  } catch (error) {
+    const failure = error as {
+      code?: string;
+      name?: string;
+      cause?: { code?: string };
+    };
+    const code =
+      failure.name === "TimeoutError" ||
+      failure.name === "AbortError" ||
+      failure.cause?.code === "ABORT_ERR"
+        ? "CONNECTION_TIMEOUT"
+        : (failure.code ?? failure.cause?.code ?? "CONNECTION_FAILED");
+    return CheckConnectionResult.parse({
+      ...base,
+      connected: false,
+      code: /^[A-Z][A-Z0-9_]{0,99}$/.test(code) ? code : "CONNECTION_FAILED",
+      identity: null,
+    });
+  }
 }
 /** No credentials, grants, arbitrary namespaces or raw replacement configs cross this boundary. */
 export async function saveStartupSettings(ctx: Context, value: unknown) {
@@ -272,10 +378,23 @@ export async function saveStartupSettings(ctx: Context, value: unknown) {
   const task = ctx.get("taskSystem") as TaskSystemService | undefined,
     remote = ctx.get("remoteExecution") as RemoteExecutionService | undefined;
   if (!task) reject("STARTUP_UNAVAILABLE", "Task service is not available");
+  if (
+    input.target === "task" &&
+    !ctx.get("typedDecisions") &&
+    (input.changes.planningDecisionEnabled === true ||
+      input.changes.sessionDecisionEnabled === true)
+  )
+    reject(
+      "STARTUP_DECISION_REQUIRED",
+      "Install and enable @dsh-task/typed-decisions before enabling decisions",
+    );
+  const restart = Object.keys(input.changes).some(key => !(input.target === "task" ? ["nodeCapacities", "defaultWorkspaceId", "planningDecisionEnabled", "sessionDecisionEnabled"] : ["concurrency", "pollIntervalMs"]).includes(key));
   const releases: (() => void)[] = [];
   try {
-    releases.push(task.beginConfigurationEdit());
-    if (remote) releases.push(remote.beginConfigurationEdit());
+    if (restart) {
+      releases.push(task.beginConfigurationEdit());
+      if (remote) releases.push(remote.beginConfigurationEdit());
+    }
     await host.edit(entry, (current) => {
       const actual =
         input.target === "task"
@@ -287,8 +406,32 @@ export async function saveStartupSettings(ctx: Context, value: unknown) {
           "Configuration changed since this page was read; reload before saving",
         );
       if (input.target === "task") {
-        const next: Raw = { ...current, ...input.changes },
+        const { nodeCapacities, ...selected } = input.changes;
+        const next: Raw = { ...current, ...selected },
           resolved = { ...input.expected, ...input.changes };
+        if (nodeCapacities !== undefined) {
+          if (resolved.role === "executor")
+            reject(
+              "STARTUP_CAPACITY_DENIED",
+              "Only a scheduler may configure its registered executor capacities",
+            );
+          const nodes = Array.isArray(current.remoteNodes)
+            ? current.remoteNodes
+            : (task.config.remoteNodes ?? []);
+          const ids = nodes.map((node) => record(node)?.nodeId);
+          if (
+            new Set(ids).size !== ids.length ||
+            nodeCapacities.length !== ids.length ||
+            new Set(nodeCapacities.map((node) => node.nodeId)).size !==
+              ids.length ||
+            nodeCapacities.some((node) => !ids.includes(node.nodeId))
+          )
+            reject(
+              "STARTUP_CAPACITY_DENIED",
+              "Capacity edits must retain exactly the existing registered node identities",
+            );
+          next.nodeCapacityOverrides = { ...record(current.nodeCapacityOverrides), ...Object.fromEntries(nodeCapacities.map(node => [node.nodeId, node.maxConcurrent])) };
+        }
         if (resolved.role === "planner" && next.localNode)
           reject(
             "STARTUP_ROLE_CONFLICT",
@@ -332,7 +475,10 @@ export async function saveStartupSettings(ctx: Context, value: unknown) {
       }
       const { endpoint, audience, trustedNetworkTarget, ...top } =
         input.changes;
-      const next: Raw = { ...current, ...top };
+      const {concurrency, pollIntervalMs, ...bootFields} = top;
+      const next: Raw = { ...current, ...bootFields };
+      if (concurrency !== undefined || pollIntervalMs !== undefined)
+        next.executionLimits = { ...record(current.executionLimits), ...(concurrency === undefined ? {} : {concurrency}), ...(pollIntervalMs === undefined ? {} : {pollIntervalMs}) };
       let coordinator = record(current.coordinator);
       if (
         endpoint !== undefined ||
@@ -353,7 +499,7 @@ export async function saveStartupSettings(ctx: Context, value: unknown) {
               "STARTUP_CONNECTION_REQUIRED",
               "A new connection needs the existing trusted-network mode and configured node identity, plus an explicitly selected endpoint, audience and exact source/target. Signed connections require operator-provisioned signing references",
             );
-          if (next.pollIntervalMs !== undefined && next.pollIntervalMs !== 0)
+          if ((record(next.executionLimits)?.pollIntervalMs ?? next.pollIntervalMs ?? 0) !== 0)
             reject(
               "STARTUP_ROUTES_REQUIRED",
               "New identity-only connections keep polling off until operator-approved native routes are configured",
@@ -448,6 +594,28 @@ export async function saveStartupSettings(ctx: Context, value: unknown) {
             "Resuming a signed connection requires existing operator-provisioned signing references",
           );
       }
+      // The operator switch owns both liveness and task admission. Zero-valued
+      // legacy intervals must not leave an enabled executor silently offline.
+      if (
+        input.changes.paused === false &&
+        (next.role ?? input.expected.role) !== "planner"
+      ) {
+        const connection = record(next.coordinator);
+        if (
+          !connection ||
+          !Array.isArray(connection.nativeRoutes) ||
+          !connection.nativeRoutes.length
+        )
+          reject(
+            "STARTUP_ROUTES_REQUIRED",
+            "Configure authorized native execution routes before enabling this executor",
+          );
+        next.executionLimits = { ...record(next.executionLimits), pollIntervalMs: (record(next.executionLimits)?.pollIntervalMs ?? next.pollIntervalMs ?? input.expected.pollIntervalMs) || 1000 };
+        next.coordinator = {
+          ...connection,
+          heartbeatIntervalMs: connection.heartbeatIntervalMs || 5000,
+        };
+      }
       if (
         input.changes.pollIntervalMs !== undefined &&
         input.changes.pollIntervalMs !== 0 &&
@@ -459,7 +627,11 @@ export async function saveStartupSettings(ctx: Context, value: unknown) {
         );
       return next;
     });
-    return SaveStartupResult.parse({ saved: true, applies: "plugin-restart" });
+    if (!restart && input.target === "task" && input.changes.nodeCapacities) {
+      // ConfigEditor has updated the Loader-owned live references without replacing this service.
+      task.applyLiveNodeCapacities();
+    }
+    return SaveStartupResult.parse({ saved: true, applies: restart ? "plugin-restart" : "live" });
   } catch (error) {
     if (error instanceof StartupSettingsError) throw error;
     const code = (error as { code?: unknown })?.code;
@@ -467,6 +639,18 @@ export async function saveStartupSettings(ctx: Context, value: unknown) {
       reject(
         "STARTUP_BUSY",
         "Execution or recovery is still active; finish or reconcile it before changing startup settings",
+      );
+    if (
+      [
+        "NETWORK_TARGET_DENIED",
+        "INVALID_NETWORK_ENDPOINT",
+        "INVALID_NETWORK_ADDRESS",
+        "TRUSTED_NETWORK_OPT_IN_REQUIRED",
+      ].includes(String(code))
+    )
+      reject(
+        "STARTUP_TARGET_MISMATCH",
+        "Scheduler URL must match the exact trusted-network destination address and port",
       );
     if (
       error instanceof Error &&

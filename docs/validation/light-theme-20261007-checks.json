@@ -1,0 +1,71 @@
+{
+  "date": "2026-10-07",
+  "scope": [
+    "typed-decisions settings",
+    "task project center, conversations, details and graph"
+  ],
+  "backlog": {
+    "notjev": "deferred until actual plugin users need it",
+    "integrated": false
+  },
+  "theme": {
+    "source": "DSH root computed color-scheme, root/body mutations and system media changes",
+    "initialThemeInjected": true,
+    "updatesWithoutReload": true,
+    "fallback": "system"
+  },
+  "mbp": {
+    "pid": 40717,
+    "port": 3082,
+    "profile": "executor",
+    "decisionPackage": "typed-decisions-settings-13.tgz",
+    "taskPackage": "task-system-project-runtime-17.tgz",
+    "appearanceRestored": "system",
+    "vpsUpdated": false
+  },
+  "validation": {
+    "workspace": {
+      "tests": 466,
+      "passed": 465,
+      "skipped": 1,
+      "failed": 0
+    },
+    "independentDecisionPackage": {
+      "tests": 49,
+      "passed": 49,
+      "failed": 0
+    },
+    "finalThemeProjectTests": {
+      "tests": 6,
+      "passed": 6,
+      "failed": 0
+    },
+    "mobile": {
+      "viewport": [
+        390,
+        844
+      ],
+      "decisionBodyWidth": 341,
+      "decisionScrollWidth": 341,
+      "navigationDirection": "row",
+      "navigationHeight": 45,
+      "graphBodyWidth": 390,
+      "graphScrollWidth": 390,
+      "graphLayout": "phone"
+    },
+    "realUi": "MBP DSH settings + executor role page; project/task/graph use fixture only",
+    "modelApiCalls": 0,
+    "taskDispatches": 0
+  },
+  "standaloneRepository": {
+    "path": ".runtime/dsh-typed-decisions",
+    "commit": "750c80b"
+  },
+  "screenshots": [
+    ".runtime/project-runtime-20261006/mbp-light-final-25.png",
+    ".runtime/project-runtime-20261006/mbp-light-mobile-final-25.png",
+    ".runtime/project-runtime-20261006/light-task-center-24.png",
+    ".runtime/project-runtime-20261006/light-node-graph-24.png",
+    ".runtime/project-runtime-20261006/light-node-graph-mobile-24.png"
+  ]
+}

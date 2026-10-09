@@ -1,0 +1,53 @@
+{
+  "date": "2026-10-09",
+  "feature": "task detail fullscreen, stable scroll, manual completion and original-session materials",
+  "deployment": {
+    "host": "aliyun-vps",
+    "package": "task-system-manual-confirm-40b-20261009.tgz",
+    "service": "dsh-orchestration-web.service",
+    "pid": 3488035,
+    "backup": "/opt/dsh-task-management-test/candidate-3-ece68974/backups/manual-confirm40b-20261009",
+    "executorRestarted": false
+  },
+  "checks": {
+    "fullCheck": {
+      "passed": 718,
+      "skipped": 5,
+      "failed": 0
+    },
+    "finalUiRegression": {
+      "passed": 15,
+      "failed": 0
+    },
+    "manualCompletionAndMaterialsRegression": "passed; original Run and Attempt preserved; idempotent command/reply; wrong node denied; old replies excluded; close gate ignores late materials but retains chat; persisted across reopen",
+    "gitDiffCheck": "passed"
+  },
+  "browser": {
+    "mobileViewport": [
+      390,
+      640
+    ],
+    "fullScreenFrameOrigin": [
+      0,
+      0
+    ],
+    "desktopFullscreen": [
+      1200,
+      820
+    ],
+    "scrollAfterPolling": 154.5,
+    "manualChoicesVisible": 3,
+    "formSubmitted": false,
+    "originalTaskState": "waiting",
+    "originalTaskManualDecision": false,
+    "screenshots": [
+      "/Users/pmp/.codex/visualizations/2026/10/07/01a114fe-a63a-7ca1-836d-9b070a05c163/task-detail40-mobile.png",
+      "/Users/pmp/.codex/visualizations/2026/10/07/01a114fe-a63a-7ca1-836d-9b070a05c163/manual-confirm40-mobile.png"
+    ]
+  },
+  "limits": [
+    "Browser mobile viewport validation, not physical iPhone Safari.",
+    "Supplemental replies are text and paths, not remote file transfer or automatic material acceptance.",
+    "No live user task was confirmed, cancelled, or redispatched during verification."
+  ]
+}

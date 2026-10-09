@@ -1,15 +1,17 @@
 import type { Template } from '../contracts.js'
 import type { Claim, Run } from './ports.js'
 import { insist, isRecord, canonicalData, canonicalSchema } from './protocol.js'
+import { projectContext } from '../project-context.js'
 
 type ContextClaim = Pick<Claim, 'executionContext'> & {
-  run: Pick<Run, 'configuration' | 'contextNotes'>
+  run: Pick<Run, 'configuration' | 'contextNotes' | 'projectContext'>
 }
 
 /** Select only immutable context named by this run. The coordinator supplies the
  * resolved bodies in its authenticated claim; a worker must never resolve these
  * IDs against its own unrelated ledger or silently drop missing context. */
 export function resolvedClaimContext(claim: ContextClaim): NonNullable<Claim['executionContext']> {
+  if (claim.run.projectContext !== undefined) projectContext(claim.run.projectContext)
   const configuration = isRecord(claim.run.configuration) ? claim.run.configuration : undefined
   let template: Template | undefined
   if (configuration?.templateRef !== undefined) {

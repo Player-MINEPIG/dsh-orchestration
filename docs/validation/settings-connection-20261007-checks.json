@@ -1,0 +1,25 @@
+{
+  "deployment": "MBP existing candidate-3 executor profile, task-system package runtime-11",
+  "regression": { "pass": 626, "skip": 5, "fail": 0 },
+  "officialStartupFixture": { "checks": 4, "modelCalls": 0, "existingServicesTouched": false },
+  "liveUi": {
+    "trailingColonPreserved": "http://100.123.230.75:",
+    "correctEndpoint": "http://100.123.230.75:18440/dsh-task/v1/commands",
+    "correctEndpointIdentityVerified": true,
+    "nodeId": "mbp-executor",
+    "executorId": "executor-17bed9a3-a4a3-4db7-916c-a5e45b491ed6",
+    "webuiPort10000Rejected": true,
+    "decisionFormInsideExecutorDecisionSection": true,
+    "savedPollingIntervals": [1000, 1001, 1000],
+    "pausedAfterChecksAndSaves": true,
+    "savedEndpointAfter": "http://100.123.230.75:18440/dsh-task/v1/commands",
+    "modelDecisionSelectionAfter": "rules (unchanged)"
+  },
+  "limits": [
+    "Identity check proves protocol availability and identity-query authorization, not every workload grant or model API readiness.",
+    "One live connection probe timed out after five seconds; an explicit retry succeeded. The UI reports timeout rather than treating it as success.",
+    "No model requests or workload dispatches were made in this validation.",
+    "Full regression preceded final error-description text changes; final package was rebuilt and verified in the live browser.",
+    "The local MBP package was updated. The VPS service remains on its previously tested package."
+  ]
+}

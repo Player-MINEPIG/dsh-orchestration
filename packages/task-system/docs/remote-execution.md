@@ -107,7 +107,7 @@ The worker claims from its injected ledger, validates role/node/provider/model/c
 
 Each recovery database persists a nonsecret instance UUID. The worker derives an attempt-specific `executionId` from that identity and first calls `markRunning` with an execution-specific command ID, then binds its session, then permits provider effects. The ledger atomically binds the first execution owner. A different store on the same authenticated node cannot start a second execution by replaying the deterministic claim command; subsequent renew/bind/submit/cancellation acknowledgments must carry the bound owner. The signed gateway requires `executionId` on `markRunning` and propagates it on all lease operations. Older direct ledger calls may omit the field only before an owner is bound; that compatibility does not permit a new remote start without an owner. Copying a recovery database deliberately copies its owner identity and is not a supported way to create another executor instance.
 
-Task-specific `allowedNodeIds` and `allowedWorkspaceIds` narrow the host policy; an explicit empty list denies all. `maxRuntimeMs` supplies a separate abort deadline. `allowedTools` and `maxDepth` remain on the passed task policy for native tool/delegation enforcement. `nativeExecutionAdapter(native, { provider, models, capabilities })` connects the host's execution-only `executeExternal(request)` entrypoint to this worker with an explicit provider/model/effort allowlist. That entrypoint must return a staged structured outcome after native session flush and owned-agent cleanup; it must not settle the ledger itself.
+Task-specific `allowedNodeIds` and `allowedWorkspaceIds` narrow the host policy; an explicit empty list denies all. Legacy `maxRuntimeMs` is accepted for compatibility but supplies no deadline; only cancellation, lost execution authority, or runtime failure stops a long-running task. `allowedTools` and `maxDepth` remain on the passed task policy for native tool/delegation enforcement. `nativeExecutionAdapter(native, { provider, models, capabilities })` connects the host's execution-only `executeExternal(request)` entrypoint to this worker with an explicit provider/model/effort allowlist. That entrypoint must return a staged structured outcome after native session flush and owned-agent cleanup; it must not settle the ledger itself.
 
 Task `requiredResources` remains on the claim and is automatically acquired by the authoritative core; peers cannot omit it by leaving resources out of the wire request. Imported `observationOnly` runs are excluded from discovery and rejected by dispatch/mutation entrypoints. They remain evidence and never become executable work through the bridge.
 
@@ -178,7 +178,7 @@ Completed-tool continuation additionally requires the operator's `safeRetry.resu
 
 Both variants are authenticated node attestations. The remote gateway checks the strict schema and bound session/lease/owner; the coordinator checks the pinned allowlist, task policy, and retry budget. Native tests establish the actual event linkage, successful completion, persistence, and dispatch-guard evidence rules. Remote package fixtures explicitly mock native evidence and do not independently establish those properties.
 
-An ordinary unknown outcome has no retry authority. With a valid witness, the worker persists `retry_pending`, stops renewal, and requests one stable `retryBeforeEffects` command. A coordinator-approved retry becomes `retry_scheduled`; only later discovery after backoff may claim a new fenced attempt. The run and authorized session are retained, and runtime limits remain anchored to the run's original `executionStartedAt`. A host with a tighter runtime budget may attest `retryAllowed: false`, which can only refuse another retry. Disabled, exhausted, or expired retry policy yields the coordinator's durable terminal failure. Malformed runtime evidence leaves the dispatch uncertain; rejected coordinator evidence or an uncertain transition keeps recovery pending. A lost receipt retries only the same durable command and proof, without dispatching a provider or tool. No new command ID is invented to resolve an ambiguous effect.
+An ordinary unknown outcome has no retry authority. With a valid witness, the worker persists `retry_pending`, stops renewal, and requests one stable `retryBeforeEffects` command. A coordinator-approved retry becomes `retry_scheduled`; only later discovery after backoff may claim a new fenced attempt. The run and authorized session are retained, and elapsed display remains anchored to the run's original `executionStartedAt`. A host may attest `retryAllowed: false`, which can only refuse another retry. Disabled or exhausted retry policy yields the coordinator's durable terminal failure. Malformed runtime evidence leaves the dispatch uncertain; rejected coordinator evidence or an uncertain transition keeps recovery pending. A lost receipt retries only the same durable command and proof, without dispatching a provider or tool. No new command ID is invented to resolve an ambiguous effect.
 
 ## Authenticated node reachability
 
@@ -216,3 +216,33 @@ npm run test --workspace @dsh-task/task-system
 Tests label mocked ledger/provider/HTTP boundaries. They exercise real Ed25519 and SQLite, authenticated health TTL and recovery, bounded witnessed retry transitions (with native evidence explicitly mocked in the package fixture), malicious payloads, least privilege, replay/reordering, physical symlink escape, stale leases, cancellation, intent/result crash recovery, and lost acknowledgments. One connected fixture uses the real TaskLedger, signed discovery and every execution lifecycle transition with only provider/network boundaries mocked. A separate test mounts and unloads the real pinned Cordis plugin while substituting only the ledger boundary. Trusted-network tests add real IPv4/IPv6 loopback HTTP, distinct source addresses, mode confusion, header forgery, peer and scope denial, replay/expiry, redirect refusal, authentication-bound recovery, and disconnect/lost-ACK restart coverage. An additional real loopback TLS carrier test uses a disposable certificate, rejects an untrusted certificate and spoofed forwarded headers, and carries signed commands through the actual HTTP handler and TaskLedger. Certificate verification remains enabled; the fixture CA is scoped to that test client. These tests do not establish live cross-device TLS, live model execution, Windows supervision, production credentials, or real network reliability. No public repository, production host, or live messaging destination is created or contacted.
 
 The TaskLedger command bound is additionally 2,000,000 canonical JSON characters per operation. The 16 MiB transport ceiling is not a guarantee that an equally large task command can commit; apply both limits and split large historical imports.
+
+
+### Requested execution status
+
+The operator creates a status request on the current running attempt with the task action version. The next authenticated `renew` response returns its `progressRequest`; the worker snapshots its current native session phase, completed steps/tools, and last public assistant text, then submits the matching request ID and a bounded summary through another `renew`. The authority validates the exact lease/fence/execution owner and request ID and stamps `reportedAt`. A pending request is reused on repeated clicks. Replies use a stable per-request command ID and cached payload so transport replay neither resamples nor dispatches work. Status delivery errors do not invalidate an already renewed lease. This is an event-based snapshot, not another model turn or a completion receipt.
+
+
+### Direct messages to an existing task session
+
+The authenticated carrier also supports `sessionMessages` (executor polling) and
+`sessionMessageReply` (reply delivery). Grant both operations to the existing
+executor peer; the peer's workspace grants still apply. This is independent of
+Run/Attempt leases. The owner UI can enqueue a message only for a session in the
+task's persisted session catalog. The executor additionally verifies its local
+dispatch record and current workspace/provider authorization.
+
+Messages wait while the original session is busy. An idle WebUI Agent is borrowed;
+a closed session is resumed with the same Session ID and preset. Both user text
+and assistant responses remain in the native session, and the returned text is
+stored in the scheduler for display with an executor reply marker. No planning,
+new Run/Attempt, result report, or task-state transition occurs. Task-scoped tools
+are unavailable during this ordinary chat turn. Model replies may use ordinary
+preset tools according to the user's message.
+
+A durable local result is retried without another model turn. If the executor
+restarts after admitting a message but before saving its result, it reports an
+uncertain message and does not automatically replay it. Check the original session
+in that case. Long responses are explicitly truncated in the panel; their full
+text remains in the original session. This channel mirrors messages sent through
+this panel, rather than importing all unrelated WebUI conversation history.

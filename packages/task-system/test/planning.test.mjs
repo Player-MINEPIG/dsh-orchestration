@@ -144,3 +144,39 @@ test("typed admission of observed work offers no executor candidates and never d
     ledger.close();
   }
 });
+
+test('planner consumes its configured preset without changing explicit decision routing', async () => {
+  const ledger=TaskLedger.open(':memory:');
+  const engine=new DecisionEngine([provider()],{defaultProvider:'fixture',presets:[{id:'planner-work',name:'Planner work',provider:'fixture',model:'test'}]});
+  const requests=[];
+  const service={presetFor:consumer=>{assert.equal(consumer,'task-planning');return 'planner-work';},evaluate:async(request,options)=>{requests.push(request);return engine.evaluate(request,options);}};
+  try {
+    const planner=new TaskPlanner(ledger,service,()=>taskDecisionCatalog(ledger,{channel:'fixture'}),()=>{});
+    assert.equal((await planner.plan({requestId:'preset-plan',title:'Plan',description:'Use saved preset'})).proposal.kind,'proposal');
+    assert.equal(requests[0].preset,'planner-work');assert.equal(requests[0].provider,undefined);
+    assert.equal((await planner.plan({requestId:'explicit-plan',title:'Explicit',description:'Pinned route',provider:'fixture'})).proposal.kind,'proposal');
+    assert.equal(requests[1].preset,undefined);assert.equal(requests[1].provider,'fixture');
+  } finally {await engine.close();ledger.close();}
+});
+
+
+test('heartbeat health changes during a decision preserve route evidence, while authority changes still reject it',async()=>{
+ for(const mutateAuthority of [false,true]) {
+  const ledger=TaskLedger.open(':memory:');const worker={nodeId:'worker',roles:['executor'],models:[{provider:'worker-model',model:'small',reasoningEfforts:['off']}],capabilities:[],workspaceIds:[],enabled:true,lastSeenAt:new Date().toISOString()};ledger.registerNode('worker',worker);
+  const task=ledger.createTask('task',{title:'Calculate'}).value;
+  const p=provider();p.evaluate=async({request})=>{
+   assert.notEqual(ledger.nodeStatuses()[0].state,"online");
+   ledger.recordNodeHeartbeat('heartbeat',{nodeId:'worker',runtimeReady:true,activeExecutions:0});
+   if(mutateAuthority)ledger.registerNode('disable',{...worker,enabled:false});
+   const route=request.context.catalog.modelRoutes[0];
+   return {modelVersion:'1',answers:Object.fromEntries(request.questions.map(q=>[q.questionId,{type:'choice',choice:{persist:'attach',attach:task.taskId,executor:'worker',modelEffort:route.id,reporting:'summary'}[q.questionId]}]))};
+  };
+  const engine=new DecisionEngine([p],{defaultProvider:'fixture'});
+  try {
+   const planner=new TaskPlanner(ledger,engine,()=>taskDecisionCatalog(ledger,{role:'planner',nodeId:'planner'}),()=>{});
+   const result=await planner.plan({requestId:'intent',taskId:task.taskId,title:'Calculate',description:'Compute 1+1'});
+   if(mutateAuthority){assert.equal(result.proposal.kind,'abstain');assert.equal(result.proposal.reason,'stale-snapshot');assert.equal(ledger.snapshot().runs.length,0);}
+   else {assert.equal(result.routingStatus,'ready',JSON.stringify(result.proposal));const applied=planner.apply('intent',{deferExecution:true});assert.equal(applied.value.taskId,task.taskId);assert.equal(ledger.getTask(task.taskId).state,'inbox');assert.equal(ledger.snapshot().tasks.length,1);}
+  }finally{await engine.close();ledger.close();}
+ }
+});

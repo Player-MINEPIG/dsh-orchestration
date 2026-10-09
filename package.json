@@ -16,7 +16,7 @@
     "test": "npm run build && npm run test --workspaces --if-present",
     "check": "npm run build && npm run test:unit && npm run test:native && npm run test:legacy && npm run test:management",
     "test:unit": "npm run test --workspaces --if-present",
-    "test:native": "node --test tests/dsh/native-loader.test.mjs tests/dsh/remote-native.test.mjs tests/dsh/trusted-network-native.test.mjs tests/dsh/context-contract.test.mjs tests/dsh/pre-dispatch.test.mjs",
+    "test:native": "node --test tests/dsh/native-loader.test.mjs tests/dsh/remote-native.test.mjs tests/dsh/trusted-network-native.test.mjs tests/dsh/context-contract.test.mjs tests/dsh/pre-dispatch.test.mjs tests/dsh/executor-switch.test.mjs tests/dsh/project-executor.test.mjs",
     "test:distribution": "node tests/dsh/distribution-acceptance.mjs && node tests/dsh/capability-distribution.mjs",
     "format:check": "prettier --check packages/task-system/src/*.ts",
     "test:legacy": "node --test tests/legacy/readers.test.mjs tests/legacy/reporting.test.mjs tests/legacy/quota.test.mjs tests/legacy/compatibility.test.mjs tests/legacy/configured-sources.test.mjs tests/legacy/ad-hoc.test.mjs tests/legacy/diagnostics.test.mjs tests/legacy/context-contract.test.mjs",
@@ -28,6 +28,8 @@
   "devDependencies": {
     "@deepseek-ai/cordis-plugin-loader": "1.0.5",
     "@deepseek-ai/dsh-agent-loop": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-agent-preset": "^0.2.0-rc.2",
+    "@deepseek-ai/dsh-agent-preset-registry": "^0.2.0-rc.2",
     "@deepseek-ai/dsh-fs-local": "0.2.0-rc.2",
     "@deepseek-ai/dsh-llm-deepseek-api-key": "0.2.0-rc.2",
     "@deepseek-ai/dsh-session-persistence-jsonl": "0.2.0-rc.2",

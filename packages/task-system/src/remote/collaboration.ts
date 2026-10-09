@@ -2,11 +2,12 @@ import { digest, insist } from './protocol.js'
 import type { ExecutionCollaboration, LedgerPort, LeaseRef } from './ports.js'
 
 /** In-process callbacks capture authority; callers never supply parent or lease fields. */
-export function bindCollaboration(ledger: LedgerPort, lease: LeaseRef, taskId: string, signal: AbortSignal): ExecutionCollaboration {
+export function bindCollaboration(ledger: LedgerPort, lease: LeaseRef, taskId: string, signal: AbortSignal, availableOperations?: readonly string[]): ExecutionCollaboration {
   const ref = Object.freeze({ ...lease })
   const live = (): void => { insist(!signal.aborted,'EXECUTION_ABORTED',409); insist(ref.executionId,'EXECUTION_OWNER_REQUIRED',403) }
   const command = (kind: string,id: string): string => { insist(typeof id === 'string' && id.length > 0 && id.length <= 256,'INVALID_COLLABORATION_COMMAND'); return `collab-${digest([ref.executionId,kind,id])}` }
   return Object.freeze<ExecutionCollaboration>({
+    ...(availableOperations ? { availableOperations: Object.freeze([...availableOperations]) } : {}),
     async offerApproval(id,input) {
       live(); insist(ledger.offerApproval,'APPROVAL_BRIDGE_UNSUPPORTED',503)
       return await ledger.offerApproval(command('offerApproval',id),{ ...ref,requestId: input.requestId,sessionId: input.sessionId,agentId: input.agentId,callId: input.callId,toolName: input.toolName,argumentsDigest: input.argumentsDigest,description: input.description,expiresAt: input.expiresAt,allowRemoteOnce: input.allowRemoteOnce },{ signal })

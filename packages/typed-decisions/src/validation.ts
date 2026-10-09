@@ -67,7 +67,11 @@ export function validateQuestion(value: unknown): asserts value is DecisionQuest
 }
 export function validateRequest(value: unknown): asserts value is DecisionRequest {
   json(value, 'request'); object(value, 'request');
-  keys(value, ['requestId', 'stateHash', 'context', 'questions', 'provider', 'model', 'reasoningEffort'], ['requestId', 'stateHash', 'context', 'questions'], 'request');
+  keys(value, ['requestId', 'stateHash', 'context', 'questions', 'provider', 'model', 'reasoningEffort', 'preset'], ['requestId', 'stateHash', 'context', 'questions'], 'request');
+  if (value.preset !== undefined) {
+    id(value.preset, 'preset');
+    if (value.provider !== undefined || value.model !== undefined || value.reasoningEffort !== undefined) fail('preset cannot be mixed with explicit routing');
+  }
   id(value.requestId, 'requestId'); text(value.stateHash, 'stateHash');
   if (value.provider !== undefined) id(value.provider, 'provider');
   if (value.model !== undefined) text(value.model, 'model');

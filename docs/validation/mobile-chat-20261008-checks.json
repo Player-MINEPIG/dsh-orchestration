@@ -1,0 +1,44 @@
+{
+  "date": "2026-10-08",
+  "runtimeRevision": 36,
+  "scope": "Fix mobile conversation scrolling and recovery reminder UI; explain existing communication capabilities; do not add a generic messaging channel",
+  "changes": [
+    "Conversation polling patches changed regions without replacing composer or whole page",
+    "Restore visible message anchor; follow new output only when already at bottom",
+    "Compact reminder with prominent enabled retry button and dismiss control; dismissal does not mutate task",
+    "Planner prompt distinguishes absent completion evidence from unfinished work and admits missing generic executor messaging capability"
+  ],
+  "checks": {
+    "total": 714,
+    "passed": 709,
+    "skipped": 5,
+    "failed": 0
+  },
+  "deployment": {
+    "target": "VPS planner only",
+    "package": "task-system-mobile-chat-36-20261008.tgz",
+    "pid": 3063404,
+    "activeState": "active",
+    "subState": "running",
+    "nRestarts": 0,
+    "backup": "mobile-chat36-20261008",
+    "executorRestarted": false
+  },
+  "browser": {
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "reminderHeight": 77.5,
+    "scrollTopBeforePoll": 279,
+    "scrollTopAfterPoll": 279,
+    "scrollTopAfterDismiss": 279,
+    "messagesHeightBeforeDismiss": 454,
+    "messagesHeightAfterDismiss": 531,
+    "remindersAfterDismiss": 0,
+    "screenshot": "/Users/pmp/.codex/visualizations/2026/10/07/01a114fe-a63a-7ca1-836d-9b070a05c163/mobile-chat-36.png"
+  },
+  "noNewRunsOrConversationTurns": true,
+  "originalTaskNotRerun": true,
+  "originalConversationNotEdited": true
+}

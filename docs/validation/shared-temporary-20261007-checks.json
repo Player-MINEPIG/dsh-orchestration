@@ -1,0 +1,281 @@
+{
+  "date": "2026-10-07",
+  "artifact": "task-system-shared-temporary-28-20261007.tgz",
+  "tests": {
+    "workspace": {
+      "total": 494,
+      "passed": 493,
+      "skipped": 1
+    },
+    "native": {
+      "total": 73,
+      "passed": 73,
+      "skipped": 0
+    },
+    "legacy": {
+      "total": 98,
+      "passed": 98,
+      "skipped": 0
+    },
+    "management": {
+      "total": 18,
+      "passed": 14,
+      "skipped": 4
+    },
+    "passed": 678,
+    "skipped": 5,
+    "failed": 0,
+    "log": ".runtime/shared-temporary-20261007/check28-final.log",
+    "missingNativePresetRegression": {
+      "before": "fails with unknown read/write/edit",
+      "after": "passes with actual official preset registry and scoped file tools"
+    }
+  },
+  "hosts": {
+    "mbp": {
+      "pid": 39918,
+      "record": ".runtime/project-runtime-20261006/mbp-high-default-37-host.json",
+      "role": "executor",
+      "nodeId": "mbp-executor",
+      "paused": false,
+      "taskSessionsEnabled": true,
+      "executionTools": [
+        "read",
+        "write",
+        "edit"
+      ]
+    },
+    "vps": {
+      "pid": 2127595,
+      "role": "planner",
+      "nodeId": "vps-planner",
+      "service": "dsh-orchestration-web.service",
+      "active": true,
+      "restarts": 0,
+      "autoExecute": false,
+      "schedulerEnabled": false
+    }
+  },
+  "authorizedConfigurationChanges": {
+    "mbp": [
+      "executionTools [] to read/write/edit",
+      "localNode.models reasoningEfforts off to high",
+      "coordinator.nativeRoutes reasoningEfforts off to high",
+      "live decision preset effort off to high"
+    ],
+    "vps": [
+      "remoteNodes executor reasoningEfforts off to high",
+      "projectAgentOptions reasoningEffort off to high",
+      "agent-default-model reasoningEffort off to high"
+    ],
+    "otherConfigurationPreserved": true,
+    "workspaceRootsAndRemoteGrantsUnchanged": true,
+    "apiCredentialsPreserved": true
+  },
+  "initialIncident": {
+    "taskId": "4c7a4917-eace-42f0-8980-b3c411fc9e61",
+    "title": "只是测试",
+    "firstRunRouteEffort": "off",
+    "firstRunTools": [
+      "task_children",
+      "task_nodes",
+      "task_settle",
+      "task_wait"
+    ],
+    "firstRunCalls": [
+      "task_nodes",
+      "task_settle"
+    ],
+    "firstReportedFileNotCreated": true,
+    "laterOrdinaryBrowserTurn": {
+      "effort": "high",
+      "fullHostToolsLoaded": true,
+      "actuallyWroteFile": true,
+      "taskSettleDenied": "requires exact owned native agent"
+    },
+    "conclusion": "Reasoning strength does not grant tools. Managed remote execution and ordinary browser continuation use different tool compositions; native executor also omitted DSH tool preset mounting."
+  },
+  "protocol": {
+    "temporarySharedWorkspace": true,
+    "distinctTaskSessions": true,
+    "sameWorkerTemporarySerialization": true,
+    "sameTaskCwdPersistence": true,
+    "legacyCwdNotRewritten": true,
+    "nativePresetMountedBeforeRestriction": true,
+    "sessionPresetRecordedAndResumed": true,
+    "hostUTCIncluded": true
+  },
+  "oldTestCleanup": {
+    "archivedSessions": [
+      "task-b3fe2001-6ac8-4cbe-a0da-c2f3bcd45673",
+      "task-48981ead-9299-44d0-b503-33035325f4bb"
+    ],
+    "removedWorkspaceEntries": [
+      "临时任务 · 只是测试",
+      "临时任务 · 执行端临时目录验收25b"
+    ],
+    "foldersAndHistoryRetained": true
+  },
+  "diagnosticRuns": [
+    {
+      "taskId": "ee61ca05-6220-4205-9679-8e29fc2fb8a0",
+      "title": "共享临时工作区文件验收26",
+      "failure": "native tool preset not mounted; no published native session/file effect",
+      "finalTaskState": "cancelled",
+      "operatorStopConfirmedAfterMBPStopped": true,
+      "automaticallyReplayed": false
+    },
+    {
+      "taskId": "81cf5125-e649-48a0-9664-055da53bf74c",
+      "title": "共享临时工作区文件验收27",
+      "toolsAndDiskWriteVerified": true,
+      "timestampAcceptanceFailed": "model supplied 12:34:56Z despite actual disk write at 09:19:13Z",
+      "effort": "off",
+      "historicalReportPreserved": true
+    }
+  ],
+  "realTasks": [
+    {
+      "taskId": "8b8b56e7-bb99-42f4-b95d-f11a2dc0609b",
+      "title": "共享临时工作区文件验收28",
+      "taskState": "completed",
+      "runId": "b6bd78ec-832a-49fc-8cf7-98219bf36502",
+      "runState": "succeeded",
+      "runCount": 1,
+      "attemptCount": 1,
+      "attemptId": "f4757c5e-3d0e-4c28-a0a6-20ea707d639e",
+      "route": {
+        "model": "deepseek-flash",
+        "nodeId": "mbp-executor",
+        "provider": "deepseek-official",
+        "reasoningEffort": "high",
+        "requiredCapabilities": [],
+        "workspaceId": "acceptance"
+      },
+      "dispatchState": "acknowledged",
+      "sessionId": "task-8239faff-a382-41b2-9adf-99eb575df68d",
+      "cwd": "/Users/pmp/AI/deepseek-harness/test-env/dsh-task-management-candidate-3-ece68974/data/workspace/scheduler-scheduler-5b933515-b3ae-43ec-bf5b-e7c6b1bfaebd-bc622088a8d1/temporary-tasks",
+      "agentPreset": "standard",
+      "requestConfig": {
+        "provider": "deepseek-official",
+        "model": "deepseek-flash",
+        "reasoningEffort": "high",
+        "maxTokens": 256000
+      },
+      "visibleTools": [
+        "edit",
+        "read",
+        "subagent",
+        "task_children",
+        "task_nodes",
+        "task_settle",
+        "task_wait",
+        "write"
+      ],
+      "toolCalls": [
+        "write",
+        "read",
+        "write",
+        "read",
+        "task_settle"
+      ],
+      "toolErrorCodes": [
+        "FS_NOT_OBSERVED"
+      ],
+      "hostTimesUTC": [
+        "2026-10-07T09:29:14.724Z"
+      ],
+      "report": {
+        "body": "Action: overwrote existing test.md via write, then re-read it to verify actual on-disk content.\n\nRelative path: temporary-tasks/test.md (workspace-relative; absolute: /Users/pmp/AI/deepseek-harness/test-env/dsh-task-management-candidate-3-ece68974/data/workspace/scheduler-scheduler-5b933515-b3ae-43ec-bf5b-e7c6b1bfaebd-bc622088a8d1/temporary-tasks/test.md)\n\nActual full content (7 lines, verified by read):\n# Shared Temp Workspace File Acceptance 28\n\n- Marker: SHARED-TEMP-28-20261007\n- currentTimeUTC: 2026-10-07T09:29:14.724Z\n- Workspace: temporary-tasks\n\nThis file was written for the small-scale file tool acceptance check.\n\nNotes: the marker and the host-provided currentTimeUTC are present verbatim; no timestamp was invented. The previous content (acceptance 27) was fully replaced. No subtasks were created and no other files were modified.",
+        "title": "File acceptance 28 — test.md written and verified"
+      }
+    },
+    {
+      "taskId": "f949de5b-7664-4b67-bbc6-83de9c65976d",
+      "title": "共享临时工作区读取验收28",
+      "taskState": "completed",
+      "runId": "a8130003-4d34-400c-ad69-efd77d7db196",
+      "runState": "succeeded",
+      "runCount": 1,
+      "attemptCount": 1,
+      "attemptId": "81d7efb6-5713-43c4-8297-921fa2e9ea16",
+      "route": {
+        "model": "deepseek-flash",
+        "nodeId": "mbp-executor",
+        "provider": "deepseek-official",
+        "reasoningEffort": "high",
+        "requiredCapabilities": [],
+        "workspaceId": "acceptance"
+      },
+      "dispatchState": "acknowledged",
+      "sessionId": "task-d7783ec2-7db4-47c5-a8f8-e1e73403f744",
+      "cwd": "/Users/pmp/AI/deepseek-harness/test-env/dsh-task-management-candidate-3-ece68974/data/workspace/scheduler-scheduler-5b933515-b3ae-43ec-bf5b-e7c6b1bfaebd-bc622088a8d1/temporary-tasks",
+      "agentPreset": "standard",
+      "requestConfig": {
+        "provider": "deepseek-official",
+        "model": "deepseek-flash",
+        "reasoningEffort": "high",
+        "maxTokens": 256000
+      },
+      "visibleTools": [
+        "edit",
+        "read",
+        "subagent",
+        "task_children",
+        "task_nodes",
+        "task_settle",
+        "task_wait",
+        "write"
+      ],
+      "toolCalls": [
+        "read",
+        "task_settle"
+      ],
+      "toolErrorCodes": [],
+      "hostTimesUTC": [
+        "2026-10-07T09:30:59.397Z"
+      ],
+      "report": {
+        "body": "## 验收结果：通过\n\n**读取方式**：仅调用 read 工具（无写入/修改，无子任务）。\n\n**相对路径**：`test.md`（当前工作区 temporary-tasks）\n\n**核对项**\n- 标记 `SHARED-TEMP-28-20261007`：存在（第 3 行）\n- `currentTimeUTC`：存在（第 4 行，值为 `2026-10-07T09:29:14.724Z`）\n\n**读到的实际完整内容（7 行）**\n\n```\n# Shared Temp Workspace File Acceptance 28\n\n- Marker: SHARED-TEMP-28-20261007\n- currentTimeUTC: 2026-10-07T09:29:14.724Z\n- Workspace: temporary-tasks\n\nThis file was written for the small-scale file tool acceptance check.\n```\n\n结论：文件存在且两项核对内容均匹配，无编造内容。",
+        "data": {
+          "createdSubtasks": false,
+          "currentTimeUTC": "2026-10-07T09:29:14.724Z",
+          "lineCount": 7,
+          "marker": "SHARED-TEMP-28-20261007",
+          "markerFound": true,
+          "relativePath": "test.md",
+          "wroteFiles": false
+        },
+        "title": "共享临时工作区读取验收28 — 通过"
+      }
+    }
+  ],
+  "file": {
+    "path": "/Users/pmp/AI/deepseek-harness/test-env/dsh-task-management-candidate-3-ece68974/data/workspace/scheduler-scheduler-5b933515-b3ae-43ec-bf5b-e7c6b1bfaebd-bc622088a8d1/temporary-tasks/test.md",
+    "exists": true,
+    "content": "# Shared Temp Workspace File Acceptance 28\n\n- Marker: SHARED-TEMP-28-20261007\n- currentTimeUTC: 2026-10-07T09:29:14.724Z\n- Workspace: temporary-tasks\n\nThis file was written for the small-scale file tool acceptance check.\n",
+    "modifiedAtUTC": "2026-10-07T09:29:19.636953+00:00"
+  },
+  "preservation": {
+    "preexistingWorkEntitiesPreservedAfter28": true,
+    "nodeAndHeartbeatChangeNormally": true,
+    "hermesDatabaseNotAccessedOrModified": true
+  },
+  "limitations": [
+    "Unstructured task_settle success is not a universal artifact verifier; this acceptance independently inspected tools and disk.",
+    "DSH can register scope-local subagent schema even after inherited tool filtering; task allowlist guard denies calls outside the whitelist.",
+    "Current UTC is the prompt generation time, not a clock refreshed for every tool call."
+  ],
+  "gui": {
+    "mobileViewport": [
+      390,
+      844
+    ],
+    "physicalPhoneRetested": false,
+    "sameTemporaryWorkspaceVisible": true,
+    "temporaryNativeSessionsVisible": 3,
+    "mobileScreenshot": "/Users/pmp/.codex/visualizations/2026/10/05/01a10d39-0346-75c0-91bd-eeb99d3872d7/shared-temporary-vps-high-mobile.png",
+    "desktopScreenshot": "/Users/pmp/.codex/visualizations/2026/10/05/01a10d39-0346-75c0-91bd-eeb99d3872d7/shared-temporary-mbp-high.png",
+    "viewportReset": true
+  }
+}

@@ -482,3 +482,142 @@ test('signed completed-tool native continuation recovers its retry receipt and p
     await gateway.dispose(); serverStore.close(); ledger.close(); await h.dispose(); rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('signed native status requests renew a long-running task without restarting the model; cancellation still stops it', { timeout: 20000 }, async () => {
+  const h = await createNativeHarness({ config: { role: 'executor', nodeId: 'worker', executionTimeoutMs: 100 }, script: ['hang'] });
+  const ledger = TaskLedger.open(join(h.dir, 'coordinator.sqlite'), { role: 'planner', nodeId: 'planner' });
+  const stores = ['server', 'client', 'worker'].map(name => new RecoveryStore(join(h.dir, `${name}.sqlite`)));
+  const [serverStore, clientStore, workerStore] = stores;
+  let gateway, worker;
+  try {
+    const keys = generateKeyPairSync('ed25519');
+    const peer = { keyId: 'offline-key', nodeId: 'worker', publicKey: keys.publicKey, audience: 'planner', operations: ['claim', 'renew', 'submit', 'cancel', 'receipt', 'bindSession', 'markRunning', 'getRun', 'getAttempt', 'acknowledgeCancellation', 'listWork', 'taskWait'], workspaces: ['workspace'], capabilities: ['native-offline'] };
+    ledger.registerWorkspace('workspace', { workspaceId: 'workspace', nodeId: 'worker', path: h.dir, label: 'Isolated native workspace', state: 'ready', createdAt: new Date().toISOString() });
+    ledger.registerNode('node', { nodeId: 'worker', roles: ['executor'], capabilities: ['native-offline'], models: [{ provider: 'test-offline', model: 'script', reasoningEfforts: [] }], workspaceIds: ['workspace'], enabled: true, lastSeenAt: new Date().toISOString() });
+    const task = ledger.createTask('task', { title: 'Native remote execution', workspaceId: 'workspace', policy: { allowedNodeIds: ['worker'], allowedWorkspaceIds: ['workspace'], allowedTools: [], maxRuntimeMs: 100 } }).value;
+    const run = ledger.createRun('run', { taskId: task.taskId, route: { nodeId: 'worker', provider: 'test-offline', model: 'script', requiredCapabilities: ['native-offline'], workspaceId: 'workspace' } }).value;
+    gateway = new RemoteGateway({ role: 'planner', nodeId: 'planner', ledger, store: serverStore, verifier: new IdentityVerifier({ audience: 'planner', peers: [peer] }) });
+    const client = new RemoteClient({ endpoint: 'https://offline-fixture.invalid/commands', nodeId: 'worker', keyId: peer.keyId, audience: 'planner', privateKey: keys.privateKey, store: clientStore, fetch: async (_url, options) => new Response(JSON.stringify(await gateway.handle(options.body))) });
+    const remote = new RemoteLedgerClient(client, 'worker');
+    const provider = nativeExecutionAdapter(h.ctx.taskSystem.native, { provider: 'test-offline', models: [{ model: 'script', reasoningEfforts: [] }], capabilities: ['native-offline'] });
+    worker = new ExecutorWorker({ ttlMs: 1000, ledger: remote, provider, store: workerStore, policy: { role: 'executor', nodeId: 'worker', capabilities: ['native-offline'], workspaces: [{ workspaceId: 'workspace', nodeId: 'worker', path: h.dir, allowedRoot: h.dir }] } });
+    const until = async predicate => { const deadline=Date.now()+5000; while(!predicate()){ assert.ok(Date.now()<deadline,'status handshake timed out'); await new Promise(resolve=>setTimeout(resolve,10)); } };
+    const pending = worker.pollOnce(1);
+    await until(()=>h.adapter.requests.length===1);
+    const version = ledger.taskActionState(task.taskId).version;
+    const requested = ledger.requestExecutionStatus('status-request',{runId:run.runId,expectedActionVersion:version});
+    assert.deepEqual(ledger.requestExecutionStatus('status-request',{runId:run.runId,expectedActionVersion:version}),requested);
+    const attemptId=requested.value.attemptId;
+    assert.equal(ledger.requestExecutionStatus('status-second-click',{runId:run.runId,expectedActionVersion:version}).value.progressRequest.requestId,'status-request');
+    await until(()=>ledger.getAttempt(attemptId).progressRequest?.summary);
+    const first=ledger.getAttempt(attemptId).progressRequest;
+    assert.match(first.summary,/正在生成下一步/);
+    assert.ok(first.reportedAt);
+    assert.equal(ledger.getRun(run.runId).state,'running');
+    assert.equal(h.ctx.taskSystem.native.activeCount,1);
+    assert.equal(h.adapter.requests.length,1,'status reporting must not call the model again');
+    assert.ok(Date.now()-Date.parse(ledger.getRun(run.runId).executionStartedAt)>100,'exceeded both legacy budgets');
+    const attempt=ledger.getAttempt(attemptId), ref={runId:run.runId,attemptId,nodeId:'worker',fence:attempt.fence,executionId:attempt.executionId};
+    assert.throws(()=>ledger.renew('foreign-progress',{...ref,ttlMs:1000,progress:{requestId:'wrong-request',summary:'forged'}}),/Progress request changed/);
+    ledger.requestExecutionStatus('status-request-next',{runId:run.runId,expectedActionVersion:ledger.taskActionState(task.taskId).version});
+    await until(()=>ledger.getAttempt(attemptId).progressRequest?.reportedAt);
+    assert.equal(ledger.getAttempt(attemptId).progressRequest.requestId,'status-request-next');
+    assert.equal(h.adapter.requests.length,1);
+    ledger.cancel('operator-stop',{taskId:task.taskId,runId:run.runId,reason:'User decided to stop after progress'});
+    await worker.cancel(run.runId);
+    const results=await pending;
+    assert.equal(results[0].status,'fulfilled');
+    assert.equal(results[0].value.state,'cancelled');
+    assert.equal(ledger.getRun(run.runId).state,'cancelled');
+    assert.equal(h.ctx.taskSystem.native.activeCount,0);
+    assert.equal(ledger.history(task.taskId).reports.length,0);
+  } finally {
+    await worker?.dispose(); await gateway?.dispose();
+    for (const store of stores) store.close();
+    ledger.close(); await h.dispose();
+  }
+});
+
+
+test('direct session message reuses an open native session and retransmits only the reply, with no Run or Attempt', {timeout:20000}, async () => {
+  const h = await createNativeHarness({config:{role:'executor',nodeId:'worker'},script:['原会话的历史','这是直接回复']});
+  const ledger = TaskLedger.open(join(h.dir,'direct-authority.sqlite'),{role:'planner',nodeId:'planner'});
+  const stores = [0,1,2].map(i=>new RecoveryStore(join(h.dir,`direct-${i}.sqlite`)));
+  let handle, worker, gateway;
+  try {
+    ledger.registerWorkspace('w',{workspaceId:'workspace',nodeId:'worker',path:h.dir,label:'test',state:'ready',createdAt:new Date().toISOString()});
+    ledger.registerNode('n',{nodeId:'worker',roles:['executor'],models:[{provider:'test-offline',model:'script',reasoningEfforts:[]}],capabilities:[],workspaceIds:['workspace'],defaultWorkspaceId:'workspace',enabled:true,lastSeenAt:new Date().toISOString()});
+    const task=ledger.createTask('t',{title:'Existing task'}).value;
+    const run=ledger.createRun('r',{taskId:task.taskId,route:{nodeId:'worker',provider:'test-offline',model:'script',workspaceId:'workspace',requiredCapabilities:[]}}).value;
+    const claim=ledger.claim('c',{runId:run.runId,nodeId:'worker',ttlMs:60000}).value;
+    const ref={runId:run.runId,attemptId:claim.attempt.attemptId,nodeId:'worker',fence:claim.attempt.fence,executionId:'owner'};
+    ledger.markRunning('start',ref);
+    const selected=ledger.selectTaskSession('session',{...ref,workspaceId:'workspace',session:{mode:'new'}}).value;
+    claim.attempt=ledger.getAttempt(ref.attemptId);claim.run=ledger.getRun(ref.runId);
+    handle=await h.ctx.agents.create({sessionId:SessionId(selected.sessionId),meta:{cwd:h.dir},agentOptions:{provider:'test-offline',model:'script'}});
+    handle.agent.followup(createUserMessage({source:{kind:'user'},content:[{type:'text',text:'先前的对话'}]}));await handle.agent.whenIdle();await h.ctx.sessions.flush(handle.agent.session);
+    // WebUI registers tools directly on its Agent; these are not global mask names.
+    handle.agent.ctx.tools.register((await import('@deepseek-ai/dsh-tools')).defineTool({name:'webui_local',description:'Original session tool',parameters:{},output:{schema:{type:'string'},render:(_a,r)=>[{type:'text',text:r}]},execute:()=> 'local'}));
+    ledger.submit('end',{...ref,outcome:'success',summary:'previous task finished'});
+    stores[2].createDispatch({attemptId:ref.attemptId,state:'acknowledged',claim,lease:ref,sessionId:selected.sessionId,workspacePath:h.dir});
+    const before={runs:ledger.snapshot().runs,attempts:ledger.snapshot().attempts,reports:ledger.snapshot().reports};
+    const keys=generateKeyPairSync('ed25519');
+    const peer={keyId:'key',nodeId:'worker',publicKey:keys.publicKey,audience:'planner',operations:['sessionMessages','sessionMessageReply','listWork','receipt'],workspaces:['workspace'],capabilities:[]};
+    gateway=new RemoteGateway({role:'planner',nodeId:'planner',ledger,store:stores[0],verifier:new IdentityVerifier({audience:'planner',peers:[peer]})});
+    let drop=true;
+    const client=new RemoteClient({endpoint:'https://test.invalid',nodeId:'worker',keyId:'key',audience:'planner',privateKey:keys.privateKey,store:stores[1],fetch:async(_url,options)=>{
+      const envelope=JSON.parse(options.body);if(envelope.operation==='sessionMessageReply'&&drop)throw new Error('offline');
+      return new Response(JSON.stringify(await gateway.handle(options.body)));
+    }});
+    const remote=new RemoteLedgerClient(client,'worker');
+    const provider=nativeExecutionAdapter(h.ctx.taskSystem.native,{provider:'test-offline',models:[{model:'script',reasoningEfforts:[]}],capabilities:[]});
+    worker=new ExecutorWorker({ledger:remote,provider,store:stores[2],policy:{role:'executor',nodeId:'worker',capabilities:[],workspaces:[{workspaceId:'workspace',nodeId:'worker',path:h.dir,allowedRoot:h.dir}]}});
+    const input={taskId:task.taskId,nodeId:'worker',sessionId:selected.sessionId,text:'只回复一句话，不重跑任务'};
+    ledger.queueSessionMessage('direct1',input);ledger.queueSessionMessage('direct1',input);
+    assert.throws(()=>ledger.queueSessionMessage('direct1',{...input,text:'changed'}),/reused|conflict/i);
+    assert.throws(()=>ledger.queueSessionMessage('foreign',{...input,nodeId:'other'}),/bound/);
+    await worker.pollOnce();
+    for(let i=0;i<100&&!stores[2].sessionMessageState('direct1')?.result;i++)await new Promise(r=>setTimeout(r,10));
+    assert.equal(stores[2].sessionMessageState('direct1').result.state,'completed');
+    assert.match(stores[2].sessionMessageState('direct1').result.reply,/这是直接回复/);
+    assert.equal(ledger.getSessionMessage('direct1').state,'queued');
+    assert.equal(h.ctx.agents.get(SessionId(selected.sessionId)),handle.agent,'WebUI agent survives');
+    assert.equal(h.adapter.requests.length,2);
+    drop=false;await worker.pollOnce();
+    for(let i=0;i<100&&ledger.getSessionMessage('direct1').state==='queued';i++)await new Promise(r=>setTimeout(r,10));
+    assert.equal(ledger.getSessionMessage('direct1').state,'completed');
+    assert.equal(h.adapter.requests.length,2,'delivery retry must not invoke the model again');
+    assert.ok((h.adapter.requests.at(-1).tools||[]).every(t=>!t.name.startsWith('task_')));
+    assert.ok(h.adapter.requests.at(-1).tools.some(t=>t.name==='webui_local'),'original WebUI tools remain available');
+    assert.deepEqual({runs:ledger.snapshot().runs,attempts:ledger.snapshot().attempts,reports:ledger.snapshot().reports},before);
+    const reader=await h.ctx.sessionPersistence.open(SessionId(selected.sessionId),'read');
+    try { const serialized=JSON.stringify((await reader.read()).events);assert.match(serialized,/只回复一句话/);assert.match(serialized,/这是直接回复/); } finally { await reader.close(); }
+    // A restarted process never automatically replays a message admitted before its crash.
+    ledger.queueSessionMessage('interrupted',input);stores[2].saveSessionMessageState('interrupted',{state:'started'});
+    await worker.pollOnce();for(let i=0;i<100&&ledger.getSessionMessage('interrupted').state==='queued';i++)await new Promise(r=>setTimeout(r,10));
+    assert.equal(ledger.getSessionMessage('interrupted').state,'uncertain');assert.equal(h.adapter.requests.length,2);
+    // An active WebUI turn keeps the direct message queued until the session becomes idle.
+    let release;h.adapter.script.push(()=>new Promise(r=>{release=r;}));
+    handle.agent.followup(createUserMessage({source:{kind:'user'},content:[{type:'text',text:'WebUI正在处理的消息'}]}));
+    for(let i=0;i<100&&!release;i++)await new Promise(r=>setTimeout(r,5));
+    ledger.queueSessionMessage('busy',input);await worker.pollOnce();await new Promise(r=>setTimeout(r,20));
+    assert.equal(stores[2].sessionMessageState('busy'),undefined);assert.equal(ledger.getSessionMessage('busy').state,'queued');
+    release('WebUI回复');await handle.agent.whenIdle();h.adapter.script.push('排队后直接回复');
+    await worker.pollOnce();for(let i=0;i<100&&ledger.getSessionMessage('busy').state==='queued';i++)await new Promise(r=>setTimeout(r,10));
+    assert.equal(ledger.getSessionMessage('busy').state,'completed');
+    // A concurrent WebUI follow-up belongs to its own turn, not to this message's reply.
+    let releaseDirect;h.adapter.script.push(()=>new Promise(r=>{releaseDirect=r;}),'另一个WebUI问题的回复');
+    ledger.queueSessionMessage('correlated',input);await worker.pollOnce();
+    for(let i=0;i<100&&!releaseDirect;i++)await new Promise(r=>setTimeout(r,5));
+    handle.agent.followup(createUserMessage({source:{kind:'user'},content:[{type:'text',text:'另一个WebUI问题'}]}));
+    releaseDirect('仅属于直接消息的回复');
+    for(let i=0;i<100&&ledger.getSessionMessage('correlated').state==='queued';i++)await new Promise(r=>setTimeout(r,10));
+    assert.match(ledger.getSessionMessage('correlated').reply,/仅属于直接消息/);
+    assert.doesNotMatch(ledger.getSessionMessage('correlated').reply,/另一个WebUI/);
+    // Closed sessions are resumed using the same ID, with old history available.
+    await handle.dispose();handle=undefined;h.adapter.script.push('恢复原会话后的回复');ledger.queueSessionMessage('closed',input);
+    await worker.pollOnce();for(let i=0;i<100&&ledger.getSessionMessage('closed').state==='queued';i++)await new Promise(r=>setTimeout(r,10));
+    assert.equal(ledger.getSessionMessage('closed').state,'completed');assert.match(ledger.getSessionMessage('closed').reply,/恢复原会话/);
+    assert.match(JSON.stringify(h.adapter.requests.at(-1).messages),/原会话的历史/);
+  } finally { await worker?.dispose();await handle?.dispose();await gateway?.dispose();for(const s of stores)s.close();ledger.close();await h.dispose(); }
+});

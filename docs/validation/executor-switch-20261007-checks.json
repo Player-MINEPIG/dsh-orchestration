@@ -1,0 +1,70 @@
+{
+  "date": "2026-10-07",
+  "package": "task-system-executor-switch-23-20261007.tgz",
+  "tests": {
+    "workspace": {
+      "total": 480,
+      "passed": 479,
+      "skipped": 1,
+      "failed": 0
+    },
+    "nativeRemote": {
+      "total": 72,
+      "passed": 72,
+      "failed": 0
+    },
+    "switchIntegration": "Two real DSH hosts, isolated HTTP and scripted model: paused diagnostics do not send heartbeat or claim; enable restores nonzero polling/heartbeat; task succeeded once; disable sends unavailable after drain; re-enable does not repeat execution."
+  },
+  "deployment": {
+    "mbp": {
+      "pid": 83290,
+      "role": "executor",
+      "paused": true,
+      "backup": "backups/executor-switch23-20261007",
+      "taskRunAttemptReportCounts": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "originalEntitiesPreserved": true
+    },
+    "vps": {
+      "pid": 2011848,
+      "role": "planner",
+      "service": "dsh-orchestration-web.service",
+      "active": true,
+      "restartCount": 0,
+      "backup": "backups/executor-switch23-20261007",
+      "taskRunAttemptReportDecisionCounts": [
+        9,
+        10,
+        9,
+        14,
+        12
+      ],
+      "originalEntitiesPreserved": true,
+      "projectSessionAdhocDispatchRowsPreserved": true
+    }
+  },
+  "browser": {
+    "mbpSimpleSwitchVisible": true,
+    "mbpSwitchOff": true,
+    "connectionCheck": "success against updated VPS; remains off",
+    "mobileViewport": {
+      "width": 390,
+      "height": 844,
+      "documentScrollWidth": 390
+    },
+    "viewportReset": true,
+    "screenshot": ".runtime/heartbeat-switch-20261007/mbp-switch-mobile.png",
+    "vpsPrivateLogin": "verified; token omitted"
+  },
+  "liveWorkloadDispatched": false,
+  "paidModelCalls": 0,
+  "limitations": [
+    "No physical iPhone/Safari test",
+    "Prior intermittent diagnostic timeout root cause remains unknown",
+    "Execution or unresolved recovery can block configuration changes"
+  ]
+}

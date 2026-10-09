@@ -41,6 +41,7 @@ export interface WorkspaceCandidate extends TaskCandidate {
 export interface TaskDecisionSnapshot {
   /** Scheduler-host requests leave workspace/session choices to the executor. */
   workspaceSelection?: "executor";
+  rankExecutors?: boolean;
   stateHash: string;
   validUntil: number;
   context: Json;
@@ -62,6 +63,7 @@ export interface TaskDecisionProposal {
   executor: ExecutorCandidate | null;
   modelRoute: ModelRouteCandidate | null;
   workspace: WorkspaceCandidate | null;
+  fallbackRoutes?: ModelRouteCandidate[];
   reporting: {
     protocolReceiptRequired: true;
     narrative: "none" | "summary" | "escalate";
@@ -159,7 +161,7 @@ function question(
 export function buildTaskDecisionRequest(
   requestId: string,
   snapshot: TaskDecisionSnapshot,
-  route: Pick<DecisionRequest, "provider" | "model" | "reasoningEffort"> = {},
+  route: Pick<DecisionRequest, "provider" | "model" | "reasoningEffort" | "preset"> = {},
   now = Date.now(),
 ): DecisionRequest {
   if (snapshot.validUntil <= now) fail("task decision snapshot expired");
@@ -195,7 +197,7 @@ export function buildTaskDecisionRequest(
       ),
       question(
         "executor",
-        "For an authorized execution request, select a suitable already eligible executor. Choose none only when no executor work is needed or no suitable executor is available. Ignored conversation must choose none.",
+        "For an authorized execution request, select the first suitable eligible executor. Prefer matching capability, then online idle machines. Registered offline machines remain eligible: recommend them and wait in inbox. Choose none only for conversation or no suitable registered executor. Ignored conversation must choose none.",
         { none: "No execution", ...candidateMap(executors) },
       ),
       question(
@@ -203,6 +205,17 @@ export function buildTaskDecisionRequest(
         "Select an eligible provider/model/reasoning tuple for the chosen executor, or none if not executing. Never invent another combination.",
         { none: "No model execution", ...candidateMap(routes) },
       ),
+      ...(snapshot.rankExecutors
+        ? Array.from(
+            { length: Math.min(8, Math.max(0, executors.length - 1)) },
+            (_, i) =>
+              question(
+                `fallbackRoute${i + 1}`,
+                `Recommend fallback number ${i + 1}, an eligible model/effort route on a DIFFERENT suitable executor. Preserve capability match; prefer online idle hosts and inexpensive effort for simple work. Do not repeat the primary executor or a prior fallback. Choose none for no further suitable executor; all later fallbacks must then be none. Offline registered hosts remain valid recommendations and wait in inbox.`,
+                { none: "No more suitable executors", ...candidateMap(routes) },
+              ),
+          )
+        : []),
       ...(snapshot.workspaceSelection === "executor"
         ? []
         : [
@@ -257,6 +270,7 @@ export function consumeTaskDecisionReceipt(
       request.requestId,
       snapshot,
       {
+        ...(request.preset ? { preset: request.preset } : {}),
         ...(request.provider ? { provider: request.provider } : {}),
         ...(request.model ? { model: request.model } : {}),
         ...(request.reasoningEffort
@@ -269,10 +283,7 @@ export function consumeTaskDecisionReceipt(
     if (stableStringify(request) !== stableStringify(rebuilt))
       return abstain("request-snapshot-mismatch");
     object(receipt.answers, "answers");
-    const answerIds =
-      snapshot.workspaceSelection === "executor"
-        ? ids.filter((id) => id !== "workspace")
-        : [...ids];
+    const answerIds = request.questions.map((q) => q.questionId);
     keys(receipt.answers, answerIds, answerIds, "task answers");
     const values: Record<string, string> = {};
     for (const q of request.questions) {
@@ -330,8 +341,32 @@ export function consumeTaskDecisionReceipt(
       return abstain("unexpected-task-attachment");
     if (values.persist === "ignore" && (executor || modelRoute || workspace))
       return abstain("ignored-task-cannot-dispatch");
+    const fallbackRoutes: ModelRouteCandidate[] = [];
+    const seen = new Set(executor ? [executor.id] : []);
+    let ended = false;
+    for (const q of request.questions.filter((q) =>
+      q.questionId.startsWith("fallbackRoute"),
+    )) {
+      const value = values[q.questionId];
+      if (value === "none") {
+        ended = true;
+        continue;
+      }
+      const route = routes.find((r) => r.id === value);
+      if (
+        ended ||
+        !executor ||
+        !route ||
+        seen.has(route.executorId) ||
+        values.persist === "ignore"
+      )
+        return abstain("invalid-fallback-order");
+      seen.add(route.executorId);
+      fallbackRoutes.push(structuredClone(route));
+    }
     return {
       kind: "proposal",
+      ...(snapshot.rankExecutors ? { fallbackRoutes } : {}),
       persistence: values.persist as TaskDecisionProposal["persistence"],
       attachTaskId: values.attach === "none" ? null : values.attach!,
       executor: executor ? structuredClone(executor) : null,

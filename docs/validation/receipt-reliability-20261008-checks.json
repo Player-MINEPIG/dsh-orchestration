@@ -1,0 +1,51 @@
+{
+  "date": "2026-10-08",
+  "runtimeRevision": 33,
+  "originalTaskId": "ec00be4c-929d-47af-ae22-394c9b80ae85",
+  "originalRunId": "e4d8a8c5-9ee9-4129-82f4-46cbd771a8a0",
+  "originalAttemptId": "479aa212-00be-43bc-b60e-59909bcfc729",
+  "timelineUTC": {
+    "claimed": "2026-10-08T03:43:43.300Z",
+    "workloadStarted": "2026-10-08T03:44:16.039Z",
+    "fileWritten": "2026-10-08T03:44:25.380Z",
+    "fileVerified": "2026-10-08T03:44:27.222Z",
+    "aborted": "2026-10-08T03:44:28.304Z",
+    "leaseExpired": "2026-10-08T03:45:13.965Z"
+  },
+  "cause": "45000ms native execution budget counted from claim; task runtime limit exceeded before task_settle. File was written but no settlement was submitted.",
+  "artifact": "workspace-structure.md",
+  "fixes": [
+    "Return an unknown EXECUTION_TIMEOUT receipt after native cleanup when local deadline expires and worker authority remains valid.",
+    "Normal worker polling retries durable results with the same command identity; it never reexecutes the workload.",
+    "Task detail falls back to latest run.settled summary when no result report exists."
+  ],
+  "checks": {
+    "total": 708,
+    "passed": 703,
+    "skipped": 5,
+    "failed": 0,
+    "newCases": [
+      "signed native runtime timeout receipt acknowledged by coordinator",
+      "polling recovery after submit outage without provider replay",
+      "polling recovery after lost ACK without provider replay"
+    ]
+  },
+  "deployment": {
+    "package": "task-system-receipt-reliability-33-20261008.tgz",
+    "mbpPid": 61648,
+    "mbpExecutionTimeoutMs": 300000,
+    "mbpHttpUnauthenticatedStatus": 401,
+    "vpsPid": 2971561,
+    "vpsActiveState": "active",
+    "vpsSubState": "running",
+    "vpsNRestarts": 0,
+    "backupDirectoryName": "receipt-reliability33-20261008"
+  },
+  "limits": [
+    "Successful side effects alone do not prove task success; explicit validated settlement remains required.",
+    "Long outages, authority expiry, or a crash before result persistence still require reconciliation."
+  ],
+  "originalTaskNotReexecuted": true,
+  "originalArtifactNotModified": true,
+  "originalUncertainRecordPreserved": true
+}

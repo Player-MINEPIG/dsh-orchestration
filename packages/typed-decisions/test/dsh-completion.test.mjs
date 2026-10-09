@@ -39,11 +39,11 @@ class StubModel extends LlmAdapter {
 }
 async function harness(t, { script = [success], config = {}, efforts, versionSource = 'configured-pin', timeoutMs = 2000 } = {}) {
   const ctx = new Context();
-  await ctx.plugin(Loader, { baseUrl: pathToFileURL(fileURLToPath(new URL('../../../package.json', import.meta.url))).href });
+  await ctx.plugin(Loader, { baseUrl: pathToFileURL(fileURLToPath(new URL('../package.json', import.meta.url))).href });
   const rows = [
     { id: 'llm', name: '@deepseek-ai/dsh-llm' },
-    { id: 'completion', name: '@dsh-task/typed-decisions/dsh-completion', config: { routes: [route], ...limits, ...config } },
-    { id: 'decisions', name: '@dsh-task/typed-decisions', config: { defaultProvider: 'ordinary', timeoutMs, failureLimit: 20, providers: [{ id: 'ordinary', kind: 'structured', models: [{ model: route.model, version: route.modelVersion, versionSource, reasoningEfforts: route.reasoningEfforts }] }] } },
+    { id: 'completion', name: './dist/dsh-completion.js', config: { routes: [route], ...limits, ...config } },
+    { id: 'decisions', name: './dist/index.js', config: { defaultProvider: 'ordinary', timeoutMs, failureLimit: 20, providers: [{ id: 'ordinary', kind: 'structured', models: [{ model: route.model, version: route.modelVersion, versionSource, reasoningEfforts: route.reasoningEfforts }] }] } },
   ];
   await ctx.loader.root.update(structuredClone(rows));
   await ctx.loader.await();

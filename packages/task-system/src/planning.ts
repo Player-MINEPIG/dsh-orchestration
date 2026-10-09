@@ -14,6 +14,7 @@ import type { ExecutionRoute, Json } from "./contracts.js";
 const digest = (value: unknown): string =>
   createHash("sha256").update(canonical(value)).digest("hex");
 export interface DecisionServicePort {
+  presetFor?(consumer: string): string | undefined;
   evaluate(
     request: DecisionRequest,
     options?: { signal?: AbortSignal },
@@ -32,6 +33,11 @@ export interface PlanningInput {
   route?: ExecutionRoute;
   /** Explicit Task workspace constraint; not a scheduler-model answer. */
   workspaceId?: string;
+  /** Host-bound project scope, never taken from tool arguments. */
+  projectId?: string;
+  /** Host-bound existing task; persistence cannot create a duplicate. */
+  taskId?: string;
+  expectedActionVersion?: string;
 }
 /** A consumer of the independent decision plugin. All grants are operator-owned policy. */
 export class TaskPlanner {
@@ -75,12 +81,33 @@ export class TaskPlanner {
   }
   private snapshot(input: PlanningInput) {
     const base = this.catalog();
+    // Project dispatch must pin an advertised effort rather than falling back
+    // to a provider default that can exceed the executor's declared catalog.
+    const modelRoutes =
+      input.projectId || input.taskId
+        ? base.modelRoutes.filter(
+            (route) =>
+              route.reasoningEffort !== undefined ||
+              !base.modelRoutes.some(
+                (other) =>
+                  other.executorId === route.executorId &&
+                  other.provider === route.provider &&
+                  other.model === route.model &&
+                  other.reasoningEffort !== undefined,
+              ),
+          )
+        : base.modelRoutes;
     const constraint = input.workspaceId
       ? this.ledger.getWorkspace(input.workspaceId)
       : undefined;
     return {
       ...base,
+      modelRoutes,
       workspaceSelection: "executor" as const,
+      ...(input.projectId || input.taskId ? { rankExecutors: true } : {}),
+      ...(input.taskId
+        ? { tasks: base.tasks.filter((t) => t.id === input.taskId) }
+        : {}),
       workspaces: [],
       ...(constraint
         ? {
@@ -89,7 +116,7 @@ export class TaskPlanner {
                 executor.id === constraint.nodeId &&
                 constraint.state === "ready",
             ),
-            modelRoutes: base.modelRoutes.filter(
+            modelRoutes: modelRoutes.filter(
               (route) =>
                 route.executorId === constraint.nodeId &&
                 constraint.state === "ready",
@@ -155,8 +182,8 @@ export class TaskPlanner {
           }
         : {
             kind: "proposal",
-            persistence: "create",
-            attachTaskId: null,
+            persistence: input.taskId ? "attach" : "create",
+            attachTaskId: input.taskId ?? null,
             executor: route
               ? { id: route.nodeId, description: route.nodeId, eligible: true }
               : null,
@@ -203,7 +230,12 @@ export class TaskPlanner {
     }
     const { buildTaskDecisionRequest, consumeTaskDecisionReceipt } =
       await import("./task-policy.js");
+    const preset =
+      !input.provider && !input.model && !input.reasoningEffort
+        ? decisions.presetFor?.("task-planning")
+        : undefined;
     const route = {
+      ...(preset ? { preset } : {}),
       ...(input.provider ? { provider: input.provider } : {}),
       ...(input.model ? { model: input.model } : {}),
       ...(input.reasoningEffort
@@ -221,9 +253,24 @@ export class TaskPlanner {
     const proposal = consumeTaskDecisionReceipt(
       receipt,
       request,
-      current,
+      {
+        ...current,
+        // Health/slots are advisory ranking evidence. Preserve the submitted
+        // descriptions while keeping current catalog identities and eligibility.
+        // Admission checks the latest heartbeat and slots after the decision.
+        executors: current.executors.map((executor) => ({
+          ...executor,
+          description:
+            snapshot.executors.find((candidate) => candidate.id === executor.id)
+              ?.description ?? executor.description,
+        })),
+      },
       this.now(),
     );
+    if (input.taskId && proposal.kind === "proposal") {
+      proposal.persistence = "attach";
+      proposal.attachTaskId = input.taskId;
+    }
     return this.view(
       this.ledger.recordDecision(`decision:${input.requestId}`, {
         decisionId: input.requestId,
@@ -254,7 +301,7 @@ export class TaskPlanner {
     };
   }
   /** Call only from an authorized task-intent path, never merely on seeing a report. */
-  apply(decisionId: string) {
+  apply(decisionId: string, options: { deferExecution?: boolean } = {}) {
     const existing = this.ledger.commandReceipt(`apply-decision:${decisionId}`);
     if (existing) return existing;
     const record = this.ledger.getDecision(decisionId);
@@ -308,6 +355,10 @@ export class TaskPlanner {
     const input = record.input as unknown as PlanningInput;
     return this.ledger.applyDecision(`apply-decision:${decisionId}`, {
       decisionId,
+      ...(input.expectedActionVersion
+        ? { expectedActionVersion: input.expectedActionVersion }
+        : {}),
+      ...(options.deferExecution ? { deferExecution: true } : {}),
       currentStateHash: current.stateHash,
       title: input.title,
       description: input.description,
@@ -330,13 +381,18 @@ export function taskDecisionCatalog(
   now = Date.now(),
 ): TaskDecisionSnapshot {
   const catalog = ledger.decisionCatalog();
+  const host = context as { role?: string; nodeId?: string };
+  const health = new Map(ledger.nodeStatuses().map((n) => [n.nodeId, n]));
   const executors = catalog.nodes
     .filter(
-      (n) => n.enabled && n.roles.some((r) => r === "executor" || r === "both"),
+      (n) =>
+        n.enabled &&
+        !(host.role === "planner" && host.nodeId === n.nodeId) &&
+        n.roles.some((r) => r === "executor" || r === "both"),
     )
     .map((n) => ({
       id: n.nodeId,
-      description: `${n.nodeId}; capabilities: ${n.capabilities.join(", ") || "none"}; models: ${n.models.map((model) => `${model.provider}/${model.model}`).join(", ") || "none"}`,
+      description: `${n.nodeId}; health: ${health.get(n.nodeId)?.state ?? "unknown"}; available slots: ${health.get(n.nodeId)?.availableSlots ?? "unknown"}; capabilities: ${n.capabilities.join(", ") || "none"}; models: ${n.models.map((model) => `${model.provider}/${model.model}`).join(", ") || "none"}. Prefer suitable online idle executors; a registered offline executor can receive queued work and claim it when online.`,
       eligible: true,
     }));
   const modelRoutes = catalog.nodes.flatMap((n) =>

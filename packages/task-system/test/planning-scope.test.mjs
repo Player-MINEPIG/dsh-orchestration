@@ -24,7 +24,7 @@ const workspaces=['default','other'].map(workspaceId=>({workspaceId,nodeId:'work
 function claim(f,runId) {const claim=f.ledger.claim(`claim-${runId}`,{runId,nodeId:'worker',ttlMs:60000}).value;const ref={runId,attemptId:claim.attempt.attemptId,nodeId:'worker',fence:claim.attempt.fence,executionId:`exec-${runId}`};claim.attempt=f.ledger.markRunning(`running-${runId}`,ref).value;return {claim,ref}}
 
 test('planning flag is independent, compatible by default and exposed in strict startup writes',()=>{
-  assert.equal(Config({}).planningDecisionEnabled,true);assert.equal(Config({}).sessionDecisionEnabled,false)
+  assert.equal(Config({}).planningDecisionEnabled.get(),true);assert.equal(Config({}).sessionDecisionEnabled.get(),false)
   const expected={role:'both',defaultWorkspaceId:'default',sessionDecisionEnabled:true,planningDecisionEnabled:true}
   assert.deepEqual(SaveStartupInput.parse({target:'task',expected,changes:{planningDecisionEnabled:false}}).changes,{planningDecisionEnabled:false})
 })

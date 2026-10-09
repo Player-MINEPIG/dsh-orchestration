@@ -2,6 +2,7 @@
 import type { Context } from "@deepseek-ai/cordis";
 import { isDeepStrictEqual } from "node:util";
 import { Config } from "./index.js";
+import { apiKeyStatus } from "./credentials.js";
 import { Config as CompletionConfig } from "./dsh-completion.js";
 
 type Raw = Record<string, any>;
@@ -73,7 +74,7 @@ const modules = [
   "@dsh-task/typed-decisions",
   "@dsh-task/typed-decisions/dsh-completion",
 ];
-function owner(ctx: Context) {
+export function owner(ctx: Context) {
   const editor = ctx.get("configEditor") as Editor | undefined;
   const find = (name: string) => {
     const rows = editor?.entries().filter((e) => e.options.name === name) ?? [];
@@ -218,7 +219,7 @@ export async function readDecisionSettings(ctx: Context) {
   const { editor, decision } = owner(ctx);
   const value = snapshot(ctx);
   const models = await catalog(ctx);
-  const readiness = (value?.providers ?? []).map((p) => {
+  const readiness = await Promise.all((value?.providers ?? []).map(async (p) => {
     const raw =
       (decision?.options.config?.providers ?? []).find(
         (x: Raw) => x.id === p.id,
@@ -247,11 +248,11 @@ export async function readDecisionSettings(ctx: Context) {
     return {
       providerId: p.id,
       status:
-        ref && process.env[ref]?.trim()
+        (await apiKeyStatus(ctx, ref)).configured
           ? "configured-unverified"
           : "credential-missing",
     };
-  });
+  }));
   return {
     available: !!decision,
     writable: !!editor && !!decision,
@@ -260,7 +261,7 @@ export async function readDecisionSettings(ctx: Context) {
     readiness,
   };
 }
-function overlayOwns(patches: readonly unknown[], entry: Entry): boolean {
+export function overlayOwns(patches: readonly unknown[], entry: Entry): boolean {
   return patches.some((v) => {
     const p = record(v);
     return (
@@ -274,6 +275,7 @@ function overlayOwns(patches: readonly unknown[], entry: Entry): boolean {
 export async function saveDecisionSettings(
   ctx: Context,
   input: { expected: DecisionSnapshot; selection: DecisionSelection },
+  presetEdit?: { templateProviderId?: string; check(current: Raw): void; update(current: Raw, provider: Raw): Raw },
 ) {
   const state = owner(ctx),
     host = state.editor;
@@ -294,7 +296,9 @@ export async function saveDecisionSettings(
   );
   let provider = oldProviders.find((p) => p.id === s.providerId);
   if (!provider) {
-    if (s.kind === "structured")
+    const template = presetEdit?.templateProviderId ? oldProviders.find(p => p.id === presetEdit.templateProviderId && p.kind === s.kind) : undefined;
+    if (template) provider = { ...structuredClone(template), id: s.providerId };
+    else if (s.kind === "structured")
       provider = { id: s.providerId, kind: "structured", models: [] };
     else if (s.kind === "jev")
       provider = {
@@ -436,6 +440,7 @@ export async function saveDecisionSettings(
           : input.expected.completion,
     };
     await host.edit(state.decision, (current) => {
+      presetEdit?.check(current);
       if (!isDeepStrictEqual(snapshot(ctx, current), expected))
         reject("DECISION_CONFLICT");
       const currentProviders: Raw[] = structuredClone(
@@ -467,11 +472,12 @@ export async function saveDecisionSettings(
               };
       if (currentProvider) Object.assign(currentProvider, update);
       else currentProviders.push({ ...provider, ...update });
-      return {
+      const merged = {
         ...current,
         defaultProvider: s.providerId,
         providers: currentProviders,
       };
+      return presetEdit ? presetEdit.update({ ...merged, defaultProvider: current.defaultProvider ?? 'rules' }, currentProviders.find(p => p.id === s.providerId)!) : merged;
     });
   } catch (error) {
     if (bridgeSaved) {
@@ -491,7 +497,7 @@ export async function saveDecisionSettings(
     reject("DECISION_SAVE_REJECTED");
   }
   const saved = snapshot(ctx);
-  if (saved?.defaultProvider !== s.providerId)
+  if (!presetEdit && saved?.defaultProvider !== s.providerId)
     reject("DECISION_SAVE_UNCONFIRMED");
   return { saved: true as const, applies: "plugin-restart" as const };
 }

@@ -1,0 +1,43 @@
+{
+  "date": "2026-10-08",
+  "runtime": 39,
+  "cause": "Direct send passed Agent-local WebUI tool names to tools.restrict, which accepts only inherited/global names. Failure occurred before admission. Switching WebUI selection does not dispose the original Agent.",
+  "fix": "Reuse inherited-tool mask and retain task tool execution guard; distinguish authorization/preparation failures from interrupted replies.",
+  "regression": {
+    "before": "failed instead of completed with webui_local registered on the original Agent",
+    "after": "63 relevant native/preset/remote/page tests passed",
+    "isolatedOriginalSession": "Copied original session with standard fixture preset and WebUI local tool: admitted and replied after fix"
+  },
+  "live": {
+    "messageId": "89541c50-7e15-475b-9b51-0736f098e1b0",
+    "taskId": "ec00be4c-929d-47af-ae22-394c9b80ae85",
+    "sessionId": "task-488c65a9-bc1c-471e-96cb-d7386a0dcb9c",
+    "webUIOriginalSessionOpen": true,
+    "state": "completed",
+    "reply": "原会话通信修复成功。",
+    "bothHistories": true,
+    "toolCalls": 0,
+    "taskRunAttemptReportRecordsUnchanged": true,
+    "oldFailedMessagesReplayed": false
+  },
+  "mobile": {
+    "viewport": [
+      390,
+      844
+    ],
+    "beforeComposerHeight": 163.5,
+    "afterComposerHeight": 126.5,
+    "ratio": 0.7737003058103975,
+    "textareaFontPx": 16,
+    "textareaHeightPx": 40,
+    "pinchZoomPreserved": true,
+    "verification": "Chrome responsive viewport; physical iPhone Safari focus was not tested",
+    "screenshot": "/Users/pmp/.codex/visualizations/2026/10/07/01a114fe-a63a-7ca1-836d-9b070a05c163/direct-message-fix39-mobile.png"
+  },
+  "deployment": {
+    "executorPid": 1460,
+    "plannerPid": 3297397,
+    "plannerRestarts": 0,
+    "backup": "backups/direct-messages39-20261008"
+  }
+}

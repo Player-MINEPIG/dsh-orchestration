@@ -35,6 +35,7 @@ if (process.env.DSH_TASK_SETTINGS_PACKAGE) {
     join(modules, "@dsh-task", "task-system"),
     "dir",
   );
+  symlinkSync(resolve("packages/typed-decisions"),join(modules,"@dsh-task","typed-decisions"),"dir");
 } else symlinkSync(resolve("node_modules"), join(dir, "node_modules"), "dir");
 const profile = {
   name: "startup-fixture",
@@ -83,12 +84,14 @@ const rows = [
   ["typert", "@deepseek-ai/dsh-typert-registry"],
   ["gateway", "@deepseek-ai/dsh-api-gateway"],
 ].map(([id, p, config]) => ({ id, name: url(p), config }));
+rows.push({id:"typed-decisions",name:"@dsh-task/typed-decisions",config:{providers:[{id:"rules",kind:"rules",rules:[]}],presets:[{id:"a",name:"A",provider:"rules"},{id:"b",name:"B",provider:"rules"}]}});
 rows.push({
   id: "task-system",
   name: "@dsh-task/task-system/plugin",
   config: taskConfig,
 });
 rows.push({ id: "task-system-settings", name: "@dsh-task/task-system" });
+rows.push({id:"task-remote-execution",name:"@dsh-task/task-system/remote",config:{role:"executor",nodeId:"fixture",paused:true,statePath:join(tmp,"remote.sqlite")}});
 writeFileSync(profile.patchPath, JSON.stringify([{ insert: rows }]));
 const root = join(dir, "cordis.yml");
 writeFileSync(root, "[]\n");
@@ -126,10 +129,11 @@ try {
   const snapshot = await invoke("startup");
   assert.equal(snapshot.applies, "plugin-restart");
   assert.equal(snapshot.writable, true);
-  assert.equal(snapshot.remote, null);
+  assert.equal(snapshot.remote.values.paused,true);
   assert.equal(snapshot.task.entryId, "task-system");
   assert.deepEqual(Object.keys(snapshot.task.values).sort(), [
     "defaultWorkspaceId",
+    "nodeCapacities",
     "planningDecisionEnabled",
     "role",
     "sessionDecisionEnabled",
@@ -203,7 +207,7 @@ try {
       },
     }),
   );
-  await assert.rejects(invoke("executorIdentity"), /authenticated|connection/i);
+  await assert.rejects(invoke("executorIdentity"), /authenticated|connection|REMOTE_PAUSED/i);
   const queue = await invoke("queue");
   assert.equal(queue.items.length, 0);
   pass(
@@ -237,6 +241,34 @@ try {
   pass(
     "restart persistence and explicit null default restoration use the real official ConfigEditor",
   );
+  // Provision one existing node in this isolated fixture, then edit only its capacity through the public RPC.
+  const editor = ctx.get("configEditor");
+  const taskEntry = editor.entries().find(entry => entry.options.id === "task-system");
+  await editor.edit(taskEntry, current => ({...current, remoteNodes: [{nodeId:"capacity-worker", roles:["executor"], enabled:true, models:[{provider:"test-offline",model:"script",reasoningEfforts:[]}], workspaceIds:[], capabilities:[], maxConcurrent:1}]}));
+  const capacityBefore = await invoke("startup");
+  assert.equal(ctx.get("taskSystem").ledger.getNode("capacity-worker").maxConcurrent, 1);
+  const capacityService=ctx.get("taskSystem"), remoteService=ctx.get("remoteExecution");
+  const capacityResult=await invoke("saveStartup", {input:{target:"task",expected:capacityBefore.task.values,changes:{nodeCapacities:[{nodeId:"capacity-worker",maxConcurrent:2}]}}});
+  assert.equal(capacityResult.applies,"live");assert.equal(ctx.get("taskSystem").ledger===capacityService.ledger,true,"task service must survive capacity save");assert.equal(ctx.get("remoteExecution")?.config===remoteService?.config,true,"remote service must survive capacity save");
+  assert.equal(ctx.get("taskSystem").ledger.getNode("capacity-worker").maxConcurrent, 2);
+  await ctx.fiber.dispose();
+  ctx = await start();
+  assert.equal(ctx.get("taskSystem").ledger.getNode("capacity-worker").maxConcurrent, 2);
+  assert.equal((await invoke("startup")).task.values.nodeCapacities[0].maxConcurrent, 2);
+  const remoteEntry=ctx.get("configEditor").entries().find(entry=>entry.options.id==="task-remote-execution"), remoteFiber=remoteEntry.fiber;
+  const remoteBefore=await invoke("startup");
+  const limitsResult=await invoke("saveStartup",{input:{target:"remote",expected:remoteBefore.remote.values,changes:{concurrency:2,pollIntervalMs:1100}}});
+  assert.equal(limitsResult.applies,"live");assert.equal(remoteEntry.fiber,remoteFiber);
+  assert.equal(ctx.get("remoteExecution").settingsSnapshot().concurrency,2);assert.equal(ctx.get("remoteExecution").settingsSnapshot().pollIntervalMs,1100);
+  const decisionEntry=ctx.get("configEditor").entries().find(entry=>entry.options.id==="typed-decisions"), decisionFiber=decisionEntry.fiber;
+  const {readDecisionConsole,decisionConsoleCommand}=await import("../../packages/typed-decisions/dist/console.js");
+  const view=await readDecisionConsole(ctx);
+  const bindingResult=await decisionConsoleCommand(ctx,{action:"setBinding",expected:view.revision,consumer:"task-planning",id:"b"});
+  assert.equal(bindingResult.applies,"live");assert.equal(decisionEntry.fiber,decisionFiber);assert.equal(ctx.get("typedDecisions").presetFor("task-planning"),"b");
+  await ctx.fiber.dispose();ctx=await start();
+  assert.equal(ctx.get("remoteExecution").settingsSnapshot().concurrency,2);assert.equal(ctx.get("typedDecisions").presetFor("task-planning"),"b");
+  pass("official ConfigEditor hot-updates remote execution limits and decision bindings without replacing fibers; both persist across boot");
+  pass("public capacity RPC updates the ledger without replacing either service and remains effective after a fresh host boot");
   console.log(
     JSON.stringify({
       ok: true,

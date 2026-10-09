@@ -1,0 +1,10 @@
+{
+  "date": "2026-10-09",
+  "branch": "codex/project-runtime",
+  "priorHead": "d8256b7",
+  "scope": "Previously implemented and deployed runtime43 work, before JEV migration",
+  "verification": {"command": "npm run check", "node": "24.19.0", "passed": 721, "skipped": 5, "failed": 0},
+  "review": {"diffCheck": "passed", "credentialPatternScan": "no findings in 116 changed/untracked files", "generatedFiles": "dist and node_modules excluded; redundant nested typed-decisions lock retained locally"},
+  "preservedBehavior": ["project and temporary tasks", "direct executor session messages", "supplemental materials without new Run or Attempt", "three manual completion choices", "Markdown reports", "mobile full-screen detail and scroll retention", "heartbeat and lease long-running execution", "retry and task completion semantics"],
+  "deployment": "No service restart or task mutation performed for this baseline commit"
+}

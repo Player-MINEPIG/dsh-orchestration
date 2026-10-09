@@ -164,3 +164,12 @@ test('caller cancellation never converts to a fallback execution', async () => {
     decisions: { evaluate: async () => { midCall.abort(); throw Error('provider aborted'); } },
   }), { name: 'AbortError' });
 });
+
+test('executor uses its selected preset and verifies the original preset request on receipt consumption', async () => {
+  const decisions = new DecisionEngine([ordinary({answers:answers('new','alternate')})], {defaultProvider:'ordinary',presets:[{id:'executor-work',name:'Executor work',provider:'ordinary',model:'judge'}]});
+  const consumers=[];
+  try {
+    const result=await resolveTaskSessionDecision(base,{requestId:'preset-selection',now:()=>1000,decisions:{presetFor(consumer){consumers.push(consumer);return 'executor-work';},evaluate(request,options){assert.equal(request.preset,'executor-work');assert.equal(request.provider,undefined);return decisions.evaluate(request,options);}}});
+    assert.equal(result.source,'decision');assert.equal(result.workspaceId,'alternate');assert.deepEqual(result.session,{mode:'new'});assert.deepEqual(consumers,['task-session','task-session']);
+  } finally {await decisions.close();}
+});

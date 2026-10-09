@@ -1,0 +1,85 @@
+{
+  "date": "2026-10-08",
+  "runtimeRevision": 32,
+  "distribution": {
+    "sha256": "03b6797f688faea9d04f772844de1d2e8bff3ca8b65d65a07cf389e54d6959ac",
+    "mbpPid": 95119,
+    "vpsPid": 2548906,
+    "bothUpdated": true,
+    "existingConfigurationPreserved": true
+  },
+  "checks": {
+    "npmRunCheck": {
+      "total": 705,
+      "passed": 700,
+      "skipped": 5,
+      "failed": 0
+    },
+    "officialRc2Startup": {
+      "passed": 6,
+      "modelCalls": 0
+    },
+    "officialFullStandardPresetResume": {
+      "coldSessionPassed": true,
+      "openedWebSessionReproducedSessionAlreadyOwnedErrorBeforeFix": true,
+      "sameLiveAgentContinuedAfterFix": true
+    }
+  },
+  "originalFailure": {
+    "taskId": "ec00be4c-929d-47af-ae22-394c9b80ae85",
+    "runId": "7986bf37-4ac9-440e-b1c1-b64730d23308",
+    "attemptId": "219ee203-e84d-4713-aaa7-82b18e4e1421",
+    "sessionId": "task-488c65a9-bc1c-471e-96cb-d7386a0dcb9c",
+    "routeDecisionMs": 12304,
+    "sessionDecisionMs": 1386,
+    "cause": "WebUI already owned the idle session writer; executeExternal attempted a second resume before posting the execution request. Lease expired without a new workload message.",
+    "uncertainStatePreserved": true,
+    "userConfirmationRequiredBeforeRetry": true,
+    "guiNextAction": "确认执行已停止，然后重新尝试派发"
+  },
+  "liveAcceptance": {
+    "taskId": "114d813a-6daa-478b-b288-34b2a266fca0",
+    "title": "WebUI 空闲会话重试验证32（无文件操作）",
+    "firstRunId": "869fa5b2-373c-4341-bcfd-02d9e89f2b67",
+    "retryRunId": "488cb2c4-b7b8-4795-ba04-0ecc784db01e",
+    "attemptIds": [
+      "edf79bfc-c98e-481c-bf7f-cdcd6e7ab000",
+      "71e3f42c-981f-49d2-9b83-866c16e728a6"
+    ],
+    "sameSessionId": "task-e1686cf2-deb1-429a-b7aa-f479c7b6c1f9",
+    "precondition": "First run settled; its session opened and retained by MBP WebUI before GUI retry.",
+    "initialPlan": "Creation route decision timed out at 20030ms; bounded initial run admitted through TaskLedger createRun on the verified MBP route, without changing the task intent or raw SQL state.",
+    "retrySource": "VPS GUI: 重新尝试派发 + 确认",
+    "retryDecisionId": "task-retry:4065f299-e740-4cdf-90a1-1708318c908a",
+    "retryReceipt": {
+      "kind": "deterministic-planning-v1",
+      "reason": "explicit-route",
+      "source": "default"
+    },
+    "retryRoutingModelCalls": 0,
+    "retrySessionSelectionModelCalls": 0,
+    "sessionSelectedEvent": {
+      "resume": true,
+      "sessionId": "task-e1686cf2-deb1-429a-b7aa-f479c7b6c1f9",
+      "workspaceId": "acceptance",
+      "decisionReceiptAbsent": true
+    },
+    "bothAttemptStates": "acknowledged",
+    "bothResults": {
+      "outcome": "blocked",
+      "summary": "会话恢复验收：原会话已收到本次请求"
+    },
+    "blockedIsIntentionalTestOutcome": true,
+    "standardToolsPresentInBothRequests": [
+      "bash",
+      "glob",
+      "grep",
+      "read",
+      "write",
+      "edit"
+    ],
+    "workloadToolCalls": "task_settle only; no files, shell, network or delegation",
+    "screenshot": "/Users/pmp/.codex/visualizations/2026/10/07/01a114fe-a63a-7ca1-836d-9b070a05c163/retry-session32-mbp.png",
+    "guiMarkedHandled": true
+  }
+}

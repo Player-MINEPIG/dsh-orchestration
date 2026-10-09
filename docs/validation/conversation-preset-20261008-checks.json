@@ -1,0 +1,64 @@
+{
+  "check": {
+    "tests": 700,
+    "pass": 695,
+    "fail": 0,
+    "skipped": 5
+  },
+  "officialHost": {
+    "checks": 6,
+    "modelCalls": 0
+  },
+  "package": "task-system-conversation-preset-31-20261008.tgz",
+  "sha256": "1ad2ae3cba328b5da98ee0bb042810e67b1da54cb29fd5c392c147e0ddc81090",
+  "mbp": {
+    "workEntitiesPreserved": true,
+    "dispatchStates": {
+      "acknowledged": 18,
+      "cancelled": 1,
+      "uncertain": 1
+    },
+    "test2StillUncertain": true,
+    "oldCancelledReconciled": true,
+    "package": "file:/Users/pmp/AI/deepseek-harness/test-env/dsh-task-management-candidate-3-ece68974/live-support/task-system-conversation-preset-31-20261008.tgz",
+    "webStarted": true,
+    "fatalLogs": false,
+    "pid": 70000
+  },
+  "vps": {
+    "entitiesPreserved": true,
+    "pr_projectsPreserved": true,
+    "pr_sessionsPreserved": true,
+    "pr_turnsPreserved": true,
+    "modelSelectionTableExists": true,
+    "userInterruptedRunUnchanged": true,
+    "activeRuns": 0,
+    "package": "file:/opt/dsh-task-management-test/candidate-3-ece68974/live-support/task-system-conversation-preset-31-20261008.tgz",
+    "pid": 2515689,
+    "active": true,
+    "restartCount": 0
+  },
+  "ui": {
+    "providerModelEffortCatalog": true,
+    "switchedToProAndReadBack": true,
+    "restoredDefaultSelection": true,
+    "conversationModelRevision": 2,
+    "modelCallsDuringAcceptance": 0,
+    "sameConversationRetained": true,
+    "recoveryConfirmationVisibleInConversation": true,
+    "humanStopVerificationUnchecked": true,
+    "userTaskNotRetried": true,
+    "mobileViewport": [
+      390,
+      844
+    ],
+    "iframeWidth": 334,
+    "iframeScrollWidth": 334,
+    "dialogWidth": 286,
+    "screenshots": [
+      "conversation-model-mobile.png",
+      "conversation-recovery-mobile.png",
+      "conversation-model-recovery.png"
+    ]
+  }
+}

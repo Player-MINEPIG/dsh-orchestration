@@ -234,7 +234,7 @@ test('mocked ledger: exact result replay reads its receipt after settlement; fre
   assert.equal(f.calls.filter(call => call[0] === 'submit').length,1)
 })
 
-test('mocked execution: task-specific node/workspace restriction and runtime budget are enforced', async t => {
+test('mocked execution: node/workspace restrictions remain enforced; legacy runtime budget is ignored until explicit stop', async t => {
   const denied = worker(t); denied.task.policy = { allowedNodeIds: ['other'] }
   await assert.rejects(denied.worker.execute('run1','claim'),/TASK_NODE_DENIED/); assert.equal(denied.executions(),0)
   const workspaceDenied = worker(t); workspaceDenied.task.policy = { allowedWorkspaceIds: [] }
@@ -242,7 +242,11 @@ test('mocked execution: task-specific node/workspace restriction and runtime bud
   let quiesced = false
   const budget = worker(t,{ provider: { execute: async request => { await new Promise(resolve => request.signal.addEventListener('abort',resolve,{ once: true })); quiesced = true; return { outcome: 'partial',summary: 'Timed out; effects require review' } } } })
   budget.task.policy = { maxRuntimeMs: 100,allowedTools: ['read'],maxDepth: 0 }
-  assert.equal((await budget.worker.execute('run1','claim')).state,'uncertain')
+  const pending = budget.worker.execute('run1','claim')
+  await new Promise(resolve => setTimeout(resolve,200))
+  assert.equal(quiesced,false)
+  await budget.worker.dispose()
+  assert.equal((await pending).state,'uncertain')
   assert.equal(quiesced,true); assert.equal(budget.calls.filter(call => call[0] === 'submit').length,0)
 })
 
@@ -275,3 +279,35 @@ test('signed gateway requires start owner and rejects missing or foreign owner o
   }
   assert.equal(f.attempt.executionId,'owner-one');assert.equal(f.calls.filter(call=>call[0]==='renew').length,0)
 })
+
+test('live polling starts from disabled cadence and reads new concurrency without replacing the worker',async t=>{
+ let clock=now,interval=0,concurrency=1;const f=worker(t,{options:{now:()=>clock}}),calls=[];
+ f.worker.recoverResults=async()=>[];f.worker.pollOnce=async n=>{calls.push(n);return []};
+ f.worker.startPolling(()=>interval,()=>concurrency);
+ await new Promise(resolve=>setTimeout(resolve,120));assert.deepEqual(calls,[]);
+ interval=100;concurrency=2;clock+=100;
+ await new Promise(resolve=>setTimeout(resolve,120));assert.deepEqual(calls,[2]);
+ concurrency=1;clock+=100;
+ await new Promise(resolve=>setTimeout(resolve,120));assert.deepEqual(calls,[2,1]);
+ interval=0;clock+=100;
+ await new Promise(resolve=>setTimeout(resolve,120));assert.deepEqual(calls,[2,1]);
+});
+
+test('recovery reconciles only the same authoritative terminal attempt and never replays uncertain work',async t=>{
+ const f=worker(t);f.run.currentAttemptId=f.attempt.attemptId;f.attempt.executionId='execution';
+ f.store.createDispatch({attemptId:f.attempt.attemptId,state:'uncertain',claim:{task:f.task,run:f.run,attempt:f.attempt},lease:{runId:f.run.runId,attemptId:f.attempt.attemptId,nodeId:f.attempt.nodeId,fence:f.attempt.fence,executionId:f.attempt.executionId},sessionId:'session'});
+ await f.worker.recoverResults();assert.equal(f.store.dispatch(f.attempt.attemptId).state,'uncertain');assert.equal(f.executions(),0);
+ f.run.state='failed';f.run.currentAttemptId='different';await f.worker.recoverResults();assert.equal(f.store.dispatch(f.attempt.attemptId).state,'uncertain');
+ f.run.currentAttemptId=f.attempt.attemptId;await f.worker.recoverResults();assert.equal(f.store.dispatch(f.attempt.attemptId).state,'acknowledged');assert.equal(f.store.dispatch(f.attempt.attemptId).reconciliation.runState,'failed');assert.equal(f.executions(),0);
+});
+
+for (const lostAfterCommit of [false,true]) test(`normal polling redelivers a durable result after ${lostAfterCommit?'ACK loss':'submission outage'} without executing again`,async t=>{
+ const f=worker(t),submit=f.ledger.submit,ids=[];let unavailable=true;
+ f.ledger.submit=(id,value)=>{ids.push(id);if(unavailable){if(lostAfterCommit)submit(id,value);throw Error('temporary transport failure')}return submit(id,value)};
+ assert.equal((await f.worker.execute('run1','initial')).state,'result');
+ if(!lostAfterCommit)f.run.state='running';
+ assert.deepEqual(await f.worker.pollOnce(),[]);assert.equal(f.store.dispatch('attempt1').state,'result');
+ unavailable=false;
+ assert.deepEqual(await f.worker.pollOnce(),[]);assert.equal(f.store.dispatch('attempt1').state,'acknowledged');
+ assert.equal(f.executions(),1);assert.equal(new Set(ids).size,1);assert.equal(ids.length,3);
+});

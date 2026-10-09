@@ -1,0 +1,30 @@
+{
+  "date": "2026-10-07",
+  "package": "runtime-13",
+  "cause": "Official StoredEntry declares store directly; old shortcut read options.store and always returned unavailable",
+  "change": [
+    "Use official entry.store.create shared settings shell",
+    "Label shortcut as Open DSH model settings",
+    "Give navigation failure its own message, distinct from save failure"
+  ],
+  "checks": {
+    "settingsPassed": 27,
+    "failed": 0,
+    "buildPassed": true,
+    "actualMBPClick": "Task system > Decision model settings > Open DSH model settings opens Models with DeepSeek provider listed"
+  },
+  "deployment": {
+    "host": "MBP",
+    "port": 3082,
+    "profile": "executor",
+    "pid": 64135,
+    "hostRecord": ".runtime/project-runtime-20261006/mbp-models-13-host.json",
+    "screenshot": ".runtime/project-runtime-20261006/mbp-model-shortcut-13.png"
+  },
+  "effects": {
+    "changedRole": false,
+    "changedModelConfiguration": false,
+    "apiCalls": false,
+    "dispatchedTasks": false
+  }
+}

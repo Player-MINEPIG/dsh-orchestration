@@ -1,0 +1,163 @@
+{
+  "date": "2026-10-07",
+  "target": "VPS candidate-3 test service",
+  "initialState": {
+    "service": "active/running",
+    "pid": 1240082,
+    "restarts": 0,
+    "webPort": 3082,
+    "taskPort": 18440,
+    "fromMbpHttp": 405,
+    "simpleUiIdentityCheck": "success before update"
+  },
+  "updated": {
+    "service": "dsh-orchestration-web.service",
+    "pid": 1964193,
+    "state": "active/running",
+    "taskPackage": "task-system-project-runtime-20.tgz",
+    "decisionPackage": "typed-decisions-settings-14.tgz",
+    "role": "planner",
+    "nodeId": "vps-planner",
+    "autoExecute": false,
+    "schedulerEnabled": false,
+    "database": "/opt/dsh-task-management-test/candidate-3-ece68974/data/tasks.sqlite",
+    "backup": "/opt/dsh-task-management-test/candidate-3-ece68974/backups/settings14-runtime20-20261007"
+  },
+  "verification": {
+    "privateHttpsWebUi": "loaded original task center and both updated settings pages",
+    "decisionFrameOverflowY": "hidden",
+    "decisionFrameHeightPx": 635,
+    "decisionMainHeightPx": 632.171875,
+    "plannerRoleShownInGui": true,
+    "afterUpdateUiIdentityChecks": [
+      "CONNECTION_TIMEOUT at five-second deadline",
+      "success with authorized mbp-executor identity"
+    ],
+    "identityProtocolProbesMs": [
+      736,
+      728,
+      724
+    ],
+    "fixedSourceTcpProbesConnectMs": [
+      356,
+      357,
+      357
+    ],
+    "fixedSourceHttpProbesMs": [
+      718,
+      714,
+      714
+    ],
+    "tailscalePingMs": 353,
+    "entities": {
+      "current": {
+        "attempt": 9,
+        "authority": 1,
+        "decision": 11,
+        "heartbeat": 1,
+        "node": 1,
+        "report": 13,
+        "run": 10,
+        "task": 9,
+        "task-attention": 1,
+        "taskSession": 7,
+        "taskSessionDefault": 7,
+        "template": 1,
+        "workspace": 2
+      },
+      "before": {
+        "attempt": 9,
+        "authority": 1,
+        "decision": 11,
+        "heartbeat": 1,
+        "node": 1,
+        "report": 13,
+        "run": 10,
+        "task": 9,
+        "task-attention": 1,
+        "taskSession": 7,
+        "taskSessionDefault": 7,
+        "template": 1,
+        "workspace": 2
+      }
+    },
+    "entityCountsPreserved": true,
+    "tableCounts": {
+      "current": {
+        "schema_meta": 1,
+        "entities": 73,
+        "commands": 690,
+        "events": 93,
+        "sqlite_sequence": 1,
+        "resources": 0,
+        "run_context_sessions": 0,
+        "wb_schema": 1,
+        "wb_domains": 1,
+        "wb_projects": 2,
+        "wb_backlogs": 2,
+        "wb_skills": 0,
+        "wb_milestones": 0,
+        "wb_domain_projects": 1,
+        "wb_backlog_tasks": 4,
+        "wb_project_workspaces": 2,
+        "wb_milestone_backlogs": 0,
+        "wb_milestone_tasks": 0,
+        "wb_skill_projects": 0,
+        "wb_skill_reports": 0,
+        "wb_artifacts": 0,
+        "wb_artifact_relations": 0,
+        "wb_criterion_checks": 0,
+        "wb_check_evidence": 0,
+        "pr_settings": 1,
+        "pr_projects": 1,
+        "pr_sessions": 2,
+        "pr_turns": 3,
+        "pr_dispatch": 3
+      },
+      "before": {
+        "schema_meta": 1,
+        "entities": 73,
+        "commands": 689,
+        "events": 93,
+        "sqlite_sequence": 1,
+        "resources": 0,
+        "run_context_sessions": 0,
+        "wb_schema": 1,
+        "wb_domains": 1,
+        "wb_projects": 2,
+        "wb_backlogs": 2,
+        "wb_skills": 0,
+        "wb_milestones": 0,
+        "wb_domain_projects": 1,
+        "wb_backlog_tasks": 4,
+        "wb_project_workspaces": 2,
+        "wb_milestone_backlogs": 0,
+        "wb_milestone_tasks": 0,
+        "wb_skill_projects": 0,
+        "wb_skill_reports": 0,
+        "wb_artifacts": 0,
+        "wb_artifact_relations": 0,
+        "wb_criterion_checks": 0,
+        "wb_check_evidence": 0,
+        "pr_settings": 1,
+        "pr_projects": 1,
+        "pr_sessions": 2,
+        "pr_turns": 3,
+        "pr_dispatch": 3
+      }
+    },
+    "modelApiCalls": 0,
+    "tasksDispatched": 0,
+    "mbpRemoteStillPaused": true
+  },
+  "limitations": [
+    "One intermittent five-second identity-check timeout was reproduced. The underlying cause was not established; this is not evidence of a persistent VPS outage. No timeout or retry policy changed.",
+    "No new physical-phone or Safari test was performed."
+  ],
+  "endpoints": {
+    "taskProtocol": "http://100.123.230.75:18440/dsh-task/v1/commands",
+    "webUi": "https://izbp11roeflhmn04yssxm4z.tail435ecd.ts.net:10000/#tasks"
+  },
+  "privateLogin": "Fresh generated token kept out of this record and repository; same private test service login verified",
+  "screenshot": ".runtime/vps-update-20261007/vps-updated-task-center.png"
+}

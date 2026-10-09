@@ -119,7 +119,7 @@ export interface TypedApiOptions {
   model?: string;
   modelVersion?: string;
   /** Resolve secrets at call time; credentials are never copied into receipts. */
-  apiKey?: () => string | undefined;
+  apiKey?: () => string | undefined | Promise<string | undefined>;
   fetch?: FetchAdapter;
   maxResponseBytes?: number;
 }
@@ -175,7 +175,8 @@ abstract class TypedApiProvider implements DecisionProvider {
         ...(q.type === 'choice' ? { criteria: q.candidates } : q.type === 'score' ? { criteria: q.levels } : q.criteria ? { criteria: q.criteria } : {}),
       };
     }
-    const key = this.options.apiKey?.();
+    const key = await this.options.apiKey?.();
+    signal.throwIfAborted();
     const response = await (this.options.fetch ?? globalThis.fetch)(this.endpoint, {
       method: 'POST', headers: { 'content-type': 'application/json', ...(key ? { authorization: `Bearer ${key}` } : {}) },
       body: JSON.stringify({ state: request.context, model: model.model, questions }), signal, redirect: 'error',

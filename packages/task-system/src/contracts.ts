@@ -34,6 +34,7 @@ export interface TaskPolicy {
   allowedWorkspaceIds?: string[];
   allowedTools?: string[];
   requiredResources?: string[];
+  /** @deprecated Retained for old records; execution has no elapsed-time cutoff. */
   maxRuntimeMs?: number;
   maxDepth?: number;
   maxChildren?: number;
@@ -59,6 +60,18 @@ export interface Task {
   /** Derived. Explicit override wins, otherwise the highest linked Backlog. */
   priority?: TaskPriority;
   priorityOverride?: TaskPriority;
+  /** Operator acceptance is independent of the original execution outcome. */
+  manualCompletion?: {
+    decisionId: string;
+    actor: string;
+    decidedAt: string;
+    runId?: string;
+    attemptId?: string;
+    nodeId?: string;
+    sessionId?: string;
+    materials: "pending" | "not_required";
+    requestMessageId?: string;
+  };
   targetAt?: string;
   state: TaskState;
   kind: "ad_hoc" | "scheduled" | "observed";
@@ -98,6 +111,19 @@ export interface ExecutionRoute {
   workspaceId?: string;
   requiredCapabilities: string[];
 }
+/** Authority-owned snapshot. Local paths and credentials never cross this boundary. */
+export interface ProjectExecutionContext {
+  version: 1;
+  schedulerId: string;
+  project: null | {
+    projectId: string;
+    revision: number;
+    title: string;
+    goal: string;
+    description: string;
+    acceptanceCriteria: Criterion[];
+  };
+}
 export interface Run {
   runId: string;
   taskId: string;
@@ -114,6 +140,7 @@ export interface Run {
     acceptanceCriteria: Criterion[];
     intentRevision?: number;
   };
+  projectContext?: ProjectExecutionContext;
   /** Legacy historical fields, never written for new runs. */
   outcome?: Outcome;
   reviewStatus?: "pending_user" | "accepted" | "rejected";
@@ -147,6 +174,12 @@ export interface Run {
   };
 }
 export interface Attempt {
+  progressRequest?: {
+    requestId: string;
+    requestedAt: string;
+    summary?: string;
+    reportedAt?: string;
+  };
   attemptId: string;
   taskId: string;
   runId: string;

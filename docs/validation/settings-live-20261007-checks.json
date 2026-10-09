@@ -1,0 +1,43 @@
+{
+  "check": {
+    "tests": 691,
+    "pass": 686,
+    "skip": 5,
+    "fail": 0
+  },
+  "officialHost": {
+    "checks": 6,
+    "modelCalls": 0,
+    "capacityPreservesLedger": true,
+    "remoteLimitsPreserveFiber": true,
+    "presetBindingsPreserveFiber": true,
+    "allPersistAcrossBoot": true
+  },
+  "mbp": {
+    "pid": 89474,
+    "runtimePackage": "task-system-settings-live-30-20261007.tgz",
+    "decisionsPackage": "typed-decisions-settings-15-20261007.tgz",
+    "guiSavedDuringUncertainRecovery": true,
+    "pollIntervalRestoredMs": 1000,
+    "dispatchContentsPreserved": true,
+    "uncertainCount": 2
+  },
+  "vps": {
+    "pid": 2254101,
+    "active": true,
+    "restartCount": 0,
+    "workEntitiesPreserved": true,
+    "capacityDraftAndDiscardConfirmed": true
+  },
+  "ui": {
+    "visibleSaveButtons": 1,
+    "mobileViewport": [
+      390,
+      844
+    ],
+    "contentWidth": 337,
+    "scrollWidth": 337,
+    "footerWithinViewport": true,
+    "screenshot": "settings-live-mobile.png"
+  }
+}

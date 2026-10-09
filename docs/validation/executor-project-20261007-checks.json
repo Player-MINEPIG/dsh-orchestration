@@ -1,0 +1,239 @@
+{
+  "date": "2026-10-07",
+  "artifact": "task-system-executor-project-25-20261007-b.tgz",
+  "dependencyThread": {
+    "id": "01a114fe-a63a-7ca1-836d-9b070a05c163",
+    "title": "临时任务工作区、对话与重新派发",
+    "completedBeforeImplementation": true,
+    "baseline": "runtime-24b"
+  },
+  "tests": {
+    "workspace": {
+      "total": 494,
+      "passed": 493,
+      "failed": 0,
+      "skipped": 1
+    },
+    "native": {
+      "total": 73,
+      "passed": 73,
+      "failed": 0,
+      "skipped": 0
+    },
+    "legacy": {
+      "total": 98,
+      "passed": 98,
+      "failed": 0,
+      "skipped": 0
+    },
+    "management": {
+      "total": 18,
+      "passed": 14,
+      "failed": 0,
+      "skipped": 4
+    },
+    "finalSameProjectConcurrencyAndSessionReuse": {
+      "total": 1,
+      "passed": 1,
+      "scriptedModels": true,
+      "log": ".runtime/executor-project-20261007/project-tests-concurrency-final.log"
+    }
+  },
+  "hosts": {
+    "mbp": {
+      "pid": 8422,
+      "record": ".runtime/project-runtime-20261006/mbp-executor-project-33-host.json",
+      "role": "executor",
+      "nodeId": "mbp-executor",
+      "remotePaused": false,
+      "taskSessionsEnabled": true
+    },
+    "vps": {
+      "pid": 2074761,
+      "service": "dsh-orchestration-web.service",
+      "active": true,
+      "restarts": 0,
+      "role": "planner",
+      "nodeId": "vps-planner",
+      "autoExecute": false,
+      "schedulerEnabled": false
+    }
+  },
+  "backupName": "executor-project25b-20261007",
+  "preservation": {
+    "mbp": {
+      "cordisPatchUnchanged": true,
+      "cordisUnchanged": true,
+      "otherDependenciesUnchanged": true
+    },
+    "vps": {
+      "cordisPatchUnchanged": true,
+      "cordisUnchanged": true,
+      "otherDependenciesUnchanged": true
+    },
+    "preexistingWorkEntitiesAndProjectTablesPreserved": true,
+    "livePresenceMayChange": true,
+    "noGrantsExpanded": true
+  },
+  "protocol": {
+    "version": 1,
+    "authorityPinnedProjectSnapshot": true,
+    "unknownVersionRejected": true,
+    "legacyClientCannotClaimProjectRun": true,
+    "legacyRunPathUnchanged": true,
+    "schedulerAbsolutePathNotTransmittedAsCwd": true,
+    "sameTaskSessionAndCwdPersist": true,
+    "sameProjectWorkerSerialization": true,
+    "multiSchedulerIsolation": true,
+    "symbolicLinkDirectoriesRejected": true,
+    "gitDetachedWorktreeTested": true,
+    "modelToolsFilteredByAvailableOperations": true
+  },
+  "realTasks": [
+    {
+      "taskId": "63afb891-5657-4886-84de-6c01d0b07248",
+      "title": "项目归属派发验收25",
+      "taskState": "completed",
+      "runCount": 1,
+      "attemptCount": 1,
+      "runId": "53ffd20f-a21f-4f47-aa2d-04b397a4ca9e",
+      "runState": "succeeded",
+      "attemptId": "c76119a6-e161-44d1-949f-3ec422af7049",
+      "attemptState": "settled",
+      "executionSession": "task-b52c4cac-b42a-47ea-9fe5-328858045439",
+      "projectContext": {
+        "project": {
+          "acceptanceCriteria": [],
+          "description": "小规模验证 VPS 统筹和 MBP 执行端的项目身份、独立目录与报告闭环。只派发一项简短算术任务，不使用文件或 shell 工具。",
+          "goal": "小规模验证 VPS 统筹和 MBP 执行端的项目身份、独立目录与报告闭环。只派发一项简短算术任务，不使用文件或 shell 工具。",
+          "projectId": "5f71728b-0049-4e94-946e-5874ad4dadc0",
+          "revision": 1,
+          "title": "执行端项目隔离验收 20261007"
+        },
+        "schedulerId": "scheduler-5b933515-b3ae-43ec-bf5b-e7c6b1bfaebd",
+        "version": 1
+      },
+      "reportId": "07f5d0ac-5e99-41e3-8a86-88bc277726bf",
+      "reportData": {
+        "arithmetic": "8 + 9 = 17",
+        "artifacts": [],
+        "projectId": "5f71728b-0049-4e94-946e-5874ad4dadc0",
+        "projectNameField": null,
+        "projectTitle": "执行端项目隔离验收 20261007",
+        "reportDeliveryNote": "task_report returned REMOTE_OUTCOME_UNCERTAIN; verification reads also failed",
+        "schedulerId": "scheduler-5b933515-b3ae-43ec-bf5b-e7c6b1bfaebd",
+        "usedFileTools": false,
+        "usedShellTools": false
+      },
+      "provider": "deepseek-official",
+      "model": "deepseek-flash",
+      "effort": "off",
+      "executorCwd": "/Users/pmp/AI/deepseek-harness/test-env/dsh-task-management-candidate-3-ece68974/data/workspace/scheduler-scheduler-5b933515-b3ae-43ec-bf5b-e7c6b1bfaebd-bc622088a8d1/project-5f71728b-0049-4e94-946e-5874ad4dadc0-c0204b2b4ccd",
+      "nativeHeaderCwdMatches": true,
+      "dispatchState": "acknowledged",
+      "visibleTools": [
+        "task_children",
+        "task_history",
+        "task_nodes",
+        "task_query",
+        "task_report",
+        "task_settle",
+        "task_wait"
+      ],
+      "calledTools": [
+        "task_report",
+        "task_history",
+        "task_query",
+        "task_settle"
+      ],
+      "toolErrorCount": 3
+    },
+    {
+      "taskId": "a9cbd15e-4908-43bb-98e7-10f2440d1d34",
+      "title": "执行端临时目录验收25b",
+      "taskState": "completed",
+      "runCount": 1,
+      "attemptCount": 1,
+      "runId": "ee5c56e7-0185-4fff-8fd4-1e34fe67af0f",
+      "runState": "succeeded",
+      "attemptId": "3ac6c40e-7d1b-45b8-8da3-80899685cb25",
+      "attemptState": "settled",
+      "executionSession": "task-48981ead-9299-44d0-b503-33035325f4bb",
+      "projectContext": {
+        "project": null,
+        "schedulerId": "scheduler-5b933515-b3ae-43ec-bf5b-e7c6b1bfaebd",
+        "version": 1
+      },
+      "reportId": "3ec1e08f-566e-4131-ac6d-584992186c6c",
+      "reportData": {
+        "artifacts": [],
+        "attemptId": "3ac6c40e-7d1b-45b8-8da3-80899685cb25",
+        "computation": "10+11",
+        "projectIsNull": true,
+        "result": 21,
+        "runId": "ee5c56e7-0185-4fff-8fd4-1e34fe67af0f",
+        "schedulerId": "scheduler-5b933515-b3ae-43ec-bf5b-e7c6b1bfaebd",
+        "taskId": "a9cbd15e-4908-43bb-98e7-10f2440d1d34",
+        "toolsUsed": []
+      },
+      "provider": "deepseek-official",
+      "model": "deepseek-flash",
+      "effort": "off",
+      "executorCwd": "/Users/pmp/AI/deepseek-harness/test-env/dsh-task-management-candidate-3-ece68974/data/workspace/scheduler-scheduler-5b933515-b3ae-43ec-bf5b-e7c6b1bfaebd-bc622088a8d1/temporary-tasks/task-a9cbd15e-4908-43bb-98e7-10f2440d1d34-36f00a36aa22",
+      "nativeHeaderCwdMatches": true,
+      "dispatchState": "acknowledged",
+      "visibleTools": [
+        "task_children",
+        "task_nodes",
+        "task_settle",
+        "task_wait"
+      ],
+      "calledTools": [
+        "task_settle"
+      ],
+      "toolErrorCount": 0
+    }
+  ],
+  "gui": {
+    "browser": "Chrome",
+    "phoneViewport": [
+      390,
+      844
+    ],
+    "iframeClientWidth": 334,
+    "iframeScrollWidth": 334,
+    "viewportRestored": true,
+    "projectAndTemporaryWorkspaceWithSessionVisibleInNativeSidebar": true,
+    "screenshots": [
+      "/Users/pmp/.codex/visualizations/2026/10/05/01a10d39-0346-75c0-91bd-eeb99d3872d7/executor-project-25b-phone-report.png",
+      "/Users/pmp/.codex/visualizations/2026/10/05/01a10d39-0346-75c0-91bd-eeb99d3872d7/executor-project-25b-local-session.png"
+    ]
+  },
+  "finalCounts": {
+    "attempt": 14,
+    "authority": 1,
+    "decision": 17,
+    "heartbeat": 1,
+    "node": 1,
+    "report": 23,
+    "run": 15,
+    "task": 13,
+    "task-attention": 2,
+    "taskSession": 11,
+    "taskSessionDefault": 10,
+    "template": 1,
+    "workspace": 3
+  },
+  "projectCounts": {
+    "runtime": 2,
+    "workbench": 3
+  },
+  "limits": [
+    "Real tasks used small DeepSeek arithmetic requests with no file or shell tools; no new physical phone/Safari test",
+    "Git worktree and ordinary project concurrency verified with local fixtures/native scripted models, not real multi-agent coding workloads",
+    "Large artifact transfer and automatic Git merges are not implemented",
+    "Legacy sessions are retained rather than moved",
+    "Initial project test completed through task_settle but three unauthorized auxiliary tools failed; 25b filters those tools, final temporary test has zero tool errors; original report retained",
+    "Existing open task detail must be reopened from refreshed list to show final report"
+  ]
+}

@@ -150,3 +150,17 @@ test('remote worker renews its lease while an optional session decision is pendi
   const started=Date.now(),result=await worker.execute(f.run('long-decision').runId,'long-claim')
   assert.ok(Date.now()-started>=1200);assert.equal(result.state,'acknowledged');assert.equal(f.ledger.getRun(result.claim.run.runId).state,'succeeded')
 })
+
+
+test('bound session is reused without model decisions and revoked workspace grants still fail',async t=>{
+ const f=fixture(t),x=f.claim(f.run('first'),'first'),bound=await select(f,x.ref,x.c);
+ f.ledger.submit('settle-first',{...x.ref,outcome:'failure',summary:'Stopped'});
+ const next=f.claim(f.run('retry'),'retry');let calls=0;
+ const decisions={decide:async()=>{calls++;throw Error('Existing binding must not call a model');}};
+ const context=f.ledger.sessionContext(next.ref),workspaces=['default','other'].map(workspaceId=>({workspaceId,nodeId:'worker',description:workspaceId,eligible:true}));
+ const choice=await chooseExecutionSession({claim:next.c,context,workspaces,decisions});
+ assert.equal(calls,0);assert.equal(choice.session.sessionId,bound.sessionId);assert.equal(choice.expectedTaskSessionId,bound.sessionId);
+ const reused=f.ledger.selectTaskSession('cached-session',{...next.ref,...choice}).value;assert.equal(reused.resume,true);
+ await assert.rejects(chooseExecutionSession({claim:next.c,context:{...context,eligibleWorkspaceIds:['other']},workspaces,decisions}),/not eligible/);
+ assert.equal(calls,0);
+});

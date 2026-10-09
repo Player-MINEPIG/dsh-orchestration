@@ -42,7 +42,8 @@ export class DecisionEngine {
   private closed = false;
 
   constructor(providers: DecisionProvider[], options: EngineOptions) {
-    this.options = { timeoutMs: 10000, maxAttempts: 1, retryBaseMs: 100, failureLimit: 3, cooldownMs: 30000, maxReceipts: 10000, ...options };
+    this.options = { timeoutMs: 10000, maxAttempts: 1, retryBaseMs: 100, failureLimit: 3, cooldownMs: 30000, maxReceipts: 10000, presets: [], defaultPreset: '', ...options };
+    this.options.presets = freeze(structuredClone(this.options.presets));
     id(options.defaultProvider, 'defaultProvider');
     positiveInteger(this.options.timeoutMs, 'timeoutMs', 300000);
     positiveInteger(this.options.maxAttempts, 'maxAttempts', 5);
@@ -56,7 +57,17 @@ export class DecisionEngine {
       this.providers.set(provider.id, { provider, capabilities: freeze(structuredClone(provider.capabilities)), failures: 0, blockedUntil: 0 });
     }
     if (!this.providers.has(options.defaultProvider)) fail('defaultProvider is not configured');
+    const ids = new Set<string>();
+    for (const preset of this.options.presets) {
+      id(preset.id, 'preset id'); text(preset.name, 'preset name');
+      if (ids.has(preset.id)) fail('duplicate preset'); ids.add(preset.id);
+      const capabilities = this.capabilities(preset.provider);
+      const model = preset.model ? capabilities.models.find(m => m.model === preset.model) : capabilities.models[0];
+      if (!model || (preset.reasoningEffort && !model.reasoningEfforts.includes(preset.reasoningEffort))) fail('preset routing is unsupported');
+    }
+    if (this.options.defaultPreset && !ids.has(this.options.defaultPreset)) fail('default preset is not configured');
   }
+  get activeCount(): number { return this.controllers.size; }
   capabilities(provider = this.options.defaultProvider): ProviderCapabilities {
     const registered = this.providers.get(provider);
     if (!registered) fail('provider is not configured');
@@ -65,11 +76,17 @@ export class DecisionEngine {
   evaluate(input: DecisionRequest, options: { signal?: AbortSignal } = {}): Promise<DecisionReceipt> {
     if (this.closed) return Promise.reject(new Error('typed decision service is closed'));
     validateRequest(input);
-    const request = freeze(structuredClone(input));
+    const original = freeze(structuredClone(input));
+    const presetId = original.preset ?? (original.provider || original.model || original.reasoningEffort ? undefined : this.options.defaultPreset || undefined);
+    const preset = presetId ? this.options.presets.find(p => p.id === presetId) : undefined;
+    if (presetId && !preset) fail('preset is not configured');
+    const { preset: _preset, ...routed } = original;
+    // Providers receive a valid, resolved explicit route; only the caller request contains the preset.
+    const request = freeze(preset ? { ...routed, provider: preset.provider, ...(preset.model ? { model: preset.model } : {}), ...(preset.reasoningEffort ? { reasoningEffort: preset.reasoningEffort } : {}) } : original);
     const providerId = request.provider ?? this.options.defaultProvider;
     const registered = this.providers.get(providerId);
     if (!registered) fail(`provider ${providerId} is not configured`);
-    const fingerprint = digest({ request, provider: providerId, providerVersion: registered.provider.version, capabilities: registered.capabilities });
+    const fingerprint = digest({ request: original, resolved: request, provider: providerId, providerVersion: registered.provider.version, capabilities: registered.capabilities });
     const cached = this.receipts.get(request.requestId);
     if (cached) {
       if (cached.digest !== fingerprint) fail('requestId was reused for different input or provider capabilities');
@@ -77,7 +94,7 @@ export class DecisionEngine {
       return cached.pending;
     }
     if (this.receipts.size >= this.options.maxReceipts) fail('receipt capacity reached; persist receipts and create a new engine instead of evicting idempotency keys');
-    const pending = this.run(request, registered, fingerprint, options.signal);
+    const pending = this.run(request, registered, fingerprint, options.signal, digest(original));
     this.receipts.set(request.requestId, { digest: fingerprint, pending });
     return pending;
   }
@@ -92,13 +109,13 @@ export class DecisionEngine {
     }
     return;
   }
-  private async run(request: DecisionRequest, registered: RegisteredProvider, inputDigest: string, parentSignal?: AbortSignal): Promise<DecisionReceipt> {
+  private async run(request: DecisionRequest, registered: RegisteredProvider, inputDigest: string, parentSignal?: AbortSignal, requestDigest = digest(request)): Promise<DecisionReceipt> {
     const started = performance.now();
     const { provider, capabilities } = registered;
     const model = request.model === undefined ? capabilities.models[0] : capabilities.models.find(m => m.model === request.model);
     let attempts = 0;
     const base = {
-      schemaVersion: 1 as const, requestId: request.requestId, inputDigest, requestDigest: digest(request), stateHash: request.stateHash,
+      schemaVersion: 1 as const, requestId: request.requestId, inputDigest, requestDigest, stateHash: request.stateHash,
       provider: provider.id, providerVersion: provider.version, model: request.model ?? model!.model,
       questionVersions: Object.fromEntries(request.questions.map(q => [q.questionId, q.questionVersion])), evidence: capabilities.evidence,
     };

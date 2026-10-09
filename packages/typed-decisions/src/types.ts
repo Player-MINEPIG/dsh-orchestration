@@ -27,6 +27,15 @@ export interface DecisionRequest {
   provider?: string;
   model?: string;
   reasoningEffort?: string;
+  /** Stable preset ID configured by the host. Cannot be mixed with explicit routing. */
+  preset?: string;
+}
+export interface DecisionPreset {
+  id: string;
+  name: string;
+  provider: string;
+  model?: string;
+  reasoningEffort?: string;
 }
 export interface Distribution {
   probabilities?: Record<string, number>;
@@ -102,6 +111,8 @@ export interface DecisionReceipt {
 }
 export interface EngineOptions {
   defaultProvider: string;
+  presets?: DecisionPreset[];
+  defaultPreset?: string;
   timeoutMs?: number;
   maxAttempts?: number;
   retryBaseMs?: number;

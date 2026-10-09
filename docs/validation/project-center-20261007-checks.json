@@ -1,0 +1,106 @@
+{
+  "date": "2026-10-07",
+  "artifact": "task-system-project-center-24-20261007-b.tgz",
+  "tests": {
+    "workspace": {
+      "total": 487,
+      "passed": 486,
+      "skipped": 1,
+      "failed": 0
+    },
+    "native": {
+      "total": 72,
+      "passed": 72,
+      "failed": 0
+    }
+  },
+  "hosts": {
+    "mbp": {
+      "pid": 98997,
+      "record": ".runtime/project-runtime-20261006/mbp-project-center-31-host.json",
+      "role": "executor",
+      "nodeId": "mbp-executor",
+      "remotePaused": false
+    },
+    "vps": {
+      "pid": 2042952,
+      "service": "dsh-orchestration-web.service",
+      "role": "planner",
+      "nodeId": "vps-planner",
+      "autoExecute": false,
+      "schedulerEnabled": false
+    }
+  },
+  "backupName": "project-center24b-20261007",
+  "preservation": {
+    "preexistingTaskRunAttemptReportDecisionContentsMatch": true,
+    "onlyLiveHeartbeatChangedBeforeFinalGuiTest": true,
+    "projectCount": 2,
+    "runtimeProjectCount": 1
+  },
+  "gui": {
+    "browser": "Chrome",
+    "phoneViewport": [
+      390,
+      844
+    ],
+    "iframeClientWidth": 334,
+    "iframeScrollWidth": 334,
+    "viewportRestored": true,
+    "navigation": [
+      "task-center -> project-center -> task-center",
+      "project-detail -> project-center",
+      "project-center -> temporary-tasks"
+    ],
+    "rootSettingsSaved": true,
+    "rootUnchanged": true,
+    "rootRevision": 2,
+    "nativeProjectWorkspace": "手机闭环验收 20261006",
+    "nativeProjectSessionCount": 2,
+    "screenshots": [
+      "/Users/pmp/.codex/visualizations/2026/10/07/01a114fe-a63a-7ca1-836d-9b070a05c163/project-center-workspaces.png",
+      "/Users/pmp/.codex/visualizations/2026/10/07/01a114fe-a63a-7ca1-836d-9b070a05c163/project-root-settings-phone.png",
+      "/Users/pmp/.codex/visualizations/2026/10/07/01a114fe-a63a-7ca1-836d-9b070a05c163/temporary-task-create-phone.png",
+      "/Users/pmp/.codex/visualizations/2026/10/07/01a114fe-a63a-7ca1-836d-9b070a05c163/temporary-task-result-phone.png"
+    ]
+  },
+  "initialGuiFinding": {
+    "taskId": "ee94205b-b77e-43aa-827f-b2972e2dbea1",
+    "reason": "request-snapshot-mismatch when live health changed during decision",
+    "runCount": 0,
+    "finalState": "cancelled",
+    "corrected": "Freeze submitted advisory health descriptions; current catalog/authority and admission checks remain authoritative"
+  },
+  "finalGuiTask": {
+    "taskId": "7f417ee5-e7cd-430a-82b5-7d1c869dc53b",
+    "runId": "dd0111a9-dfac-49cc-abc5-0289f19bcf07",
+    "attemptId": "30ba3789-6a29-472d-bffd-f45d9d5325c8",
+    "reportId": "3104077b-5217-4a14-b9c4-b126fa97ce17",
+    "runCount": 1,
+    "attemptCount": 1,
+    "taskState": "completed",
+    "runState": "succeeded",
+    "ack": "acknowledged",
+    "executor": "mbp-executor",
+    "provider": "deepseek-official",
+    "model": "deepseek-flash",
+    "effort": "off",
+    "result": "7 + 8 = 15",
+    "marker": "TEMP-CENTER-FINAL-20261007-15",
+    "planningSession": "adhoc-feb69fde-901d-4763-98d0-42ddbed6e1d2",
+    "executionSession": "task-6ce74afe-4291-4652-84c5-ffa65def2a36"
+  },
+  "finalCounts": {
+    "task": 11,
+    "run": 13,
+    "attempt": 12,
+    "report": 19,
+    "decision": 15
+  },
+  "limits": [
+    "Chrome responsive simulation; no new physical phone or Safari test",
+    "DSH native session logs use native persistence, not session subdirectories inside project cwd",
+    "Legacy 二游日常 retains its MBP execution workspace association; it has no VPS project planning workspace",
+    "Read-only task detail was reopened from the refreshed list to inspect the completed report"
+  ]
+}

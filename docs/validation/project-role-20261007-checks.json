@@ -1,0 +1,53 @@
+{
+  "date": "2026-10-07",
+  "package": "runtime-12",
+  "scope": "MBP executor project-center role/error presentation",
+  "cause": {
+    "actualRole": "executor",
+    "nodeId": "mbp-executor",
+    "backend": "Project runtime is not constructed for executor role; untyped exception was masked as gateway/internal"
+  },
+  "checks": {
+    "targeted": {
+      "passed": 29,
+      "failed": 0
+    },
+    "fullRegression": {
+      "passed": 629,
+      "skipped": 5,
+      "failed": 0
+    },
+    "liveDSH": [
+      "Actual executor settings confirmed before fix",
+      "Official task/project error reaches iframe as PLANNER_REQUIRED",
+      "Persistent role explanation replaces false zero counts",
+      "Recheck role button keeps explicit executor state"
+    ],
+    "unit": [
+      "Executor snapshot and creation stay rejected",
+      "Planner service unavailable differs from role restriction",
+      "Planner snapshot still available; both role conflict preserves bounded reason",
+      "No zero counts before first successful read",
+      "Role failure stops repeated automatic requests; manual retry can recover",
+      "Stale data retains warning and clears it after recovery"
+    ]
+  },
+  "deployment": {
+    "host": "MBP",
+    "port": 3082,
+    "profile": "executor",
+    "pid": 60916,
+    "hostRecord": ".runtime/project-runtime-20261006/mbp-role-12-host.json",
+    "screenshot": ".runtime/project-runtime-20261006/mbp-executor-role-12.png",
+    "vpsUpdated": false
+  },
+  "limits": [
+    "No role or execution permission expansion",
+    "No remote planner proxy added",
+    "No task dispatch or model invocation in this verification"
+  ],
+  "logs": {
+    "full": ".runtime/project-runtime-20261006/regression-12-network.log",
+    "targeted": ".runtime/project-runtime-20261006/role-targeted-12.log"
+  }
+}

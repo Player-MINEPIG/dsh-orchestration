@@ -22,3 +22,5 @@
         maxOutputBytes: 131072
         maxRuntimeMs: 10000
         maxConcurrent: 2
+    - id: typed-decision-settings
+      name: '@dsh-task/typed-decisions/console-server'

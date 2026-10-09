@@ -20,6 +20,7 @@ import {
 } from "./session-default.js";
 
 export interface TaskSessionDecisionService {
+  presetFor?(consumer: string): string | undefined;
   evaluate(
     request: DecisionRequest,
     options?: { signal?: AbortSignal },
@@ -27,7 +28,7 @@ export interface TaskSessionDecisionService {
 }
 export type TaskSessionDecisionRoute = Pick<
   DecisionRequest,
-  "provider" | "model" | "reasoningEffort"
+  "provider" | "model" | "reasoningEffort" | "preset"
 >;
 export type TaskSessionDecisionResult = TaskSessionSelection & {
   receipt?: DecisionReceipt;
@@ -112,6 +113,7 @@ export function consumeTaskSessionDecisionReceipt(
       request.requestId,
       snapshot,
       {
+        ...(request.preset ? { preset: request.preset } : {}),
         ...(request.provider ? { provider: request.provider } : {}),
         ...(request.model ? { model: request.model } : {}),
         ...(request.reasoningEffort
@@ -191,7 +193,9 @@ export async function resolveTaskSessionDecision(
     request = buildTaskSessionDecisionRequest(
       options.requestId,
       initial,
-      options.route,
+      options.route && Object.values(options.route).some(v => v !== undefined)
+        ? options.route
+        : options.decisions.presetFor?.("task-session") ? { preset: options.decisions.presetFor("task-session") } : {},
       now(),
     );
     receipt = await options.decisions.evaluate(request, {

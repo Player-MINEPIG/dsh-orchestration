@@ -1,0 +1,55 @@
+{
+  "feature": "existing executor session direct messaging",
+  "deployment": {
+    "planner": {
+      "revision": 38,
+      "pid": 3117455
+    },
+    "executor": {
+      "revision": 38,
+      "pid": 27768
+    }
+  },
+  "checks": {
+    "fullRegression": {
+      "tests": 716,
+      "pass": 711,
+      "skip": 5,
+      "fail": 0,
+      "log": "/private/tmp/direct-check-final2.log"
+    },
+    "finalNativeAndPage": {
+      "tests": 26,
+      "pass": 26,
+      "log": "/private/tmp/direct-last-tests.log"
+    },
+    "finalPageSubmitAndTimeout": {
+      "tests": 13,
+      "pass": 13,
+      "log": "/private/tmp/direct-page-final.log"
+    }
+  },
+  "live": {
+    "sessionId": "task-77a32340-b28e-4d92-8545-5c3aca1b117f",
+    "messages": [
+      "direct-message-acceptance-37-20261008",
+      "1b177c05-8ada-4170-b59f-e0e86cf9b6a8"
+    ],
+    "nativeMessageCount": 2,
+    "toolCalls": 0,
+    "terminalReasons": [
+      "completed",
+      "completed"
+    ],
+    "mobileViewport": {
+      "width": 390,
+      "height": 844
+    },
+    "screenshot": "/Users/pmp/.codex/visualizations/2026/10/07/01a114fe-a63a-7ca1-836d-9b070a05c163/direct-executor-chat-38.png"
+  },
+  "limitations": [
+    "This mirrors messages sent from the task panel, not unrelated WebUI history.",
+    "An interrupted admitted message without a locally saved result is marked uncertain and never automatically replayed.",
+    "Very long replies are explicitly truncated in the panel; full history stays in the native session."
+  ]
+}

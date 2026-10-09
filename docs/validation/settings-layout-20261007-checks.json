@@ -1,0 +1,54 @@
+{
+  "artifact": "task-system-settings-layout-29-20261007.tgz",
+  "checks": {
+    "tests": 687,
+    "pass": 682,
+    "fail": 0,
+    "skipped": 5
+  },
+  "officialConfigEditor": {
+    "passed": 5,
+    "modelCalls": 0,
+    "capacity1to2AndHostRestart": true
+  },
+  "mbp": {
+    "pid": 64564,
+    "preservation": {
+      "cordis.ymlUnchanged": true,
+      "cordis.patch.ymlUnchanged": true,
+      "otherPackagesUnchanged": true,
+      "tasks.sqliteWorkEntitiesUnchanged": true,
+      "remote-execution.sqliteDispatchesUnchanged": true
+    }
+  },
+  "vps": {
+    "pid": 2196501,
+    "workEntitiesUnchanged": true,
+    "nodeCapacity": 1
+  },
+  "ui": {
+    "desktopThemes": [
+      "dark",
+      "light"
+    ],
+    "mobileViewport": {
+      "width": 390,
+      "height": 844,
+      "settingsWidth": 337,
+      "settingsScrollWidth": 337
+    },
+    "switchVerticalErrorPx": 0,
+    "detailColumnTopDifferencePx": 0,
+    "disabledSaveDark": {
+      "foreground": "rgb(207, 211, 214)",
+      "background": "rgb(44, 44, 46)",
+      "opacity": 1
+    },
+    "draftCapacity2EnabledSaveAndDiscardRestored1": true,
+    "originalThemeAndViewportRestored": true
+  },
+  "limitations": [
+    "Chrome responsive viewport only; no physical phone or Safari verification",
+    "Live capacity remains 1; persistence and restart tested in isolated official host"
+  ]
+}

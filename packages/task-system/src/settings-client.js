@@ -15,13 +15,11 @@ window.__ModuleLoader__.load({
       "schedulerEnabled",
       "autoExecute",
       "maxConcurrent",
-      "executionTimeoutMs",
       "healthAlerts",
       "localHeartbeatIntervalMs",
     ];
     const ranges = {
       maxConcurrent: [1, 32],
-      executionTimeoutMs: [100, 86400000],
       localHeartbeatIntervalMs: [100, 3600000],
     };
     const booleanKeys = new Set([
@@ -35,13 +33,54 @@ window.__ModuleLoader__.load({
       decisionShared:
         "Scheduler executor selection and executor workspace/session decisions use this same configuration.",
       decisionMode: "Decision adapter",
+      decisionKind_rules:
+        "Rules applies configured rules without a model call. With no matching rule it abstains.",
+      decisionKind_structured:
+        "DSH LLM uses your configured DSH provider/model. Recommended for varied tasks and natural-language requests.",
+      decisionKind_jev:
+        "Typesafe Jev uses the dedicated Typesafe decision API and needs its own credentials; it does not use your DSH model API.",
+      decisionKind_compatible:
+        "Uses an explicitly configured compatible decision API.",
+      connectionCheck: "Check connection",
+      connectionChecking: "Checking…",
+      connectionCheckOk:
+        "Scheduler protocol and this node's authorization verified.",
+      connectionCheckPaused:
+        "Executor is off; connection detection does not enable heartbeats or receive tasks.",
+      connectionCheckFailed: "Connection check failed",
+      connectionError_ECONNREFUSED: "The port refused the connection; check the task-protocol port and listener.",
+      connectionError_EHOSTUNREACH: "The scheduler cannot be reached; check the private network.",
+      connectionError_ENETUNREACH: "The private network is unavailable.",
+      connectionError_EADDRNOTAVAIL: "The configured local source address is unavailable.",
+      connectionError_OPERATION_DENIED: "The scheduler rejected this identity-query permission.",
+      connectionError_NOT_FOUND: "The service is reachable, but this task-protocol path was not found.",
+      connectionError_CONNECTION_FAILED: "The response could not be verified as the scheduler task protocol.",
+      connectionPortHint:
+        "Use the scheduler task-protocol address, not its WebUI address. This test uses the current draft without saving it.",
+      connectionError_NETWORK_TARGET_DENIED:
+        "Address/port does not match the exact transport binding.",
+      connectionError_REMOTE_REJECTED:
+        "The service replied but did not accept the task protocol; check its port and route.",
+      connectionError_CONNECTION_TIMEOUT:
+        "Connection timed out; check the address, port and network.",
+      connectionError_CHECK_PAUSE_REQUIRED:
+        "Pause remote execution before testing a changed destination.",
+      startupError_STARTUP_TARGET_MISMATCH:
+        "Address/port does not match the trusted-network destination. Check advanced settings.",
+      startupError_STARTUP_BUSY:
+        "Work or recovery is still active. Finish or reconcile it before saving.",
+      startupError_STARTUP_CONFLICT:
+        "Configuration changed. Refresh before saving; your draft is retained.",
+      startupError_STARTUP_OVERRIDE:
+        "A higher configuration layer owns these settings; update profile ownership before saving.",
       decisionProvider: "Configured DSH provider",
       decisionModel: "Configured model",
       decisionChoose: "Choose…",
       decisionModelSelector: "Model selector",
       decisionModelVersion: "Exact model version",
       decisionEndpoint: "Compatible API endpoint",
-      decisionManageModels: "Manage providers and credentials in Models",
+      decisionManageModels: "Open DSH model settings",
+      decisionModelsUnavailable: "Model settings could not be opened. Select Models in the settings sidebar.",
       decisionCredentialMissing:
         "Credentials are not configured. Non-secret settings can be saved; model decisions are not ready.",
       decisionCatalogEmpty:
@@ -73,6 +112,8 @@ window.__ModuleLoader__.load({
       simpleHint:
         "Choose your role, connection and default workspace. Advanced settings keep the same draft.",
       openAdvanced: "Open advanced settings",
+      decisionDependencyRequired: "Install and enable the @dsh-task/typed-decisions decision plugin to use this feature. Refresh startup configuration after enabling it.",
+      startupError_STARTUP_DECISION_REQUIRED: "Install and enable @dsh-task/typed-decisions before enabling decisions.",
       schedulerDecisionTitle: "Scheduler · executor selection",
       schedulerDecisionHint:
         "The scheduler uses the existing task_plan decision tool to propose an executor. Applying a proposal checks the authoritative executor catalog and permissions.",
@@ -104,8 +145,13 @@ window.__ModuleLoader__.load({
       connectionUnconfirmed:
         "Connection configured; scheduler identity and permissions have not been confirmed here.",
       remotePausedStatus:
-        "Remote operation is paused; connection settings remain editable.",
+        "Executor is off; heartbeats and task reception are stopped. Connection settings remain editable.",
       startupEditable: "Role, workspace and scheduler connection",
+      nodeCapacityTitle: "Scheduler · executor node capacity",
+      nodeCapacityHint: "Slots admitted by this scheduler for each registered executor (1–32). Effective parallelism also depends on executor concurrency and shared workspace serialization. Saving applies immediately; lowering capacity does not stop active runs.",
+      nodeCapacityEmpty: "No executor nodes are registered in this profile.",
+      nodeCapacity: "Node capacity",
+      startupError_STARTUP_CAPACITY_DENIED: "Only existing scheduler-registered node capacities can be edited. Refresh the configuration.",
       startupTask: "Task-service startup settings",
       startupRemote: "Scheduler connection",
       startupSave: "Save and restart plugin",
@@ -129,6 +175,15 @@ window.__ModuleLoader__.load({
       startupMigrationHint:
         "Upgrade only after this existing peer has been explicitly granted executorIdentity, sessionContext and selectTaskSession. This action does not grant those permissions.",
       startupInvalid: "Enter valid values before saving.",
+      executorEnabled: "Enable executor",
+      remoteEnabled: "Enable scheduler connection service",
+      executorEnabledHint: "This switch saves and restarts the remote plugin immediately. On: automatically send heartbeats and receive tasks. Off: stop receiving tasks and report unavailable; if the network is unreachable, the last heartbeat expires. Running or unresolved work blocks changes.",
+      remoteEnabledHint: "This switch saves and restarts the remote service immediately. Planner-only nodes never receive execution work.",
+      heartbeat_disabled: "Automatic heartbeat is off. Enable the executor to restore heartbeats and task reception.",
+      heartbeat_waiting: "Executor enabled; waiting for the scheduler to acknowledge a heartbeat. Refresh to check again.",
+      heartbeat_acknowledged: "Last heartbeat acknowledged by the scheduler; online status follows heartbeat expiry.",
+      heartbeat_failed: "Heartbeat failed; executor is enabled but online status is not confirmed. Check the connection and refresh.",
+      startupError_STARTUP_ROUTES_REQUIRED: "Configure authorized executor models and workspace routes before enabling the executor.",
       paused: "Pause remote operation",
       pausedHint:
         "Save and restart with this on to keep connection settings loaded while remote requests, workers and polling are paused. Turn it off and save to resume with the configured connection and permissions.",
@@ -155,9 +210,6 @@ window.__ModuleLoader__.load({
       maxConcurrent: "Local automatic-execution limit",
       maxConcurrentHint:
         "Maximum admissions by the local automatic runner. Existing node capacity and task policies may impose a lower limit; remote-worker concurrency is separate.",
-      executionTimeoutMs: "Native execution budget (ms)",
-      executionTimeoutMsHint:
-        "Used when a new native attempt starts, including attempts claimed remotely. A running attempt keeps its existing timer; task policy may impose a shorter budget.",
       healthAlerts: "Reconcile node-health alerts",
       healthAlertsHint:
         "Runs planner-side health reconciliation during maintenance. It does not change alert destinations.",
@@ -186,6 +238,7 @@ window.__ModuleLoader__.load({
       workspaceTitle: "Executor · sessions and workspace",
       defaultWorkspaceId: "Workspace ID · read only",
       defaultWorkspace: "Default workspace",
+      workspaceLayoutHint: "For new project tasks this is the authorized parent. Local project folders are created by scheduler and project ID; temporary tasks have their own folders. Existing sessions retain their directory.",
       workspaceNone: "No default workspace selected",
       workspaceLoading: "Reading this host's workspaces…",
       workspaceFailed:
@@ -199,7 +252,7 @@ window.__ModuleLoader__.load({
       workspaceRefresh: "Refresh workspaces",
       sessionDecisionEnabled: "Enable executor workspace/session decisions",
       workspaceHint:
-        "The default workspace must already be registered locally. Changes apply after restart. Without a valid decision, execution uses the default Task session and workspace policy.",
+        "The default workspace must already be registered locally. Saved changes apply to future tasks immediately. Without a valid decision, execution uses the default Task session and workspace policy.",
       decisionHint:
         "Decision adapters reuse @dsh-task/typed-decisions: DSH LLM, Typesafe Jev, or a registered AnyJev adapter. Select the model in this form; manage credentials through Models.",
       settingsPending:
@@ -243,7 +296,7 @@ window.__ModuleLoader__.load({
       taskSessionHint:
         "Existing connections retain their current session protocol until an explicit authorized migration. This page does not upgrade permissions.",
       remoteHint:
-        "Remote operation uses the separate pause control in startup settings. A poll interval of 0 disables automatic polling after restart while direct requests remain available. Changes may be blocked by active or uncertain work.",
+        "The executor switch controls heartbeats and task reception together. Enabling replaces legacy zero intervals with automatic defaults. Active or uncertain work can block changes.",
       loading: "Reading current deployment…",
       loadFailed:
         "Could not read deployment details. Retry; no values were changed.",
@@ -269,14 +322,49 @@ window.__ModuleLoader__.load({
       decisionFormTitle: "决策模型配置",
       decisionShared:
         "调度端选择执行端、执行端选择工作区／会话，共用此决策模型配置。",
-      decisionMode: "决策模式",
+      decisionMode: "决策方式",
+      decisionKind_rules:
+        "Rules：按已配置的规则判断，不调用模型；没有匹配规则时不会自动选择。",
+      decisionKind_structured:
+        "DSH LLM：使用 DSH 中已有的供应商和模型。适合非固定任务及自然语言请求，建议你的场景选择此项。",
+      decisionKind_jev:
+        "Typesafe Jev：调用 Typesafe 的专用决策 API，需要单独配置凭据；不会使用你已配置的 DSH 模型 API。",
+      decisionKind_compatible: "使用明确配置的兼容决策 API。",
+      connectionCheck: "检验连接",
+      connectionChecking: "正在检验…",
+      connectionCheckOk: "已连通调度端任务协议，并确认此节点获准连接。",
+      connectionCheckPaused: "执行端仍关闭；检验连接不会开启心跳或接单。",
+      connectionCheckFailed: "连接检验失败",
+      connectionError_ECONNREFUSED: "端口拒绝连接，请核对任务协议端口和监听服务。",
+      connectionError_EHOSTUNREACH: "无法到达调度端，请检查私有网络连接。",
+      connectionError_ENETUNREACH: "私有网络当前不可用。",
+      connectionError_EADDRNOTAVAIL: "配置的本机来源地址当前不可用，请核对高级设置。",
+      connectionError_OPERATION_DENIED: "调度端未允许此节点查询执行端身份。",
+      connectionError_NOT_FOUND: "服务可达，但未找到任务协议接口路径。",
+      connectionError_CONNECTION_FAILED: "未能把返回内容验证为调度端任务协议。",
+      connectionPortHint:
+        "请填调度端任务协议地址，而不是 WebUI 地址。检验使用当前草稿，无需先保存。",
+      connectionError_NETWORK_TARGET_DENIED: "地址或端口与精确连接绑定不一致。",
+      connectionError_REMOTE_REJECTED:
+        "服务已响应，但未接受任务协议；请检查端口和接口路径。",
+      connectionError_CONNECTION_TIMEOUT: "连接超时，请检查地址、端口和网络。",
+      connectionError_CHECK_PAUSE_REQUIRED:
+        "请先暂停远程执行，再检验修改后的目标地址。",
+      startupError_STARTUP_TARGET_MISMATCH:
+        "地址或端口与 trusted-network 目标绑定不一致，请核对高级设置。",
+      startupError_STARTUP_BUSY: "角色或连接变更需要重启；仍有执行或未确认记录阻止重启。容量、默认工作区、决策开关和并发等即时设置可另行保存。",
+      startupError_STARTUP_CONFLICT:
+        "配置已变化，请刷新核对后保存；草稿已保留。",
+      startupError_STARTUP_OVERRIDE:
+        "此配置由更高层配置持有，需要先调整 profile 配置归属。",
       decisionProvider: "已有 DSH provider",
       decisionModel: "已有模型",
       decisionChoose: "请选择…",
       decisionModelSelector: "模型选择名",
       decisionModelVersion: "实际模型／版本",
       decisionEndpoint: "Compatible API 地址",
-      decisionManageModels: "在“模型”中管理 provider 与凭据",
+      decisionManageModels: "打开 DSH 模型设置",
+      decisionModelsUnavailable: "模型设置入口暂不可用，请点击设置左侧的“模型”。",
       decisionCredentialMissing:
         "凭据尚未配置。可保存非秘密设置；模型决策尚未就绪。",
       decisionCatalogEmpty:
@@ -303,25 +391,27 @@ window.__ModuleLoader__.load({
       settingsMode: "设置模式",
       simpleHint: "选择本机角色、连接与默认工作区。高级设置沿用同一份草稿。",
       openAdvanced: "打开高级设置",
+      decisionDependencyRequired: "需要安装并启用 @dsh-task/typed-decisions 决策插件后才能使用。启用后请刷新启动配置。",
+      startupError_STARTUP_DECISION_REQUIRED: "请先安装并启用 @dsh-task/typed-decisions 决策插件，再开启决策功能。",
       schedulerDecisionTitle: "调度端 · 选择执行者",
       schedulerDecisionHint:
         "调度端使用现有 task_plan 决策工具提出执行者建议；应用建议时校验权威执行端目录与权限。",
       planningDecisionEnabled: "启用调度端执行者决策",
       schedulerDecisionStatus:
-        "打开此开关并配置已有模型，才使用模型选择执行者。关闭或未加载决策插件时沿用明确路由；未确定执行者则保持待分配。",
-      schedulerDecisionModelEntry: "调度端决策模型配置",
+        "打开此开关并选择决策预设后，使用该预设选择执行者。关闭或未加载决策插件时沿用明确路由；未确定执行者则保持待分配。",
+      schedulerDecisionModelEntry: "选择调度端决策预设",
       schedulerDecisionSetup:
-        "打开“决策模型配置”选择已有模型；两个角色共用同一配置。",
+        "在本页分别选择调度端与执行端的决策预设；预设内容在独立“决策”设置中管理。",
       executorDecisionTitle: "执行端 · 工作区与会话",
       executorDecisionHint:
         "任务派过来后，由执行端在任务约束内选择工作区，并新建或复用 Task 会话。",
       executorDecisionInactive:
         "这些执行配置予以保留，但在“调度端”角色下不生效。",
-      decisionModelEntry: "执行端决策模型配置",
+      decisionModelEntry: "选择执行端决策预设",
       decisionModelStatus:
-        "使用已有决策模型配置；没有有效决策时，采用默认 Task 会话与工作区策略。",
+        "使用本机选择的决策预设；没有有效决策时，采用默认 Task 会话与工作区策略。",
       decisionModelSetup:
-        "点击“决策模型配置”选择已有模型／provider；此开关控制会话与工作区决策。",
+        "点击“选择执行端决策预设”；此开关控制会话与工作区决策。",
       schedulerAddress: "调度端地址",
       audienceHint:
         "audience 是调度端配置的目标验证标识，必须与调度端的值一致；请向调度端获取，不按地址猜测。",
@@ -332,8 +422,13 @@ window.__ModuleLoader__.load({
       connectionSetupStatus:
         "连接尚未就绪。请向调度端获取连接信息（audience、认证／权限及目标绑定），再在高级设置或“插件”中补齐。",
       connectionUnconfirmed: "连接已配置；此处尚未确认调度端身份与权限。",
-      remotePausedStatus: "远程运行已暂停，连接配置仍可编辑。",
+      remotePausedStatus: "执行端已关闭，不发送心跳、不接收任务；连接配置仍可编辑。",
       startupEditable: "角色、工作区与调度端连接",
+      nodeCapacityTitle: "调度端 · 执行节点容量",
+      nodeCapacityHint: "此调度端允许各已登记执行节点同时占用的槽位数（1–32）。实际并行数还受执行端的远程执行并发及共享工作区串行约束限制。保存后即时生效；降低容量不会停止已有运行。",
+      nodeCapacityEmpty: "当前配置尚未登记执行节点。",
+      nodeCapacity: "节点容量",
+      startupError_STARTUP_CAPACITY_DENIED: "只能修改调度端已有执行节点的容量，请刷新配置。",
       startupTask: "任务服务启动配置",
       startupRemote: "调度端连接",
       startupSave: "保存并重启插件",
@@ -346,7 +441,7 @@ window.__ModuleLoader__.load({
       startupUnavailable: "此 profile 没有可编辑的任务服务条目。",
       startupReadonly: "当前宿主不允许通过此连接编辑启动配置。",
       startupRestartHint:
-        "启动配置单独保存；保存会重启受影响的插件，不会重启 DSH。身份、凭据和远端权限由原配置流程管理。",
+        "全部草稿由下方常驻按钮统一保存。容量、工作区、决策开关和执行限制即时生效；角色、连接及协议变更需要重建受影响的插件。身份、凭据和授权仍由原配置管理。",
       startupUnconfigured:
         "尚未配置调度端连接。此表单仅可在已有 trusted-network 认证模式和固定内部节点身份的配置上建立连接；其他认证配置请使用官方安全配置流程。此页不创建密钥或授予权限。",
       startupEndpointHint:
@@ -355,6 +450,15 @@ window.__ModuleLoader__.load({
       startupMigrationHint:
         "仅在此已有 peer 已获 executorIdentity、sessionContext、selectTaskSession 明确授权后升级。此操作不会授予这些权限。",
       startupInvalid: "请先填写有效值再保存。",
+      executorEnabled: "启用执行端",
+      remoteEnabled: "启用调度连接服务",
+      executorEnabledHint: "开关修改先进入草稿，点击下方常驻保存按钮后应用。开启后自动发送心跳并接收任务；关闭后停止接单。此变更需要重建远程服务，活动或未确认工作会阻止保存。",
+      remoteEnabledHint: "开关会立即保存并重启远程服务。仅有调度端身份时不会接收执行任务。",
+      heartbeat_disabled: "自动心跳未开启。启用执行端可恢复心跳和接单。",
+      heartbeat_waiting: "执行端已启用，等待调度端确认心跳。可刷新查看最新状态。",
+      heartbeat_acknowledged: "最近一次心跳已获调度端确认；在线状态以心跳有效期为准。",
+      heartbeat_failed: "心跳发送失败；执行端已启用，但尚未确认在线。请检验连接后刷新。",
+      startupError_STARTUP_ROUTES_REQUIRED: "请先配置已授权的执行模型和工作区路线，再启用执行端。",
       paused: "暂停远程运行",
       pausedHint:
         "开启并保存重启后，连接配置保持加载，远程请求、执行器和轮询暂停。关闭并保存后，按已配置的连接与权限恢复运行。",
@@ -381,9 +485,6 @@ window.__ModuleLoader__.load({
       maxConcurrent: "本机自动执行并发上限",
       maxConcurrentHint:
         "只限制本机自动执行器的接收数量。节点容量和任务策略仍可能更严格；远程执行器的并发独立配置。",
-      executionTimeoutMs: "原生执行预算（毫秒）",
-      executionTimeoutMsHint:
-        "新原生尝试开始时读取，包括远程领取的尝试。已运行尝试保留原计时器；任务策略可设置更短预算。",
       healthAlerts: "检查节点健康告警",
       healthAlertsHint:
         "由规划节点在维护轮询中检查健康状态，不改变告警接收位置。",
@@ -398,7 +499,7 @@ window.__ModuleLoader__.load({
         "检测到 Home 级配置文件。如其中覆写 task-system.config，其优先级高于 profile，宿主会拒绝保存。下方 profile 路径是正常保存位置。",
       deployment: "当前部署 · 只读",
       startupHint:
-        "以下显示实际启动配置。角色、工作区和已有连接由独立启动表单保存；节点身份、数据库路径、工具授权和凭据仍为只读。",
+        "以下显示实际启动配置。角色、工作区和已有连接由下方常驻按钮统一保存；节点身份、数据库路径、工具授权和凭据仍为只读。",
       nodeId: "内部节点 ID",
       schedulerId: "调度端 ID",
       executorId: "调度端分配的执行端 ID",
@@ -412,6 +513,7 @@ window.__ModuleLoader__.load({
       workspaceTitle: "执行端 · 会话与工作区",
       defaultWorkspaceId: "工作区 ID · 只读",
       defaultWorkspace: "默认工作区",
+      workspaceLayoutHint: "新项目任务以此授权工作区为父目录，按调度端 ID／项目 ID 创建本地文件夹；临时任务使用独立目录。已有会话保留原目录。",
       workspaceNone: "未指定默认工作区",
       workspaceLoading: "正在读取本机工作区…",
       workspaceFailed:
@@ -424,9 +526,9 @@ window.__ModuleLoader__.load({
       workspaceRefresh: "刷新工作区",
       sessionDecisionEnabled: "启用执行端工作区／会话决策",
       workspaceHint:
-        "默认工作区须已在本机登记；改变后重启生效。没有有效决策时，执行采用默认的 Task 会话和工作区策略。",
+        "默认工作区须已在本机登记；保存后立即用于后续任务。没有有效决策时，执行采用默认的 Task 会话和工作区策略。",
       decisionHint:
-        "决策复用 @dsh-task/typed-decisions：普通 DSH LLM、Typesafe Jev 或已注册的 AnyJev adapter。在表单中选择模型；凭据在官方“模型”中管理。",
+        "在“决策”设置中管理 Rules、DSH LLM、Typesafe Jev 和已注册适配器的预设；本插件只选择使用哪一个。凭据在官方“模型”或原有环境引用中管理。",
       settingsPending: "当前宿主尚未加载会话／工作区设置接口。",
       queueTitle: "本机任务队列 · 只读",
       queueHint:
@@ -466,7 +568,7 @@ window.__ModuleLoader__.load({
       taskSessionHint:
         "旧连接继续使用原会话流程；显式授权迁移后才能升级。此页不扩展远端授权。",
       remoteHint:
-        "远程运行由启动配置中的独立暂停开关控制。领取间隔设为 0 并重启后只停用自动轮询，直接请求仍可用；存在活动工作或状态未确认的执行时可能无法保存。",
+        "执行端开关联动心跳和接单。启用时，旧的零间隔自动恢复为默认间隔；存在活动工作或状态未确认的执行时可能无法保存。",
       loading: "正在读取当前部署…",
       loadFailed: "未能读取部署详情，请重试；没有修改任何配置。",
       refresh: "刷新部署详情",
@@ -517,7 +619,7 @@ window.__ModuleLoader__.load({
         }));
       }
       inject() {
-        return { hooks: { taskSettings: this.store }, ...this.form.actions() };
+        return { hooks: { taskSettings: this.store }, ...this.form.actions(), save: async () => { await this.form.save(); const state=this.form.shell(); return !state.failed && !state.dirty; } };
       }
       dispose() {
         this.form.dispose();
@@ -545,47 +647,103 @@ window.__ModuleLoader__.load({
         for (const listener of this.listeners) listener();
       }
       accept(view, writable) {
-        if (!view || view.ns !== "task-system" || !view.value ||
-            !Number.isSafeInteger(view.revision)) throw new Error("Invalid task settings response");
-        const pick = (value) => Object.fromEntries(keys.filter(key =>
-          value && Object.hasOwn(value, key)).map(key => [key, value[key]]));
-        this.publish({ status: "ready", mode: "host", writable: writable === true,
-          value: pick(view.value), base: pick(view.base), user: pick(view.user), revision: view.revision });
+        if (
+          !view ||
+          view.ns !== "task-system" ||
+          !view.value ||
+          !Number.isSafeInteger(view.revision)
+        )
+          throw new Error("Invalid task settings response");
+        const pick = (value) =>
+          Object.fromEntries(
+            keys
+              .filter((key) => value && Object.hasOwn(value, key))
+              .map((key) => [key, value[key]]),
+          );
+        this.publish({
+          status: "ready",
+          mode: "host",
+          writable: writable === true,
+          value: pick(view.value),
+          base: pick(view.base),
+          user: pick(view.user),
+          revision: view.revision,
+        });
       }
       load() {
         if (this.disposed) return Promise.resolve();
-        if (this.inFlight) { this.rerun = true; return this.inFlight; }
+        if (this.inFlight) {
+          this.rerun = true;
+          return this.inFlight;
+        }
         this.inFlight = (async () => {
           do {
             this.rerun = false;
             try {
               const response = await this.api.describe();
               if (!response.ok) throw new Error("Task settings unavailable");
-              const view = response.value.namespaces.find(row => row.ns === "task-system");
+              const view = response.value.namespaces.find(
+                (row) => row.ns === "task-system",
+              );
               if (view) this.accept(view, response.value.writable);
-              else this.publish({ status: "unavailable", writable: false, mode: "host" });
+              else
+                this.publish({
+                  status: "unavailable",
+                  writable: false,
+                  mode: "host",
+                });
             } catch {
-              this.publish({ ...this.snapshot, writable: false,
-                status: this.snapshot.value ? "ready" : "unavailable" });
+              this.publish({
+                ...this.snapshot,
+                writable: false,
+                status: this.snapshot.value ? "ready" : "unavailable",
+              });
             }
           } while (this.rerun && !this.disposed);
-        })().finally(() => { this.inFlight = undefined; });
+        })().finally(() => {
+          this.inFlight = undefined;
+        });
         return this.inFlight;
       }
       mutate(ops, revision) {
-        if (!Array.isArray(ops) || !ops.length || ops.some(op =>
-          !["set", "unset"].includes(op.op) || !Array.isArray(op.path) ||
-          op.path.length !== 1 || !keys.includes(op.path[0]) ||
-          (op.op === "set" && typeof op.value !== (booleanKeys.has(op.path[0]) ? "boolean" : "number")) ||
-          (op.op === "set" && !fieldSpec(op.path[0]).parse(String(op.value)))))
+        if (
+          !Array.isArray(ops) ||
+          !ops.length ||
+          ops.some(
+            (op) =>
+              !["set", "unset"].includes(op.op) ||
+              !Array.isArray(op.path) ||
+              op.path.length !== 1 ||
+              !keys.includes(op.path[0]) ||
+              (op.op === "set" &&
+                typeof op.value !==
+                  (booleanKeys.has(op.path[0]) ? "boolean" : "number")) ||
+              (op.op === "set" &&
+                !fieldSpec(op.path[0]).parse(String(op.value))),
+          )
+        )
           return Promise.resolve(false);
         const owned = structuredClone(ops);
         const task = this.tail.then(async () => {
-          if (this.disposed || !this.snapshot.writable || !Number.isSafeInteger(revision)) return false;
+          if (
+            this.disposed ||
+            !this.snapshot.writable ||
+            !Number.isSafeInteger(revision)
+          )
+            return false;
           try {
-            const response = await this.api.mutate("task-system", owned, revision);
-            if (response.ok) { this.accept(response.value, true); return true; }
-          } catch { /* Recover authoritative values; keep the form's draft. */ }
+            const response = await this.api.mutate(
+              "task-system",
+              owned,
+              revision,
+            );
+            if (response.ok) {
+              this.accept(response.value, true);
+              return true;
+            }
+          } catch {
+            /* Recover authoritative values; keep the form's draft. */
+          }
           await this.load();
           return false;
         });
@@ -596,11 +754,17 @@ window.__ModuleLoader__.load({
         let off;
         const sync = () => {
           if (this.snapshot.status === "ready" && !off) off = register();
-          else if (this.snapshot.status !== "ready" && off) { off(); off = undefined; }
+          else if (this.snapshot.status !== "ready" && off) {
+            off();
+            off = undefined;
+          }
         };
         const unsubscribe = this.subscribe(sync);
         sync();
-        return () => { unsubscribe(); off?.(); };
+        return () => {
+          unsubscribe();
+          off?.();
+        };
       }
       async dispose() {
         this.disposed = true;
@@ -733,6 +897,7 @@ window.__ModuleLoader__.load({
       task: [
         "role",
         "defaultWorkspaceId",
+        "nodeCapacities",
         "planningDecisionEnabled",
         "sessionDecisionEnabled",
       ],
@@ -755,10 +920,14 @@ window.__ModuleLoader__.load({
         typeof value !== "object" ||
         Array.isArray(value) ||
         Object.keys(value).some((key) => !keys.includes(key)) ||
-        (!partial && keys.some((key) => !Object.hasOwn(value, key)))
+        (!partial && keys.some((key) => key !== "nodeCapacities" && !Object.hasOwn(value, key)))
       )
         throw new Error("Invalid startup values");
       for (const [key, entry] of Object.entries(value)) {
+        if (key === "nodeCapacities" && (!Array.isArray(entry) || entry.some(node =>
+          !node || Object.keys(node).some(field => !["nodeId", "maxConcurrent"].includes(field)) ||
+          typeof node.nodeId !== "string" || !node.nodeId || !Number.isSafeInteger(node.maxConcurrent) || node.maxConcurrent < 1 || node.maxConcurrent > 32)))
+          throw new Error("Invalid node capacity");
         if (
           (key === "role" &&
             !["planner", "executor", "both"].includes(entry)) ||
@@ -883,13 +1052,37 @@ window.__ModuleLoader__.load({
         typeSymbol: "@dsh-task/task-system#SaveStartupResult",
         create: () => ({
           parse(value) {
-            if (value?.saved !== true || value.applies !== "plugin-restart")
+            if (value?.saved !== true || !["live", "plugin-restart"].includes(value.applies))
               throw new Error("Invalid startup save result");
             return value;
           },
         }),
       },
     };
+    const startupNeedsRestart = (target, changes) => Object.keys(changes).some(key => !(target === "task" ? ["nodeCapacities", "defaultWorkspaceId", "planningDecisionEnabled", "sessionDecisionEnabled"] : ["concurrency", "pollIntervalMs"]).includes(key));
+    class SettingsSaveCoordinator {
+      constructor() { this.items = new Map(); this.listeners = new Set(); this.saving = false; this.message = ""; }
+      subscribe(fn) { this.listeners.add(fn); return () => this.listeners.delete(fn); }
+      emit() { for (const fn of this.listeners) fn(); }
+      register(id, item) { this.items.set(id,item); this.emit(); return () => {this.items.delete(id);this.emit();}; }
+      update(id, meta) { const row=this.items.get(id); if (!row || JSON.stringify(row.meta)===JSON.stringify(meta)) return; if (meta.dirty && !row.meta?.dirty && !this.saving) this.message=""; row.meta=meta; this.emit(); }
+      snapshot() { const dirty=[...this.items.values()].filter(row=>row.meta?.dirty); return {count:dirty.length,invalid:dirty.some(row=>row.meta.invalid),busy:this.saving || [...this.items.values()].some(row=>row.meta?.busy),restart:dirty.some(row=>row.meta.restart),message:this.message}; }
+      async saveAll() {
+        const before=this.snapshot(); if (!before.count || before.invalid || before.busy) return false;
+        this.saving=true;this.message="";this.emit();let saved=0;
+        const items=[...this.items.values()].filter(row=>row.meta?.dirty).sort((a,b)=>Number(a.meta.restart)-Number(b.meta.restart));
+        try { for (const row of items) { if (await row.save() !== true) {this.message=saved ? "部分设置已保存；未完成的草稿已保留。请查看错误提示。" : "未能保存，草稿已保留。请查看错误提示。";return false;} saved++; } this.message="设置已保存。";return true; }
+        catch {this.message=saved ? "部分设置已保存；其余草稿已保留。" : "未能保存，草稿已保留。";return false;}
+        finally {this.saving=false;this.emit();}
+      }
+      discardAll() { if (this.snapshot().busy) return; for (const row of this.items.values()) row.discard(); this.message="";this.emit(); }
+    }
+    function useSaveParticipant(coordinator, id, participant) {
+      if (!coordinator) return;
+      const ref=React.useRef(participant);ref.current=participant;
+      React.useEffect(()=>coordinator.register(id,{meta:participant.meta,save:()=>ref.current.save(),discard:()=>ref.current.discard()}),[coordinator,id]);
+      React.useEffect(()=>coordinator.update(id,participant.meta),[coordinator,id,participant.meta.dirty,participant.meta.invalid,participant.meta.busy,participant.meta.restart]);
+    }
     const hintStyle = {
       color: "var(--dsw-alias-label-secondary, currentColor)",
       fontSize: 13,
@@ -973,19 +1166,20 @@ window.__ModuleLoader__.load({
                   borderBottom: "1px solid var(--dsw-alias-border-l3, #8a8a8a)",
                 },
               },
-              h("dt", { style: hintStyle }, t(key)),
+              h("dt", { style: { ...hintStyle, margin: 0 } }, t(key)),
               h(
                 "dd",
                 {
                   style: {
                     margin: 0,
                     fontSize: 13,
+                    lineHeight: 1.65,
                     overflowWrap: "anywhere",
                     whiteSpace: "pre-wrap",
                   },
                   "data-setting": key,
                 },
-                key === "role"
+                key === "executionTools" && value.executionToolsMode === "preset" ? "DSH Agent preset（默认工具与权限）" : key === "role"
                   ? t(
                       {
                         planner: "rolePlanner",
@@ -1199,6 +1393,8 @@ window.__ModuleLoader__.load({
                         "td",
                         { style: cellStyle },
                         h("strong", null, item.title),
+                        item.projectTitle ? h("div", { style: hintStyle }, item.projectTitle) : null,
+                        advanced && item.executionDirectory ? h("div", { style: { ...hintStyle, overflowWrap: "anywhere" } }, item.executionDirectory) : null,
                         h(
                           "div",
                           { style: hintStyle, hidden: !advanced },
@@ -1272,6 +1468,71 @@ window.__ModuleLoader__.load({
         ),
       );
     }
+    const checkConnectionDescriptor = {
+      id: "@dsh-task/task-system#taskPluginSettings/checkConnection",
+      service: NS,
+      namespace: NS,
+      method: "checkConnection",
+      invocation: { kind: "direct" },
+      parameters: [
+        {
+          name: "input",
+          wire: "input",
+          source: "json",
+          codec: {
+            mode: "strict",
+            typeSymbol: "@dsh-task/task-system#CheckConnectionInput",
+            create: () => ({
+              parse(value) {
+                if (
+                  !value ||
+                  Object.keys(value).sort().join() !==
+                    "endpoint,expected,trustedNetworkTarget" ||
+                  typeof value.endpoint !== "string" ||
+                  !value.endpoint ||
+                  value.endpoint.length > 2048
+                )
+                  throw Error("Invalid connection check input");
+                parseStartupValues(value.expected, "remote");
+                parseStartupValues(
+                  { trustedNetworkTarget: value.trustedNetworkTarget },
+                  "remote",
+                  true,
+                );
+                return value;
+              },
+            }),
+          },
+        },
+      ],
+      result: {
+        mode: "strict",
+        typeSymbol: "@dsh-task/task-system#CheckConnectionResult",
+        create: () => ({
+          parse(value) {
+            if (
+              !value ||
+              Object.keys(value).sort().join() !==
+                "checkedAt,code,connected,endpoint,identity,paused" ||
+              typeof value.connected !== "boolean" ||
+              typeof value.paused !== "boolean" ||
+              typeof value.checkedAt !== "string" ||
+              (value.endpoint !== null && typeof value.endpoint !== "string") ||
+              (value.code !== null && typeof value.code !== "string")
+            )
+              throw Error("Invalid connection check result");
+            if (value.identity !== null)
+              executorIdentityDescriptor.result.create().parse(value.identity);
+            if (
+              value.connected !== (value.identity !== null) ||
+              (value.connected && value.code !== null)
+            )
+              throw Error("Invalid connection check status");
+            return value;
+          },
+        }),
+      },
+    };
     function connectionUrl(value) {
       try {
         const url = new URL(value);
@@ -1289,6 +1550,7 @@ window.__ModuleLoader__.load({
     function simpleEndpointInput(value, previous) {
       const text = String(value).trim(),
         url = connectionUrl(text);
+      if (text.endsWith(":")) return text;
       if (
         !url ||
         url.username ||
@@ -1306,6 +1568,7 @@ window.__ModuleLoader__.load({
         ? {
             role: values.role,
             defaultWorkspaceId: values.defaultWorkspaceId ?? "",
+            ...(values.nodeCapacities ? {nodeCapacities: values.nodeCapacities.map(node => ({nodeId: node.nodeId, maxConcurrent: String(node.maxConcurrent)}))} : {}),
             planningDecisionEnabled: values.planningDecisionEnabled,
             sessionDecisionEnabled: values.sessionDecisionEnabled,
           }
@@ -1333,6 +1596,13 @@ window.__ModuleLoader__.load({
       if (!["planner", "executor", "both"].includes(draft.role))
         invalid.push("role");
       if (target === "task") {
+        if (values.nodeCapacities) {
+          next.nodeCapacities = (draft.nodeCapacities ?? []).map(node => ({nodeId: node.nodeId, maxConcurrent: Number(node.maxConcurrent)}));
+          if (next.nodeCapacities.length !== values.nodeCapacities.length ||
+              next.nodeCapacities.some((node, i) => node.nodeId !== values.nodeCapacities[i]?.nodeId ||
+                !String(draft.nodeCapacities[i].maxConcurrent).trim() || !Number.isSafeInteger(node.maxConcurrent) || node.maxConcurrent < 1 || node.maxConcurrent > 32))
+            invalid.push("nodeCapacities");
+        }
         next.defaultWorkspaceId =
           String(draft.defaultWorkspaceId).trim() || null;
         for (const key of [
@@ -1372,7 +1642,12 @@ window.__ModuleLoader__.load({
             JSON.stringify(next[key]) !== JSON.stringify(values[key]),
         );
         if (!next.paused || connectionChanged) {
-          if (!next.endpoint) invalid.push("endpoint");
+          if (
+            !next.endpoint ||
+            !connectionUrl(next.endpoint) ||
+            next.endpoint.endsWith(":")
+          )
+            invalid.push("endpoint");
           if (!next.audience) invalid.push("audience");
           if (values.trustedNetworkTarget || values.endpoint === null) {
             const binding = next.trustedNetworkTarget;
@@ -1405,7 +1680,7 @@ window.__ModuleLoader__.load({
           )
             invalid.push(key);
         }
-        if (migrate) next.taskSessionsEnabled = true;
+        if (migrate || draft.taskSessionsEnabled === true) next.taskSessionsEnabled = true;
       }
       const changes = Object.fromEntries(
         Object.entries(next).filter(
@@ -1487,6 +1762,7 @@ window.__ModuleLoader__.load({
             ),
           ),
         ),
+        h("p", { style: hintStyle }, t("workspaceLayoutHint")),
         directory?.loading
           ? h("p", { role: "status", style: hintStyle }, t("workspaceLoading"))
           : null,
@@ -1545,15 +1821,22 @@ window.__ModuleLoader__.load({
       openAdvanced,
       openPlugins,
       openDecisionModels,
+      renderDecisionModels,
+      decisionAvailable = false,
+      checkConnection,
+      saveCoordinator,
     }) {
       const [draft, setDraft] = React.useState(() =>
         startupDraft(target, row.values),
       );
       const [status, setStatus] = React.useState({ saving: false });
-      const endpoint = React.useRef(row.values.endpoint);
+      const [endpointText, setEndpointText] = React.useState(() =>
+        simpleEndpointDisplay(row.values.endpoint ?? ""),
+      );
+      const [connection, setConnection] = React.useState({ checking: false });
       const edit = (key, value) => {
-        if (key === "endpoint" && connectionUrl(value))
-          endpoint.current = value;
+        if (key === "endpoint") setEndpointText(simpleEndpointDisplay(value));
+        setConnection({ checking: false });
         if (key === "role") onRoleChange?.(value);
         setDraft((old) => ({
           ...old,
@@ -1591,11 +1874,12 @@ window.__ModuleLoader__.load({
       const disabled =
         !writable ||
         status.saving ||
+        connection.checking ||
         (target === "remote" && (!row.loaded || row.loaderDisabled));
       const executor = draft.role === "executor" || draft.role === "both";
       const planner = draft.role === "planner" || draft.role === "both";
-      const save = async (migrate = false) => {
-        const update = startupChanges(target, row.values, draft, migrate);
+      const save = async (migrate = false, selectedDraft = draft) => {
+        const update = startupChanges(target, row.values, selectedDraft, migrate);
         if (
           disabled ||
           workspaceInvalid ||
@@ -1612,19 +1896,22 @@ window.__ModuleLoader__.load({
           });
           await onSaved();
           setStatus({ saving: false, saved: true });
+          return true;
         } catch (error) {
           setStatus({
             saving: false,
             failed: true,
             errorCode:
-              typeof error?.code === "string" &&
-              /^[a-z0-9_/-]{1,100}$/i.test(error.code)
-                ? error.code
+              typeof (error?.details?.reason ?? error?.code) === "string" &&
+              /^[a-z0-9_/-]{1,100}$/i.test(error?.details?.reason ?? error.code)
+                ? (error?.details?.reason ?? error.code)
                 : null,
           });
         }
       };
 
+      const discardStartup = () => {setDraft(startupDraft(target,row.values));setEndpointText(simpleEndpointDisplay(row.values.endpoint ?? ""));setConnection({checking:false});onRoleChange?.(row.values.role);setStatus({saving:false});};
+      useSaveParticipant(saveCoordinator, `startup-${target}`, {meta:{dirty:parsed.dirty,invalid:workspaceInvalid || parsed.invalid.length>0 || !writable,busy:status.saving || connection.checking,restart:startupNeedsRestart(target,parsed.changes)},save:()=>save(),discard:discardStartup});
       const field = (key, label = key) =>
         h(
           "label",
@@ -1660,9 +1947,7 @@ window.__ModuleLoader__.load({
                 id: `task-startup-${target}-${key}`,
                 style: controlStyle,
                 value:
-                  key === "endpoint" && !advanced
-                    ? simpleEndpointDisplay(draft[key])
-                    : draft[key],
+                  key === "endpoint" && !advanced ? endpointText : draft[key],
                 disabled:
                   disabled ||
                   (target === "task" &&
@@ -1679,16 +1964,28 @@ window.__ModuleLoader__.load({
                 ].includes(key)
                   ? "numeric"
                   : undefined,
-                onChange: (event) =>
-                  edit(
-                    key,
-                    key === "endpoint" && !advanced
-                      ? simpleEndpointInput(
-                          event.target.value,
-                          endpoint.current,
-                        )
-                      : event.target.value,
-                  ),
+                onChange: (event) => {
+                  const text = event.target.value;
+                  if (key === "endpoint" && !advanced) {
+                    edit(key, simpleEndpointInput(text, row.values.endpoint));
+                    setEndpointText(text);
+                    const url = connectionUrl(text);
+                    if (
+                      url &&
+                      !text.trim().endsWith(":") &&
+                      row.values.trustedNetworkTarget
+                    )
+                      setDraft((old) => ({
+                        ...old,
+                        targetAddress: url.hostname.replace(/^\[|\]$/g, ""),
+                        targetPort: String(
+                          Number(
+                            url.port || (url.protocol === "http:" ? 80 : 443),
+                          ),
+                        ),
+                      }));
+                  } else edit(key, text);
+                },
               }),
           key === "audience" && advanced
             ? h("p", { style: hintStyle }, t("audienceHint"))
@@ -1727,6 +2024,15 @@ window.__ModuleLoader__.load({
             )
           : null,
         field("role"),
+        target === "task" && planner ? h("div", {"data-task-node-capacities": true},
+          h("h4", {style: headingStyle}, t("nodeCapacityTitle")),
+          h("p", {style: hintStyle}, t("nodeCapacityHint")),
+          ...(draft.nodeCapacities ?? []).map((node, index) => h("div", {key:node.nodeId, style:{margin:"12px 0"}},
+            h("label", {htmlFor:`task-node-capacity-${index}`, style:{display:"block", marginBottom:6}}, `${node.nodeId} · ${t("nodeCapacity")}`),
+            h("input", {id:`task-node-capacity-${index}`, type:"number", min:1, max:32, step:1, style:controlStyle, value:node.maxConcurrent, disabled,
+              "aria-invalid": parsed.invalid.includes("nodeCapacities") || undefined,
+              onChange:event => edit("nodeCapacities", draft.nodeCapacities.map((value,i) => i === index ? {...value,maxConcurrent:event.target.value} : value))}))),
+          !draft.nodeCapacities?.length ? h("p", {style:hintStyle}, t("nodeCapacityEmpty")) : null) : null,
         target === "task"
           ? h(
               React.Fragment,
@@ -1750,13 +2056,14 @@ window.__ModuleLoader__.load({
                   t("planningDecisionEnabled"),
                   h(Switch, {
                     label: t("planningDecisionEnabled"),
-                    checked: draft.planningDecisionEnabled,
-                    disabled: disabled || !planner,
+                    checked: decisionAvailable && draft.planningDecisionEnabled,
+                    disabled: disabled || !planner || !decisionAvailable,
                     onChange: (value) => edit("planningDecisionEnabled", value),
                   }),
                 ),
+                !decisionAvailable ? h("p", {role:"note",style:hintStyle}, t("decisionDependencyRequired")) : null,
                 h("p", { style: hintStyle }, t("schedulerDecisionStatus")),
-                draft.planningDecisionEnabled
+                decisionAvailable && draft.planningDecisionEnabled
                   ? h(
                       "div",
                       { "data-task-scheduler-decision-entry": true },
@@ -1765,11 +2072,12 @@ window.__ModuleLoader__.load({
                         {
                           variant: "outline",
                           onClick: () => {
-                            openDecisionModels?.();
+                            openDecisionModels?.("planner");
                           },
                         },
                         t("schedulerDecisionModelEntry"),
                       ),
+                      renderDecisionModels?.("planner"),
                       h(
                         "div",
                         {
@@ -1823,13 +2131,14 @@ window.__ModuleLoader__.load({
                   t("sessionDecisionEnabled"),
                   h(Switch, {
                     label: t("sessionDecisionEnabled"),
-                    checked: draft.sessionDecisionEnabled,
-                    disabled: disabled || !executor,
+                    checked: decisionAvailable && draft.sessionDecisionEnabled,
+                    disabled: disabled || !executor || !decisionAvailable,
                     onChange: (value) => edit("sessionDecisionEnabled", value),
                   }),
                 ),
+                !decisionAvailable ? h("p", {role:"note",style:hintStyle}, t("decisionDependencyRequired")) : null,
                 h("p", { style: hintStyle }, t("workspaceHint")),
-                executor && draft.sessionDecisionEnabled
+                decisionAvailable && executor && draft.sessionDecisionEnabled
                   ? h(
                       "div",
                       { "data-task-decision-entry": true },
@@ -1839,11 +2148,12 @@ window.__ModuleLoader__.load({
                         {
                           variant: "outline",
                           onClick: () => {
-                            openDecisionModels?.();
+                            openDecisionModels?.("executor");
                           },
                         },
                         t("decisionModelEntry"),
                       ),
+                      renderDecisionModels?.("executor"),
                       h(
                         "div",
                         {
@@ -1871,14 +2181,19 @@ window.__ModuleLoader__.load({
                     gap: 20,
                     margin: "12px 0",
                   },
-                  hidden: !advanced,
+                  "data-task-availability-switch": true,
                 },
-                t("paused"),
+                t(executor ? "executorEnabled" : "remoteEnabled"),
                 h(Switch, {
-                  label: t("paused"),
-                  checked: draft.paused,
-                  disabled,
-                  onChange: (value) => edit("paused", value),
+                  label: t(executor ? "executorEnabled" : "remoteEnabled"),
+                  checked: !draft.paused,
+                  disabled: disabled || parsed.invalid.length > 0,
+                  onChange: async (enabled) => {
+                    const next = { ...draft, paused: !enabled };
+                    setDraft(next);
+                    setConnection({ checking: false });
+                    if (!saveCoordinator && !await save(false, next)) setDraft(draft);
+                  },
                 }),
               ),
               draft.paused
@@ -1888,7 +2203,12 @@ window.__ModuleLoader__.load({
                     t("remotePausedStatus"),
                   )
                 : null,
-              h("p", { style: hintStyle, hidden: !advanced }, t("pausedHint")),
+              h("p", { style: hintStyle }, t(executor ? "executorEnabledHint" : "remoteEnabledHint")),
+              executor && !row.values.paused
+                ? h("p", { role: "status", style: hintStyle, "data-task-heartbeat-status": true },
+                    t(`heartbeat_${row.heartbeat?.state ?? "waiting"}`),
+                    row.heartbeat?.acknowledgedAt ? ` · ${new Date(row.heartbeat.acknowledgedAt).toLocaleString()}` : "")
+                : null,
               ...["endpoint", "audience", "pollIntervalMs", "concurrency"].map(
                 (key) => field(key),
               ),
@@ -1921,7 +2241,11 @@ window.__ModuleLoader__.load({
                     { "data-task-connection-status": true },
                     h(
                       "p",
-                      { role: "status", style: hintStyle },
+                      {
+                        role: "status",
+                        style: hintStyle,
+                        hidden: !!connection.value,
+                      },
                       t(
                         row.values.endpoint === null ||
                           !row.loaded ||
@@ -1957,13 +2281,82 @@ window.__ModuleLoader__.load({
                         variant: "outline",
                         hidden: !advanced,
                         disabled: disabled || parsed.invalid.length > 0,
-                        onClick: () => save(true),
+                        onClick: () => saveCoordinator ? edit("taskSessionsEnabled",true) : save(true),
                       },
                       t("startupMigration"),
                     ),
                   )
                 : null,
             ),
+        target === "remote"
+          ? h(
+              "div",
+              { "data-task-connection-check": true },
+              h("p", { style: hintStyle }, t("connectionPortHint")),
+              h(
+                Button,
+                {
+                  variant: "outline",
+                  disabled:
+                    disabled ||
+                    !checkConnection ||
+                    parsed.invalid.length > 0 ||
+                    !draft.endpoint,
+                  onClick: async () => {
+                    setConnection({ checking: true });
+                    try {
+                      const selected = { ...row.values, ...parsed.changes };
+                      const value = await checkConnection({
+                        expected: row.values,
+                        endpoint: selected.endpoint,
+                        trustedNetworkTarget: selected.trustedNetworkTarget,
+                      });
+                      setConnection({ checking: false, value });
+                    } catch (error) {
+                      setConnection({
+                        checking: false,
+                        value: {
+                          connected: false,
+                          code:
+                            error?.details?.reason ??
+                            error?.code ??
+                            "CONNECTION_FAILED",
+                        },
+                      });
+                    }
+                  },
+                },
+                t(
+                  connection.checking
+                    ? "connectionChecking"
+                    : "connectionCheck",
+                ),
+              ),
+              connection.value
+                ? h(
+                    "p",
+                    {
+                      role: connection.value.connected ? "status" : "alert",
+                      style: {
+                        ...hintStyle,
+                        color: connection.value.connected
+                          ? "#93C9A3"
+                          : "#E58F8F",
+                      },
+                    },
+                    connection.value.connected
+                      ? t("connectionCheckOk")
+                      : `${t("connectionCheckFailed")}：${t(`connectionError_${connection.value.code}`) === `connectionError_${connection.value.code}` ? connection.value.code : t(`connectionError_${connection.value.code}`)}`,
+                    connection.value.identity
+                      ? ` · ${connection.value.identity.nodeId} · ${connection.value.identity.executorId}`
+                      : "",
+                    connection.value.paused
+                      ? ` ${t("connectionCheckPaused")}`
+                      : "",
+                  )
+                : null,
+            )
+          : null,
         parsed.invalid.length
           ? h(
               "p",
@@ -1975,14 +2368,24 @@ window.__ModuleLoader__.load({
           ? h(
               "p",
               { role: "alert" },
-              t("startupSaveFailed"),
+              t(`startupError_${status.errorCode}`) ===
+                `startupError_${status.errorCode}`
+                ? t("startupSaveFailed")
+                : t(`startupError_${status.errorCode}`),
               status.errorCode ? ` (${status.errorCode})` : "",
             )
           : null,
         status.saved ? h("p", { role: "status" }, t("startupSaved")) : null,
-        h(
+        !saveCoordinator ? h(
           "div",
-          { style: { display: "flex", flexWrap: "wrap", gap: 12, marginTop: 14 } },
+          {
+            style: {
+              display: "flex",
+              flexWrap: "wrap",
+              gap: 12,
+              marginTop: 14,
+            },
+          },
           h(
             Button,
             {
@@ -2003,14 +2406,17 @@ window.__ModuleLoader__.load({
               disabled: disabled || !parsed.dirty,
               onClick: () => {
                 setDraft(startupDraft(target, row.values));
-                endpoint.current = row.values.endpoint;
+                setEndpointText(
+                  simpleEndpointDisplay(row.values.endpoint ?? ""),
+                );
+                setConnection({ checking: false });
                 onRoleChange?.(row.values.role);
                 setStatus({ saving: false });
               },
             },
             t("discardDraft"),
           ),
-        ),
+        ) : null,
       );
     }
     function StartupSettings({
@@ -2023,6 +2429,9 @@ window.__ModuleLoader__.load({
       openAdvanced,
       openPlugins,
       openDecisionModels,
+      renderDecisionModels,
+      checkConnection,
+      saveCoordinator,
     }) {
       const { state, refresh, replace } = useReadSnapshot(startup);
       const workspaceScopeKey = JSON.stringify([
@@ -2064,6 +2473,9 @@ window.__ModuleLoader__.load({
           { style: hintStyle, hidden: !advanced },
           t("startupRestartHint"),
         ),
+        state.value?.restartBlockers?.length ? h("details", {"data-task-restart-blockers":true},
+          h("summary",null,`有 ${state.value.restartBlockers.length} 项执行／恢复记录会阻止重启类变更；即时设置可正常保存`),
+          ...state.value.restartBlockers.map(run=>h("p",{key:run.runId,style:hintStyle},`${run.title} · ${run.state} · ${run.runId}`))) : null,
         state.failed
           ? h(
               "p",
@@ -2094,12 +2506,15 @@ window.__ModuleLoader__.load({
                     openAdvanced,
                     openPlugins,
                     openDecisionModels,
+                    renderDecisionModels,
                     onRoleChange: setTaskRole,
                     workspaceDirectory: workspaceCatalog.state,
                     refreshWorkspaces: workspaceCatalog.refresh,
                     row: state.value.task,
+                    decisionAvailable: state.value.task.decisionAvailable === true,
                     writable: state.value.writable,
                     saveStartup,
+                    saveCoordinator,
                     onSaved: afterSave,
                   })
                 : h("p", { style: hintStyle }, t("startupUnavailable")),
@@ -2130,12 +2545,14 @@ window.__ModuleLoader__.load({
                       JSON.stringify(state.value.remote.values),
                     t,
                     target: "remote",
+                    checkConnection,
                     advanced,
                     visible: advanced || executor,
                     openAdvanced,
                     row: state.value.remote,
                     writable: state.value.writable,
                     saveStartup,
+                    saveCoordinator,
                     onSaved: afterSave,
                   })
                 : executor || advanced
@@ -2248,6 +2665,11 @@ window.__ModuleLoader__.load({
         }),
       },
     };
+    const decisionPresetDescriptors = ["decisionConsole", "setDecisionPreset"].map(method => ({
+      id: `@dsh-task/task-system#taskPluginSettings/${method}`, service:"taskPluginSettings", namespace:"taskPluginSettings", method,
+      invocation:{kind:"direct"}, parameters: method === "setDecisionPreset" ? [{name:"input",wire:"input",source:"json",codec:{mode:"strict",typeSymbol:"@dsh-task/task-system#SetDecisionPresetInput",create:()=>({parse:value=>value})}}] : [],
+      result:{mode:"strict",typeSymbol:`@dsh-task/task-system#${method}Result`,create:()=>({parse(value){if(!value || typeof value!=="object")throw Error("Invalid decision preset response");return value;}})},
+    }));
     function decisionChoices(snapshot) {
       const choices = snapshot.providers.map((p) => ({
         id: p.id,
@@ -2399,6 +2821,11 @@ window.__ModuleLoader__.load({
             )
           : null,
         select("providerId", t("decisionMode"), choices),
+        h(
+          "p",
+          { style: hintStyle, "data-decision-kind-help": draft.kind },
+          t(`decisionKind_${draft.kind}`),
+        ),
         draft.kind === "structured"
           ? h(
               React.Fragment,
@@ -2455,9 +2882,11 @@ window.__ModuleLoader__.load({
               "p",
               { role: "alert" },
               t(
-                status.code === "DECISION_CONFLICT"
-                  ? "decisionConflict"
-                  : "decisionSaveFailed",
+                status.code === "MODELS_GUI_UNAVAILABLE"
+                  ? "decisionModelsUnavailable"
+                  : status.code === "DECISION_CONFLICT"
+                    ? "decisionConflict"
+                    : "decisionSaveFailed",
               ),
               ` (${status.code})`,
             )
@@ -2515,6 +2944,30 @@ window.__ModuleLoader__.load({
         ),
       );
     }
+    function DecisionPresetSettings({role, readDecisionConsole, setDecisionPreset, openDecisions, close, saveCoordinator}) {
+      const {state, refresh} = useReadSnapshot(readDecisionConsole);
+      const [selected, select] = React.useState(null), [saving, setSaving] = React.useState(false), [message, setMessage] = React.useState(null);
+      const consumer = role === "planner" ? "task-planning" : "task-session";
+      const current = state.value?.bindings?.[consumer] ?? "";
+      const choice = selected ?? current;
+      const savePreset=async()=>{setSaving(true);setMessage(null);try {await setDecisionPreset({expected:state.value.revision,consumer,id:choice});select(null);await refresh();setMessage("预设选择已保存。");return true;} catch(error){setMessage(error?.details?.reason==="DECISION_CONFLICT" ? "配置已变化，请刷新后核对草稿。" : "保存未能确认，请查看决策插件状态。");return false;} finally {setSaving(false);}};
+      useSaveParticipant(saveCoordinator,`preset-${consumer}`,{meta:{dirty:choice!==current,invalid:!state.value?.writable,busy:saving,restart:false},save:savePreset,discard:()=>{select(null);setMessage(null);}});
+      return h("section", {"data-decision-model-settings": true, id:"task-decision-model-form", tabIndex:-1},
+        h("h4", {style:headingStyle}, "决策预设"),
+        h("p", {style:hintStyle}, "在本插件选择预设。规则、供应商、模型与思考强度在独立的“决策”设置中管理。"),
+        state.failed ? h("p", {role:"alert"}, "无法读取决策预设，请检查 typed-decisions 是否启用。") : null,
+        state.value ? h(React.Fragment, null,
+          h("label", {htmlFor:"task-preset-select",style:{display:"block",margin:"12px 0 6px"}}, role === "planner" ? "选择执行者使用的预设" : "选择工作区与会话使用的预设"),
+          h("select", {id:"task-preset-select", value:choice, disabled:saving || !state.value.writable, style:controlStyle, onChange:e=>{select(e.target.value);setMessage(null);}},
+            h("option", {value:""}, "跟随决策页默认预设"),
+            ...(state.value.presets ?? []).map(p => h("option", {key:p.id,value:p.id}, p.name))),
+          message ? h("p", {role:"status",style:hintStyle}, message) : null,
+          !saveCoordinator ? h(Button, {variant:"outline",disabled:saving || !state.value.writable || choice===current,onClick:savePreset}, saving ? "保存中…" : "保存预设选择") : null) : h("p", {style:hintStyle}, "正在读取预设…"),
+        h("div", {style:{display:"flex",flexWrap:"wrap",gap:8,marginTop:12}},
+          h(Button, {variant:"outline",onClick:()=>{if(!openDecisions())setMessage("请在设置左侧打开“决策”。");}}, "打开独立决策设置"),
+          h(Button, {variant:"outline",disabled:state.loading,onClick:refresh}, "刷新预设"),
+          h(Button, {variant:"outline",onClick:close}, "关闭预设选择")));
+    }
     function DecisionModelSettings({
       t,
       readDecisionSettings,
@@ -2555,7 +3008,9 @@ window.__ModuleLoader__.load({
             : null,
         h(
           "div",
-          { style: { display: "flex", flexWrap: "wrap", gap: 8, marginTop: 12 } },
+          {
+            style: { display: "flex", flexWrap: "wrap", gap: 8, marginTop: 12 },
+          },
           h(
             Button,
             { variant: "outline", onClick: refresh, disabled: state.loading },
@@ -2566,13 +3021,33 @@ window.__ModuleLoader__.load({
       );
     }
 
+    function ProjectWorkspaceSettings({ readProjectSettings, saveProjectSettings, saveCoordinator }) {
+      const {state, replace, refresh} = useReadSnapshot(readProjectSettings);
+      const [root, setRoot] = React.useState(null), [saving, setSaving] = React.useState(false), [notice, setNotice] = React.useState("");
+      const saveRoot=async()=>{setSaving(true);setNotice("");try {const value=await saveProjectSettings({root:(root ?? state.value.root).trim(),expectedRevision:state.value.revision});replace({enabled:true,...value});setRoot(null);setNotice("项目父目录已保存");return true;} catch {setNotice("保存失败，请核对路径或刷新后重试；草稿已保留。");return false;} finally {setSaving(false);}};
+      useSaveParticipant(saveCoordinator,"project-root",{meta:{dirty:root!==null && root!==state.value?.root,invalid:!state.value?.enabled || !(root ?? state.value?.root ?? "").trim(),busy:saving,restart:false},save:saveRoot,discard:()=>{setRoot(null);setNotice("");}});
+      if (state.value && !state.value.enabled) return null;
+      return h("section", {"data-project-workspace-settings": true},
+        h("h3", {style: headingStyle}, "调度端 · 项目工作区"),
+        h("p", {style: hintStyle}, "项目和临时任务的规划工作区父目录。只影响新建工作区；执行端使用自己已授权的目录。"),
+        state.failed ? h("p", {role:"alert"}, "读取项目父目录失败，请刷新重试。") : null,
+        h("label", {htmlFor:"task-project-root"}, "项目父目录"),
+        h("input", {id:"task-project-root", value:root ?? state.value?.root ?? "", placeholder:"/absolute/path/projects", style:{display:"block",width:"100%",boxSizing:"border-box",margin:"8px 0 12px"}, disabled:!state.value?.enabled || saving, onChange:event=>{setRoot(event.target.value);setNotice("");}}),
+        !saveCoordinator ? h(Button,{variant:"outline",disabled:!state.value?.enabled || saving,onClick:saveRoot},saving ? "正在保存…" : "保存项目父目录") : null,
+        h(Button, {variant:"outline",style:{marginLeft:8},disabled:saving,onClick:()=>{setRoot(null);setNotice("");refresh();}}, "刷新"),
+        notice ? h("p", {role:"status",style:hintStyle}, notice) : null);
+    }
     function Page(props) {
       const { t } = props;
+      const registryRef=React.useRef(null);if (!registryRef.current) registryRef.current=new SettingsSaveCoordinator();
+      const saveCoordinator=registryRef.current;
+      const [,redrawSave]=React.useState(0);
+      React.useEffect(()=>saveCoordinator.subscribe(()=>redrawSave(value=>value+1)),[saveCoordinator]);
       const [refreshKey, setRefreshKey] = React.useState(0);
       const [advanced, setAdvanced] = React.useState(false);
       const [modelOpen, setModelOpen] = React.useState(false);
-      const openDecisionModels = () => {
-        setModelOpen(true);
+      const openDecisionModels = (role) => {
+        setModelOpen(role);
         requestAnimationFrame(() =>
           document.getElementById("task-decision-model-form")?.focus(),
         );
@@ -2582,10 +3057,12 @@ window.__ModuleLoader__.load({
         requestAnimationFrame(() => document.getElementById(id)?.focus());
       };
       const state = props.useTaskSettings((snapshot) => snapshot);
+      useSaveParticipant(saveCoordinator,"runtime",{meta:{dirty:state.dirty,invalid:state.invalid || !state.writable,busy:state.saving,restart:false},save:props.save,discard:props.discard});
+      const saveState=saveCoordinator.snapshot();
       if (props.view === "summary") return t("summary");
       return h(
         "div",
-        { "data-task-plugin-settings": true },
+        { "data-task-plugin-settings": true, style:{minHeight:"100%",display:"flex",flexDirection:"column"} },
         h(
           "style",
           null,
@@ -2593,12 +3070,17 @@ window.__ModuleLoader__.load({
           [data-task-plugin-settings] [hidden] { display: none !important; }
           [data-task-plugin-settings] input, [data-task-plugin-settings] select { min-width: 0; max-width: 100%; }
           [data-task-plugin-settings] [role="switch"] { flex-shrink: 0; }
-          [data-task-plugin-settings] button { border: 1px solid var(--dsw-alias-border-l3, #8a8a8a) !important; }
-          [data-task-plugin-settings] button:not([role="switch"]) { border-radius: 6px; background: var(--dsw-alias-bg-layer-2, #e9e9e9); padding: 7px 12px; }
+          [data-task-plugin-settings] button:not([role="switch"]) { border: 1px solid var(--dsw-alias-border-l3, #8a8a8a) !important; }
+          [data-task-plugin-settings] button:not([role="switch"]) { border-radius: 6px; background: var(--dsw-alias-bg-layer-2, #e9e9e9); padding: 7px 12px; color: var(--dsw-alias-label-primary, #252525); }
+          [data-task-plugin-settings] button:not([role="switch"]):disabled { color: var(--dsw-alias-label-secondary, #666); opacity: 1; cursor: not-allowed; }
+          [data-task-plugin-settings] [data-task-detail-row] { align-items: start; }
+          [data-task-plugin-settings] table th, [data-task-plugin-settings] table td { vertical-align: top; text-align: left; }
           [data-task-plugin-settings] button:focus-visible, [data-task-plugin-settings] input:focus-visible, [data-task-plugin-settings] select:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
           [data-task-plugin-settings] section, [data-task-plugin-settings] [data-task-runtime] { border-top: 1px solid var(--dsw-alias-border-l3, #8a8a8a); padding-top: 18px; margin-top: 22px; }
           [data-task-plugin-settings] [data-task-startup-settings] > [data-startup-target="task"] { border-top: 0; padding-top: 0; margin-top: 0; }
           [data-task-plugin-settings] section > h3:first-child, [data-task-plugin-settings] section > h4:first-child { margin-top: 0 !important; }
+          [data-task-plugin-settings] [data-task-runtime-form] > div > div:last-child > button { display:none; }
+          [data-task-plugin-settings] [data-task-save-bar] { position:sticky; bottom:0; z-index:5; margin-top:20px; padding:12px; background:var(--dsw-alias-bg-layer-1,#fff); border-top:1px solid var(--dsw-alias-border-l3,#8a8a8a); box-shadow:0 -4px 12px rgba(0,0,0,.12); }
           [data-task-plugin-settings] [data-task-mode] { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
           [data-task-plugin-settings] [data-task-mode] [aria-pressed="true"] { font-weight: 600; box-shadow: inset 0 -2px currentColor; }
           @media (max-width: 640px) {
@@ -2653,17 +3135,22 @@ window.__ModuleLoader__.load({
               openAdvanced,
               openPlugins: props.openPlugins,
               openDecisionModels,
+              checkConnection: props.checkConnection,
+              saveCoordinator,
+              renderDecisionModels: (role) =>
+                modelOpen === role
+                  ? h(DecisionPresetSettings, {
+                      role,
+                      readDecisionConsole: props.readDecisionConsole,
+                      setDecisionPreset: props.setDecisionPreset,
+                      openDecisions: props.openDecisions,
+                      close: () => setModelOpen(false),
+                      saveCoordinator,
+                    })
+                  : null,
             })
           : null,
-        modelOpen
-          ? h(DecisionModelSettings, {
-              t,
-              readDecisionSettings: props.readDecisionSettings,
-              saveDecisionSettings: props.saveDecisionSettings,
-              openModels: props.openModels,
-              close: () => setModelOpen(false),
-            })
-          : null,
+        h(ProjectWorkspaceSettings, {readProjectSettings:props.readProjectSettings,saveProjectSettings:props.saveProjectSettings,saveCoordinator}),
         h(LocalQueue, {
           key: refreshKey,
           t,
@@ -2691,7 +3178,7 @@ window.__ModuleLoader__.load({
             { "data-task-runtime": true },
             h("h3", { style: headingStyle }, t("runtime")),
             h("p", { style: hintStyle }, t("savedHint")),
-            h(
+            h("div", {"data-task-runtime-form":true}, h(
               SettingsForm,
               {
                 state,
@@ -2758,7 +3245,7 @@ window.__ModuleLoader__.load({
                       onReset: () => props.resetField(key),
                     }),
               ),
-            ),
+            )),
           ),
           h(ReadOnly, {
             key: refreshKey,
@@ -2767,6 +3254,11 @@ window.__ModuleLoader__.load({
             queryIdentity: props.queryIdentity,
           }),
         ),
+        h("div", {"data-task-save-bar":true},
+          h("p",{role:"status",style:{...hintStyle,margin:"0 0 8px"}},saveState.message || (saveState.count ? `有 ${saveState.count} 处未保存修改。${saveState.restart ? "包含需重启插件的变更。" : "保存后即时生效，已有运行保持原配置。"}` : "设置已保存；修改后在此统一保存。")),
+          h("div",{style:{display:"flex",flexWrap:"wrap",gap:8}},
+            h(Button,{variant:"outline",disabled:!saveState.count || saveState.invalid || saveState.busy,onClick:()=>saveCoordinator.saveAll()},saveState.busy ? "保存中…" : saveState.restart ? "保存并重启插件" : "保存设置"),
+            h(Button,{variant:"outline",disabled:!saveState.count || saveState.busy,onClick:()=>saveCoordinator.discardAll()},"丢弃全部草稿")))
       );
     }
     async function readRemote(ctx, method, codec, ...args) {
@@ -2788,45 +3280,289 @@ window.__ModuleLoader__.load({
     function openSettingsSection(ctx, id) {
       const shell = ctx.slots
         .entries?.("sidebar.settings")
-        .find((entry) => entry.options.store)
-        ?.options.store.create();
+        .find((entry) => entry.store)
+        ?.store.create();
       if (!shell?.actions?.openSection) return false;
       shell.actions.openSection(id);
       return true;
     }
     const openPlugins = (ctx) => openSettingsSection(ctx, "plugins");
     const openModels = (ctx) => openSettingsSection(ctx, "models");
+    const projectMethods = [
+      "projectSettings",
+      "createTemporaryTask",
+      "projectSnapshot",
+      "projectPage",
+      "saveProjectSettings",
+      "createProject",
+      "conversationModels",
+      "selectConversationModel",
+      "taskConversation",
+      "sendTaskMessage",
+      "sendExecutorMessage",
+      "projectConversation",
+      "sendProjectMessage",
+      "handoffProject",
+      "reviewProjectTask",
+      "actOnProjectTask",
+    ];
+    const projectDescriptors = projectMethods.map((method) => ({
+      id: `@dsh-task/task-system#taskPluginSettings/${method}`,
+      service: "taskPluginSettings",
+      namespace: "taskPluginSettings",
+      method,
+      invocation: { kind: "direct" },
+      parameters: ["projectSettings", "projectSnapshot", "projectPage", "conversationModels"].includes(method)
+        ? []
+        : [
+            {
+              name: "input",
+              wire: "input",
+              source: "json",
+              codec: {
+                mode: "strict",
+                typeSymbol: `@dsh-task/task-system#${method}Input`,
+                create: () => ({
+                  parse(value) {
+                    if (!value || typeof value !== "object")
+                      throw Error("Invalid project input");
+                    return value;
+                  },
+                }),
+              },
+            },
+          ],
+      result: {
+        mode: "strict",
+        typeSymbol: `@dsh-task/task-system#${method}Result`,
+        create: () => ({
+          parse(value) {
+            if (
+              method === "projectPage"
+                ? typeof value !== "string"
+                : !value || typeof value !== "object"
+            )
+              throw Error("Invalid project response");
+            return value;
+          },
+        }),
+      },
+    }));
+    function ProjectIcon() {
+      return h(
+        "svg",
+        {
+          width: 24,
+          height: 24,
+          viewBox: "0 0 24 24",
+          fill: "none",
+          stroke: "currentColor",
+          strokeWidth: 1.6,
+          "aria-hidden": true,
+        },
+        h("path", {
+          d: "M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z",
+        }),
+      );
+    }
+    function hostTheme() {
+      const scheme = getComputedStyle(document.documentElement).colorScheme;
+      return scheme === "dark" || (scheme !== "light" && matchMedia("(prefers-color-scheme: dark)").matches) ? "dark" : "light";
+    }
+    function sendTheme(frame, channel) {
+      frame.current?.contentWindow?.postMessage({ channel, method: "theme", input: hostTheme() }, "*");
+    }
+    function watchTheme(frame, channel) {
+      const update = () => sendTheme(frame, channel);
+      const observer = new MutationObserver(update);
+      observer.observe(document.documentElement, { attributes: true });
+      observer.observe(document.body, { attributes: true });
+      const system = matchMedia("(prefers-color-scheme: dark)");
+      system.addEventListener("change", update);
+      update();
+      return () => { observer.disconnect(); system.removeEventListener("change", update); };
+    }
+    function ProjectPanel({ invoke }) {
+      const frame = React.useRef(null),
+        [html, setHtml] = React.useState(null),
+        [error, setError] = React.useState(null),
+        [detailFullscreen, setDetailFullscreen] = React.useState(false);
+      React.useEffect(() => {
+        let active = true;
+        invoke("projectPage").then(
+          (value) => {
+            if (active) setHtml(value.replace("<html ", `<html data-theme="${hostTheme()}" `));
+          },
+          () => {
+            if (active) setError("项目页面加载失败，请重新连接");
+          },
+        );
+        return () => {
+          active = false;
+        };
+      }, [invoke]);
+      React.useEffect(() => {
+        const listener = async (event) => {
+          if (event.source === frame.current?.contentWindow && event.data?.channel === "dsh-project-runtime" && event.data.method === "detailFullscreen") {
+            setDetailFullscreen(event.data.input === true);
+            return;
+          }
+          if (
+            event.source !== frame.current?.contentWindow ||
+            event.data?.channel !== "dsh-project-runtime" ||
+            !projectMethods.includes(event.data.method) ||
+            event.data.method === "projectPage"
+          )
+            return;
+          const source = event.source,
+            { id, method, input } = event.data;
+          try {
+            const value = await invoke(method, input);
+            source.postMessage(
+              { channel: "dsh-project-runtime", id, value },
+              "*",
+            );
+          } catch (error) {
+            const code = error?.code === "task/project" ? error.details?.reason : error?.code;
+            const messages = {
+              PLANNER_REQUIRED: "当前节点为执行端，项目任务中心需要调度端身份。",
+              PROJECT_UNAVAILABLE: "本机项目服务尚未就绪，请检查任务插件是否启用。",
+              "gateway/internal": "项目服务内部错误，请检查调度端日志后重试。",
+              "client/invalid-result": "项目服务返回的数据格式不正确，请核对插件版本。",
+              CONFLICT: "记录已变化或请求 ID 重复，请刷新后核对",
+              BUSY: "统筹会话正在响应，请稍后再试",
+              INVALID: "请输入有效的名称、目标和绝对目录",
+              CONFIGURATION: "请先设置项目目录或配置统筹模型",
+              FORBIDDEN: "此节点或会话没有操作权限",
+              NOT_FOUND: "找不到对应记录",
+              WORKSPACE_POLICY: "目录不符合工作区规则",
+            };
+            source.postMessage(
+              {
+                channel: "dsh-project-runtime",
+                id,
+                error: messages[code] || "无法读取或操作项目服务，请检查连接后重试。",
+                errorCode: code,
+              },
+              "*",
+            );
+          }
+        };
+        window.addEventListener("message", listener);
+        return () => window.removeEventListener("message", listener);
+      }, [invoke]);
+      React.useEffect(() => html ? watchTheme(frame, "dsh-project-runtime") : undefined, [html]);
+      if (error)
+        return h("div", { role: "alert", style: { padding: 24 } }, error);
+      if (!html)
+        return h("div", { style: { padding: 24 } }, "正在加载项目与任务…");
+      return h("iframe", {
+        ref: frame,
+        title: "项目与任务",
+        srcDoc: html,
+        onLoad: () => sendTheme(frame, "dsh-project-runtime"),
+        sandbox: "allow-scripts allow-same-origin allow-forms allow-popups",
+        style: {
+          ...(detailFullscreen ? {position: "fixed", inset: 0, zIndex: 1000, width: "100vw", height: "100dvh"} : {}),
+          display: "block",
+          border: 0,
+          width: detailFullscreen ? "100vw" : "100%",
+          height: detailFullscreen ? "100dvh" : "100%",
+          minHeight: 0,
+          background: "transparent",
+          colorScheme: "inherit",
+        },
+      });
+    }
+
     async function apply(ctx) {
       const t = ctx.locale.bind(NS);
       ctx.effect(
         () => ctx.locale.register(NS, { en, zh }),
         "task settings dictionaries",
       );
-      const remoteScope = ctx.remote.$host.isLoopback ? undefined :
-        new RemoteTaskSettingsScope(ctx.remote.settings);
-      const controller = new Controller(remoteScope ?? ctx.configForms.get("task-system"));
+      const remoteScope = ctx.remote.$host.isLoopback
+        ? undefined
+        : new RemoteTaskSettingsScope(ctx.remote.settings);
+      const controller = new Controller(
+        remoteScope ?? ctx.configForms.get("task-system"),
+      );
       ctx.effect(() => () => controller.dispose(), "task settings form");
-      if (remoteScope) ctx.effect(() => {
-        const refresh = () => { void remoteScope.load(); };
-        const disposers = [ctx.remote.$on("settings/document-updated", refresh),
-          ctx.on("connection/reset", refresh)];
-        refresh();
-        return async () => { for (const off of disposers) off(); await remoteScope.dispose(); };
-      }, "remote task deployment settings");
+      if (remoteScope)
+        ctx.effect(() => {
+          const refresh = () => {
+            void remoteScope.load();
+          };
+          const disposers = [
+            ctx.remote.$on("settings/document-updated", refresh),
+            ctx.on("connection/reset", refresh),
+          ];
+          refresh();
+          return async () => {
+            for (const off of disposers) off();
+            await remoteScope.dispose();
+          };
+        }, "remote task deployment settings");
       const unmount = await ctx.remote.$mount({
         package: "@dsh-task/task-system",
         descriptors: [
+          ...projectDescriptors,
           descriptor,
           queueDescriptor,
           workspaceCatalogDescriptor,
           executorIdentityDescriptor,
           startupDescriptor,
           saveStartupDescriptor,
+          checkConnectionDescriptor,
+          ...decisionPresetDescriptors,
           decisionSettingsDescriptor,
           saveDecisionSettingsDescriptor,
         ],
       });
       ctx.effect(() => unmount, "task settings read-only remote");
+      const invoke = (method, input) => {
+        const descriptor = projectDescriptors.find((d) => d.method === method);
+        return readRemote(
+          ctx,
+          method,
+          descriptor.result.create(),
+          ...(input === undefined ? [] : [input]),
+        );
+      };
+      ctx.effect(() => {
+        const offMain = ctx.slots.inject("main", () =>
+          ctx.slots.register(
+            {
+              name: "main",
+              key: "dsh-task-projects",
+              inject: () => ({ invoke }),
+            },
+            ProjectPanel,
+          ),
+        );
+        const offNav = ctx.slots.inject("sidebar.panellist", () =>
+          ctx.slots.register(
+            {
+              name: "sidebar.panellist",
+              id: "dsh-task-projects",
+              order: 20,
+              label: () => "项目与任务",
+            },
+            ProjectIcon,
+          ),
+        );
+        return () => {
+          offNav();
+          offMain();
+        };
+      }, "project task center");
+      if (
+        new URL(window.location?.href ?? "https://localhost/").hash === "#tasks"
+      ) {
+        const layout = ctx.get("layout");
+        layout?.selectPanel("dsh-task-projects");
+      }
+
       const read = () =>
         readRemote(ctx, "describe", descriptor.result.create());
       const readQueue = () =>
@@ -2844,6 +3580,8 @@ window.__ModuleLoader__.load({
           saveDecisionSettingsDescriptor.result.create(),
           parseDecisionInput(input),
         );
+      const readDecisionConsole = () => readRemote(ctx,"decisionConsole",decisionPresetDescriptors[0].result.create());
+      const setDecisionPreset = input => readRemote(ctx,"setDecisionPreset",decisionPresetDescriptors[1].result.create(),input);
       const readWorkspaces = () =>
         readRemote(
           ctx,
@@ -2858,6 +3596,13 @@ window.__ModuleLoader__.load({
         );
       const startup = () =>
         readRemote(ctx, "startup", startupDescriptor.result.create());
+      const checkConnection = (input) =>
+        readRemote(
+          ctx,
+          "checkConnection",
+          checkConnectionDescriptor.result.create(),
+          checkConnectionDescriptor.parameters[0].codec.create().parse(input),
+        );
       const saveStartup = (input) =>
         readRemote(
           ctx,
@@ -2867,19 +3612,27 @@ window.__ModuleLoader__.load({
         );
       ctx.effect(
         () =>
-          (remoteScope ? (register) => remoteScope.whileServed(register) :
-            (register) => ctx.configForms.whileServed(["task-system"], register))(() => {
+          (remoteScope
+            ? (register) => remoteScope.whileServed(register)
+            : (register) =>
+                ctx.configForms.whileServed(["task-system"], register))(() => {
             const inject = () => ({
               ...controller.inject(),
               read,
               readQueue,
+              readProjectSettings: () => invoke("projectSettings"),
+              saveProjectSettings: input => invoke("saveProjectSettings",input),
               readWorkspaces,
               readDecisionSettings,
               saveDecisionSettings,
+              readDecisionConsole,
+              setDecisionPreset,
+              openDecisions: () => openSettingsSection(ctx,"typed-decisions"),
               openModels: () => openModels(ctx),
               queryIdentity,
               startup,
               saveStartup,
+              checkConnection,
               openPlugins: () => openPlugins(ctx),
             });
             const section = ctx.slots.inject("settings.section", () =>
@@ -2918,6 +3671,8 @@ window.__ModuleLoader__.load({
       inject: ["slots", "locale", "configForms", "remote", "remote.settings"],
       apply,
       Controller,
+      SettingsSaveCoordinator,
+      startupNeedsRestart,
       RemoteTaskSettingsScope,
       openPlugins,
       openModels,
@@ -2925,6 +3680,8 @@ window.__ModuleLoader__.load({
       saveDecisionSettingsDescriptor,
       DecisionModelRow,
       DecisionModelSettings,
+      DecisionPresetSettings,
+      decisionPresetDescriptors,
       decisionDraft,
       decisionChoices,
       parseDecisionInput,
@@ -2936,6 +3693,7 @@ window.__ModuleLoader__.load({
       executorIdentityDescriptor,
       startupDescriptor,
       saveStartupDescriptor,
+      checkConnectionDescriptor,
       ExecutorIdentity,
       startupDraft,
       startupChanges,

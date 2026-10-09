@@ -1,0 +1,186 @@
+{
+  "environment": "existing candidate-3 test database",
+  "cases": [
+    {
+      "scenario": "offline then online",
+      "marker": "PHONE-OFFLINE-20261006-99",
+      "taskId": "4439aea6-846e-45d4-87b8-6f3b9f58b0e5",
+      "taskState": "completed",
+      "runId": "e9cf788e-89fd-4896-b365-8d32ed58772f",
+      "runState": "succeeded",
+      "route": {
+        "model": "deepseek-flash",
+        "nodeId": "mbp-executor",
+        "provider": "deepseek-official",
+        "requiredCapabilities": [],
+        "workspaceId": "acceptance"
+      },
+      "attemptId": "69be26a7-688f-433b-8f41-786cf09c80ac",
+      "attemptState": "settled",
+      "reportId": "09726be1-69e6-4738-a0a0-b5eca9ef4de3",
+      "reportContainsMarker": true,
+      "ack": "acknowledged",
+      "nativeRequest": {
+        "sessionId": "task-b51fe8e0-feee-47d3-a667-4e4d136e3fba",
+        "config": {
+          "provider": "deepseek-official",
+          "model": "deepseek-flash",
+          "reasoningEffort": "high",
+          "maxTokens": 256000
+        },
+        "adapterDefaults": {
+          "reasoningEffort": true,
+          "maxTokens": true
+        }
+      }
+    },
+    {
+      "scenario": "already online",
+      "marker": "PHONE-ONLINE-20261006-100",
+      "taskId": "22923820-6f1a-4e01-8135-d5c0265694e2",
+      "taskState": "completed",
+      "runId": "8b1f4f28-1fb5-4ef7-af3a-553f4d620975",
+      "runState": "succeeded",
+      "route": {
+        "model": "deepseek-flash",
+        "nodeId": "mbp-executor",
+        "provider": "deepseek-official",
+        "requiredCapabilities": [],
+        "workspaceId": "acceptance"
+      },
+      "attemptId": "eccf1188-766a-47ea-8df8-57d21a5004f5",
+      "attemptState": "settled",
+      "reportId": "1bf849ab-c21a-415a-a5c1-299942279cd4",
+      "reportContainsMarker": true,
+      "ack": "acknowledged",
+      "nativeRequest": {
+        "sessionId": "task-d4fb3e19-032d-48e0-9bf5-94701d80bc27",
+        "config": {
+          "provider": "deepseek-official",
+          "model": "deepseek-flash",
+          "reasoningEffort": "high",
+          "maxTokens": 256000
+        },
+        "adapterDefaults": {
+          "reasoningEffort": true,
+          "maxTokens": true
+        }
+      }
+    },
+    {
+      "scenario": "explicit advertised effort",
+      "marker": "PHONE-OFF-20261006-101",
+      "taskId": "84db44a5-5eef-42fd-8a2d-2b31ec94df95",
+      "taskState": "completed",
+      "runId": "4deef04d-50c6-45d5-a421-66e5adc7f46b",
+      "runState": "succeeded",
+      "route": {
+        "model": "deepseek-flash",
+        "nodeId": "mbp-executor",
+        "provider": "deepseek-official",
+        "reasoningEffort": "off",
+        "requiredCapabilities": [],
+        "workspaceId": "acceptance"
+      },
+      "attemptId": "c113f814-f861-4ba0-9ddd-bb9430dc2f95",
+      "attemptState": "settled",
+      "reportId": "66e1a5a9-5b11-417d-ba35-b7906e27ce95",
+      "reportContainsMarker": true,
+      "ack": "acknowledged",
+      "nativeRequest": {
+        "sessionId": "task-68386e88-ea53-48c2-8331-266f33a8229a",
+        "config": {
+          "provider": "deepseek-official",
+          "model": "deepseek-flash",
+          "reasoningEffort": "off",
+          "maxTokens": 256000
+        },
+        "adapterDefaults": {
+          "maxTokens": true
+        }
+      }
+    }
+  ],
+  "modelDefaultFinding": "First two requests used default high; corrected project candidate list pins declared effort. Third native request verifies off.",
+  "tests": {
+    "fullBeforeFinalReplanFix": {
+      "pass": 618,
+      "skip": 5,
+      "fail": 0
+    },
+    "focusedAfterFinalFix": {
+      "pass": 32,
+      "skip": 0,
+      "fail": 0
+    }
+  },
+  "responsive": {
+    "phoneLayout": {
+      "bodyWidth": 337,
+      "graphWidth": 305,
+      "mainWidth": 337,
+      "shapeKinds": [
+        "项目",
+        "任务",
+        "执行",
+        "产物",
+        "任务",
+        "执行",
+        "产物"
+      ],
+      "viewport": 337
+    },
+    "selectedFilter": {
+      "border": "rgb(124, 164, 239)",
+      "color": "rgb(124, 164, 239)",
+      "selected": "true"
+    },
+    "desktopCards": {
+      "bodyWidth": 1160,
+      "cardCount": 2,
+      "gap": "20px",
+      "viewport": 1160
+    },
+    "desktopLayout": {
+      "bodyWidth": 1160,
+      "graphWidth": 1096,
+      "nodeCount": 7,
+      "viewport": 1160
+    }
+  },
+  "project": {
+    "project": {
+      "id": "49086561-c65c-4bc5-974e-e461852f78ca",
+      "cwd": "/opt/dsh-task-management-test/candidate-3-ece68974/workspaces/projects/project-49086561-c65c-4bc5-974e-e461852f78ca",
+      "session": "project-0a17a4e5-5ca6-4599-b59f-afc478d58447",
+      "generation": 2,
+      "state": "ready"
+    },
+    "turns": [
+      {
+        "command": "0213f55f-2957-4c7c-92ec-fba5c2d5dea5",
+        "state": "completed",
+        "error": null
+      },
+      {
+        "command": "50799ac0-750f-4efc-b629-26d6618f3f10",
+        "state": "completed",
+        "error": null
+      },
+      {
+        "command": "9996fde3-cbe6-471f-a459-8e6f074abdee",
+        "state": "completed",
+        "error": null
+      }
+    ],
+    "purePlannerOwnedAttempts": 0,
+    "purePlannerNodeId": "vps-planner"
+  },
+  "finalExecutorState": "remote polling paused; local DSH remains running",
+  "limits": [
+    "One real registered executor; fallback ordering verified with meaningful automated tests.",
+    "First offline case required one operator confirmation after restoring accidentally-added test confirmation flag to original default false.",
+    "Report review path was not exercised live because these arithmetic runs did not require review.",
+    "Session handoff is deterministic ledger-based context preparation, not memory-manager or a full-history model audit."
+  ]
+}

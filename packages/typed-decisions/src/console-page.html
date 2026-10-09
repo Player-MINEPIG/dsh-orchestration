@@ -1,0 +1,1569 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #ffffff;
+        --card: #f7f7f8;
+        --line: #d4d4d8;
+        --text: #242424;
+        --muted: #62626b;
+        --blue: #315fa8;
+        --green: #347457;
+        --red: #b43e48;
+        --amber: #86601d;
+        --hover: #f0f0f2;
+        --primary: #e4e4e7;
+        --input: #ffffff;
+      }
+      :root[data-theme="dark"] {
+        color-scheme: dark;
+        --bg: #262626;
+        --card: #222;
+        --line: #454545;
+        --text: #eee;
+        --muted: #a1a1a1;
+        --blue: #7ca4ef;
+        --green: #91b9a4;
+        --red: #e58f8f;
+        --amber: #d3b686;
+        --hover: #363636;
+        --primary: #4b4b4b;
+        --input: #202020;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root:not([data-theme]) {
+        color-scheme: dark;
+        --bg: #262626;
+        --card: #222;
+        --line: #454545;
+        --text: #eee;
+        --muted: #a1a1a1;
+        --blue: #7ca4ef;
+        --green: #91b9a4;
+        --red: #e58f8f;
+        --amber: #d3b686;
+        --hover: #363636;
+        --primary: #4b4b4b;
+        --input: #202020;
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html {
+        overflow: hidden;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font:
+          14px/1.6 -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
+      }
+      main {
+        padding: 24px;
+        max-width: 1050px;
+        margin: auto;
+      }
+      h2 {
+        font-size: 20px;
+        margin: 0 0 8px;
+      }
+      h3 {
+        font-size: 16px;
+        margin: 0;
+      }
+      p {
+        margin: 8px 0 16px;
+      }
+      .muted {
+        color: var(--muted);
+      }
+      button,
+      input,
+      select,
+      textarea {
+        font: inherit;
+        color: inherit;
+      }
+      button {
+        border: 1px solid var(--line);
+        background: transparent;
+        padding: 8px 13px;
+        border-radius: 8px;
+        min-height: 40px;
+        cursor: pointer;
+      }
+      button:hover {
+        background: var(--hover);
+      }
+      button.primary {
+        background: var(--primary);
+      }
+      button:disabled {
+        opacity: 0.45;
+        cursor: default;
+      }
+      input,
+      select,
+      textarea {
+        width: 100%;
+        min-width: 0;
+        border: 1px solid var(--line);
+        background: var(--input);
+        border-radius: 8px;
+        padding: 9px 11px;
+      }
+      textarea {
+        resize: vertical;
+        min-height: 82px;
+        font-family: ui-monospace, monospace;
+        font-size: 13px;
+      }
+      label {
+        display: block;
+        margin: 12px 0 5px;
+      }
+      input:focus,
+      select:focus,
+      textarea:focus,
+      button:focus-visible {
+        outline: 2px solid var(--blue);
+        outline-offset: 2px;
+      }
+      .row {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      .between {
+        justify-content: space-between;
+      }
+      .card {
+        padding: 16px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        margin: 12px 0;
+        overflow-wrap: anywhere;
+      }
+      .preset-list { display: grid; gap: 16px; }
+      .preset-list > .card { margin: 0; }
+      .preset-editor { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--line); }
+      .credential-card { margin-top: 16px; background: var(--card); }
+      .rule-set-list {
+        display: grid;
+        gap: 16px;
+      }
+      .rule-set-list > .card {
+        margin: 0;
+      }
+      .rule-list {
+        display: grid;
+        gap: 12px;
+        margin: 16px 0;
+      }
+      .rule-list > .card {
+        margin: 0;
+      }
+      .rule-card {
+        background: var(--card);
+        min-width: 0;
+      }
+      .rule-card .row.actions {
+        margin-top: 16px;
+      }
+      .rule-summary p {
+        margin: 8px 0;
+      }
+      .ruleset-editor,
+      .rule-editor {
+        margin-top: 16px;
+        padding-top: 16px;
+        border-top: 1px solid var(--line);
+      }
+      .path-row {
+        display: flex;
+        gap: 8px;
+        align-items: flex-end;
+        margin-bottom: 10px;
+      }
+      .path-row > div {
+        flex: 1;
+        min-width: 0;
+      }
+      .value-node {
+        min-width: 0;
+      }
+      .value-items {
+        display: grid;
+        gap: 12px;
+        margin-top: 12px;
+      }
+      .value-child {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 12px;
+        min-width: 0;
+      }
+      .value-child .value-child {
+        padding: 8px 0;
+        border-left: 0;
+        border-right: 0;
+        border-radius: 0;
+      }
+      .value-child > button {
+        margin-top: 12px;
+      }
+      #rule-form > .row.actions {
+        margin-top: 16px;
+      }
+      .card.selected {
+        border-color: var(--blue);
+      }
+      .cards {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(min(100%, 250px), 1fr));
+        gap: 12px;
+        margin: 14px 0;
+      }
+      .cards .card {
+        margin: 0;
+      }
+      .badge {
+        font-size: 12px;
+        border: 1px solid var(--line);
+        padding: 2px 7px;
+        border-radius: 7px;
+      }
+      .ok {
+        color: var(--green);
+      }
+      .bad {
+        color: var(--red);
+      }
+      .warn {
+        color: var(--amber);
+      }
+      nav {
+        display: flex;
+        gap: 8px;
+        margin: 16px 0;
+        border-bottom: 1px solid var(--line);
+        padding-bottom: 12px;
+      }
+      nav button[aria-selected="true"] {
+        border-color: var(--blue);
+        color: var(--blue);
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+      }
+      .status {
+        min-height: 24px;
+        padding: 7px 0;
+        overflow-wrap: anywhere;
+      }
+      #notice {
+        position: sticky;
+        top: 0;
+        background: var(--bg);
+        z-index: 2;
+      }
+      details {
+        margin-top: 12px;
+      }
+      summary {
+        cursor: pointer;
+      }
+      .small {
+        font-size: 12px;
+      }
+      a {
+        color: var(--blue);
+      }
+      [hidden] {
+        display: none !important;
+      }
+      @media (max-width: 560px) {
+        main {
+          padding: 16px 16px 24px;
+        }
+        .grid {
+          grid-template-columns: 1fr;
+        }
+        .card {
+          padding: 16px;
+        }
+        .row.actions button {
+          flex: 1 1 auto;
+        }
+        button {
+          min-height: 44px;
+        }
+        h2 {
+          font-size: 18px;
+        }
+        input,
+        select,
+        textarea {
+          font-size: 16px;
+        }
+        .cards {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h2>决策</h2>
+      <p class="muted">
+        在这里配置决策预设。其他插件在自己的页面选择预设，复用同一份规则与模型配置。
+      </p>
+      <div class="row actions">
+        <button id="refresh">刷新配置</button
+        ><button id="models">打开 DSH 模型设置</button>
+      </div>
+      <div id="notice" class="status" role="status" aria-live="polite"></div>
+      <nav aria-label="决策配置">
+        <button data-tab="presets" aria-selected="true">预设</button
+        ><button data-tab="rules" aria-selected="false">Rules 规则</button>
+      </nav>
+      <section id="content"><p class="muted">正在读取配置…</p></section>
+      <input
+        type="file"
+        id="import-file"
+        accept="application/json,.json"
+        hidden
+      />
+    </main>
+    <script>
+      /* RULE_FORM_HELPERS */
+      const CHANNEL = "dsh-decision-settings",
+        pending = new Map();
+      let serial = 0,
+        view = null,
+        tab = "presets",
+        editing = null,
+        ruleEditing = null,
+        busy = false;
+      const checks = new Map();
+      const $ = (s) => document.querySelector(s),
+        esc = (x) =>
+          String(x ?? "").replace(
+            /[&<>"']/g,
+            (c) =>
+              ({
+                "&": "&amp;",
+                "<": "&lt;",
+                ">": "&gt;",
+                '"': "&quot;",
+                "'": "&#39;",
+              })[c],
+          );
+      function rpc(method, input) {
+        return new Promise((resolve, reject) => {
+          const id = ++serial;
+          const timer = setTimeout(() => {
+            pending.delete(id);
+            reject(Error("DECISION_TIMEOUT"));
+          }, 25000);
+          pending.set(id, { resolve, reject, timer });
+          parent.postMessage({ channel: CHANNEL, id, method, input }, "*");
+        });
+      }
+      window.addEventListener("message", (e) => {
+        if (e.source !== parent || e.data?.channel !== CHANNEL) return;
+        if (e.data.method === "theme") {
+          if (["light", "dark"].includes(e.data.input)) document.documentElement.dataset.theme = e.data.input;
+          return;
+        }
+        const p = pending.get(e.data.id);
+        if (!p) return;
+        clearTimeout(p.timer);
+        pending.delete(e.data.id);
+        e.data.error ? p.reject(Error(e.data.error)) : p.resolve(e.data.value);
+      });
+      const messages = {
+        DECISION_CONFLICT:
+          "配置已在其他页面变化。草稿已保留，请刷新后核对再保存。",
+        DECISION_READ_ONLY: "当前 profile 没有可编辑的决策配置。",
+        DECISION_OVERRIDE: "决策配置被启动参数覆盖，请先修改对应启动配置。",
+        DECISION_CREDENTIAL_STORE_MISSING: "未加载 DSH 凭据存储服务，请启用后再保存密钥。",
+        DECISION_CREDENTIAL_READ_ONLY: "此密钥被只读凭据来源覆盖，无法修改。",
+        DECISION_CREDENTIAL_EXTERNAL: "当前使用已有环境引用，不能在这里移除。可保存独立密钥切换到本预设。",
+        DECISION_CREDENTIAL_SAVE_FAILED: "密钥保存失败，请检查凭据存储权限。",
+        DECISION_BUSY: "还有任务或模型调用在运行，请完成后再保存。",
+        DECISION_IN_USE: "仍有预设或插件在使用此项，请先更换引用。",
+        DECISION_LAST_PRESET: "至少保留一个预设。",
+        DECISION_PRESET_MISSING: "找不到预设，请刷新配置。",
+        DECISION_MODEL_UNAVAILABLE:
+          "这个供应商或模型不可用，请在“模型”中检查。",
+        DECISION_BRIDGE_MISSING: "未加载 DSH 模型桥接插件。",
+        DECISION_MODEL_METADATA_UNAVAILABLE:
+          "无法读取模型能力，请检查供应商配置。",
+        DECISION_EFFORT_UNSUPPORTED: "这个模型不支持所选思考强度。",
+        DECISION_INPUT_INVALID:
+          "字段或规则格式不正确，请核对问题、路径、匹配值类型和答案。",
+        DECISION_RULES_INVALID: "规则格式不正确，最多 500 条、128 KiB。",
+        DECISION_SAVE_REJECTED:
+          "保存被配置编辑器拒绝。草稿已保留，请检查插件状态后重试。",
+        DECISION_PARTIAL_SAVE:
+          "保存过程中回滚未能确认，请刷新检查预设和模型路由。",
+        DECISION_TIMEOUT: "请求超时，请刷新确认当前配置后重试。",
+        DECISION_SERVICE_UNAVAILABLE:
+          "决策服务连接不可用，请检查插件是否启用并重新连接。",
+      };
+      function notice(text, kind = "") {
+        const n = $("#notice");
+        n.textContent = text;
+        n.className = "status " + kind;
+      }
+      function fail(e) {
+        notice(
+          messages[e.message] ||
+            "操作失败（" + e.message + "），请检查后重试。",
+          "bad",
+        );
+      }
+      function write(action, extra) {
+        return rpc("command", { action, expected: view.revision, ...extra });
+      }
+      function locked(fn) {
+        return async () => {
+          if (busy) return;
+          busy = true;
+          document
+            .querySelectorAll("button")
+            .forEach((b) => (b.disabled = true));
+          try {
+            await fn();
+          } catch (e) {
+            fail(e);
+          } finally {
+            busy = false;
+            document
+              .querySelectorAll("button")
+              .forEach((b) => (b.disabled = false));
+          }
+        };
+      }
+      async function load() {
+        const next = await rpc("view");
+        if (view && view.revision !== next.revision) checks.clear();
+        view = next;
+        render();
+      }
+      function option(value, label, selected) {
+        return (
+          '<option value="' +
+          esc(value) +
+          '"' +
+          (value === selected ? " selected" : "") +
+          ">" +
+          esc(label) +
+          "</option>"
+        );
+      }
+      function kind(p) {
+        return (
+          view.snapshot?.providers.find((x) => x.id === p.provider)?.kind ||
+          "rules"
+        );
+      }
+      function summary(p) {
+        const provider = view.snapshot?.providers.find(
+          (x) => x.id === p.provider,
+        );
+        if (provider?.kind === "rules") return "Rules · " + p.provider;
+        if (provider?.kind === "structured") {
+          const r = view.snapshot.completion?.routes.find(
+            (r) => r.model === (p.model || provider.models?.[0]?.model),
+          );
+          return (
+            "DSH LLM · " +
+            (r?.provider || p.provider) +
+            " / " +
+            (r?.modelVersion || p.model || "")
+          );
+        }
+        return (
+          (provider?.kind === "jev" ? "Typesafe Jev" : "Compatible API") +
+          " · " +
+          (p.model || provider?.model || "")
+        );
+      }
+      function probeText(p) {
+        const c = checks.get(p.id);
+        if (!c) return '<span class="muted">尚未检测</span>';
+        const labels = {
+          CONNECTED: "连接成功，模型响应已通过校验",
+          CREDENTIAL_MISSING:
+            kind(p) === "structured" ? "缺少普通模型凭据，请在 DSH 模型设置中配置" : "缺少独立决策 API 密钥，请展开此预设，在 API 凭据卡片内配置",
+          BRIDGE_MISSING: "缺少 DSH 模型桥接路由，请重新保存模型预设",
+          MODEL_UNAVAILABLE: "供应商或模型不可用，请检查 DSH 模型设置",
+          RULES_VALID: "本地规则校验通过（" + (c.ruleCount || 0) + " 条）",
+          timeout: "模型请求超时",
+          "circuit-open": "调用暂时熔断",
+          "invalid-output": "服务已响应，但返回不符合决策格式",
+          unsupported: "不支持这个模型或思考强度",
+          "provider-error": "模型或 API 调用失败，请检查凭据、地址和模型",
+          PROBE_ABSTAINED: "服务有响应，但检测没有得到预期答案",
+          "http-401": "认证失败（401）",
+          "http-403": "没有调用权限（403）",
+          "http-404": "API 或模型不存在（404）",
+          "http-429": "服务限流（429）",
+        };
+        return (
+          '<span class="' +
+          (c.ok ? "ok" : "bad") +
+          '">' +
+          esc(labels[c.code] || "检测失败（" + c.code + "）") +
+          '</span><div class="muted small">' +
+          esc(new Date(c.checkedAt).toLocaleString()) +
+          (c.elapsedMs !== undefined ? " · " + c.elapsedMs + " ms" : "") +
+          "</div>"
+        );
+      }
+      function render() {
+        document
+          .querySelectorAll("nav button")
+          .forEach((b) =>
+            b.setAttribute("aria-selected", String(b.dataset.tab === tab)),
+          );
+        if (!view?.available) {
+          $("#content").innerHTML =
+            '<p role="alert">未加载 typed-decisions 配置条目，请检查插件安装。</p>';
+          return;
+        }
+        if (tab === "presets") renderPresets();
+        else renderRules();
+      }
+      function renderPresets() {
+        $("#content").innerHTML =
+          '<div class="row between"><h3>决策预设</h3><button id="new-preset">新建预设</button></div><p class="muted">检测模型会发起一次小型真实请求，可能产生少量 API 费用。Rules 在本地校验。</p><div class="preset-list">' +
+          [...view.presets, ...(editing && !editing.existing ? [{id: editing.id, name: "新建预设", provider: ""}] : [])]
+            .map(
+              (p) =>
+                '<article class="card ' +
+                (editing?.id === p.id ? "selected" : "") +
+                '" data-preset="' + esc(p.id) + '"><div class="row between"><strong>' +
+                esc(p.name) +
+                "</strong>" +
+                (view.defaultPreset === p.id
+                  ? '<span class="badge">默认</span>'
+                  : "") +
+                '</div><p class="muted small">' +
+                esc(p.provider ? summary(p) : "未保存 · " + ({rules:"Rules",structured:"DSH LLM",jev:"Typesafe Jev",compatible:"Compatible API"}[editing.mode])) +
+                (p.reasoningEffort ? " · 思考 " + esc(p.reasoningEffort) : "") +
+                '</p><div class="small muted">ID：' +
+                esc(p.id) +
+                '</div><div class="status" data-check="' +
+                esc(p.id) +
+                '">' +
+                probeText(p) +
+                '</div><div class="row actions"><button data-edit="' +
+                esc(p.id) +
+                '" aria-expanded="' + String(editing?.id === p.id && editing.expanded !== false) + '">' + (editing?.id === p.id && editing.expanded !== false ? "收起编辑" : "编辑") + '</button>' + (p.provider ? '<button data-probe="' +
+                esc(p.id) +
+                '">' +
+                (kind(p) === "rules" ? "校验规则" : "检测连接") +
+                '</button>' : "") + '</div>' + (p.provider ? '<div class="row" style="margin-top:8px">' +
+                (view.defaultPreset !== p.id
+                  ? '<button data-default="' + esc(p.id) + '">设为默认</button>'
+                  : "") +
+                '<button data-delete="' +
+                esc(p.id) +
+                '">删除</button></div>' : "") + (editing?.id === p.id && editing.expanded !== false ? '<div id="preset-editor" class="preset-editor"></div>' : "") + '</article>',
+            )
+            .join("") +
+          '</div>';
+        $("#new-preset").onclick = () => {
+          editing = {
+            id: "preset-" + crypto.randomUUID().slice(0, 8),
+            name: "",
+            mode: "rules",
+            ruleset: view.rulesets[0]?.id || "rules",
+            nativeProvider: view.catalog[0]?.provider || "",
+            modelVersion: "",
+            model: "jev-1.13.0",
+            reasoningEffort: "",
+            endpoint: "",
+            existing: false,
+          };
+          renderPresetForm();
+        };
+        document.querySelectorAll("[data-edit]").forEach(
+          (b) =>
+            (b.onclick = () => {
+              if (editing?.id === b.dataset.edit) {
+                editing.expanded = editing.expanded === false;
+                renderPresets();
+                return;
+              }
+              const p = view.presets.find((p) => p.id === b.dataset.edit),
+                provider = view.snapshot.providers.find(
+                  (x) => x.id === p.provider,
+                ),
+                r = view.snapshot.completion?.routes.find(
+                  (r) => r.model === (p.model || provider?.models?.[0]?.model),
+                );
+              editing = {
+                id: p.id,
+                name: p.name,
+                mode: kind(p),
+                ruleset: p.provider,
+                nativeProvider: r?.provider || view.catalog[0]?.provider || "",
+                modelVersion: r?.modelVersion || provider?.modelVersion || "",
+                model: provider?.model || "jev-1.13.0",
+                reasoningEffort: p.reasoningEffort || "",
+                endpoint: provider?.endpoint || "",
+                providerId: p.provider,
+                existing: true,
+              };
+              renderPresetForm();
+            }),
+        );
+        document.querySelectorAll("[data-probe]").forEach(
+          (b) =>
+            (b.onclick = locked(async () => {
+              notice(
+                kind(view.presets.find((p) => p.id === b.dataset.probe)) ===
+                  "rules"
+                  ? "正在校验本地规则…"
+                  : "正在发送连接检测请求…",
+              );
+              const c = await rpc("command", {
+                action: "checkConnection",
+                id: b.dataset.probe,
+              });
+              checks.set(b.dataset.probe, c);
+              $('[data-check="' + b.dataset.probe + '"]').innerHTML = probeText(
+                view.presets.find((p) => p.id === b.dataset.probe),
+              );
+              notice(
+                c.ok ? "检测完成。" : "检测未通过，请查看预设上的原因。",
+                c.ok ? "ok" : "bad",
+              );
+            })),
+        );
+        document.querySelectorAll("[data-default]").forEach(
+          (b) =>
+            (b.onclick = locked(async () => {
+              await write("setDefault", { id: b.dataset.default });
+              await load();
+              notice("默认预设已保存。", "ok");
+            })),
+        );
+        document.querySelectorAll("[data-delete]").forEach(
+          (b) =>
+            (b.onclick = locked(async () => {
+              if (!confirm("删除此预设？正在使用的预设不能删除。")) return;
+              await write("deletePreset", { id: b.dataset.delete });
+              if (editing?.id === b.dataset.delete) editing = null;
+              await load();
+              notice("预设已删除。", "ok");
+            })),
+        );
+        if (editing && editing.expanded !== false) mountPresetForm();
+      }
+      async function efforts() {
+        if (!editing || editing.mode !== "structured") return;
+        const identity = editing.id + "/" + editing.nativeProvider + "/" + editing.modelVersion;
+        try {
+          const info = await rpc("command", {
+            action: "modelInfo",
+            provider: editing.nativeProvider,
+            model: editing.modelVersion,
+          });
+          if (
+            !editing ||
+            identity !== editing.id + "/" + editing.nativeProvider + "/" + editing.modelVersion
+          )
+            return;
+          const field = $("#p-effort");
+          if (field)
+            field.innerHTML =
+              option("", "模型默认", editing.reasoningEffort) +
+              info.reasoningEfforts
+                .map((x) => option(x, x, editing.reasoningEffort))
+                .join("");
+        } catch (e) {
+          if (editing?.mode === "structured") fail(e);
+        }
+      }
+      function renderPresetForm(focus = true) {
+        renderPresets();
+        if (focus && $("#p-name")) {
+          $("#preset-editor").scrollIntoView({ block: "nearest" });
+          $("#p-name").focus();
+        }
+      }
+      function mountPresetForm() {
+        if (!editing) return;
+        const d = editing,
+          models =
+            view.catalog.find((x) => x.provider === d.nativeProvider)?.models ||
+            [];
+        if (
+          d.mode === "structured" &&
+          !models.some((x) => x.id === d.modelVersion)
+        )
+          d.modelVersion = models[0]?.id || "";
+        $("#preset-editor").innerHTML =
+          '<form id="preset-form"><h3>' +
+          (d.existing ? "编辑预设" : "新建预设") +
+          '</h3><label for="p-name">名称</label><input id="p-name" required maxlength="100" value="' +
+          esc(d.name) +
+          '"><p class="muted small">预设 ID：' +
+          esc(d.id) +
+          '。重命名不影响插件引用。</p><label for="p-mode">决策方式</label><select id="p-mode">' +
+          [
+            "rules",
+            "structured",
+            "jev",
+            ...(view.snapshot.providers.some((x) => x.kind === "compatible")
+              ? ["compatible"]
+              : []),
+          ]
+            .map((x) =>
+              option(
+                x,
+                {
+                  rules: "Rules · 本地规则",
+                  structured: "DSH LLM · 普通模型",
+                  jev: "Typesafe Jev",
+                  compatible: "已注册 Compatible API",
+                }[x],
+                d.mode,
+              ),
+            )
+            .join("") +
+          '</select><p class="muted">' +
+          {
+            rules:
+              "按明确规则匹配上下文；没有匹配规则时放弃自动选择，不调用模型。",
+            structured: "使用 DSH 已配置的供应商和普通模型，校验有限候选答案。",
+            jev: "调用 Typesafe Jev typed API；在此预设内管理独立 API 密钥，也支持已有环境引用。",
+            compatible:
+              "使用已注册且声明能力的兼容适配器；不把任意 URL 当作通用 API。",
+          }[d.mode] +
+          "</p>" +
+          (d.mode === "rules"
+            ? '<label for="p-ruleset">规则集</label><select id="p-ruleset">' +
+              view.rulesets.map((x) => option(x.id, x.id, d.ruleset)).join("") +
+              "</select>"
+            : d.mode === "structured"
+              ? '<label for="p-provider">供应商</label><select id="p-provider">' +
+                view.catalog
+                  .map((x) =>
+                    option(
+                      x.provider,
+                      x.name +
+                        (x.credential === "missing" ? "（缺少凭据）" : ""),
+                      d.nativeProvider,
+                    ),
+                  )
+                  .join("") +
+                '</select><label for="p-model-version">模型</label><select id="p-model-version">' +
+                models
+                  .map((x) => option(x.id, x.name || x.id, d.modelVersion))
+                  .join("") +
+                '</select><label for="p-effort">思考强度</label><select id="p-effort">' +
+                option("", "模型默认", d.reasoningEffort) +
+                (d.reasoningEffort
+                  ? option(
+                      d.reasoningEffort,
+                      d.reasoningEffort,
+                      d.reasoningEffort,
+                    )
+                  : "") +
+                "</select>"
+              : (d.mode === "compatible"
+                  ? '<label for="p-compatible">已注册适配器</label><select id="p-compatible">' +
+                    view.snapshot.providers
+                      .filter((x) => x.kind === "compatible")
+                      .map((x) => option(x.id, x.id, d.providerId))
+                      .join("") +
+                    "</select>"
+                  : "") +
+                '<div class="grid"><div><label for="p-model">模型标识</label><input id="p-model" required value="' +
+                esc(d.model) +
+                '"></div><div><label for="p-model-version">固定模型版本</label><input id="p-model-version" required value="' +
+                esc(d.modelVersion || d.model) +
+                '"></div></div>' +
+                (d.mode === "compatible"
+                  ? '<label for="p-endpoint">API 地址</label><input id="p-endpoint" type="text" inputmode="url" spellcheck="false" required value="' +
+                    esc(d.endpoint) +
+                    '">'
+                  : "")) +
+          '<p class="muted small">' + (d.mode === "structured" ? "普通模型的供应商与凭据由 DSH 模型设置管理。" : d.mode === "rules" ? "本地规则不需要 API 凭据。" : "独立决策 API 的凭据在下方管理。") + '保存预设会重新加载相关决策插件。</p><div class="row actions"><button class="primary" type="submit">保存预设</button><button type="button" id="preset-cancel">取消编辑</button></div></form>';
+        const fields = {
+          "p-name": "name",
+          "p-mode": "mode",
+          "p-ruleset": "ruleset",
+          "p-provider": "nativeProvider",
+          "p-model": "model",
+          "p-model-version": "modelVersion",
+          "p-effort": "reasoningEffort",
+          "p-endpoint": "endpoint",
+          "p-compatible": "providerId",
+        };
+        for (const [element, key] of Object.entries(fields)) {
+          const f = $("#" + element);
+          if (!f) continue;
+          f.oninput = () => {
+            d[key] = f.value;
+            if (key === "mode" || key === "nativeProvider") {
+              d.reasoningEffort = "";
+              if (key === "mode" && d.mode === "jev") {
+                d.model = "jev-1.13.0";
+                d.modelVersion = d.model;
+              }
+              if (key === "mode" && d.mode === "compatible") {
+                const adapter = view.snapshot.providers.find(
+                  (p) => p.kind === "compatible",
+                );
+                d.providerId = adapter.id;
+                d.model = adapter.model;
+                d.modelVersion = adapter.modelVersion;
+                d.endpoint = adapter.endpoint;
+              }
+              renderPresetForm(false);
+            } else if (key === "modelVersion" && d.mode === "structured") {
+              d.reasoningEffort = "";
+              efforts();
+            } else if (key === "providerId") {
+              const p = view.snapshot.providers.find(
+                (x) => x.id === d.providerId,
+              );
+              d.model = p.model;
+              d.modelVersion = p.modelVersion;
+              d.endpoint = p.endpoint;
+              renderPresetForm(false);
+            }
+          };
+        }
+        $("#preset-cancel").onclick = () => {
+          editing = null;
+          renderPresets();
+        };
+        $("#preset-form").onsubmit = (e) => {
+          e.preventDefault();
+          locked(async () => {
+            let selection =
+              d.mode === "rules"
+                ? { kind: "rules", providerId: d.ruleset }
+                : d.mode === "structured"
+                  ? {
+                      kind: "structured",
+                      providerId:
+                        d.providerId || "preset:" + d.id + ":structured",
+                      nativeProvider: d.nativeProvider,
+                      modelVersion: d.modelVersion,
+                    }
+                  : {
+                      kind: d.mode,
+                      providerId:
+                        d.mode === "jev"
+                          ? d.providerId || "preset:" + d.id + ":jev"
+                          : d.providerId,
+                      model: d.model,
+                      modelVersion: d.modelVersion || d.model,
+                      ...(d.mode === "compatible"
+                        ? { endpoint: d.endpoint }
+                        : {}),
+                    };
+            await write("savePreset", {
+              id: d.id,
+              name: d.name.trim(),
+              selection,
+              ...(d.mode === "structured" && d.reasoningEffort
+                ? { reasoningEffort: d.reasoningEffort }
+                : {}),
+            });
+            editing = null;
+            await load();
+            notice("预设已保存。其他插件可以选择它。", "ok");
+          })();
+        };
+        if (d.mode === "structured" && d.modelVersion) efforts();
+        if (d.mode === "jev" || d.mode === "compatible") mountApiCredentials(d);
+      }
+      function mountApiCredentials(d) {
+        const info = view.apiCredentials?.find(x => x.providerId === d.providerId);
+        const owned = d.existing && d.providerId === "preset:" + d.id + ":" + d.mode;
+        const box = document.createElement("section");
+        box.className = "card credential-card";
+        box.innerHTML = '<h3>API 凭据</h3><p class="muted small">' +
+          (!owned ? "先保存预设，再为它配置独立密钥。" : info?.configured ? (info.managed ? "已配置本预设的独立密钥；不会显示已有值。" : "已有环境引用可用。保存独立密钥后仅影响本预设。") : "未配置可用密钥。") +
+          '</p>' + (owned ? '<label for="p-api-key">新的 API 密钥</label><input id="p-api-key" type="password" autocomplete="new-password" placeholder="输入后点击保存密钥；留空不会改动已有密钥"><p class="muted small">密钥存入 DSH 私有凭据存储，页面只接收配置状态。普通模型无需在此重复配置。</p><div class="row actions"><button type="button" id="api-key-save">保存密钥</button>' + (info?.managed && info.configured ? '<button type="button" id="api-key-clear">移除本预设密钥</button>' : '') + '</div>' : '');
+        $("#preset-editor").append(box);
+        if (!owned) return;
+        $("#api-key-save").onclick = locked(async () => {
+          const field = $("#p-api-key");
+          if (!field.value.trim()) { notice("请先输入新密钥。", "bad"); return; }
+          await write("setApiKey", { id: d.id, apiKey: field.value.trim() });
+          field.value = "";
+          checks.delete(d.id);
+          await load();
+          notice("独立密钥已保存，可点击预设的检测连接按钮。", "ok");
+        });
+        if ($("#api-key-clear")) $("#api-key-clear").onclick = locked(async () => {
+          if (!confirm("移除此预设的密钥？其他预设的凭据不受影响。")) return;
+          await write("clearApiKey", { id: d.id });
+          checks.delete(d.id);
+          await load();
+          notice("本预设密钥已移除。", "ok");
+        });
+      }
+      function renderRules() {
+        const draft = ruleEditing;
+        const rows = [...view.rulesets];
+        if (draft && !rows.some((r) => r.id === draft.id))
+          rows.push({ id: draft.id, version: "未保存", rules: draft.rules });
+        $("#content").innerHTML =
+          '<div class="row between"><h3>规则集</h3><div class="row"><button id="new-ruleset">新建规则集</button><button id="import-rules">导入规则</button></div></div><p class="muted">通过问题 ID、版本、上下文路径和值精确匹配。没有命中或同时命中多条规则时，放弃选择。</p><div class="rule-set-list">' +
+          rows
+            .map((r) => {
+              const active = draft?.id === r.id,
+                expanded = active && draft.expanded !== false;
+              return (
+                '<article class="card rule-set' +
+                (expanded ? " selected" : "") +
+                '" data-ruleset="' +
+                esc(r.id) +
+                '"><div class="row between"><strong>' +
+                esc(r.id) +
+                "</strong>" +
+                (active && (draft.dirty || draft.formDirty)
+                  ? '<span class="badge warn">草稿未保存</span>'
+                  : "") +
+                '</div><p class="muted">' +
+                (active ? draft.rules.length : r.rules.length) +
+                " 条规则 · 版本 " +
+                esc(r.version) +
+                '</p><div class="row actions"><button data-rules-edit="' +
+                esc(r.id) +
+                '" aria-expanded="' +
+                expanded +
+                '">' +
+                (expanded ? "收起编辑" : "编辑规则集") +
+                "</button>" +
+                (r.version === "未保存"
+                  ? ""
+                  : '<button data-export="' +
+                    esc(r.id) +
+                    '">导出</button><button data-rules-delete="' +
+                    esc(r.id) +
+                    '">删除</button>') +
+                "</div>" +
+                (expanded
+                  ? '<div id="ruleset-editor" class="ruleset-editor"></div>'
+                  : "") +
+                "</article>"
+              );
+            })
+            .join("") +
+          "</div>";
+        $("#new-ruleset").onclick = () => {
+          if (!leaveRulesDraft()) return;
+          ruleEditing = {
+            id: "rules-" + crypto.randomUUID().slice(0, 8),
+            rules: [],
+            existing: false,
+            index: null,
+            form: null,
+            expanded: true,
+            revision: view.revision,
+            dirty: false,
+          };
+          renderRulesForm();
+        };
+        $("#import-rules").onclick = () => $("#import-file").click();
+        document.querySelectorAll("[data-rules-edit]").forEach(
+          (b) =>
+            (b.onclick = () => {
+              if (ruleEditing?.id === b.dataset.rulesEdit) {
+                ruleEditing.expanded = ruleEditing.expanded === false;
+                renderRules();
+                return;
+              }
+              if (!leaveRulesDraft()) return;
+              const r = view.rulesets.find((r) => r.id === b.dataset.rulesEdit);
+              ruleEditing = {
+                id: r.id,
+                rules: structuredClone(r.rules),
+                existing: true,
+                index: null,
+                form: null,
+                expanded: true,
+                revision: view.revision,
+                dirty: false,
+              };
+              renderRulesForm();
+            }),
+        );
+        document.querySelectorAll("[data-export]").forEach(
+          (b) =>
+            (b.onclick = () => {
+              const r = view.rulesets.find((r) => r.id === b.dataset.export);
+              const blob = new Blob(
+                [
+                  JSON.stringify(
+                    { schemaVersion: 1, id: r.id, rules: r.rules },
+                    null,
+                    2,
+                  ) + "\n",
+                ],
+                { type: "application/json" },
+              );
+              const url = URL.createObjectURL(blob),
+                a = document.createElement("a");
+              a.href = url;
+              a.download = r.id.replace(/[^a-zA-Z0-9_-]/g, "_") + ".rules.json";
+              a.click();
+              setTimeout(() => URL.revokeObjectURL(url), 1000);
+              notice("已导出保存的规则，不包含未保存的草稿或 API 凭据。", "ok");
+            }),
+        );
+        document.querySelectorAll("[data-rules-delete]").forEach(
+          (b) =>
+            (b.onclick = locked(async () => {
+              if (!confirm("删除这个规则集？被预设引用的规则集不能删除。"))
+                return;
+              await write("deleteRules", { id: b.dataset.rulesDelete });
+              if (ruleEditing?.id === b.dataset.rulesDelete) ruleEditing = null;
+              await load();
+              notice("规则集已删除。", "ok");
+            })),
+        );
+        if (draft && draft.expanded !== false) mountRulesEditor();
+        if (busy)
+          document
+            .querySelectorAll("button")
+            .forEach((b) => (b.disabled = true));
+      }
+      function leaveRulesDraft() {
+        return (
+          !ruleEditing ||
+          !(ruleEditing.dirty || ruleEditing.formDirty) ||
+          confirm("当前规则集有未保存的草稿。放弃草稿并切换？")
+        );
+      }
+      function renderRulesForm(focus = true) {
+        renderRules();
+        if (focus) {
+          $("#ruleset-editor")?.scrollIntoView({ block: "nearest" });
+          $("#r-id")?.focus();
+        }
+      }
+      function ruleCard(rule, index, isNew = false) {
+        const d = ruleEditing,
+          expanded = d.index === index && d.ruleExpanded !== false && !!d.form;
+        return (
+          '<article class="card rule-card' +
+          (expanded ? " selected" : "") +
+          '" data-rule-index="' +
+          index +
+          '"><div class="rule-summary"><strong>' +
+          (isNew
+            ? "新规则"
+            : esc(rule.questionId) + " · v" + esc(rule.questionVersion)) +
+          "</strong>" +
+          (isNew
+            ? '<p class="muted small">填写下面的表单，完成后保存规则集。</p>'
+            : '<p class="muted small">上下文' +
+              (rule.path.length
+                ? " → " + esc(rule.path.join(" → "))
+                : "（整体）") +
+              " 等于 " +
+              esc(valueSummary(rule.equals)) +
+              '</p><div class="small">' +
+              esc(answerSummary(rule.answer)) +
+              "</div>") +
+          '</div><div class="row actions"><button type="button" data-rule-edit="' +
+          index +
+          '" aria-expanded="' +
+          expanded +
+          '">' +
+          (expanded ? "收起编辑" : "展开编辑") +
+          '</button><button type="button" data-rule-remove="' +
+          index +
+          '">' +
+          (isNew ? "取消新规则" : "移除") +
+          "</button></div>" +
+          (expanded ? '<div id="rule-editor" class="rule-editor"></div>' : "") +
+          "</article>"
+        );
+      }
+      function commitRuleForm() {
+        const d = ruleEditing;
+        if (!d.form) return true;
+        try {
+          const rule = readRuleForm(d.form);
+          if (d.index === -1) d.rules.push(rule);
+          else d.rules[d.index] = rule;
+          d.form = null;
+          d.formDirty = false;
+          d.index = null;
+          d.dirty = true;
+          return true;
+        } catch (e) {
+          const alert = $("#rule-error");
+          if (alert) alert.textContent = e.message;
+          else {
+            d.ruleExpanded = true;
+            renderRules();
+            $("#rule-error").textContent = e.message;
+          }
+          return false;
+        }
+      }
+      function mountRulesEditor() {
+        const d = ruleEditing;
+        $("#ruleset-editor").innerHTML =
+          '<label for="r-id">规则集 ID</label><input id="r-id" value="' +
+          esc(d.id) +
+          '"' +
+          (d.existing ? " readonly" : "") +
+          '><div class="rule-list">' +
+          d.rules.map((r, i) => ruleCard(r, i)).join("") +
+          (d.index === -1 && d.form ? ruleCard(null, -1, true) : "") +
+          '</div><button type="button" id="add-rule">新建规则</button><p class="muted small">规则的修改、添加和移除，点击“保存规则集”后才生效。导出使用已保存的版本。</p><div class="row actions"><button id="save-rules" class="primary">保存规则集</button><button id="rules-cancel">放弃草稿</button></div>';
+        $("#r-id").oninput = (e) => {
+          d.id = e.target.value;
+          d.dirty = true;
+        };
+        $("#add-rule").onclick = () => {
+          if (!commitRuleForm()) return;
+          d.index = -1;
+          d.formDirty = true;
+          d.ruleExpanded = true;
+          d.form = ruleForm({
+            questionId: "",
+            questionVersion: "1",
+            path: [],
+            equals: "",
+            answer: { type: "choice", choice: "" },
+          });
+          renderRules();
+          $("#r-question").focus();
+        };
+        document.querySelectorAll("[data-rule-edit]").forEach(
+          (b) =>
+            (b.onclick = () => {
+              const index = Number(b.dataset.ruleEdit);
+              if (d.index === index && d.form)
+                d.ruleExpanded = d.ruleExpanded === false;
+              else {
+                if (!commitRuleForm()) return;
+                d.index = index;
+                d.form = ruleForm(d.rules[index]);
+                d.formDirty = false;
+                d.ruleExpanded = true;
+              }
+              renderRules();
+            }),
+        );
+        document.querySelectorAll("[data-rule-remove]").forEach(
+          (b) =>
+            (b.onclick = () => {
+              const index = Number(b.dataset.ruleRemove);
+              if (d.index === index) {
+                d.form = null;
+                d.formDirty = false;
+                d.index = null;
+              }
+              if (index >= 0) {
+                d.rules.splice(index, 1);
+                if (d.index !== null && d.index > index) d.index--;
+                d.dirty = true;
+              }
+              renderRules();
+            }),
+        );
+        $("#save-rules").onclick = locked(async () => {
+          if (!d.existing && view.rulesets.some((r) => r.id === d.id.trim()))
+            throw Error("规则集 ID 已存在，请使用其他名称。");
+          if (!commitRuleForm()) return;
+          renderRules();
+          await write("saveRules", {
+            expected: d.revision,
+            id: d.id.trim(),
+            rules: d.rules,
+          });
+          ruleEditing = null;
+          await load();
+          notice("规则集已保存，引用它的预设随即生效。", "ok");
+        });
+        $("#rules-cancel").onclick = () => {
+          ruleEditing = null;
+          renderRules();
+          notice("已放弃草稿，保存的规则没有变化。");
+        };
+        if (d.form && d.ruleExpanded !== false) mountRuleForm();
+      }
+      function mountRuleForm() {
+        const d = ruleEditing,
+          f = d.form;
+        $("#rule-editor").innerHTML =
+          '<form id="rule-form"><div class="grid"><div><label for="r-question">问题 ID</label><input id="r-question" required value="' +
+          esc(f.questionId) +
+          '"></div><div><label for="r-version">问题版本</label><input id="r-version" required value="' +
+          esc(f.questionVersion) +
+          '"></div></div><label>上下文路径</label><p class="muted small">按顺序添加字段名。留空表示匹配整个上下文。</p><div id="path-fields"></div><button type="button" id="add-path">添加路径段</button><label>匹配值</label><div id="value-fields"></div><label for="r-answer-type">答案类型</label><select id="r-answer-type">' +
+          Object.entries({
+            choice: "选择候选项",
+            noul: "0～1 数值",
+            score: "评分",
+            abstain: "放弃选择",
+          })
+            .map(([k, v]) => option(k, v, f.answerType))
+            .join("") +
+          '</select><div id="answer-fields"></div><p id="rule-error" class="bad" role="alert"></p><div class="row actions"><button type="submit">完成规则编辑</button></div></form>';
+        $("#r-question").oninput = (e) => (f.questionId = e.target.value);
+        $("#r-version").oninput = (e) => (f.questionVersion = e.target.value);
+        mountPathFields();
+        mountValueFields();
+        mountAnswerFields();
+        $("#add-path").onclick = () => {
+          f.path.push("");
+          mountPathFields();
+          $("#path-" + (f.path.length - 1)).focus();
+        };
+        $("#r-answer-type").onchange = (e) => {
+          f.answerType = e.target.value;
+          f.answerValue =
+            f.answerType === "noul" || f.answerType === "score" ? "0" : "";
+          mountAnswerFields();
+        };
+        $("#rule-form").addEventListener("input", () => (d.formDirty = true));
+        $("#rule-form").addEventListener("change", () => (d.formDirty = true));
+        $("#rule-form").addEventListener("click", (e) => {
+          if (e.target.closest("button[type=button]")) d.formDirty = true;
+        });
+        $("#rule-form").onsubmit = (e) => {
+          e.preventDefault();
+          if (commitRuleForm()) {
+            renderRules();
+            notice("规则已加入草稿，保存规则集后生效。");
+          }
+        };
+      }
+      function mountPathFields() {
+        const f = ruleEditing.form;
+        $("#path-fields").innerHTML = f.path.length
+          ? f.path
+              .map(
+                (segment, i) =>
+                  '<div class="path-row"><div><label for="path-' +
+                  i +
+                  '" class="small">第 ' +
+                  (i + 1) +
+                  ' 段</label><input id="path-' +
+                  i +
+                  '" required value="' +
+                  esc(segment) +
+                  '"></div><button type="button" data-path-remove="' +
+                  i +
+                  '" aria-label="移除路径段 ' +
+                  (i + 1) +
+                  '">移除</button></div>',
+              )
+              .join("")
+          : '<p class="muted small">匹配整个上下文</p>';
+        f.path.forEach(
+          (_, i) =>
+            ($("#path-" + i).oninput = (e) => (f.path[i] = e.target.value)),
+        );
+        document.querySelectorAll("[data-path-remove]").forEach(
+          (b) =>
+            (b.onclick = () => {
+              f.path.splice(Number(b.dataset.pathRemove), 1);
+              mountPathFields();
+            }),
+        );
+      }
+      function mountAnswerFields() {
+        const f = ruleEditing.form;
+        const label = {
+          choice: "候选项 ID",
+          noul: "数值（0～1）",
+          score: "评分值",
+          abstain: "放弃原因",
+        }[f.answerType];
+        const numeric = f.answerType === "noul" || f.answerType === "score";
+        $("#answer-fields").innerHTML =
+          '<label for="r-answer-value">' +
+          label +
+          '</label><input id="r-answer-value" required ' +
+          (numeric
+            ? 'type="number" step="any" min="0" max="' +
+              (f.answerType === "noul" ? 1 : 9) +
+              '" '
+            : "") +
+          'value="' +
+          esc(f.answerValue) +
+          '"><p class="muted small">' +
+          {
+            choice: "使用调用插件提供的候选项 ID，实际决策时会检查它是否有效。",
+            noul: "返回 0～1 之间的数值。",
+            score: "评分范围由调用插件定义，最多 10 个等级（0～9）。",
+            abstain: "命中规则后放弃选择，并返回这里填写的原因。",
+          }[f.answerType] +
+          "</p>";
+        $("#r-answer-value").oninput = (e) => (f.answerValue = e.target.value);
+      }
+      function valueNodeHtml(node, label) {
+        const prefix = "value-" + node.uid;
+        const names = {
+          string: "文本",
+          number: "数字",
+          boolean: "布尔值",
+          null: "空值",
+          object: "对象",
+          array: "列表",
+        };
+        let result =
+          '<div class="value-node"><label for="' +
+          prefix +
+          '-type">' +
+          esc(label) +
+          '类型</label><select id="' +
+          prefix +
+          '-type">' +
+          Object.entries(names)
+            .map(([k, v]) => option(k, v, node.kind))
+            .join("") +
+          "</select>";
+        if (node.kind === "string")
+          result +=
+            '<label for="' +
+            prefix +
+            '-input">' +
+            esc(label) +
+            '文本</label><textarea id="' +
+            prefix +
+            '-input">' +
+            esc(node.value) +
+            "</textarea>";
+        else if (node.kind === "number")
+          result +=
+            '<label for="' +
+            prefix +
+            '-input">' +
+            esc(label) +
+            '数字</label><input id="' +
+            prefix +
+            '-input" type="number" step="any" required value="' +
+            esc(node.value) +
+            '">';
+        else if (node.kind === "boolean")
+          result +=
+            '<label for="' +
+            prefix +
+            '-input">' +
+            esc(label) +
+            '布尔值</label><select id="' +
+            prefix +
+            '-input">' +
+            option("true", "是", String(node.value)) +
+            option("false", "否", String(node.value)) +
+            "</select>";
+        else if (node.kind === "null")
+          result += '<p class="muted small">匹配空值，无需输入内容。</p>';
+        else {
+          result +=
+            '<div class="value-items">' +
+            node.items
+              .map(
+                (item, i) =>
+                  '<div class="value-child">' +
+                  (node.kind === "object"
+                    ? '<label for="' +
+                      prefix +
+                      "-key-" +
+                      i +
+                      '">字段 ' +
+                      (i + 1) +
+                      ' 名称</label><input id="' +
+                      prefix +
+                      "-key-" +
+                      i +
+                      '" value="' +
+                      esc(item.key) +
+                      '">'
+                    : '<strong class="small">第 ' + (i + 1) + " 项</strong>") +
+                  valueNodeHtml(
+                    node.kind === "object" ? item.node : item,
+                    "第 " + (i + 1) + " 项",
+                  ) +
+                  '<button type="button" id="' +
+                  prefix +
+                  "-remove-" +
+                  i +
+                  '">移除' +
+                  (node.kind === "object" ? "字段" : "条目") +
+                  " " +
+                  (i + 1) +
+                  "</button></div>",
+              )
+              .join("") +
+            '</div><div class="row actions"><button type="button" id="' +
+            prefix +
+            '-add">添加' +
+            (node.kind === "object" ? "字段" : "条目") +
+            "</button></div>";
+        }
+        return result + "</div>";
+      }
+      function mountValueFields() {
+        const root = ruleEditing.form.equals;
+        $("#value-fields").innerHTML = valueNodeHtml(root, "匹配值");
+        function bind(node) {
+          const prefix = "value-" + node.uid;
+          $("#" + prefix + "-type").onchange = (e) => {
+            const defaults = {
+              string: "",
+              number: 0,
+              boolean: true,
+              null: null,
+              object: {},
+              array: [],
+            };
+            const replacement = valueDraft(defaults[e.target.value]);
+            for (const key of Object.keys(node)) delete node[key];
+            Object.assign(node, replacement);
+            mountValueFields();
+          };
+          const input = $("#" + prefix + "-input");
+          if (input) {
+            const changed = (e) =>
+              (node.value =
+                node.kind === "boolean"
+                  ? e.target.value === "true"
+                  : e.target.value);
+            input.oninput = changed;
+            input.onchange = changed;
+          }
+          if (node.kind === "object" || node.kind === "array") {
+            node.items.forEach((item, i) => {
+              if (node.kind === "object")
+                $("#" + prefix + "-key-" + i).oninput = (e) =>
+                  (item.key = e.target.value);
+              bind(node.kind === "object" ? item.node : item);
+              $("#" + prefix + "-remove-" + i).onclick = () => {
+                node.items.splice(i, 1);
+                mountValueFields();
+              };
+            });
+            $("#" + prefix + "-add").onclick = () => {
+              node.items.push(
+                node.kind === "object"
+                  ? { key: "", node: valueDraft("") }
+                  : valueDraft(""),
+              );
+              mountValueFields();
+            };
+          }
+        }
+        bind(root);
+      }
+      $("#import-file").onchange = async (e) => {
+        const f = e.target.files[0];
+        if (!f) return;
+        try {
+          if (f.size > 131072) throw Error("DECISION_RULES_INVALID");
+          const data = JSON.parse(await f.text());
+          if (
+            data.schemaVersion !== 1 ||
+            typeof data.id !== "string" ||
+            !Array.isArray(data.rules) ||
+            Object.keys(data).some(
+              (k) => !["schemaVersion", "id", "rules"].includes(k),
+            )
+          )
+            throw Error("DECISION_RULES_INVALID");
+          try {
+            if (data.rules.length > 500) throw Error();
+            data.rules.forEach((r) => {
+              if (
+                !r ||
+                Object.keys(r).length !== 5 ||
+                Object.keys(r).some(
+                  (k) =>
+                    ![
+                      "questionId",
+                      "questionVersion",
+                      "path",
+                      "equals",
+                      "answer",
+                    ].includes(k),
+                )
+              )
+                throw Error();
+              readRuleForm(ruleForm(r));
+            });
+          } catch {
+            throw Error("DECISION_RULES_INVALID");
+          }
+          if (!leaveRulesDraft()) return;
+          ruleEditing = {
+            id: data.id,
+            rules: data.rules,
+            existing: view.rulesets.some((r) => r.id === data.id),
+            index: null,
+            form: null,
+            expanded: true,
+            revision: view.revision,
+            dirty: true,
+          };
+          tab = "rules";
+          render();
+          notice("已导入草稿。点击“保存规则集”后才生效。");
+        } catch (e) {
+          fail(e);
+        } finally {
+          e.target.value = "";
+        }
+      };
+      document.querySelectorAll("nav button").forEach(
+        (b) =>
+          (b.onclick = () => {
+            tab = b.dataset.tab;
+            render();
+          }),
+      );
+      $("#refresh").onclick = locked(async () => {
+        await load();
+        notice("已读取最新配置，未保存的草稿仍保留。");
+      });
+      $("#models").onclick = locked(async () => {
+        if (!(await rpc("models")).opened)
+          throw Error("DECISION_SERVICE_UNAVAILABLE");
+      });
+      new ResizeObserver(() =>
+        parent.postMessage(
+          {
+            channel: CHANNEL,
+            method: "height",
+            input: Math.ceil(document.querySelector("main").getBoundingClientRect().height) + 2,
+          },
+          "*",
+        ),
+      ).observe(document.querySelector("main"));
+      load().catch(fail);
+    </script>
+  </body>
+</html>

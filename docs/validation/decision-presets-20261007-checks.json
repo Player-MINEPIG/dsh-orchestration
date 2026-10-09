@@ -1,0 +1,93 @@
+{
+  "date": "2026-10-07",
+  "feature": "Independent typed-decisions settings, rules and presets",
+  "ownership": {
+    "settingsSection": "typed-decisions",
+    "hostService": "typedDecisionSettings",
+    "taskDependencyRequired": false,
+    "taskConsumerBindings": [
+      "task-planning",
+      "task-session"
+    ]
+  },
+  "checks": {
+    "regression": {
+      "tests": 643,
+      "pass": 638,
+      "fail": 0,
+      "skipped": 5
+    },
+    "buildPassed": true,
+    "realGui": [
+      "independent Decisions navigation",
+      "create a native DeepSeek preset with off reasoning",
+      "rules create, edit, save and version update",
+      "rules JSON download and re-import via native file picker",
+      "Task system selects preset and restores default",
+      "Task system opens independent Decisions page"
+    ],
+    "apiProbes": [
+      {
+        "provider": "deepseek-official",
+        "model": "deepseek-flash",
+        "reasoningEffort": "off",
+        "ok": true,
+        "elapsedMs": 891
+      },
+      {
+        "provider": "deepseek-official",
+        "model": "deepseek-flash",
+        "reasoningEffort": "off",
+        "ok": true,
+        "elapsedMs": 1006
+      }
+    ],
+    "responsive": {
+      "viewportWidth": 390,
+      "contentWidthBefore": 101,
+      "contentWidthAfter": 341,
+      "contentScrollWidth": 341,
+      "horizontalOverflow": false,
+      "desktopNavigationPreserved": true
+    },
+    "adapterProtocolValidated": true
+  },
+  "deployment": {
+    "host": "MBP",
+    "port": 3082,
+    "profile": "executor",
+    "pid": 81744,
+    "taskArchive": "dsh-task-task-system-project-runtime-15.tgz",
+    "decisionArchive": "typed-decisions-settings-6.tgz",
+    "hostRecord": ".runtime/project-runtime-20261006/mbp-decisions-18-host.json",
+    "screenshot": ".runtime/project-runtime-20261006/mbp-independent-decisions-18.png"
+  },
+  "preserved": {
+    "role": "executor",
+    "nodeId": "mbp-executor",
+    "remotePaused": true,
+    "defaultProvider": "rules",
+    "defaultPreset": "default",
+    "bindings": {},
+    "apiCredentialsUnchanged": true,
+    "originalTestDatabases": true
+  },
+  "reviewableTestData": {
+    "nativePreset": {
+      "id": "preset-486d0d20",
+      "name": "DeepSeek 决策测试"
+    },
+    "unboundRuleset": "rules-gui-smoke"
+  },
+  "statusColors": {
+    "success": "#91b9a4",
+    "failure": "#e58f8f",
+    "warning": "#d3b686",
+    "selected": "#7ca4ef",
+    "unknown": "#a1a1a1"
+  },
+  "limitations": [
+    "Connection results are page-local and reflect the timestamped probe, not continuous monitoring.",
+    "No OpenAI Decisions API wire adapter added; existing Rules, DSH LLM, Jev and registered compatible adapters are covered."
+  ]
+}

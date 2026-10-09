@@ -101,7 +101,27 @@ test('actual Cordis opt-in heartbeat reports native presence and actual executio
   delete local.native;t.mock.timers.tick(1000)
   for(let i=0;i<100&&f.ledger.nodeStatuses().find(n=>n.nodeId==='worker').runtimeReady;i++)await immediate()
   own=f.ledger.nodeStatuses().find(n=>n.nodeId==='worker');assert.equal(own.runtimeReady,false);assert.equal(own.activeExecutions,0)
-  await fiber.dispose();const stopped=sends;t.mock.timers.tick(60000);await immediate();assert.equal(sends,stopped)
+  assert.equal(service.heartbeatSnapshot().state,'acknowledged');
+  // A ConfigEditor reload holds the admission guard while unloading the old instance.
+  service.beginConfigurationEdit();
+  await fiber.dispose();assert.equal(f.ledger.nodeStatuses().find(n=>n.nodeId==='worker').state,'unavailable');const stopped=sends;t.mock.timers.tick(60000);await immediate();assert.equal(sends,stopped)
   assert.equal(plugin.Config({}).coordinator??null,null)
   assert.equal(plugin.Config({coordinator:{endpoint:'https://fixture.invalid',audience:'planner',keyId:'fixture',privateKeyEnv:env}}).coordinator.heartbeatIntervalMs,0)
 })
+
+
+test('offline notification follows the last in-flight heartbeat and stops future heartbeats',async t=>{
+ const f=fixture(t,{clock:false}),ctx=new Context();
+ const config=plugin.Config({role:'executor',nodeId:'worker',coordinator:{endpoint:'https://fixture.invalid',audience:'planner',nativeRoutes:[]}});
+ const owned=new RecoveryStore(':memory:');
+ const service=new plugin.RemoteExecutionService(ctx,config,{},owned);
+ const samples=[];let release;
+ service.coordinatorLedger={recordNodeHeartbeat:async(_id,input)=>{samples.push(input);if(input.runtimeReady)await new Promise(resolve=>release=resolve);return {value:{}};}};
+ await ctx.plugin({apply(ctx){ctx.provide('taskSystem',{native:{executeExternal(){}}});}});
+ service.heartbeatPending=service.heartbeatNow();
+ const disposing=service.dispose();await immediate();assert.equal(samples.length,1);
+ release();await disposing;
+ assert.equal(samples.length,2);assert.equal(samples[0].runtimeReady,true);assert.equal(samples[1].runtimeReady,false);
+ assert.ok(samples[1].sampledAt>samples[0].sampledAt);
+ await assert.rejects(service.heartbeatNow(),{code:'DRAINING'});await ctx.fiber.dispose();
+});

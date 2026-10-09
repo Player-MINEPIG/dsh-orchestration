@@ -1,0 +1,68 @@
+{
+  "date": "2026-10-07",
+  "standaloneRepository": {
+    "path": "/Users/pmp/.codex/worktrees/d511/dsh-orchestration/.runtime/dsh-typed-decisions",
+    "commit": "d311f83959f5be776e3e28e291fc026830c04344",
+    "remote": null,
+    "isolatedDirectory": "/private/tmp/dsh-typed-decisions-isolated-20261007",
+    "install": "npm ci --offline",
+    "build": "passed",
+    "tests": {
+      "total": 40,
+      "passed": 40,
+      "failed": 0
+    },
+    "package": "dsh-task-typed-decisions-0.2.0.tgz",
+    "sourceArchive": "/Users/pmp/.codex/worktrees/d511/dsh-orchestration/.runtime/dsh-typed-decisions-source.zip",
+    "gitBundle": "/Users/pmp/.codex/worktrees/d511/dsh-orchestration/.runtime/dsh-typed-decisions.bundle"
+  },
+  "padding": {
+    "before": {
+      "mainDesktop": "4px 4px 24px",
+      "mainMobile": "2px 0 20px"
+    },
+    "afterDesktop": {
+      "main": "24px",
+      "card": "16px",
+      "bodyWidth": 564,
+      "scrollWidth": 564
+    },
+    "afterMobile390": {
+      "main": "16px 16px 24px",
+      "card": "16px",
+      "bodyWidth": 341,
+      "scrollWidth": 341
+    },
+    "screenshot": "/Users/pmp/.codex/worktrees/d511/dsh-orchestration/.runtime/project-runtime-20261006/mbp-decision-padding-desktop-19.png"
+  },
+  "mbp": {
+    "pid": 84189,
+    "hostRecord": "/Users/pmp/.codex/worktrees/d511/dsh-orchestration/.runtime/project-runtime-20261006/mbp-decisions-19-host.json",
+    "typedDecisionsArchive": "typed-decisions-settings-7.tgz",
+    "taskSystemArchive": "dsh-task-task-system-project-runtime-15.tgz",
+    "port": 3082,
+    "role": "executor",
+    "remotePaused": true
+  },
+  "rules": {
+    "fields": [
+      "questionId",
+      "questionVersion",
+      "path",
+      "equals",
+      "answer"
+    ],
+    "matching": "exactly-one structural-equality match per question",
+    "editor": "question and version text fields; path, equals, answer use JSON",
+    "guiSchemaCatalog": "not implemented"
+  },
+  "github": "Repository visibility question pending; no GitHub repository created.",
+  "workspaceRegression": {
+    "command": "npm test",
+    "total": 456,
+    "passed": 455,
+    "skipped": 1,
+    "failed": 0,
+    "log": ".runtime/project-runtime-20261006/decision-repository-workspace-regression.log"
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "environment": "existing candidate-3 test database; VPS planner project runtime v9",
+  "regression": { "pass": 622, "skip": 5, "fail": 0 },
+  "liveUi": {
+    "viewport": { "width": 393, "height": 852 },
+    "handleAndRestore": {
+      "taskId": "9993d86e-0107-43bc-9239-69c98267beab",
+      "observedTransitions": ["error", "handled", "error"],
+      "nativeTaskStateAfter": "waiting",
+      "runId": "188ba175-278e-4e04-90ba-d4f2d54edccd",
+      "runStateAfter": "failed",
+      "runCountAfter": 1,
+      "attentionAuditValues": [true, false]
+    },
+    "cancelBeforeDispatch": {
+      "taskId": "operator-button-test-20261007",
+      "nativeTaskStateAfter": "cancelled",
+      "displayAfter": "已取消",
+      "runCount": 0,
+      "attemptCount": 0
+    },
+    "waitingLabel": "等待后续处理"
+  },
+  "automatedCoverage": [
+    "Attention marker survives reopen; new lifecycle invalidates it; stale actions reject; failed execution facts remain unchanged.",
+    "Execution approval and result review stay distinct; accepting partial results does not mark full success; new Run invalidates old execution approval.",
+    "Queued cancellation, running cancellation acknowledgement, uncertain cancellation and explicit stop reconciliation.",
+    "Continue dispatch preserves Task and old Run; offline stays inbox; online creates exactly one new Run; duplicate replay and stale/active retry are bounded."
+  ],
+  "limits": [
+    "Live clicks verified handle, restore and cancellation before dispatch. Approval, review, active cancellation and continue-dispatch conditions were verified with automated integration tests.",
+    "No new model calls or executor workloads were sent during this operator-button validation.",
+    "Version 9 changes only the waiting label after the full version 8 regression; version 9 was rebuilt and verified in the live UI."
+  ]
+}

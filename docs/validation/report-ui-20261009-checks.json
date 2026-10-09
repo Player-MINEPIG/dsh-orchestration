@@ -1,0 +1,37 @@
+{
+  "date": "2026-10-09",
+  "deployment": {
+    "package": "task-system-report-ui-42-20261009.tgz",
+    "service": "dsh-orchestration-web.service",
+    "pid": 4112248,
+    "backup": "/opt/dsh-task-management-test/candidate-3-ece68974/backups/report-ui42-20261009"
+  },
+  "checks": {
+    "fullCheck": {
+      "passed": 721,
+      "skipped": 5,
+      "failed": 0
+    },
+    "finalPageTests": 17,
+    "markdown": "headings, tables, nested lists, blockquotes, code blocks, safe links; raw HTML escaped, javascript URLs rejected, external images not fetched",
+    "state": "requested, failed, subsequent requested, received, closed; latest supplement replaces current report view without changing original run outcome"
+  },
+  "browser": {
+    "viewport": [
+      390,
+      844
+    ],
+    "actualTaskLabel": "已完成 · 已收到材料，待核对",
+    "executionReportSections": 1,
+    "tables": 1,
+    "codeBlocks": 2,
+    "reportWidth": 358,
+    "reportScrollWidth": 358,
+    "screenshot": "/Users/pmp/.codex/visualizations/2026/10/07/01a114fe-a63a-7ca1-836d-9b070a05c163/report42-mobile.png"
+  },
+  "notes": [
+    "Existing supplemental report was used; no task execution or supplementary request was triggered by this verification.",
+    "Supplemental Report kind remains note; execution settlement Report kind remains result. UI chooses latest same-run supplement and collapses prior report versions.",
+    "External Markdown images are displayed as text references; report HTML is not executed."
+  ]
+}

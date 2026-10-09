@@ -82,6 +82,12 @@ export async function chooseExecutionSession(input: {
         description: task.description,
         runId: claim.run.runId,
         schedulerId: context.schedulerId,
+        ...(context.projectContext
+          ? {
+              projectContext:
+                context.projectContext as unknown as import("./remote/protocol.js").Json,
+            }
+          : {}),
       },
       validUntil: Date.now() + (input.ttlMs ?? 30000),
       workspaces: input.workspaces.map((workspace) => ({
@@ -110,7 +116,11 @@ export async function chooseExecutionSession(input: {
     };
   };
   const snapshot = buildSnapshot();
-  const selection = input.decisions
+  // An authority-owned binding is already a decision. Validate its identity,
+  // workspace and current grants, rather than asking a model to choose again.
+  const selection = snapshot.taskSessionId
+    ? defaultTaskSessionSelection(snapshot, "existing-task-binding")
+    : input.decisions
     ? await (
         await import("./session-policy.js")
       ).resolveTaskSessionDecision(snapshot, {

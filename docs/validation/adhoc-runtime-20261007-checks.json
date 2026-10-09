@@ -1,0 +1,106 @@
+{
+  "legacyTasks": [
+    {
+      "taskId": "9993d86e-0107-43bc-9239-69c98267beab",
+      "title": "计算 37+58 并提交验收报告（ORCH-ADHOC-20261006-95）",
+      "state": "inbox",
+      "sessionId": "adhoc-77af6c99-414a-4e50-89ff-f6ae404e2253",
+      "plannerWorkspace": "/opt/dsh-task-management-test/candidate-3-ece68974/workspaces/projects/temporary-tasks/task-44a88eca77cd25e72cfa300b71dc033f",
+      "runs": [
+        {
+          "runId": "188ba175-278e-4e04-90ba-d4f2d54edccd",
+          "state": "failed",
+          "taskId": "9993d86e-0107-43bc-9239-69c98267beab"
+        }
+      ],
+      "dispatch": {
+        "candidates": [
+          {
+            "model": "deepseek-flash",
+            "nodeId": "mbp-executor",
+            "provider": "deepseek-official",
+            "reasoningEffort": "off",
+            "requiredCapabilities": []
+          }
+        ],
+        "state": "inbox",
+        "generation": 0
+      }
+    },
+    {
+      "taskId": "65de1ab9-dd49-48d8-860f-355b3816fe81",
+      "title": "计算 38+58 并提交验收结果报告 (ORCH-ADHOC-20261006-96)",
+      "state": "waiting",
+      "sessionId": "adhoc-55ed2ee0-1677-4056-af82-9c9571a7f99b",
+      "plannerWorkspace": "/opt/dsh-task-management-test/candidate-3-ece68974/workspaces/projects/temporary-tasks/task-0ea025f88459d0ab121f06bb70167d47",
+      "runs": [
+        {
+          "runId": "912b0aae-a136-4d3d-9eff-df5f4514f5e5",
+          "state": "failed",
+          "taskId": "65de1ab9-dd49-48d8-860f-355b3816fe81"
+        }
+      ],
+      "dispatch": null
+    }
+  ],
+  "entitiesPreservedAcrossFinalRestart": {
+    "task": true,
+    "run": true,
+    "attempt": true,
+    "report": true,
+    "decision": true,
+    "project": true,
+    "task-attention": true
+  },
+  "taskCount": 9,
+  "userProjectCount": 1,
+  "vpsService": "MainPID=1992979\nNRestarts=0\nActiveState=active\nSubState=running\n",
+  "date": "2026-10-07",
+  "taskPackage": "task-system-adhoc-runtime-22-20261007-b.tgz",
+  "decisionPackage": "typed-decisions-settings-14.tgz",
+  "tests": {
+    "full": {
+      "total": 477,
+      "passed": 476,
+      "skipped": 1,
+      "failed": 0
+    },
+    "nativeSDK": {
+      "total": 71,
+      "passed": 71,
+      "failed": 0
+    }
+  },
+  "mbp": {
+    "pid": 73558,
+    "hostRecord": ".runtime/project-runtime-20261006/mbp-adhoc-28-host.json",
+    "role": "executor",
+    "nodeId": "mbp-executor",
+    "remotePaused": true,
+    "autoExecute": false,
+    "schedulerEnabled": false
+  },
+  "ui": {
+    "browser": "Chrome",
+    "phoneViewport": {
+      "width": 390,
+      "height": 844
+    },
+    "iframeClientWidth": 334,
+    "iframeScrollWidth": 334,
+    "lightAndDarkVerified": true,
+    "appearanceRestored": "system",
+    "temporaryWorkspaceEntryVerified": true,
+    "projectConversationReturnVerified": true
+  },
+  "backups": {
+    "mbp": "/Users/pmp/AI/deepseek-harness/test-env/dsh-task-management-candidate-3-ece68974/backups/adhoc-runtime22-20261007",
+    "vps": "/opt/dsh-task-management-test/candidate-3-ece68974/backups/adhoc-runtime22-20261007"
+  },
+  "limits": [
+    "Live executor remains paused: legacy task 95 is waiting for dispatch, not claimed or completed. Online admission/one-new-run/unsafe retry protections are verified through the real SDK scripted-model tests.",
+    "No suitable catalog candidate keeps the task pending; task conversation can replan after operator configuration changes.",
+    "Previous intermittent 5-second connection timeout root cause remains undetermined."
+  ],
+  "privateLogin": "New entry verified in the same private WebUI; retained only in ignored private runtime files, not in this evidence."
+}

@@ -1,0 +1,105 @@
+{
+  "date": "2026-10-07",
+  "scope": [
+    "preset spacing",
+    "decision single scrollbar",
+    "missing-dependency lock",
+    "independent DSH deployment"
+  ],
+  "layout": {
+    "presetSelectToSaveGapPx": 12,
+    "iframeOverflowY": "hidden",
+    "mbpContentHeightPx": 1173.3515625,
+    "mbpFrameHeightPx": 1176,
+    "verticalScrollOwners": 1,
+    "standaloneExpandedHeightPx": 1397,
+    "standaloneCollapsedHeightPx": 921,
+    "verification": "Actual Chrome desktop DOM and screenshots; no new phone/Safari verification in this run",
+    "outerScrollToBottomVerified": true
+  },
+  "dependencyLock": {
+    "service": "typedDecisions",
+    "snapshotField": "task.decisionAvailable",
+    "missingOrDisabled": [
+      "planningDecisionEnabled",
+      "sessionDecisionEnabled"
+    ],
+    "ui": "unchecked and disabled; install-and-enable notice beside each switch; preset entry hidden",
+    "backendReason": "STARTUP_DECISION_REQUIRED",
+    "configurationNotSilentlyRewritten": true,
+    "actualStandaloneGuiVerified": true
+  },
+  "independentDeployments": {
+    "decision": {
+      "ok": true,
+      "kind": "decision",
+      "checks": [
+        "counterpart package absent",
+        "standalone settings readable and writable",
+        "settings HTML shipped",
+        "rules and preset persisted through actual ConfigEditor and reloaded",
+        "independent typed decision evaluates saved rules"
+      ]
+    },
+    "task": {
+      "ok": true,
+      "kind": "task",
+      "checks": [
+        "counterpart package absent",
+        "task settings readable without decision package",
+        "session selection falls back without decision service",
+        "project workspace and initial session created without decision plugin",
+        "real native task lifecycle settles successfully with scripted model"
+      ]
+    }
+  },
+  "deploymentMethod": "Official DSH CLI, separate fresh profiles and databases outside the monorepo, npm tarballs; counterpart package resolution and service absence asserted",
+  "decisionGui": [
+    "saved preset through GUI and observed success",
+    "saved rules retained after restart",
+    "local rule validation passed"
+  ],
+  "taskExecution": "Real DSH AgentLoop, session, task_settle and durable ledger; only the model response is scripted. Explicit route uses the created project workspace required by the default DSH prompt.",
+  "validation": {
+    "workspace": {
+      "tests": 470,
+      "passed": 469,
+      "skipped": 1,
+      "failed": 0
+    },
+    "decisionOutsideParent": {
+      "tests": 50,
+      "passed": 50,
+      "failed": 0
+    },
+    "realModelApiCalls": 0,
+    "productionTaskDispatches": 0
+  },
+  "mbp": {
+    "pid": 47333,
+    "port": 3082,
+    "role": "executor",
+    "remotePaused": true,
+    "decisionPackage": "typed-decisions-settings-14.tgz",
+    "taskPackage": "task-system-project-runtime-20.tgz",
+    "hostRecord": ".runtime/project-runtime-20261006/mbp-decisions-26-host.json",
+    "presetsBindingsAndCredentialsPreserved": true,
+    "vpsUpdated": false
+  },
+  "standaloneRepository": {
+    "path": ".runtime/dsh-typed-decisions",
+    "commit": "a5ab702",
+    "sourceZip": ".runtime/dsh-typed-decisions-source.zip",
+    "gitBundle": ".runtime/dsh-typed-decisions.bundle"
+  },
+  "screenshots": [
+    ".runtime/standalone-plugins-20261007/task-dependency-locked-panel.png",
+    ".runtime/standalone-plugins-20261007/mbp-preset-spacing.png",
+    ".runtime/standalone-plugins-20261007/mbp-one-scrollbar.png"
+  ],
+  "logs": [
+    ".runtime/standalone-plugins-20261007/full-tests.log",
+    ".runtime/standalone-plugins-20261007/isolated-source-tests.log"
+  ],
+  "independentTestServersStopped": true
+}

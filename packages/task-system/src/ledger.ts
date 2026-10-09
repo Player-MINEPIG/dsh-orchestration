@@ -10,6 +10,7 @@ import {
   canonicalSchema,
 } from "./remote/protocol.js";
 import { NATIVE_PROVIDER_UNAVAILABLE_SUMMARY } from "./contracts.js";
+import { projectContext } from "./project-context.js";
 import { validateCriteria } from "./workbench-contracts.js";
 import type { Criterion, VersionRef } from "./workbench-contracts.js";
 import type { ObservationCandidate, CapturedText } from "./observation.js";
@@ -35,6 +36,7 @@ import type {
   Event,
   ExecutionRoute,
   ExecutionContext,
+  ProjectExecutionContext,
   TaskPriority,
   Json,
   LeaseRef,
@@ -335,6 +337,22 @@ export class TaskLedger {
     }
   }
   private configurationPaused = false;
+  configurationBlockers() {
+    return (
+      this.db
+        .prepare(
+          "SELECT data FROM entities WHERE kind='run' AND state IN ('running','uncertain') LIMIT 100",
+        )
+        .all() as { data: string }[]
+    )
+      .map((row) => JSON.parse(row.data) as Run)
+      .filter((run) => !run.historyOnly && !run.observationOnly)
+      .map((run) => ({
+        runId: run.runId,
+        title: this.getTask(run.taskId).title,
+        state: run.state,
+      }));
+  }
   beginConfigurationEdit(): () => void {
     if (
       this.configurationPaused ||
@@ -1668,12 +1686,14 @@ export class TaskLedger {
       taskId: string;
       expectedRevision: number;
       approved: boolean;
+      expectedActionVersion?: string;
       actor: string;
       reason: string;
     },
   ) {
     this.planner();
     return this.command(commandId, "setTaskConfirmation", input, () => {
+      this.assertTaskActionVersion(input.taskId, input.expectedActionVersion);
       const task = this.getTask(input.taskId);
       const prior = task.confirmation ?? {
         required: Boolean(this.options.requireConfirmation),
@@ -1817,9 +1837,65 @@ export class TaskLedger {
       fail("TOO_LARGE", "Resolved execution context exceeds 1 MB");
     return context;
   }
+  private projectSnapshot(
+    task: Task,
+    parentRunId?: string,
+  ): ProjectExecutionContext | undefined {
+    if (parentRunId) {
+      const parent = this.getRun(parentRunId).projectContext;
+      if (parent) return projectContext(parent);
+    }
+    const hasProjects = this.db
+      .prepare(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='wb_projects'",
+      )
+      .get();
+    const projects = hasProjects
+      ? this.db
+          .prepare(
+            `SELECT DISTINCT p.* FROM wb_projects p
+      JOIN wb_backlogs b ON b.project_id=p.project_id
+      JOIN wb_backlog_tasks t ON t.backlog_id=b.backlog_id WHERE t.task_id=?`,
+          )
+          .all(task.taskId)
+      : [];
+    if (projects.length > 1)
+      fail("AMBIGUOUS_PROJECT", "A dispatched task must belong to one project");
+    const p = projects[0];
+    const hasTemporary = this.db
+      .prepare(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='pr_adhoc'",
+      )
+      .get();
+    if (
+      !p &&
+      !(
+        hasTemporary &&
+        this.db.prepare("SELECT 1 FROM pr_adhoc WHERE task=?").get(task.taskId)
+      )
+    )
+      return undefined;
+    return projectContext({
+      version: 1,
+      schedulerId: this.schedulerIdentity(),
+      project: p
+        ? {
+            projectId: p.project_id,
+            revision: p.revision,
+            title: p.title,
+            goal: p.goal,
+            description: p.description,
+            acceptanceCriteria: JSON.parse(String(p.criteria)),
+          }
+        : null,
+    });
+  }
   private newRun(
     input: RunInput,
-    inherited?: { workspaceConstraint?: string },
+    inherited?: {
+      workspaceConstraint?: string;
+      projectContext?: ProjectExecutionContext;
+    },
   ): Run {
     input = structuredClone(input);
     const task = this.getTask(input.taskId);
@@ -1892,6 +1968,8 @@ export class TaskLedger {
         fail("FORBIDDEN", "Task policy excludes workspace");
     }
     const configuration = this.pinConfiguration(input.configuration);
+    const project =
+      inherited?.projectContext ?? this.projectSnapshot(task, parentRunId);
     const key = id(input.runId ?? randomUUID());
     if (this.get("run", key)) fail("CONFLICT", "Run ID already exists");
     const notes = this.list<{
@@ -1949,6 +2027,7 @@ export class TaskLedger {
       sessionIds: contextSessionIds,
       historyOnly: false,
       configuration,
+      ...(project ? { projectContext: project } : {}),
       intentSnapshot: {
         title: task.title,
         description: task.description,
@@ -2052,6 +2131,23 @@ export class TaskLedger {
       return node;
     });
   }
+  setNodeCapacity(commandId: string, nodeId: string, maxConcurrent: number) {
+    this.planner();
+    finite(maxConcurrent, 1, 32, "node capacity");
+    if (!Number.isInteger(maxConcurrent))
+      fail("INVALID", "Node capacity must be integer");
+    return this.command(
+      commandId,
+      "setNodeCapacity",
+      { nodeId, maxConcurrent },
+      () => {
+        const node = this.getNode(nodeId);
+        node.maxConcurrent = maxConcurrent;
+        this.put("node", nodeId, node);
+        return node;
+      },
+    );
+  }
   registerWorkspace(commandId: string, workspace: Workspace) {
     if (this.role === "executor" && workspace.nodeId !== this.nodeId)
       fail(
@@ -2072,7 +2168,39 @@ export class TaskLedger {
       return workspace;
     });
   }
+  returnUnclaimedToInbox(
+    commandId: string,
+    input: { taskId: string; runId: string },
+  ) {
+    this.planner();
+    return this.command(commandId, "returnUnclaimedToInbox", input, () => {
+      const run = this.getRun(input.runId),
+        task = this.getTask(input.taskId);
+      if (
+        run.taskId !== task.taskId ||
+        run.state !== "queued" ||
+        run.currentAttemptId ||
+        this.list<Attempt>("attempt").some((a) => a.runId === run.runId)
+      )
+        fail("CONFLICT", "Execution has already been claimed");
+      run.state = "cancelled";
+      run.updatedAt = this.now();
+      this.put("run", run.runId, run);
+      task.state = "inbox";
+      task.updatedAt = this.now();
+      this.saveTask(task);
+      this.event(
+        "run.unclaimed_returned",
+        { reason: "executor unavailable before claim" },
+        task.taskId,
+        run.runId,
+      );
+      return task;
+    });
+  }
   validateRoute(route: ExecutionRoute) {
+    if (this.role === "planner" && route.nodeId === this.nodeId)
+      fail("FORBIDDEN", "Planner-only host cannot execute its own workload");
     const node = this.getNode(route.nodeId);
     if (!node.enabled) fail("FORBIDDEN", "Node disabled");
     if (
@@ -2643,11 +2771,7 @@ export class TaskLedger {
         policy.baseDelayMs * Math.pow(2, count),
       );
       const exhausted =
-        input.allowRetry === false ||
-        count >= policy.maxRetries ||
-        (task.policy?.maxRuntimeMs !== undefined &&
-          this.clock() + delay - Date.parse(run.executionStartedAt) >=
-            task.policy.maxRuntimeMs);
+        input.allowRetry === false || count >= policy.maxRetries;
       attempt.state = "settled";
       attempt.retryEvidence = structuredClone(w);
       attempt.updatedAt = this.now();
@@ -2730,10 +2854,54 @@ export class TaskLedger {
     });
   }
 
-  renew(commandId: string, input: LeaseRef & { ttlMs: number }) {
+  requestExecutionStatus(
+    commandId: string,
+    input: { runId: string; expectedActionVersion: string },
+  ) {
+    this.planner();
+    return this.command(commandId, "requestExecutionStatus", input, () => {
+      const run = this.getRun(input.runId);
+      this.assertTaskActionVersion(run.taskId, input.expectedActionVersion);
+      if (
+        run.state !== "running" ||
+        !run.currentAttemptId ||
+        run.cancellationRequested
+      )
+        fail("CONFLICT", "Execution is not running");
+      const attempt = this.getAttempt(run.currentAttemptId!);
+      if (Date.parse(attempt.leaseExpiresAt) <= this.clock())
+        fail("LEASE_EXPIRED", "Executor lease expired");
+      if (!attempt.progressRequest || attempt.progressRequest.summary)
+        attempt.progressRequest = {
+          requestId: commandId,
+          requestedAt: this.now(),
+        };
+      this.saveAttempt(attempt);
+      return attempt;
+    });
+  }
+
+  renew(
+    commandId: string,
+    input: LeaseRef & {
+      ttlMs: number;
+      progress?: { requestId: string; summary: string };
+    },
+  ) {
     return this.command(commandId, "renew", input, () => {
       finite(input.ttlMs, 100, 3_600_000, "lease TTL");
       const { attempt } = this.owned(input);
+      if (input.progress) {
+        id(input.progress.requestId, "progress request");
+        text(input.progress.summary, "progress summary", 1000);
+        if (attempt.progressRequest?.requestId !== input.progress.requestId)
+          fail("CONFLICT", "Progress request changed");
+        attempt.progressRequest = {
+          ...attempt.progressRequest!,
+          summary: input.progress.summary,
+          reportedAt: this.now(),
+        };
+      }
       attempt.leaseExpiresAt = new Date(
         this.clock() + input.ttlMs,
       ).toISOString();
@@ -2759,6 +2927,137 @@ export class TaskLedger {
     return this.need<{ schedulerId: string }>("authority", "scheduler")
       .schedulerId;
   }
+  sessionMessageTargets(taskId: string) {
+    this.getTask(taskId);
+    return this.list<TaskSession>("taskSession", taskId);
+  }
+  sessionMessages(taskId: string) {
+    this.getTask(taskId);
+    return this.list<import("./remote/ports.js").SessionMessage>(
+      "sessionMessage",
+      taskId,
+    ).slice(-200);
+  }
+  getSessionMessage(messageId: string) {
+    return this.need<import("./remote/ports.js").SessionMessage>(
+      "sessionMessage",
+      messageId,
+    );
+  }
+  queueSessionMessage(
+    commandId: string,
+    input: { taskId: string; nodeId: string; sessionId: string; text: string },
+  ) {
+    this.planner();
+    return this.command(commandId, "queueSessionMessage", input, () => {
+      text(input.text, "session message", 8000);
+      const target = this.sessionMessageTargets(input.taskId).find(
+        (s) => s.nodeId === input.nodeId && s.sessionId === input.sessionId,
+      );
+      if (!target?.workspaceId)
+        fail("FORBIDDEN", "Session is not bound to this task and node");
+      const decision = this.getTask(input.taskId).manualCompletion;
+      const message: import("./remote/ports.js").SessionMessage = {
+        ...(decision?.materials === "pending" &&
+        decision.nodeId === input.nodeId &&
+        decision.sessionId === input.sessionId
+          ? { supplementFor: decision.decisionId }
+          : {}),
+        messageId: commandId,
+        taskId: input.taskId,
+        nodeId: input.nodeId,
+        sessionId: input.sessionId,
+        workspaceId: target!.workspaceId!,
+        text: input.text,
+        createdAt: this.now(),
+        updatedAt: this.now(),
+        state: "queued",
+      };
+      this.put(
+        "sessionMessage",
+        commandId,
+        message,
+        input.taskId,
+        message.state,
+      );
+      return message;
+    });
+  }
+  pendingSessionMessages(nodeId: string) {
+    return this.list<import("./remote/ports.js").SessionMessage>(
+      "sessionMessage",
+    )
+      .filter((m) => m.nodeId === nodeId && m.state === "queued")
+      .slice(0, 4);
+  }
+  completeSessionMessage(
+    commandId: string,
+    input: import("./remote/ports.js").SessionMessageResult & {
+      messageId: string;
+      nodeId: string;
+    },
+  ) {
+    return this.command(commandId, "completeSessionMessage", input, () => {
+      const message = this.getSessionMessage(input.messageId);
+      if (message.nodeId !== input.nodeId)
+        fail("FORBIDDEN", "Message node mismatch");
+      if (!["completed", "failed", "uncertain"].includes(input.state))
+        fail("INVALID", "Invalid message result");
+      text(input.reply, "session reply", 12000);
+      if (message.state !== "queued") {
+        if (message.state !== input.state || message.reply !== input.reply)
+          fail("CONFLICT", "Message already answered");
+        return message;
+      }
+      Object.assign(message, {
+        state: input.state,
+        reply: input.reply,
+        updatedAt: this.now(),
+      });
+      this.put(
+        "sessionMessage",
+        message.messageId,
+        message,
+        message.taskId,
+        message.state,
+      );
+      const task = this.getTask(message.taskId),
+        decision = task.manualCompletion;
+      // Only replies admitted after the operator opened this original-session gate
+      // become supplemental material. They are evidence, never a new settlement.
+      if (
+        input.state === "completed" &&
+        decision?.materials === "pending" &&
+        task.state === "completed" &&
+        decision.nodeId === message.nodeId &&
+        decision.sessionId === message.sessionId &&
+        message.supplementFor === decision.decisionId &&
+        this.list<Run>("run", task.taskId).at(-1)?.runId === decision.runId
+      ) {
+        const report = this.report({
+          taskId: task.taskId,
+          runId: decision.runId,
+          attemptId: decision.attemptId,
+          sessionId: message.sessionId,
+          title: "补交材料（待核对）",
+          body: input.reply,
+          kind: "note",
+          data: {
+            supplemental: true,
+            messageId: message.messageId,
+            actor: "executor:" + message.nodeId,
+          },
+        });
+        this.event(
+          "task.materials_received",
+          { reportId: report.reportId, messageId: message.messageId },
+          task.taskId,
+          decision.runId,
+        );
+      }
+      return message;
+    });
+  }
   sessionContext(ref: LeaseRef): TaskSessionContext {
     const { run } = this.owned(ref);
     const task = this.getTask(run.taskId),
@@ -2783,6 +3082,7 @@ export class TaskLedger {
     );
     return {
       schedulerId: this.schedulerIdentity(),
+      ...(run.projectContext ? { projectContext: run.projectContext } : {}),
       task: {
         taskId: task.taskId,
         title: task.title,
@@ -3224,6 +3524,12 @@ export class TaskLedger {
       (r) => !(r.historyOnly || r.observationOnly),
     );
     const latest = runs.at(-1) ?? fallback;
+    if (
+      task.manualCompletion?.runId === latest.runId &&
+      task.state === "completed" &&
+      !runs.some((r) => ["queued", "running", "uncertain"].includes(r.state))
+    )
+      return;
     task.state =
       latest.state === "succeeded" &&
       (!latest.intentSnapshot?.intentRevision ||
@@ -3379,12 +3685,229 @@ export class TaskLedger {
     );
     return run;
   }
+  /** Operator attention is separate from execution outcome; a new lifecycle invalidates it. */
+  taskActionState(taskId: string) {
+    const task = this.getTask(taskId),
+      runs = this.list<Run>("run", taskId),
+      run = runs.at(-1);
+    const owned = runs.filter((r) => !(r.historyOnly || r.observationOnly));
+    const active = owned.some((r) => ["queued", "running"].includes(r.state));
+    const uncertain = owned.some((r) => r.state === "uncertain");
+    const confirmationPending =
+      !["cancelled", "archived", "completed", "failed"].includes(task.state) &&
+      !this.confirmationAllows(task);
+    const fingerprint = hash({
+      ...(task.manualCompletion
+        ? { manualCompletion: task.manualCompletion }
+        : {}),
+      task: [
+        task.taskId,
+        task.state,
+        task.updatedAt,
+        task.confirmation ?? null,
+      ],
+      runs: runs.map((r) => [
+        r.runId,
+        r.state,
+        r.reviewStatus ?? null,
+        !!r.cancellationRequested,
+        r.currentAttemptId ?? null,
+      ]),
+      reports: this.list<Report>("report", taskId).map((r) => r.reportId),
+    });
+    const record = this.get("task-attention", taskId) as
+      | { fingerprint: string; handled: boolean }
+      | undefined;
+    const handled = record?.fingerprint === fingerprint && record.handled;
+    return {
+      version: hash({ fingerprint, record }),
+      fingerprint,
+      handled: !!handled,
+      confirmationPending,
+      active,
+      uncertain,
+      canHandle:
+        !active &&
+        !uncertain &&
+        !confirmationPending &&
+        run?.reviewStatus !== "pending_user" &&
+        !["cancelled", "archived", "completed", "inbox"].includes(task.state) &&
+        (task.state === "failed" ||
+          ["failed", "blocked", "partial"].includes(run?.state ?? "") ||
+          run?.reviewStatus === "rejected"),
+      canRetry:
+        task.kind !== "observed" &&
+        !active &&
+        !uncertain &&
+        !confirmationPending &&
+        run?.reviewStatus !== "pending_user" &&
+        !["cancelled", "archived", "completed", "inbox"].includes(task.state) &&
+        ["failed", "blocked"].includes(run?.state ?? "") &&
+        !(run?.historyOnly || run?.observationOnly),
+      canCancel:
+        task.kind !== "observed" &&
+        !["cancelled", "archived"].includes(task.state) &&
+        (task.manualCompletion?.materials === "pending" ||
+          task.state !== "completed" ||
+          ["pending_user", "rejected"].includes(run?.reviewStatus ?? "")),
+      canReconcile:
+        task.kind !== "observed" &&
+        task.state !== "archived" &&
+        run?.state === "uncertain" &&
+        !active &&
+        owned.filter((r) => r.state === "uncertain").length === 1,
+    };
+  }
+  private assertTaskActionVersion(taskId: string, expected?: string) {
+    if (expected && this.taskActionState(taskId).version !== expected)
+      fail("CONFLICT", "Task changed; refresh before acting");
+  }
+  requeueTask(
+    commandId: string,
+    input: { taskId: string; expectedActionVersion: string },
+  ) {
+    this.planner();
+    return this.command(commandId, "requeueTask", input, () => {
+      this.assertTaskActionVersion(input.taskId, input.expectedActionVersion);
+      if (!this.taskActionState(input.taskId).canRetry)
+        fail("CONFLICT", "Task is not safe to dispatch again");
+      const task = this.getTask(input.taskId);
+      task.state = "inbox";
+      task.updatedAt = this.now();
+      this.saveTask(task);
+      this.event(
+        "task.requeued",
+        { actor: "operator:task-center" },
+        task.taskId,
+      );
+      return task;
+    });
+  }
+  confirmTaskCompletion(
+    commandId: string,
+    input: {
+      taskId: string;
+      expectedActionVersion: string;
+      requireMaterials: boolean;
+    },
+  ) {
+    this.planner();
+    return this.command(commandId, "confirmTaskCompletion", input, () => {
+      this.assertTaskActionVersion(input.taskId, input.expectedActionVersion);
+      const task = this.getTask(input.taskId),
+        view = this.taskActionState(input.taskId);
+      if (
+        task.kind === "observed" ||
+        view.active ||
+        view.uncertain ||
+        (!view.canHandle &&
+          !(
+            task.state === "completed" &&
+            task.manualCompletion?.materials === "pending"
+          ))
+      )
+        fail("CONFLICT", "Task is not ready for manual completion");
+      const run = this.list<Run>("run", task.taskId).at(-1);
+      const attempt = run?.currentAttemptId
+        ? this.getAttempt(run.currentAttemptId)
+        : undefined;
+      const target = this.sessionMessageTargets(task.taskId).find(
+        (s) =>
+          s.nodeId === attempt?.nodeId &&
+          s.sessionId === attempt?.sessionId &&
+          s.workspaceId,
+      );
+      if (input.requireMaterials && !target)
+        fail("NOT_FOUND", "Original executor session is unavailable");
+      const decidedAt = this.now();
+      task.manualCompletion = {
+        decisionId: commandId,
+        actor: "operator:task-center",
+        decidedAt,
+        runId: run?.runId,
+        attemptId: attempt?.attemptId,
+        nodeId: target?.nodeId,
+        sessionId: target?.sessionId,
+        materials: input.requireMaterials ? "pending" : "not_required",
+      };
+      if (input.requireMaterials && target?.workspaceId) {
+        const messageId = randomUUID();
+        const message: import("./remote/ports.js").SessionMessage = {
+          messageId,
+          supplementFor: commandId,
+          taskId: task.taskId,
+          nodeId: target.nodeId,
+          sessionId: target.sessionId,
+          workspaceId: target.workspaceId,
+          state: "queued",
+          createdAt: decidedAt,
+          updatedAt: decidedAt,
+          text:
+            "用户已人工确认此任务完成，请补交原执行已有的结果摘要、材料内容或文件路径，并说明无法提供的材料。不要重跑任务、修改产物或尝试结算旧 Run；直接回复即可，回复将保留为待核对的补交材料。原执行记录：" +
+            run!.runId,
+        };
+        this.put(
+          "sessionMessage",
+          messageId,
+          message,
+          task.taskId,
+          message.state,
+        );
+        task.manualCompletion.requestMessageId = messageId;
+      }
+      task.state = "completed";
+      task.updatedAt = decidedAt;
+      this.saveTask(task);
+      this.event(
+        "task.manually_completed",
+        {
+          actor: task.manualCompletion.actor,
+          materials: task.manualCompletion.materials,
+          requestMessageId: task.manualCompletion.requestMessageId ?? null,
+        },
+        task.taskId,
+        run?.runId,
+      );
+      return task;
+    });
+  }
+  setTaskHandled(
+    commandId: string,
+    input: { taskId: string; expectedActionVersion: string; handled: boolean },
+  ) {
+    this.planner();
+    return this.command(commandId, "setTaskHandled", input, () => {
+      this.assertTaskActionVersion(input.taskId, input.expectedActionVersion);
+      const view = this.taskActionState(input.taskId);
+      if (input.handled ? !view.canHandle : !view.handled)
+        fail("CONFLICT", "Task cannot change attention state");
+      const record = {
+        fingerprint: view.fingerprint,
+        handled: input.handled,
+        actor: "operator:task-center",
+        decidedAt: this.now(),
+      };
+      this.put("task-attention", input.taskId, record, input.taskId);
+      this.event(
+        "task.attention_changed",
+        { handled: input.handled, actor: record.actor },
+        input.taskId,
+      );
+      return record;
+    });
+  }
   cancel(
     commandId: string,
-    input: { taskId: string; runId?: string; reason: string },
+    input: {
+      taskId: string;
+      runId?: string;
+      reason: string;
+      expectedActionVersion?: string;
+    },
   ) {
     this.planner();
     return this.command(commandId, "cancel", input, () => {
+      this.assertTaskActionVersion(input.taskId, input.expectedActionVersion);
       const task = this.getTask(input.taskId);
       if (task.kind === "observed")
         fail(
@@ -3488,11 +4011,17 @@ export class TaskLedger {
   }
   resolveUncertain(
     commandId: string,
-    input: { runId: string; outcome: "cancelled" | "failed"; reason: string },
+    input: {
+      runId: string;
+      outcome: "cancelled" | "failed";
+      reason: string;
+      expectedActionVersion?: string;
+    },
   ) {
     this.planner();
     return this.command(commandId, "resolveUncertain", input, () => {
       const run = this.getRun(input.runId);
+      this.assertTaskActionVersion(run.taskId, input.expectedActionVersion);
       if (run.historyOnly || run.observationOnly)
         fail(
           "OBSERVE_ONLY",
@@ -3504,6 +4033,12 @@ export class TaskLedger {
       run.state = input.outcome;
       run.updatedAt = this.now();
       this.saveRun(run);
+      if (run.currentAttemptId) {
+        const attempt = this.getAttempt(run.currentAttemptId!);
+        attempt.state = input.outcome === "cancelled" ? "cancelled" : "expired";
+        attempt.updatedAt = this.now();
+        this.saveAttempt(attempt);
+      }
       if (run.currentAttemptId)
         this.db
           .prepare("DELETE FROM resources WHERE attempt_id=?")
@@ -3720,11 +4255,17 @@ export class TaskLedger {
   }
   reviewRun(
     commandId: string,
-    input: { runId: string; decision: "accepted" | "rejected"; reason: string },
+    input: {
+      runId: string;
+      decision: "accepted" | "rejected";
+      reason: string;
+      expectedActionVersion?: string;
+    },
   ) {
     this.planner();
     return this.command(commandId, "reviewRun", input, () => {
       const run = this.getRun(input.runId);
+      this.assertTaskActionVersion(run.taskId, input.expectedActionVersion);
       if (run.reviewStatus !== "pending_user")
         fail("CONFLICT", "Run is not awaiting review");
       if (!["accepted", "rejected"].includes(input.decision))
@@ -3773,7 +4314,10 @@ export class TaskLedger {
             continuationOf: prior.runId,
           },
         },
-        { workspaceConstraint: prior.workspaceConstraint },
+        {
+          workspaceConstraint: prior.workspaceConstraint,
+          projectContext: prior.projectContext,
+        },
       );
       this.event(
         "run.continued",
@@ -3839,6 +4383,8 @@ export class TaskLedger {
     commandId: string,
     input: {
       decisionId: string;
+      deferExecution?: boolean;
+      expectedActionVersion?: string;
       currentStateHash: string;
       title: string;
       description: string;
@@ -3964,22 +4510,57 @@ export class TaskLedger {
           task.taskId,
         );
       }
+      if (input.expectedActionVersion) {
+        this.assertTaskActionVersion(task.taskId, input.expectedActionVersion);
+        if (!this.taskActionState(task.taskId).canRetry)
+          fail("CONFLICT", "Task is not safe to dispatch again");
+      }
       const report = this.report({
         taskId: task.taskId,
         title: "Task request",
         body: input.description || input.title,
         kind: "progress",
       });
-      const run = input.route
-        ? this.newRun({
-            taskId: task.taskId,
-            route: input.route,
-            configuration: {
-              decisionId: input.decisionId,
-              reporting: input.reporting,
-            },
-          })
-        : undefined;
+      if (input.deferExecution) {
+        if (
+          typeof originalInput.projectId !== "string" &&
+          originalInput.taskId !== task.taskId
+        )
+          fail(
+            "FORBIDDEN",
+            "Deferred project dispatch needs host-owned project scope",
+          );
+        if (
+          this.list<Run>("run").some(
+            (r) =>
+              r.taskId === task.taskId &&
+              ["queued", "running", "uncertain"].includes(r.state),
+          )
+        )
+          fail("CONFLICT", "Task already has active execution");
+        if (
+          input.persistence === "attach" &&
+          task.state !== "inbox" &&
+          !input.expectedActionVersion &&
+          (this.list<Run>("run").some((r) => r.taskId === task.taskId) ||
+            !["ready", "waiting"].includes(task.state))
+        )
+          fail("CONFLICT", "Use the operator retry action for ended tasks");
+        task.state = "inbox";
+        task.updatedAt = this.now();
+        this.saveTask(task);
+      }
+      const run =
+        input.route && !input.deferExecution
+          ? this.newRun({
+              taskId: task.taskId,
+              route: input.route,
+              configuration: {
+                decisionId: input.decisionId,
+                reporting: input.reporting,
+              },
+            })
+          : undefined;
       this.event(
         "decision.applied",
         {
@@ -3992,6 +4573,7 @@ export class TaskLedger {
       );
       return {
         taskId: task.taskId,
+        ...(input.deferExecution ? { deferred: true } : {}),
         reportId: report.reportId,
         ...(run ? { runId: run.runId } : {}),
       };

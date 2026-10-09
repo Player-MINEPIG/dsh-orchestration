@@ -335,7 +335,7 @@ test("invalid/gapped/effectful retry proof cannot release ownership or schedule 
   }
 });
 
-test("safe retry cannot knowingly queue a delay beyond the original execution budget", () => {
+test("safe retry is bounded by retry count rather than legacy elapsed budget", () => {
   const f = fixture({
     safeRetry: { maxRetries: 2, baseDelayMs: 200, maxDelayMs: 400 },
   });
@@ -345,8 +345,8 @@ test("safe retry cannot knowingly queue a delay beyond the original execution bu
       ...ref,
       witness,
     }).value;
-    assert.equal(stopped.state, "failed");
-    assert.equal(stopped.retry, undefined);
+    assert.equal(stopped.state, "queued");
+    assert.equal(stopped.retry.count, 1);
   } finally {
     f.close();
   }

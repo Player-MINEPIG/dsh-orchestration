@@ -1,5 +1,6 @@
 import { chooseExecutionSession } from '../execution-session.js'
 import { Context, Service } from '@deepseek-ai/cordis'
+import { isVolatile } from '@deepseek-ai/cosmokit'
 import z from '@deepseek-ai/schemastery'
 import { resolve } from 'node:path'
 import { createPrivateKey, randomUUID } from 'node:crypto'
@@ -27,7 +28,7 @@ export interface Config {
   authMode?: AuthMode; trustedNetwork?: NetworkPolicyConfig | null;
   audience: string; peers: { keyId: string; nodeId: string; publicKey: string; audience: string; operations: Operation[]; workspaces: string[]; capabilities: string[] }[];
   capabilities: string[]; workspaces: WorkspaceBinding[]; allowLoopbackHttp: boolean; leaseTtlMs: number; maxBodyBytes: number; maxResponseBytes: number;
-  pollIntervalMs: number; concurrency: number;
+  pollIntervalMs: number; concurrency: number; executionLimits?: {pollIntervalMs?: number; concurrency?: number};
   /** Compatibility for old connections; new setup writes true after explicit grants. */
   taskSessionsEnabled?: boolean;
   coordinator?: { endpoint: string; audience: string; authMode?: AuthMode; keyId?: string; privateKeyEnv?: string; trustedNetwork?: TrustedNetworkTarget | null; maxResponseBytes?: number; heartbeatIntervalMs?: number; nativeRoutes: { provider: string; models: { model: string; reasoningEfforts: string[] }[] }[] } | null;
@@ -35,7 +36,7 @@ export interface Config {
   observationForwarding?: { workspaceId: string } | null;
 }
 const authModeSchema = z.union([z.const('ed25519'),z.const('trusted-network')])
-const operationSchema = z.union([z.const('claim'),z.const('renew'),z.const('submit'),z.const('cancel'),z.const('receipt'),z.const('bindSession'),z.const('markRunning'),z.const('getRun'),z.const('getAttempt'),z.const('acknowledgeCancellation'),z.const('listWork'),z.const('observe'),z.const('delegate'),z.const('taskHistory'),z.const('taskWait'),z.const('taskNote'),z.const('taskReport'),z.const('heartbeat'),z.const('nodeStatus'),z.const('retryBeforeEffects'),z.const('offerApproval'),z.const('approvalStatus'),z.const('cancelApproval'),z.const('executorIdentity'),z.const('sessionContext'),z.const('selectTaskSession')])
+const operationSchema = z.union([z.const('claim'),z.const('renew'),z.const('submit'),z.const('cancel'),z.const('receipt'),z.const('bindSession'),z.const('markRunning'),z.const('getRun'),z.const('getAttempt'),z.const('acknowledgeCancellation'),z.const('listWork'),z.const('observe'),z.const('delegate'),z.const('taskHistory'),z.const('taskWait'),z.const('taskNote'),z.const('taskReport'),z.const('heartbeat'),z.const('nodeStatus'),z.const('retryBeforeEffects'),z.const('offerApproval'),z.const('approvalStatus'),z.const('cancelApproval'),z.const('executorIdentity'),z.const('sessionContext'),z.const('selectTaskSession'),z.const('sessionMessages'),z.const('sessionMessageReply')])
 const addressSchema = z.string().required()
 const portSchema = z.number().step(1).min(1).max(65535).required()
 const networkPolicySchema = z.object({
@@ -43,7 +44,7 @@ const networkPolicySchema = z.object({
   peers: z.array(z.object({ address: addressSchema,nodeId: z.string().required(),role: z.union([z.const('planner'),z.const('executor'),z.const('both')]).required(),audience: z.string().required(),operations: z.array(operationSchema).required(),workspaces: z.array(z.string()).required(),capabilities: z.array(z.string()).required() })).required(),
 })
 const networkTargetSchema = z.object({ address: addressSchema,port: portSchema,localAddress: addressSchema,allowHttp: z.const(true).required() })
-export const Config: z<Config> = z.object({
+const PlainConfig: z<Config> = z.object({
   paused: z.boolean().default(false).description('Keep this plugin loaded for configuration while creating no remote store, connection, listener, polling or heartbeat. Setting false is an explicit resume/connect action.'),
   role: z.union([z.const('planner'),z.const('executor'),z.const('both')]).default('executor'),
   authMode: authModeSchema.default('ed25519'),trustedNetwork: z.union([z.const(null),networkPolicySchema]).default(null),
@@ -55,10 +56,12 @@ export const Config: z<Config> = z.object({
   capabilities: z.array(z.string()).default([]), workspaces: z.array(z.object({ workspaceId: z.string().required(),nodeId: z.string().required(),path: z.string().required(),allowedRoot: z.string().required() })).default([]),
   allowLoopbackHttp: z.boolean().default(false), leaseTtlMs: z.number().step(1).min(1000).max(300000).default(60000), maxBodyBytes: z.number().step(1).min(1024).max(MAX_WIRE_BYTES).default(DEFAULT_MAX_BODY_BYTES), maxResponseBytes: z.number().step(1).min(1024).max(MAX_WIRE_BYTES).default(DEFAULT_MAX_RESPONSE_BYTES),
   pollIntervalMs: z.union([z.const(0),z.number().step(1).min(100).max(3600000)]).default(0), concurrency: z.number().step(1).min(1).max(16).default(1),
+  executionLimits: z.object({pollIntervalMs:z.union([z.const(0),z.number().step(1).min(100).max(3600000)]).required(false),concurrency:z.number().step(1).min(1).max(16).required(false)}).default({}),
   taskSessionsEnabled: z.boolean().required(false),
   coordinator: z.union([z.const(null),z.object({ endpoint: z.string().required(),audience: z.string().required(),authMode: authModeSchema.default('ed25519'),keyId: z.string(),privateKeyEnv: z.string(),trustedNetwork: z.union([z.const(null),networkTargetSchema]).default(null),maxResponseBytes: z.number().step(1).min(1024).max(MAX_WIRE_BYTES).default(DEFAULT_MAX_RESPONSE_BYTES),heartbeatIntervalMs: z.union([z.const(0),z.number().step(1).min(1000).max(3600000)]).default(0),nativeRoutes: z.array(z.object({ provider: z.string().required(),models: z.array(z.object({ model: z.string().required(),reasoningEfforts: z.array(z.string()).default([]) })).required() })).default([]) })]).default(null),
   observationForwarding: z.union([z.const(null),z.object({ workspaceId: z.string().required() })]).default(null).description('Forward only captured observations whose immutable session cwd resolves within this configured workspace path and allowed root.'),
 })
+export const Config = z.object({...PlainConfig.dict, executionLimits:PlainConfig.dict!.executionLimits!.volatile()})
 interface HostWebServer { register(route: { kind: 'exact'; path: string; handler: (req: IncomingMessage,res: ServerResponse) => Promise<void> }): () => void }
 /** An independently replaceable taskSystem service supplies only this structural ledger seam. */
 export interface TaskSystemPort {
@@ -70,6 +73,7 @@ export class RemoteExecutionService extends Service {
   private workers = new Set<ExecutorWorker>()
   private active = true
   private configurationPaused = false
+  private configurationRelease?: () => void
   private config: Config
   private ledger: LedgerPort
   private store?: RecoveryStore
@@ -83,10 +87,16 @@ export class RemoteExecutionService extends Service {
   private heartbeatPending?: Promise<unknown>
   lastHeartbeatFailed = false
   private lastHeartbeatSample = 0
+  private lastHeartbeatAcknowledgedAt: string | null = null
   coordinatorLedger?: RemoteLedgerClient
   nativeWorker?: ExecutorWorker
   constructor(ctx: Context, config: Config, ledger: LedgerPort, store?: RecoveryStore) {
-    super(ctx,'remoteExecution'); this.config = config; this.ledger = ledger; this.workerLedger = ledger; this.store = config.paused === true ? undefined : store
+    super(ctx,'remoteExecution');
+    const limits = config.executionLimits as unknown;
+    const raw = {...config};
+    for (const key of ['pollIntervalMs','concurrency'] as const)
+      Object.defineProperty(raw,key,{enumerable:true,get:()=> (isVolatile(limits) ? limits.get() as Config['executionLimits'] : limits as Config['executionLimits'])?.[key] ?? config[key]});
+    this.config = raw; this.ledger = ledger; this.workerLedger = ledger; this.store = config.paused === true ? undefined : store
     if (config.paused === true) return
     insist(store,'RECOVERY_STORE_REQUIRED',503)
     if (config.role !== 'executor') this.gateway = new RemoteGateway({ role: config.role,nodeId: config.nodeId,verifier: config.authMode === 'trusted-network' ? new TrustedNetworkVerifier({ ...config.trustedNetwork!,audience: config.audience }) : new IdentityVerifier({ audience: config.audience,peers: config.peers }),ledger,store,maxBodyBytes: config.maxBodyBytes,maxResponseBytes: config.maxResponseBytes })
@@ -111,6 +121,13 @@ export class RemoteExecutionService extends Service {
       taskSessionsEnabled: this.config.taskSessionsEnabled === true,
     }
   }
+  heartbeatSnapshot() {
+    return {
+      state: this.config.paused === true ? 'disabled' as const : !this.heartbeatTimer ? 'disabled' as const : this.lastHeartbeatFailed ? 'failed' as const : this.lastHeartbeatAcknowledgedAt ? 'acknowledged' as const : 'waiting' as const,
+      intervalMs: this.config.paused === true ? 0 : this.config.coordinator?.heartbeatIntervalMs ?? 0,
+      acknowledgedAt: this.lastHeartbeatAcknowledgedAt,
+    }
+  }
   beginConfigurationEdit(): () => void {
     insist(!this.configurationPaused && !this.heartbeatPending && !(this.store?.dispatches() ?? []).some(record => !['acknowledged','cancelled','retry_scheduled'].includes(record.state)),'CONFIGURATION_BUSY',409)
     const releases: (() => void)[] = []
@@ -119,16 +136,44 @@ export class RemoteExecutionService extends Service {
       if (this.gateway) releases.push(this.gateway.beginConfigurationEdit())
       for (const worker of this.workers) releases.push(worker.beginConfigurationEdit())
       this.configurationPaused = true
-      return () => { this.configurationPaused = false; for (const release of releases.reverse()) release() }
+      let released = false
+      const release = () => { if (released) return; released = true; this.configurationPaused = false; for (const release of releases.reverse()) release() }
+      this.configurationRelease = release
+      return () => { if (this.configurationRelease === release) this.configurationRelease = undefined; release() }
     } catch (error) { for (const release of releases.reverse()) release(); throw error }
   }
   queueSnapshot() {
     const dispatches = (this.store?.dispatches() ?? []).filter(record => !['acknowledged','cancelled','retry_scheduled'].includes(record.state))
-    const byRun = new Map(dispatches.map(record => [record.claim.run.runId,{ taskId: record.claim.task.taskId,runId: record.claim.run.runId,title: record.claim.task.title,state: String(record.state),sessionId: record.sessionId,workspaceId: record.claim.run.route?.workspaceId ?? null }]))
-    for (const worker of this.workers) for (const run of worker.queueSnapshot()) if (!byRun.has(run.runId)) byRun.set(run.runId,{ taskId: run.taskId,runId: run.runId,title: run.intentSnapshot?.title ?? run.taskId,state: run.state,sessionId: '',workspaceId: run.route?.workspaceId ?? null })
+    const byRun = new Map(dispatches.map(record => [record.claim.run.runId,{ taskId: record.claim.task.taskId,runId: record.claim.run.runId,title: record.claim.task.title,state: String(record.state),sessionId: record.sessionId,workspaceId: record.claim.run.route?.workspaceId ?? null,projectTitle: record.claim.run.projectContext?.project?.title ?? null,executionDirectory: record.workspacePath ?? null }]))
+    for (const worker of this.workers) for (const run of worker.queueSnapshot()) if (!byRun.has(run.runId)) byRun.set(run.runId,{ taskId: run.taskId,runId: run.runId,title: run.intentSnapshot?.title ?? run.taskId,state: run.state,sessionId: '',workspaceId: run.route?.workspaceId ?? null,projectTitle: run.projectContext?.project?.title ?? null,executionDirectory: null })
     return { sampledAt: new Date().toISOString(),nodeId: this.config.nodeId,items: [...byRun.values()].slice(0,100),truncated: byRun.size > 100 }
   }
   async executorIdentity() { insist(this.config.paused !== true,'REMOTE_PAUSED',409); insist(this.client,'COORDINATOR_REQUIRED',503); return await this.client.executorIdentity() }
+  /** Operator-only identity probe. It never starts workers, heartbeats or claims. */
+  async checkConnection(endpoint: string, target: TrustedNetworkTarget | null) {
+    const coordinator = this.config.coordinator
+    insist(coordinator,'COORDINATOR_REQUIRED',503)
+    if (this.config.paused !== true) {
+      insist(endpoint === coordinator.endpoint && (target === null ? !coordinator.trustedNetwork : !!coordinator.trustedNetwork && ['address','port','localAddress','allowHttp'].every(key => target[key as keyof TrustedNetworkTarget] === coordinator.trustedNetwork![key as keyof TrustedNetworkTarget])),'CHECK_PAUSE_REQUIRED',409)
+      insist(this.client,'COORDINATOR_REQUIRED',503)
+      return await this.client.executorIdentity({ diagnostic: true })
+    }
+    const release = this.beginConfigurationEdit()
+    let store: RecoveryStore | undefined, client: RemoteClient | undefined
+    try {
+      let privateKey
+      if ((coordinator.authMode ?? 'ed25519') !== 'trusted-network') {
+        insist(!target && coordinator.privateKeyEnv && /^[A-Za-z_][A-Za-z0-9_]*$/.test(coordinator.privateKeyEnv),'INVALID_KEY_ENV_REFERENCE')
+        const existing = process.env[coordinator.privateKeyEnv]
+        insist(existing,'EXISTING_SIGNING_KEY_REQUIRED')
+        privateKey = createPrivateKey(existing)
+      }
+      // Use the existing durable sequence owner; an ephemeral store would reset replay protection.
+      store = new RecoveryStore(resolve(this.config.statePath))
+      client = new RemoteClient({ endpoint,audience: coordinator.audience,nodeId: this.config.nodeId,authMode: coordinator.authMode,keyId: coordinator.keyId,privateKey,trustedNetwork: target ?? undefined,store,allowLoopbackHttp: this.config.allowLoopbackHttp,timeoutMs: 5000,maxBodyBytes: this.config.maxBodyBytes,maxResponseBytes: coordinator.maxResponseBytes })
+      return await client.executorIdentity({ diagnostic: true })
+    } finally { await client?.dispose(); store?.close(); release() }
+  }
   configureCoordinator(taskSystem: TaskSystemPort): void {
     insist(this.config.paused !== true,'REMOTE_PAUSED',409)
     const coordinator = this.config.coordinator
@@ -162,7 +207,9 @@ export class RemoteExecutionService extends Service {
       const currentNative = (): NativeExecutionPort | undefined => (this.ctx.get('taskSystem') as TaskSystemPort | undefined)?.native
       const routes = coordinator.nativeRoutes.map(route => ({ provider: route.provider,models: route.models.map(model => ({ model: model.model,reasoningEfforts: [...model.reasoningEfforts] })) }))
       const provider: ExecutionProvider = {
+        sendSessionMessage: async (...args) => { const native = currentNative(); insist(native?.sendSessionMessage, 'SESSION_MESSAGES_UNSUPPORTED', 503); return native.sendSessionMessage(...args); },
         id: 'native-dsh',capabilities: [...this.config.capabilities],
+        status: ref => currentNative()?.executionStatus?.(ref) ?? '执行端正在准备原生会话。',
         supports: route => !!currentNative() && routes.some(allowed => allowed.provider === route.provider && allowed.models.some(model => model.model === route.model && (route.reasoningEffort === undefined || model.reasoningEfforts.includes(route.reasoningEffort)))),
         execute: async request => {
           const native = currentNative()
@@ -197,7 +244,9 @@ export class RemoteExecutionService extends Service {
     const activeExecutions = Math.max(nativeActive,[...this.workers].reduce((count,worker) => count + worker.activeExecutions,0))
     const providers = [...new Set(this.config.coordinator.nativeRoutes.map(route => route.provider))].map(provider => ({ provider,state: 'not-probed' }))
     this.lastHeartbeatSample = Math.max(Date.now(),this.lastHeartbeatSample + 1)
-    return await this.coordinatorLedger.recordNodeHeartbeat(`heartbeat-${randomUUID()}`,{ nodeId: this.config.nodeId,sampledAt: this.lastHeartbeatSample,runtimeReady: typeof native?.executeExternal === 'function',activeExecutions,providerStatus: { state: 'not-probed',providers } })
+    const receipt = await this.coordinatorLedger.recordNodeHeartbeat(`heartbeat-${randomUUID()}`,{ nodeId: this.config.nodeId,sampledAt: this.lastHeartbeatSample,runtimeReady: typeof native?.executeExternal === 'function',activeExecutions,providerStatus: { state: 'not-probed',providers } })
+    this.lastHeartbeatAcknowledgedAt = new Date().toISOString()
+    return receipt
   }
   createWorker(provider: ExecutionProvider): ExecutorWorker {
     insist(this.config.paused !== true,'REMOTE_PAUSED',409)
@@ -212,7 +261,7 @@ export class RemoteExecutionService extends Service {
       },
     })
     this.workers.add(worker)
-    if (this.config.pollIntervalMs > 0) worker.startPolling(this.config.pollIntervalMs,this.config.concurrency)
+    worker.startPolling(() => this.config.pollIntervalMs,() => this.config.concurrency)
     return worker
   }
   attachCarrier(startup: Promise<{ close(): Promise<void> }>): Promise<void> {
@@ -231,13 +280,22 @@ export class RemoteExecutionService extends Service {
     this.active = false
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer)
     this.observationDisposer?.()
-    const clientDrain = this.client?.dispose()
     if (this.carrierStartup) await Promise.allSettled([this.carrierStartup])
     await this.carrierClose?.()
     await this.gateway?.dispose()
     await Promise.allSettled([...this.workers].map(worker => worker.dispose()))
-    await clientDrain
     await this.heartbeatPending
+    // ConfigEditor can unload this instance while holding the admission guard.
+    // Workers have drained; release the client guard only for the final offline sample.
+    this.configurationRelease?.()
+    this.configurationRelease = undefined
+    if (this.coordinatorLedger && this.config.role !== 'planner') {
+      this.lastHeartbeatSample = Math.max(Date.now(),this.lastHeartbeatSample + 1)
+      try {
+        await this.coordinatorLedger.recordNodeHeartbeat(`offline-${randomUUID()}`,{ nodeId: this.config.nodeId,sampledAt: this.lastHeartbeatSample,runtimeReady: false,activeExecutions: 0 },{ signal: AbortSignal.timeout(5000) })
+      } catch { /* Unreachable coordinators expire the previous heartbeat. */ }
+    }
+    await this.client?.dispose()
     this.store?.close()
   }
 }

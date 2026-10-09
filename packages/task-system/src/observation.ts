@@ -67,7 +67,10 @@ export function foldObservation(
     return state;
   if (state.excluded) return { ...state, lastSeq: event.seq };
   if (event.type === "user/message") {
-    if (event.data.source.kind === "dsh-task")
+    if (
+      event.data.source.kind === "dsh-task" ||
+      event.data.source.kind === "dsh-direct-message"
+    )
       return { ...state, excluded: true, lastSeq: event.seq, messages: [] };
     if (event.data.source.kind !== "user")
       return { ...state, lastSeq: event.seq };

@@ -238,7 +238,7 @@ test('native transient retry requires live zero-tool evidence and resumes the ex
   } finally { await second.dispose(); }
 });
 
-test('native safe retry refuses post-tool failures and non-transient errors and respects the original host deadline', async () => {
+test('native safe retry refuses post-tool failures and non-transient errors and ignores the legacy host deadline', async () => {
   const retry = { maxRetries: 2, baseDelayMs: 100, maxDelayMs: 200 };
   const effects = await harness({ config: { safeRetry: retry, executionTools: ['fixture_effect'], trustedUnconfinedTools: true }, script: [{ name: 'fixture_effect', args: {} }, () => { throw new LlmError('Synthetic server interruption', 'SERVER'); }] });
   let calls = 0;
@@ -256,7 +256,7 @@ test('native safe retry refuses post-tool failures and non-transient errors and 
   const expired = await harness({ config: { safeRetry: retry, executionTimeoutMs: 100 }, script: [() => { throw new LlmError('Synthetic transient', 'RATE_LIMIT', { status: 429 }); }] });
   try {
     const { claim } = seed(expired); const result = await expired.ctx.taskSystem.native.execute(claim);
-    assert.equal(result.run.state, 'failed'); assert.equal(result.run.validation, undefined); assert.equal(result.run.retry, undefined);
+    assert.equal(result.run.state, 'queued'); assert.equal(result.run.validation, undefined); assert.equal(result.run.retry.count, 1);
     assert.equal(expired.ledger.getAttempt(claim.attempt.attemptId).retryEvidence.toolCallCount, 0);
   } finally { await expired.dispose(); }
 });
@@ -694,7 +694,7 @@ test('actual native configured readers bind source evidence to one attempt befor
   } finally { await h.dispose(); }
 });
 
-test('task policy intersects configured tools and runtime timeout drains before uncertainty', async () => {
+test('task tool policy remains enforced but legacy runtime budgets never stop an active task', async () => {
   const h = await harness({ config: { executionTools: ['fixture_work'] }, script: [{ name: 'fixture_work', args: {} }, { name: 'task_settle', args: { outcome: 'success', summary: 'Forbidden capability was denied' } }] });
   let effects = 0;
   h.ctx.tools.register(defineTool({ name: 'fixture_work', description: 'Test-only observable effect', parameters: {}, output: { schema: { type: 'json' }, render: (_, value) => [{ type: 'text', text: JSON.stringify(value) }] }, execute: async () => { effects++; return true; } }));
@@ -703,10 +703,16 @@ test('task policy intersects configured tools and runtime timeout drains before 
     assert.equal((await h.ctx.taskSystem.native.execute(claim)).run.state, 'succeeded');
     assert.equal(effects, 0, 'node configuration cannot override a narrower task capability policy');
   } finally { await h.dispose(); }
-  const bounded = await harness({ script: ['hang'] });
+  const bounded = await harness({ config: {executionTimeoutMs: 100}, script: ['hang'] });
   try {
     const { claim } = seed(bounded, '', { policy: { maxRuntimeMs: 100 } });
-    await assert.rejects(bounded.ctx.taskSystem.native.execute(claim), /interrupted/);
+    const pending = assert.rejects(bounded.ctx.taskSystem.native.execute(claim), /interrupted/);
+    await until(() => bounded.adapter.requests.length === 1);
+    await new Promise(resolve => setTimeout(resolve, 200));
+    assert.equal(bounded.ctx.taskSystem.native.activeCount, 1);
+    assert.equal(bounded.ledger.getRun(claim.run.runId).state, 'running');
+    await bounded.ctx.taskSystem.native.dispose();
+    await pending;
     assert.equal(bounded.ledger.getRun(claim.run.runId).state, 'uncertain');
     assert.equal(bounded.ctx.agents.get(bounded.ledger.getAttempt(claim.attempt.attemptId).sessionId), undefined);
   } finally { await bounded.dispose(); }
@@ -846,7 +852,7 @@ test('explicit delegation tools create only descendants, inherit policy, and exp
   } finally { await h.dispose(); }
 });
 
-test('resume cannot renew the attempt runtime budget or start effects after its deadline', async () => {
+test('resume continues a live lease even after its legacy runtime budget', async () => {
   const initial = await harness();
   const { claim } = seed(initial, '', { policy: { maxRuntimeMs: 100 } });
   const ref = { runId: claim.run.runId, attemptId: claim.attempt.attemptId, nodeId: 'local', fence: claim.attempt.fence };
@@ -856,11 +862,12 @@ test('resume cannot renew the attempt runtime budget or start effects after its 
   await initial.ctx.sessions.flush(handle.agent.session);
   await handle.dispose(); await initial.dispose();
   await until(() => Date.now() - Date.parse(claim.attempt.createdAt) > 110);
-  const h = await harness({ dir: initial.dir, script: ['This must never run'] });
+  const h = await harness({ dir: initial.dir, script: [{name: 'task_settle', args: {outcome: 'success', summary: 'Continued beyond old budget'}}] });
   try {
     const restoredClaim = { task: h.ledger.getTask(claim.task.taskId), run: h.ledger.getRun(ref.runId), attempt: h.ledger.getAttempt(ref.attemptId) };
-    assert.throws(() => h.ctx.taskSystem.native.resume(restoredClaim), /runtime budget expired/);
-    assert.equal(h.adapter.requests.length, 0);
+    const result = await h.ctx.taskSystem.native.resume(restoredClaim);
+    assert.equal(result.run.state, 'succeeded');
+    assert.equal(h.adapter.requests.length, 1);
     assert.equal(h.ctx.taskSystem.native.activeCount, 0);
     assert.equal(h.ctx.agents.get(sessionId), undefined);
   } finally { await h.dispose(); }

@@ -11,16 +11,29 @@ import {
   SaveStartupResult,
   readStartupSettings,
   saveStartupSettings,
+  StartupSettingsError,
+  CheckConnectionInput,
+  CheckConnectionResult,
+  checkStartupConnection,
 } from "./startup-settings.js";
 /** Optional official Web settings companion. No tasks, database or credentials are owned here. */
 import { Context } from "@deepseek-ai/cordis";
 import {
   TypertRemoteService,
+  RemoteError,
   type InvocationDescriptor,
 } from "@deepseek-ai/dsh-typert-protocol";
+declare module "@deepseek-ai/dsh-typert-protocol" {
+  interface RemoteErrorDetailsMap {
+    "task/startup": { readonly reason: string };
+    "task/project": { readonly reason: string };
+  }
+}
 import { z } from "zod";
 import { resolve, join, basename } from "node:path";
+import { readFileSync } from "node:fs";
 import { existsSync } from "node:fs";
+import { TaskError } from "./ledger.js";
 import type { TaskSystemService } from "./dsh-plugin.js";
 import type { RemoteExecutionService } from "./remote/index.js";
 
@@ -40,6 +53,8 @@ const QueueSnapshot = z.object({
       state: z.string(),
       sessionId: z.string().nullable(),
       workspaceId: z.string().nullable(),
+      projectTitle: z.string().nullable().optional(),
+      executionDirectory: z.string().nullable().optional(),
     }),
   ),
   truncated: z.boolean(),
@@ -104,6 +119,7 @@ const ReadonlySettings = z.object({
   maintenanceIntervalMs: z.number(),
   leaseTtlMs: z.number(),
   executionTools: z.array(z.string()),
+  executionToolsMode: z.enum(["preset", "allowlist"]).optional(),
   remote: z
     .object({
       role: z.enum(["planner", "executor", "both"]),
@@ -197,6 +213,30 @@ export const saveStartupDescriptor: InvocationDescriptor = {
     create: () => SaveStartupResult,
   },
 };
+export const checkConnectionDescriptor: InvocationDescriptor = {
+  id: "@dsh-task/task-system#taskPluginSettings/checkConnection",
+  service: "taskPluginSettings",
+  namespace: "taskPluginSettings",
+  method: "checkConnection",
+  invocation: { kind: "direct" },
+  parameters: [
+    {
+      name: "input",
+      wire: "input",
+      source: "json",
+      codec: {
+        mode: "strict",
+        typeSymbol: "@dsh-task/task-system#CheckConnectionInput",
+        create: () => CheckConnectionInput,
+      },
+    },
+  ],
+  result: {
+    mode: "strict",
+    typeSymbol: "@dsh-task/task-system#CheckConnectionResult",
+    create: () => CheckConnectionResult,
+  },
+};
 
 export const decisionSettingsDescriptor: InvocationDescriptor = {
   id: "@dsh-task/task-system#taskPluginSettings/decisionSettings",
@@ -235,6 +275,43 @@ export const saveDecisionSettingsDescriptor: InvocationDescriptor = {
     create: () => SaveDecisionResult,
   },
 };
+const SetDecisionPresetInput = z
+  .object({
+    expected: z.string().min(1),
+    consumer: z.enum(["task-planning", "task-session"]),
+    id: z.string().max(256),
+  })
+  .strict();
+export const decisionPresetDescriptors: InvocationDescriptor[] = [
+  "decisionConsole",
+  "setDecisionPreset",
+].map((method) => ({
+  id: `@dsh-task/task-system#taskPluginSettings/${method}`,
+  service: "taskPluginSettings",
+  namespace: "taskPluginSettings",
+  method,
+  invocation: { kind: "direct" },
+  parameters:
+    method === "setDecisionPreset"
+      ? [
+          {
+            name: "input",
+            wire: "input",
+            source: "json",
+            codec: {
+              mode: "strict",
+              typeSymbol: "@dsh-task/task-system#SetDecisionPresetInput",
+              create: () => SetDecisionPresetInput,
+            },
+          },
+        ]
+      : [],
+  result: {
+    mode: "strict",
+    typeSymbol: `@dsh-task/task-system#${method}Result`,
+    create: () => z.json(),
+  },
+}));
 /** Higher CLI insertions and overrides both outrank profile form writes. */
 export function hasTaskConfigOverride(patches: readonly unknown[]): boolean {
   return patches.some((value) => {
@@ -254,9 +331,282 @@ export function hasTaskConfigOverride(patches: readonly unknown[]): boolean {
   });
 }
 
+const projectInputs = {
+  projectSettings: null,
+  projectSnapshot: null,
+  projectPage: null,
+  saveProjectSettings: z
+    .object({
+      root: z.string().min(1).max(4096),
+      expectedRevision: z.number().int().nonnegative(),
+    })
+    .strict(),
+  createProject: z
+    .object({
+      commandId: z.string().min(1).max(200),
+      title: z.string().min(1).max(500),
+      goal: z.string().min(1).max(20000),
+    })
+    .strict(),
+  createTemporaryTask: z
+    .object({
+      commandId: z.string().min(1).max(200),
+      title: z.string().min(1).max(500),
+      description: z.string().min(1).max(20000),
+    })
+    .strict(),
+  conversationModels: null,
+  selectConversationModel: z
+    .object({
+      projectId: z.string().min(1).optional(),
+      taskId: z.string().min(1).optional(),
+      expectedRevision: z.number().int().min(0),
+      selection: z
+        .object({
+          provider: z.string().min(1),
+          model: z.string().min(1),
+          reasoningEffort: z.string().min(1).optional(),
+        })
+        .strict()
+        .nullable(),
+    })
+    .strict(),
+  sendExecutorMessage: z
+    .object({
+      projectId: z.string().min(1).optional(),
+      taskId: z.string().min(1),
+      nodeId: z.string().min(1),
+      sessionId: z.string().min(1),
+      commandId: z.string().min(1).max(128),
+      text: z.string().min(1).max(8000),
+    })
+    .strict(),
+  taskConversation: z.object({ taskId: z.string().min(1) }).strict(),
+  sendTaskMessage: z
+    .object({
+      taskId: z.string().min(1),
+      commandId: z.string().min(1).max(200),
+      text: z.string().min(1).max(20000),
+    })
+    .strict(),
+  projectConversation: z.object({ projectId: z.string().min(1) }).strict(),
+  sendProjectMessage: z
+    .object({
+      projectId: z.string().min(1),
+      commandId: z.string().min(1).max(200),
+      text: z.string().min(1).max(20000),
+    })
+    .strict(),
+  handoffProject: z.object({ projectId: z.string().min(1) }).strict(),
+  actOnProjectTask: z
+    .object({
+      commandId: z.string().min(1).max(200),
+      taskId: z.string().min(1),
+      expectedVersion: z.string().min(1).max(200),
+      runId: z.string().min(1).nullable(),
+      confirmationRevision: z.number().int().positive(),
+      action: z.enum([
+        "complete-materials",
+        "complete",
+        "handle",
+        "restore",
+        "cancel",
+        "approve",
+        "accept",
+        "reject",
+        "confirm-stopped",
+        "status",
+        "retry",
+      ]),
+    })
+    .strict(),
+  reviewProjectTask: z
+    .object({
+      commandId: z.string().min(1).max(200),
+      taskId: z.string().min(1),
+    })
+    .strict(),
+};
+export const projectDescriptors: InvocationDescriptor[] = Object.entries(
+  projectInputs,
+).map(([method, input]) => ({
+  id: `@dsh-task/task-system#taskPluginSettings/${method}`,
+  service: "taskPluginSettings",
+  namespace: "taskPluginSettings",
+  method,
+  invocation: { kind: "direct" },
+  parameters: input
+    ? [
+        {
+          name: "input",
+          wire: "input",
+          source: "json",
+          codec: {
+            mode: "strict",
+            typeSymbol: `@dsh-task/task-system#${method}Input`,
+            create: () => input,
+          },
+        },
+      ]
+    : [],
+  result: {
+    mode: "strict",
+    typeSymbol: `@dsh-task/task-system#${method}Result`,
+    create: () => (method === "projectPage" ? z.string() : z.json()),
+  },
+}));
+
 export class TaskPluginSettings extends TypertRemoteService {
   constructor(ctx: Context) {
     super(ctx, "taskPluginSettings");
+  }
+  private projects() {
+    const task = this.ctx.get("taskSystem") as TaskSystemService | undefined;
+    if (task?.config.role === "executor")
+      throw new RemoteError(
+        "task/project",
+        "Project center requires a planner",
+        {
+          reason: "PLANNER_REQUIRED",
+        },
+      );
+    if (!task?.projects)
+      throw new RemoteError("task/project", "Project service is unavailable", {
+        reason: "PROJECT_UNAVAILABLE",
+      });
+    return task.projects;
+  }
+  private async projectOperation<T>(
+    operation: () => T | Promise<T>,
+  ): Promise<T> {
+    try {
+      return await operation();
+    } catch (error) {
+      if (error instanceof TaskError)
+        throw new RemoteError("task/project", "Project operation rejected", {
+          reason: error.code,
+        });
+      throw error;
+    }
+  }
+  async projectSettings() {
+    const task = this.ctx.get("taskSystem") as TaskSystemService | undefined;
+    return task?.projects && task.config.role !== "executor"
+      ? { enabled: true, ...task.projects.settings() }
+      : { enabled: false };
+  }
+  async createTemporaryTask(input: unknown) {
+    return this.projectOperation(() =>
+      this.projects().createTemporary(
+        projectInputs.createTemporaryTask.parse(input),
+      ),
+    );
+  }
+  async projectSnapshot() {
+    return this.projectOperation(() => this.projects().snapshot());
+  }
+  async projectPage() {
+    return readFileSync(
+      new URL("./project-page.html", import.meta.url),
+      "utf8",
+    );
+  }
+  async saveProjectSettings(input: unknown) {
+    return this.projectOperation(() =>
+      this.projects().saveSettings(
+        projectInputs.saveProjectSettings.parse(input),
+      ),
+    );
+  }
+  async createProject(input: unknown) {
+    return this.projectOperation(() =>
+      this.projects().create(projectInputs.createProject.parse(input)),
+    );
+  }
+  async conversationModels() {
+    return this.projectOperation(() => this.projects().modelCatalog());
+  }
+  async selectConversationModel(input: unknown) {
+    return this.projectOperation(() =>
+      this.projects().selectModel(
+        projectInputs.selectConversationModel.parse(input),
+      ),
+    );
+  }
+  async taskConversation(input: unknown) {
+    return this.projectOperation(() =>
+      this.projects().taskConversation(
+        projectInputs.taskConversation.parse(input).taskId,
+      ),
+    );
+  }
+  async sendExecutorMessage(input: unknown) {
+    return this.projectOperation(() =>
+      this.projects().sendExecutorMessage(
+        projectInputs.sendExecutorMessage.parse(input),
+      ),
+    );
+  }
+  async sendTaskMessage(input: unknown) {
+    return this.projectOperation(() =>
+      this.projects().sendTask(projectInputs.sendTaskMessage.parse(input)),
+    );
+  }
+  async projectConversation(input: unknown) {
+    return this.projectOperation(() =>
+      this.projects().conversation(
+        projectInputs.projectConversation.parse(input).projectId,
+      ),
+    );
+  }
+  async sendProjectMessage(input: unknown) {
+    return this.projectOperation(() =>
+      this.projects().send(projectInputs.sendProjectMessage.parse(input)),
+    );
+  }
+  async handoffProject(input: unknown) {
+    return this.projectOperation(() =>
+      this.projects().handoff(
+        projectInputs.handoffProject.parse(input).projectId,
+      ),
+    );
+  }
+  async actOnProjectTask(input: unknown) {
+    return this.projectOperation(
+      async () =>
+        await this.projects().actOnTask(
+          projectInputs.actOnProjectTask.parse(input),
+        ),
+    );
+  }
+  async reviewProjectTask(input: unknown) {
+    return this.projectOperation(() =>
+      this.projects().review(projectInputs.reviewProjectTask.parse(input)),
+    );
+  }
+  async decisionConsole() {
+    const owner = await import("@dsh-task/typed-decisions/console");
+    return owner.readDecisionConsole(this.ctx);
+  }
+  async setDecisionPreset(value: unknown) {
+    const input = SetDecisionPresetInput.parse(value);
+    try {
+      const owner = await import("@dsh-task/typed-decisions/console");
+      return await owner.decisionConsoleCommand(this.ctx, {
+        action: "setBinding",
+        ...input,
+      });
+    } catch (error) {
+      const reason =
+        error instanceof Error && error.name === "DecisionSettingsError"
+          ? (error as unknown as { code: string }).code
+          : "DECISION_SAVE_REJECTED";
+      throw new RemoteError(
+        "task/startup",
+        "Decision preset selection rejected",
+        { reason },
+      );
+    }
   }
   async decisionSettings() {
     return await readDecisionSettings(this.ctx);
@@ -334,7 +684,18 @@ export class TaskPluginSettings extends TypertRemoteService {
     });
   }
   async saveStartup(input: unknown) {
-    return await saveStartupSettings(this.ctx, input);
+    try {
+      return await saveStartupSettings(this.ctx, input);
+    } catch (error) {
+      if (error instanceof StartupSettingsError)
+        throw new RemoteError("task/startup", error.message, {
+          reason: error.code,
+        });
+      throw error;
+    }
+  }
+  async checkConnection(input: unknown) {
+    return await checkStartupConnection(this.ctx, input);
   }
   async executorIdentity() {
     const remote = this.ctx.get("remoteExecution") as
@@ -420,7 +781,9 @@ export class TaskPluginSettings extends TypertRemoteService {
       keepAlive: config.keepAlive,
       maintenanceIntervalMs: config.maintenanceIntervalMs,
       leaseTtlMs: config.leaseTtlMs,
-      executionTools: [...config.executionTools],
+      executionTools: [...(config.executionTools ?? [])],
+      executionToolsMode:
+        config.executionTools == null ? "preset" : "allowlist",
       remote: remote?.settingsSnapshot() ?? null,
     });
   }
@@ -447,12 +810,15 @@ export function apply(ctx: Context): void {
           schemas: [],
           model: { services: [], events: [], objects: [] },
           invocations: [
+            ...projectDescriptors,
             settingsDescriptor,
             queueDescriptor,
             workspaceCatalogDescriptor,
             executorIdentityDescriptor,
             startupDescriptor,
             saveStartupDescriptor,
+            checkConnectionDescriptor,
+            ...decisionPresetDescriptors,
             decisionSettingsDescriptor,
             saveDecisionSettingsDescriptor,
           ],
