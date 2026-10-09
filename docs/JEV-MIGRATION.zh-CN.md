@@ -2,9 +2,9 @@
 
 本轮采用方案 1：在 fork 的 JEV 插件中支持普通 DSH 模型，保持 `state + questions` 输入规范及统一输出。普通模型通过 `ctx.llm.prepareCall` 调用；服务商适配、鉴权和连接由 DSH 原生模型服务维护。
 
-- Fork：https://github.com/Player-MINEPIG/dsh-jev-plugin，版本 0.3.0。
+- Fork：https://github.com/Player-MINEPIG/dsh-jev-plugin，版本 0.3.1。
 - 上游：https://github.com/RaulLazaro/dsh-jev-plugin，基于 `0c2dd315a7e4ba85cad638c041985941f088487c`。保留 MIT 许可及原作者版权。
-- 任务插件：`@dsh-task/task-system` 0.2.1，使用 `ctx.decisionModels.ask`。
+- 任务插件：`@dsh-task/task-system` 0.2.2，使用 `ctx.decisionModels.ask`。
 - 原 `@dsh-task/typed-decisions` 不再属于活动 workspace 或运行时依赖。源码为回滚及历史测试保留；测试夹具不安装旧服务。
 
 ## 职责与接口

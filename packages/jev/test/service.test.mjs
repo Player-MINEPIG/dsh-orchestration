@@ -119,3 +119,21 @@ test('connection test uses shared ask and the plugin mounts before optional tool
   let output;await route.handler({method:'POST',socket:{remoteAddress:'127.0.0.1'}},{writeHead(){},end(body){output=JSON.parse(body)}})
   assert.equal(output.ok,true);assert.equal(output.value.provider,'custom');assert.equal(requests,2)
 })
+
+
+test('provider overrides resolve the selected provider credential instead of forwarding the default key', async () => {
+  const references = []
+  const previous = globalThis.fetch
+  let authorization
+  globalThis.fetch = async (_url, options) => {
+    authorization = options.headers.authorization
+    return {ok:true,status:200,text:async()=>JSON.stringify({answers:{q:{type:'noul',noul:1}}})}
+  }
+  try {
+    const ask = createDecisionCaller(() => ({resolve:async reference => {references.push(reference);return {value:reference === 'JEV_API_KEY' ? 'selected-fixture-key' : 'wrong-default-key'}}}),
+      () => ({provider:'typesafe',credential:'DEFAULT_REFERENCE',apiKey:'legacy-default-key',baseUrl:'https://selected.invalid/v1/systemone'}))
+    await ask({provider:'custom',state:'Fixture',questions:{q:{type:'noul',instructions:'Question'}}})
+    assert.deepEqual(references, ['JEV_API_KEY'])
+    assert.equal(authorization, 'Bearer selected-fixture-key')
+  } finally {globalThis.fetch = previous}
+})

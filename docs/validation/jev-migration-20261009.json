@@ -4,17 +4,17 @@
   "baselineCommit": "ea4cd0d845c91aff50f41a8def8d10c6c77a44c6",
   "fork": "https://github.com/Player-MINEPIG/dsh-jev-plugin",
   "forkBranch": "codex/shared-decision-models",
-  "forkCommit": "3cac9515d5d36b9bffa7a9ce7830ac5025672443",
+  "forkCommit": "3380ae7ea6be42cefd93a614798df9b7efe91541",
   "upstreamCommit": "0c2dd315a7e4ba85cad638c041985941f088487c",
   "node": "24.19.0",
   "checks": {
     "full": {
-      "pass": 737,
+      "pass": 738,
       "skip": 5,
       "fail": 0
     },
     "sharedService": {
-      "pass": 60,
+      "pass": 61,
       "fail": 0
     },
     "officialCliDistribution": {
@@ -28,5 +28,6 @@
     }
   },
   "optionalLegacySettingsSuite": "First legacy official-settings-smoke case still expects executionTimeoutMs and six runtime fields. It predates the validated removal of task runtime budgets, and is not evidence for the new service. Dedicated official startup, full check and real distribution passed.",
-  "decisionBoundary": "Provider/model management, transport, cancellation and protocol parsing only; caller owns policy, audit, task state and effects."
+  "decisionBoundary": "Provider/model management, transport, cancellation and protocol parsing only; caller owns policy, audit, task state and effects.",
+  "credentialOverrideRegression": "Switching provider resolves that provider credential; neither the default credential reference nor legacy key is forwarded"
 }

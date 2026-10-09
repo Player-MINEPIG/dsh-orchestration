@@ -15,7 +15,7 @@
   },
   "scripts": {
     "build": "npm run build -w @dsh-task/task-system && npm run build -w @dsh-task/feishu-channel",
-    "test": "npm run build && npm run test --workspaces --if-present",
+    "test": "npm run build && npm run test:unit",
     "check": "npm run build && npm run test:unit && npm run test:native && npm run test:legacy && npm run test:management",
     "test:unit": "tsc -p packages/typed-decisions/tsconfig.json && npm run test --workspaces --if-present",
     "test:native": "node --test tests/dsh/native-loader.test.mjs tests/dsh/remote-native.test.mjs tests/dsh/trusted-network-native.test.mjs tests/dsh/context-contract.test.mjs tests/dsh/pre-dispatch.test.mjs tests/dsh/executor-switch.test.mjs tests/dsh/project-executor.test.mjs tests/dsh/jev-native.test.mjs",

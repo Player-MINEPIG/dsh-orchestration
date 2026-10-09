@@ -1,17 +1,17 @@
 {
   "ok": true,
   "dshVersion": "0.2.0-rc.2",
-  "scratch": "/var/folders/1p/0r3r_j49633fr1f0r0q6wyt80000gn/T/dsh-capability-distribution-wzPrIR",
+  "scratch": "/var/folders/1p/0r3r_j49633fr1f0r0q6wyt80000gn/T/dsh-capability-distribution-UWvXsA",
   "packages": [
     {
       "name": "dsh-jev-plugin",
-      "filename": "dsh-jev-plugin-0.3.0.tgz",
-      "integrity": "sha512-uOH/am43I//P4Vp3BLDvjSUXUFa/k3IgUekhjfGslyooMk4wh0bn8CVCnYdgp/W9skKMfRJyYSjUYAxB8vtlSg=="
+      "filename": "dsh-jev-plugin-0.3.1.tgz",
+      "integrity": "sha512-yF02myfFsct52EliHZ8NKHPL8wE5NmjgkTqvpoReSQglO2+REZ2XA1r3wdiI5CMTwLY0gcmBm9zDJfDYXl4jqA=="
     },
     {
       "name": "@dsh-task/task-system",
-      "filename": "dsh-task-task-system-0.2.1.tgz",
-      "integrity": "sha512-F4uRMOsxNIIgD/uQmxmhKy90ENK8svHsK4qnKWgZZJcPJ3Uy01B19xKezctOaGqOp+cERydnAFFc3Yp63w9fFg=="
+      "filename": "dsh-task-task-system-0.2.2.tgz",
+      "integrity": "sha512-2Z/sCTx4q3NKGjxI862SrX/3DfYe8aXvcnVqvSQeFRpyPsLWUkiQQJrD7zIVt7TpGkcWiAL7xwgZo4xZezhBLA=="
     },
     {
       "name": "@dsh-task/feishu-channel",

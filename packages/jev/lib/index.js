@@ -379,7 +379,7 @@ export function createDecisionCaller(getCredentials, getConfig, getLedger, getLl
       const baseConfig = getConfig() ?? {}
       const selected = args?.provider ?? baseConfig.provider ?? 'typesafe'
       const profile = (baseConfig.profiles ?? []).find(p => p.id === selected)
-      const cfg = { ...baseConfig, ...(selected !== baseConfig.provider ? {model:'', reasoningEffort:''} : {}), ...(profile ?? {}), provider: profile?.provider ?? selected, ...(args?.model !== undefined ? {model:args.model} : {}), ...(args?.reasoningEffort !== undefined ? {reasoningEffort:args.reasoningEffort} : {}) }
+      const cfg = { ...baseConfig, ...(selected !== baseConfig.provider ? {model:'', reasoningEffort:'', credential:undefined, apiKey:undefined} : {}), ...(profile ?? {}), provider: profile?.provider ?? selected, ...(args?.model !== undefined ? {model:args.model} : {}), ...(args?.reasoningEffort !== undefined ? {reasoningEffort:args.reasoningEffort} : {}) }
       options?.signal?.throwIfAborted()
       if (cfg?.enabled === false) {
         throw new Error('the jev tool is disabled in Settings → Jev')

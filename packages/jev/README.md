@@ -1,4 +1,4 @@
-# Shared decision model service (fork 0.3.0)
+# Shared decision model service (fork 0.3.1)
 
 This fork adds `ctx.decisionModels.ask` to RaulLazaro's JEV plugin. The JEV tool,
 Settings connection probe and external plugins share that implementation. It
@@ -45,7 +45,7 @@ upstream package):
 npm install --ignore-scripts
 npm test
 npm pack
-dsh plugin --profile web add /absolute/path/dsh-jev-plugin-0.3.0.tgz
+dsh plugin --profile web add /absolute/path/dsh-jev-plugin-0.3.1.tgz
 ```
 
 Task state, request timing, business validation, fallback, routing, sessions,
