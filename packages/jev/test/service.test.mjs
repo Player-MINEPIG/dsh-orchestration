@@ -1,3 +1,4 @@
+import { Readable } from 'node:stream'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { Context } from '@deepseek-ai/cordis'
@@ -137,3 +138,32 @@ test('provider overrides resolve the selected provider credential instead of for
     assert.equal(authorization, 'Bearer selected-fixture-key')
   } finally {globalThis.fetch = previous}
 })
+
+async function catalogBridge(llm, body={}, address='127.0.0.1') {
+  const route=makeBridgeRoutes({getLlm:()=>llm}).find(r=>r.path.endsWith('/catalog'));
+  const req=Readable.from([Buffer.from(JSON.stringify(body))]);req.method='POST';req.socket={remoteAddress:address};
+  let status,result;const res={writeHead:code=>{status=code},end:value=>{result=JSON.parse(value)}};
+  await route.handler(req,res);return {status,...result};
+}
+test('settings choices use the registered DSH models and per-model reasoning metadata without generating',async()=>{
+  const calls=[];const llm={
+    listProviders:()=>[{id:'host',name:'Host',privateField:'do not expose'}],
+    listModels:async provider=>{calls.push(provider);return [{id:'fast',name:'Fast'},{id:'plain',name:'Plain'}]},
+    resolveModelInfo:async(provider,model)=>model==='fast' ? {reasoning:{efforts:[{id:'low',name:'Low'},{id:'high',name:'High'}]}} : {},
+    prepareCall:()=>{throw Error('Catalog must never generate')},
+  };
+  const result=await catalogBridge(llm,{provider:'host'});assert.equal(result.status,200);assert.equal(result.ok,true);
+  assert.deepEqual(result.value,{providers:[{id:'host',name:'Host'}],provider:'host',models:[{id:'fast',name:'Fast',reasoningEfforts:[{id:'low',name:'Low'},{id:'high',name:'High'}]},{id:'plain',name:'Plain',reasoningEfforts:[]}]});
+  assert.deepEqual(calls,['host']);
+  assert.deepEqual((await catalogBridge(llm,{provider:'removed'})).value.models,[]);assert.deepEqual(calls,['host']);
+});
+test('catalog retains bridge access restrictions and rejects malformed provider selection',async()=>{
+  let read=false;const llm={listProviders:()=>{read=true;return []}};
+  assert.equal((await catalogBridge(llm,{},'100.64.0.1')).status,403);assert.equal(read,false);
+  assert.equal((await catalogBridge(llm,{provider:42})).status,400);assert.equal(read,false);
+});
+test('missing or failed catalog reports availability without exposing provider errors',async()=>{
+  const missing=await catalogBridge(undefined);assert.equal(missing.ok,false);assert.match(missing.message,/service unavailable/);
+  const result=await catalogBridge({listProviders:()=>{throw Error('private transport detail')}});
+  assert.equal(result.ok,false);assert.doesNotMatch(result.message,/private transport/);
+});

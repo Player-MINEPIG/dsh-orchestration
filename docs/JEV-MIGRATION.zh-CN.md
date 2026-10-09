@@ -55,3 +55,5 @@ JEV 0.3.2 改用 DSH rc.2 的 `settings.section` 注册独立 JEV 设置页；ta
 VPS 的 Tailscale 身份代理启用 `hostSettings: true`，只调整官方设置镜像的持久化选择。DSH 的非 localhost 页面原本选择内存设置，导致 Models 无法读取主机配置；代理的身份、Origin、Host 校验及 DSH 原生认证保持原有行为。DSH 升级后需重新验证该兼容点。
 
 已通过 MBP Chrome 访问实际 HTTPS 入口验证 Models、JEV 页和任务设置跳转；没有保存模型配置或再次发起付费连接测试。741 项回归通过、5 项跳过，双端配置语义与受保护任务记录保留。安装器将旧平铺配置转为 bundles + cordis.patch.yml；已使用 DSH 配置合成逻辑和原启动覆盖层核对。见 [浏览器验证记录](validation/jev-browser-settings-20261009.json)。
+
+JEV 0.3.3 的普通模型设置改为提供商、模型、思考强度联动选择。选项直接来自 DSH `listProviders`、`listModels` 和 `resolveModelInfo`，不发送生成请求；切换提供商或模型会清空关联草稿中的旧选择，保存前不改配置。三个控件宽度为 24rem，小屏受容器宽度约束。已在实际 VPS 地址验证选项、宽度和模型切换重置；66 项针对性测试通过。见 [选择控件验证](validation/jev-model-selectors-20261009.json)。

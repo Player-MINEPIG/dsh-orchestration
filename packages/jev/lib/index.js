@@ -580,7 +580,7 @@ export function isLoopbackRequest(req) {
  * Every route is POST, loopback-only, and shapes its own JSON.
  */
 export function makeBridgeRoutes(deps) {
-  const { getSettings, getConfig, getCredentials, getLedger, probe } = deps
+  const { getSettings, getConfig, getCredentials, getLedger, getLlm, probe } = deps
 
   const guard = (req, res) => {
     if (!isLoopbackRequest(req)) {
@@ -650,6 +650,37 @@ export function makeBridgeRoutes(deps) {
   }
 
   return [
+    {
+      kind: 'exact',
+      path: `${BRIDGE_PREFIX}/catalog`,
+      handler: async (req, res) => {
+        if (!guard(req, res)) return
+        const body = await readJsonBody(req)
+        if (!body || (body.provider !== undefined && typeof body.provider !== 'string')) {
+          writeJson(res, 400, {ok:false, message:'expected an optional provider ID'})
+          return
+        }
+        const llm = getLlm?.()
+        if (!llm) {
+          writeJson(res, 200, {ok:false, message:'DSH model service unavailable'})
+          return
+        }
+        try {
+          const providers = llm.listProviders().map(p => ({id:p.id, name:p.name}))
+          if (body.provider && !providers.some(p => p.id === body.provider)) {
+            writeJson(res, 200, {ok:true, value:{providers, provider:body.provider, models:[]}})
+            return
+          }
+          const models = body.provider ? await Promise.all((await llm.listModels(body.provider)).map(async model => {
+            const info = await llm.resolveModelInfo(body.provider, model.id)
+            return {id:model.id, name:model.name, reasoningEfforts:(info?.reasoning?.efforts ?? []).map(e => ({id:e.id, name:e.name}))}
+          })) : []
+          writeJson(res, 200, {ok:true, value:{providers, provider:body.provider ?? '', models}})
+        } catch {
+          writeJson(res, 200, {ok:false, message:'Could not load the DSH model catalog; check Models settings and reload.'})
+        }
+      },
+    },
     {
       kind: 'exact',
       path: `${BRIDGE_PREFIX}/describe`,
@@ -822,6 +853,7 @@ export function apply(ctx, config) {
         getConfig: () => current(),
         getCredentials,
         getLedger,
+        getLlm: () => ctx.get('llm'),
         probe,
       }).map((route) => sctx.webServer.register(route))
       return () => {

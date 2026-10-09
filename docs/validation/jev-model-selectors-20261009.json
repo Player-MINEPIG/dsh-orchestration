@@ -1,0 +1,52 @@
+{
+  "date": "2026-10-09",
+  "version": "0.3.3",
+  "forkCommit": "a17bc709a55abbc0ef1f97870418f35be0c880ec",
+  "change": {
+    "nativeProvider": "registered DSH provider selector",
+    "model": "selected provider model catalog selector",
+    "reasoningEffort": "selected model metadata selector; provider default option",
+    "width": "24rem, max-width 100%, border-box"
+  },
+  "validation": {
+    "command": "node --test packages/jev/test/*.mjs tests/dsh/jev-native.test.mjs",
+    "passed": 66,
+    "failed": 0,
+    "browserOrigin": "https://izbp11roeflhmn04yssxm4z.tail435ecd.ts.net:10000",
+    "renderedSelectorWidthsPx": [
+      384,
+      384,
+      384
+    ],
+    "availableNativeProvider": "deepseek-official",
+    "availableModels": [
+      "deepseek-flash",
+      "deepseek-v4-pro"
+    ],
+    "selectedModelEfforts": [
+      "off",
+      "low",
+      "high",
+      "max"
+    ],
+    "modelChangeClearsExplicitEffort": true,
+    "originalDraftRestoredAndSaveDisabled": true,
+    "savedConfigChanges": false,
+    "modelGenerationCalls": false
+  },
+  "deployment": {
+    "vps": {
+      "installed": true,
+      "effectiveModelTaskRemoteConfigPreserved": true,
+      "protectedTaskStatePreserved": true,
+      "backup": "/opt/dsh-task-management-test/candidate-3-ece68974/backups/jev-selectors-20261009"
+    },
+    "mbp": {
+      "installed": true,
+      "effectiveModelTaskRemoteConfigPreserved": true,
+      "protectedTaskStatePreserved": true,
+      "backup": "/Users/pmp/AI/deepseek-harness/test-env/dsh-task-management-candidate-3-ece68974/backups/jev-selectors-20261009"
+    }
+  },
+  "tarballSha256": "590aa537177af7757d4a4acf7e1c4177ebde6cfd3b74f9f22b311cd5e3273160"
+}

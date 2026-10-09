@@ -57,6 +57,7 @@ window.__ModuleLoader__.load({
 .dshjev-label{color:var(--dsw-alias-label-primary);font-size:13px;font-weight:500}
 .dshjev-hint{color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:1.5}
 .dshjev-input,.dshjev-select{border:1px solid var(--dsw-alias-border-l2);font:inherit;color:var(--dsw-alias-label-primary);background:var(--dsw-specific-input-major);border-radius:6px;padding:6px 8px;font-size:13px;width:100%}
+.dshjev-compact{width:24rem;max-width:100%;box-sizing:border-box}
 .dshjev-select{color-scheme:light dark}
 .dshjev-select option{background-color:#fff;color:#1f2328}
 @media (prefers-color-scheme:dark){.dshjev-select{color-scheme:dark}.dshjev-select option{background-color:#1e1f24;color:#e8e8ea}}
@@ -107,6 +108,7 @@ window.__ModuleLoader__.load({
       const [busy, setBusy] = React.useState(false)
       const [note, setNote] = React.useState(null)
       const [test, setTest] = React.useState(null)
+      const [catalog, setCatalog] = React.useState({providers:[], models:[], provider:'', loading:false, error:null})
 
       const load = React.useCallback(async () => {
         try {
@@ -150,6 +152,32 @@ window.__ModuleLoader__.load({
 
       const providers = view?.providers ?? []
       const provider = providers.find((p) => p.id === draft?.provider) ?? providers[0]
+      const nativeMode = draft?.provider === 'native'
+      const models = catalog.provider === draft?.nativeProvider ? catalog.models : []
+      const selectedModel = models.find(m => m.id === draft?.model)
+      const efforts = selectedModel?.reasoningEfforts ?? []
+      React.useEffect(() => {
+        if (!open || !nativeMode || draft === null) return
+        let disposed = false
+        setCatalog(c => ({...c, loading:true, error:null}))
+        post('catalog', {provider:draft.nativeProvider || undefined}).then(result => {
+          if (disposed) return
+          if (result?.ok) setCatalog({...result.value, loading:false, error:null})
+          else setCatalog(c => ({...c, loading:false, error:result?.message ?? 'Could not load DSH models.'}))
+        }).catch(() => {
+          if (!disposed) setCatalog(c => ({...c, loading:false, error:'Could not load DSH models. Reload to retry.'}))
+        })
+        return () => {disposed = true}
+      }, [open, nativeMode, draft?.nativeProvider, view])
+
+      const select = (value, choices, onChange, defaultLabel, disabled = false) => h('select', {
+        className:'dshjev-select dshjev-compact', value:value ?? '', disabled:busy || catalog.loading || disabled,
+        onChange:event => onChange(event.target.value),
+      },
+        h('option', {value:''}, defaultLabel),
+        value && !choices.some(c => c.id === value) ? h('option', {value, disabled:true}, `${value} (currently configured; unavailable)`) : null,
+        choices.map(c => h('option', {key:c.id, value:c.id}, c.name || c.id)),
+      )
       const dirty =
         draft !== null &&
         view !== null &&
@@ -284,9 +312,13 @@ window.__ModuleLoader__.load({
               provider && provider.note
                 ? h('span', { className: 'dshjev-hint' }, provider.note)
                 : null,
-              draft?.provider === 'native' ? h(React.Fragment, null,
-                h(Field,{label:'DSH provider',hint:'Use the provider ID configured in DSH Models; credentials stay there.'},h('input',{className:'dshjev-input',value:draft.nativeProvider,disabled:busy,onChange:e=>setDraft({...draft,nativeProvider:e.target.value})})),
-                h(Field,{label:'Reasoning effort',hint:'Optional effort supported by the chosen model.'},h('input',{className:'dshjev-input',value:draft.reasoningEffort,disabled:busy,onChange:e=>setDraft({...draft,reasoningEffort:e.target.value})}))) : null,
+              nativeMode ? h(React.Fragment, null,
+                h(Field,{label:'DSH provider',hint:'Choose a registered DSH provider. Credentials are managed in Models.'},
+                  select(draft.nativeProvider,catalog.providers,value=>setDraft({...draft,nativeProvider:value,model:'',reasoningEffort:''}),'Select provider')),
+                h(Field,{label:'Reasoning effort',hint:'Choices follow the selected model. Leave default to use the provider’s setting.'},
+                  select(draft.reasoningEffort,efforts,value=>setDraft({...draft,reasoningEffort:value}),'Provider default',!selectedModel || efforts.length === 0)),
+                catalog.error ? h('span',{className:'dshjev-err',role:'alert'},catalog.error) : null,
+              ) : null,
               draft?.provider === 'custom'
                 ? h(
                     Field,
@@ -309,7 +341,7 @@ window.__ModuleLoader__.load({
                   label: 'Model override',
                   hint: 'Leave empty to use the provider default shown above.',
                 },
-                h('input', {
+                nativeMode ? select(draft.model,models,value=>setDraft({...draft,model:value,reasoningEffort:''}),'Provider default',!draft.nativeProvider) : h('input', {
                   className: 'dshjev-input',
                   value: draft?.model ?? '',
                   disabled: busy || draft === null,

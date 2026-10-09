@@ -34,7 +34,7 @@ Configure `provider: native`, `nativeProvider: <DSH provider ID>` and
 `maxOutputTokens` are forwarded to DSH. Provider profiles in `profiles` carry
 `id`, `name`, `provider`, `model` and optional endpoint, credential reference or
 native-provider fields. Passing a profile ID as `provider` selects it. Passing
-`model` overrides that selection. Settings → JEV selects the default,
+`model` overrides that selection. For ordinary DSH models, the settings page offers registered provider and model choices with model-specific reasoning efforts. Settings → JEV selects the default,
 configures provider fields and runs a probe; edit multiple profiles through the
 standard plugin configuration editor.
 
