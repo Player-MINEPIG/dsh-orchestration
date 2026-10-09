@@ -1,0 +1,71 @@
+{
+  "schemaVersion": 1,
+  "sourceCommit": "d019ca72305858460418e13841a05a332fbd6489",
+  "baselineCommit": "ea4cd0d845c91aff50f41a8def8d10c6c77a44c6",
+  "forkCommit": "3380ae7ea6be42cefd93a614798df9b7efe91541",
+  "packages": [
+    {
+      "name": "dsh-jev-plugin-0.3.1.tgz",
+      "bytes": 28253,
+      "sha256": "8e0b36907f7d82e1f5c3a986595c55cfd6d61f12a7c37747ddc14272ad6c177b"
+    },
+    {
+      "name": "dsh-task-task-system-0.2.2.tgz",
+      "bytes": 574509,
+      "sha256": "c4583833adbd8c6ba92daf33630ada2df1ab7ec86a279fd036f70e35b68c0152"
+    }
+  ],
+  "mbp": {
+    "protectedTaskStateUnchanged": true,
+    "temporaryProbeRowsRemoved": true,
+    "oldDependencyAbsent": true,
+    "settingsBridge": true,
+    "installedJevVersion": "0.3.1",
+    "installedTaskVersion": "0.2.2",
+    "installedCredentialOverrideFix": true,
+    "backup": "/Users/pmp/AI/deepseek-harness/test-env/dsh-task-management-candidate-3-ece68974/backups/jev-service-20261009",
+    "liveNativeProbe": {
+      "pluginVersionAtProbe": "0.3.0",
+      "nativeImplementationUnchangedInPatch": true,
+      "provider": "native",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 188,
+        "output_tokens": 190
+      },
+      "answersValid": true
+    },
+    "postRestartSharedServiceHealthy": true
+  },
+  "vps": {
+    "protectedTaskStateUnchanged": true,
+    "temporaryProbeRowsRemoved": true,
+    "oldDependencyAbsent": true,
+    "settingsBridge": true,
+    "nativeProvider": "deepseek-official",
+    "service": "active",
+    "authProxy": "active",
+    "installedTaskVersion": "0.2.2",
+    "installedJevVersion": "0.3.1",
+    "installedCredentialOverrideFix": true,
+    "backup": "/opt/dsh-task-management-test/candidate-3-ece68974/backups/jev-service-20261009",
+    "liveNativeProbe": {
+      "pluginVersionAtProbe": "0.3.0",
+      "nativeImplementationUnchangedInPatch": true,
+      "provider": "native",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 188,
+        "output_tokens": 503
+      },
+      "answersValid": true
+    },
+    "postRestartSharedServiceHealthy": true
+  },
+  "taskMutation": false,
+  "newRunOrAttempt": false,
+  "temporaryProbeRowsRemoved": true,
+  "rollbackDatabaseRestoreRequired": false,
+  "liveJevProviderCall": false,
+  "liveJevProviderNote": "Deployed defaults use native DSH DeepSeek. TypeSafe/Laya/Gateway paid API calls were not exercised."
+}

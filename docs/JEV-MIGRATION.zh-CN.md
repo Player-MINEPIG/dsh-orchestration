@@ -45,3 +45,5 @@ Settings → Plugins → Jev 编辑默认提供商和模型。普通模型使用
 ## 验证与证据
 
 `npm run check` 覆盖共享服务、取消、超时、协议解析、调用方业务拒绝及现有任务/互联回归。`npm run test:distribution` 使用固定官方 DSH 0.2.0-rc.2，将实际 tarball 安装进隔离 profile，boot、调用服务/工具、卸载并验证状态保留。发行测试使用 ScriptedModel：原生接口实际调用，远程付费模型调用未发生。真实服务商探测与部署状态应单独报告，不能由离线测试推断成功。
+
+最终源码回归：738 通过、5 跳过。MBP 与 VPS 已安装 JEV 0.3.1 / task-system 0.2.2，移除旧插件和临时探测行；原生 DeepSeek 探测实际成功（补丁只修复不同提供商凭证引用，原生实现未变），重启后服务、设置接口与原任务数据一致性检查通过。见 [代码验证](validation/jev-migration-20261009.json) 与 [部署证据](validation/jev-deployment-20261009.json)。TypeSafe 等外部 JEV 提供商未做真实付费调用，需按所选服务商配置凭证后测试。
