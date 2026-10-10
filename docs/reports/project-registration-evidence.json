@@ -1,0 +1,210 @@
+{
+  "date": "2026-10-11 Australia/Melbourne",
+  "baseCommit": "ece68974a5c1632bc2c3f7427fe8743ce8aa6fe8",
+  "suppliedSnapshotCommit": "8cf8d05",
+  "kind": "actual-MBP-to-VPS-HTTP-over-SSH-tunnel",
+  "modelInvocations": 0,
+  "source": {
+    "hostname": "PlayerMINEPIGMacBook-Pro-M2.local",
+    "nodeId": "pmp-mac",
+    "workspace": "/Users/pmp/.codex/worktrees/20e9/dsh-orchestration/.runtime/registration/cross-host/2026-10-10T18-06-42-955Z",
+    "outbox": "/Users/pmp/.codex/worktrees/20e9/dsh-orchestration/.runtime/registration/cross-host/2026-10-10T18-06-42-955Z/outbox"
+  },
+  "destination": {
+    "sshAlias": "aliyun-vps",
+    "nodeId": "test-central",
+    "isolatedRoot": "/root/dsh-orchestration-tests/project-registration-20261011",
+    "endpoint": "http://127.0.0.1:43481/v1/registrations"
+  },
+  "projectExternalId": "mac-created-1791655602959",
+  "crossHostSteps": [
+    {
+      "step": "offline-enqueued",
+      "at": null,
+      "transportFailure": true,
+      "receipts": []
+    },
+    {
+      "step": "local-origin-register-to-vps",
+      "at": "2026-10-10T18:06:43.695Z",
+      "transportFailure": null,
+      "receipts": [
+        {
+          "commandId": "reg-command-b6db0fc980b04d00484e6fd90b743fe7830b0fec63dff030edfa3db1578500fb",
+          "acceptedAt": "2026-10-10T18:06:43.559Z",
+          "registrationId": "reg-registration-06ed3ee18e91e882acdf9308329f184374ca0ffd5ca3b35353e59b111c004418",
+          "projectId": "reg-project-0a8e5184514d12c47e94fb7cd5adad40f493079c8ba0b753866e2fbc2c0b1271",
+          "sourceRevision": 1,
+          "digest": "93487c94fb78b93829792bad0890c955d497c272562f74f074b4bc849682be6b"
+        }
+      ]
+    },
+    {
+      "step": "local-origin-update-to-vps",
+      "at": "2026-10-10T18:06:44.354Z",
+      "transportFailure": null,
+      "receipts": [
+        {
+          "commandId": "reg-command-e52824984830ac0b1f3f50b2ef4ad25a3bd9bb51d026323de63ad2254e71d925",
+          "acceptedAt": "2026-10-10T18:06:44.238Z",
+          "registrationId": "reg-registration-06ed3ee18e91e882acdf9308329f184374ca0ffd5ca3b35353e59b111c004418",
+          "projectId": "reg-project-0a8e5184514d12c47e94fb7cd5adad40f493079c8ba0b753866e2fbc2c0b1271",
+          "sourceRevision": 2,
+          "digest": "9d03c303aa3034765a004b1fb8ef1eb75c7d22c70da7e093a1c244058904df05"
+        }
+      ]
+    },
+    {
+      "step": "local-origin-final-to-vps",
+      "at": "2026-10-10T18:06:44.698Z",
+      "transportFailure": null,
+      "receipts": [
+        {
+          "commandId": "reg-command-c9f67051e446b7f8afee5cb194b1f5fd038d8c04c9435f90c6cb8f873878ada4",
+          "acceptedAt": "2026-10-10T18:06:44.580Z",
+          "registrationId": "reg-registration-06ed3ee18e91e882acdf9308329f184374ca0ffd5ca3b35353e59b111c004418",
+          "projectId": "reg-project-0a8e5184514d12c47e94fb7cd5adad40f493079c8ba0b753866e2fbc2c0b1271",
+          "sourceRevision": 3,
+          "digest": "751a8edcf8ce17b17a3620e649359527c16a010a2690bbd87f6644f4e5de2370"
+        }
+      ]
+    },
+    {
+      "step": "old-source-replay-to-vps",
+      "at": "2026-10-10T18:06:45.034Z",
+      "transportFailure": null,
+      "receipts": [
+        {
+          "commandId": "reg-command-b6db0fc980b04d00484e6fd90b743fe7830b0fec63dff030edfa3db1578500fb",
+          "acceptedAt": "2026-10-10T18:06:43.559Z",
+          "registrationId": "reg-registration-06ed3ee18e91e882acdf9308329f184374ca0ffd5ca3b35353e59b111c004418",
+          "projectId": "reg-project-0a8e5184514d12c47e94fb7cd5adad40f493079c8ba0b753866e2fbc2c0b1271",
+          "sourceRevision": 1,
+          "digest": "93487c94fb78b93829792bad0890c955d497c272562f74f074b4bc849682be6b"
+        }
+      ]
+    },
+    {
+      "step": "real-pv-local-package-replay-to-vps",
+      "at": "2026-10-10T18:06:45.725Z",
+      "transportFailure": null,
+      "receipts": [
+        {
+          "commandId": "reg-command-e5b64dc4b7df5bda3a452c25d1700d4e1e371d00934800f21a5af24354f435f5",
+          "acceptedAt": "2026-10-10T18:02:32.926Z",
+          "registrationId": "reg-registration-51c84dfc1208cfedf45b265377811ea288d0a5d91caf89e9216bbe0f2e9fd794",
+          "projectId": "reg-project-655a608cda7393946649a081b02dcc4c2aaecf3f6e84bb3e89f3df479d573e2b",
+          "sourceRevision": 1,
+          "digest": "89de0077b9065bcc6ba58311da0f1010f4719603cdf81a652152144220187ab8"
+        }
+      ]
+    }
+  ],
+  "vpsSameHostSmoke": {
+    "ok": true,
+    "runDir": "/root/dsh-orchestration-tests/project-registration-20261011/runs/2026-10-10T18-02-32-465Z",
+    "evidence": [
+      {
+        "step": "unauthorized",
+        "at": "2026-10-10T18:02:32.608Z",
+        "httpStatus": 403
+      },
+      {
+        "step": "register-live",
+        "at": "2026-10-10T18:02:32.638Z",
+        "revision": 1
+      },
+      {
+        "step": "update-live",
+        "at": "2026-10-10T18:02:32.683Z",
+        "centralNotePreserved": true,
+        "centralFeedbackPreserved": true,
+        "centralReview": "needs_work",
+        "revision": 2,
+        "runState": "succeeded",
+        "observationOnly": true
+      },
+      {
+        "step": "final",
+        "at": "2026-10-10T18:02:32.758Z",
+        "revision": 3,
+        "acceptance": "needs_work"
+      },
+      {
+        "step": "replay",
+        "at": "2026-10-10T18:02:32.813Z",
+        "httpStatus": 200,
+        "receiptRevision": 1,
+        "currentRevision": 3
+      },
+      {
+        "step": "sealed",
+        "at": "2026-10-10T18:02:32.827Z",
+        "httpStatus": 409
+      },
+      {
+        "step": "pv-history",
+        "at": "2026-10-10T18:02:33.050Z",
+        "registrationId": "reg-registration-51c84dfc1208cfedf45b265377811ea288d0a5d91caf89e9216bbe0f2e9fd794",
+        "tasks": 21,
+        "runs": 14,
+        "reports": 20,
+        "artifactReferences": 51,
+        "largeMediaCopied": 0,
+        "unknownOriginalTime": true,
+        "sourceAcceptance": [
+          {
+            "title": "首轮技术交付",
+            "state": "unknown"
+          },
+          {
+            "title": "C6 封面候选",
+            "state": "unknown"
+          },
+          {
+            "title": "C6 配音技术交付",
+            "state": "unknown"
+          }
+        ]
+      },
+      {
+        "step": "pv-replay",
+        "at": "2026-10-10T18:02:33.084Z",
+        "httpStatus": 200,
+        "projectCount": 2
+      },
+      {
+        "step": "assertions",
+        "at": "2026-10-10T18:02:33.112Z",
+        "allImportedRunsObservationOnly": true,
+        "projectCount": 2,
+        "acknowledged": 4
+      }
+    ]
+  },
+  "pv": {
+    "tasks": 21,
+    "runs": 14,
+    "reports": 20,
+    "mediaReferences": 51,
+    "originalTimes": null,
+    "structure": "filename-based organization, not inferred native recursive delegation",
+    "acceptance": "unknown for current project; limited historical report subset"
+  },
+  "ui": {
+    "url": "http://127.0.0.1:43482/#projects",
+    "centralNoteSaved": true,
+    "screenshot": "/Users/pmp/.codex/worktrees/20e9/dsh-orchestration/.runtime/registration/vps-panel.jpg"
+  },
+  "runtime": {
+    "node": "/usr/local/bin/node (v22.23.1)",
+    "sqlite": "node:sqlite built-in, experimental on Node22",
+    "dependencies": "/root/dsh-orchestration-tests/project-registration-20261011/node_modules",
+    "packages": [
+      "ajv@8.17.1",
+      "cron-parser@5.4.0",
+      "zod@4.6.5"
+    ],
+    "size": "16MB; npm cache and transport tarballs removed"
+  }
+}

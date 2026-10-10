@@ -26,7 +26,11 @@
       "default": "./dist/remote/api.js"
     },
     "./channels": "./dist/channels.js",
-    "./client": "./dist/settings-client.js"
+    "./client": "./dist/settings-client.js",
+    "./project-registration": "./dist/project-registration/protocol.js",
+    "./project-registration/plugin": "./dist/project-registration/plugin.js",
+    "./project-registration/client": "./dist/project-registration/client.js",
+    "./project-registration/http": "./dist/project-registration/http.js"
   },
   "types": "./dist/index.d.ts",
   "files": [

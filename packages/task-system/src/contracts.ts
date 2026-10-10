@@ -100,6 +100,7 @@ export interface Task {
     observedAt: string;
     importedAt: string;
     originalCreatedAt?: string;
+    originalTimesUnknown?: boolean;
     label: string;
   };
 }
@@ -391,6 +392,7 @@ export interface NodeStatus {
   source: "authenticated-peer" | "host-local" | "unobserved";
 }
 export interface Snapshot {
+  projectRegistrations?: import("./project-registration/intake.js").RegistrationRecord[];
   schemaVersion: "1";
   generatedAt: string;
   source: Source;

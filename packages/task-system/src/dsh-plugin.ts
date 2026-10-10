@@ -2390,7 +2390,7 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
       },
     );
   } else {
-    const allowed = new Set(PLANNING_TOOLS);
+    const allowed = new Set([...PLANNING_TOOLS, "project_register", "project_update", "project_submit", "project_history_intake", "project_sync"]);
     ctx.tools.guard((exec) =>
       allowed.has(exec.name)
         ? undefined

@@ -13,6 +13,8 @@ import { NATIVE_PROVIDER_UNAVAILABLE_SUMMARY } from "./contracts.js";
 import { projectContext } from "./project-context.js";
 import { validateCriteria } from "./workbench-contracts.js";
 import type { Criterion, VersionRef } from "./workbench-contracts.js";
+import { mappedId } from "./project-registration/protocol.js";
+import { intakeRegistration, manageRegistration, type RegistrationRecord } from "./project-registration/intake.js";
 import type { ObservationCandidate, CapturedText } from "./observation.js";
 import { Ajv } from "ajv";
 import { CronExpressionParser } from "cron-parser";
@@ -1560,6 +1562,8 @@ export class TaskLedger {
         input.expectedRevision !== (t.revision ?? 1)
       )
         fail("CONFLICT", "Task revision changed");
+      if(this.list<RegistrationRecord>("registration").some(r=>r.packet.tasks.some(x=>mappedId(r.namespace,r.projectExternalId,"task",x.externalId)===t.taskId))) fail("FORBIDDEN","Origin owns registered task facts");
+      if (input.expectedIntentRevision !== undefined && input.expectedIntentRevision !== (t.intentRevision ?? 1)) fail("CONFLICT", "Task intent revision changed");
       const intentChanged =
         (input.goal !== undefined && input.goal !== (t.goal ?? "")) ||
         (input.acceptanceCriteria !== undefined &&
@@ -5020,9 +5024,133 @@ export class TaskLedger {
       quietUntil: new Date(latest + quietMs).toISOString(),
     };
   }
+  private optionalText(value: string, label: string, max = 10000): string {
+    if (typeof value !== "string" || value.length > max) fail("INVALID", `Invalid ${label}`);
+    return value.trim();
+  }
+  private criteria(value: string[]): string[] {
+    if (!Array.isArray(value) || value.length > 30) fail("INVALID", "Invalid acceptance criteria");
+    return value.map(item => text(item, "acceptance criterion", 2000));
+  }
+  private refs(value: string[], kind: string): string[] {
+    if (!Array.isArray(value) || value.length > 100 || new Set(value).size !== value.length) fail("INVALID", "Invalid reference list");
+    for (const key of value) this.need(kind, key);
+    return [...value];
+  }
+  private revision(old: { revision: number } | undefined, expected: number) {
+    if (!Number.isInteger(expected) || expected !== (old?.revision ?? 0)) fail("CONFLICT", "Record revision changed; reload before saving");
+    return expected + 1;
+  }
+  getProject(projectId: string) { return this.need<Project>("project", projectId); }
+  saveProject(commandId: string, input: ProjectInput) {
+    this.planner();
+    return this.command(commandId, "saveProject", input, () => {
+      const projectId = id(input.projectId ?? randomUUID()), old = this.get<Project>("project", projectId);
+      if(this.list<RegistrationRecord>("registration").some(r=>r.projectId===projectId)) fail("FORBIDDEN","Origin owns project facts; edit registration central metadata instead");
+      const revision = this.revision(old, input.expectedRevision);
+      if (!["candidate", "active", "paused", "completed", "archived"].includes(input.state)) fail("INVALID", "Invalid project state");
+      if (input.workspaceId) this.getWorkspace(input.workspaceId);
+      if (input.state !== "candidate" && !input.workspaceId) fail("INVALID", "An actual project requires a registered workspace");
+      if (input.state === "candidate" && input.workspaceId) fail("INVALID", "Candidate projects cannot bind a workspace");
+      if (!Array.isArray(input.milestones) || input.milestones.length > 50) fail("INVALID", "Invalid milestones");
+      const keys = new Set<string>();
+      const milestones = input.milestones.map(m => {
+        const key = id(m.milestoneId);
+        if (keys.has(key)) fail("INVALID", "Duplicate milestone"); keys.add(key);
+        if (!["planned", "active", "accepted"].includes(m.state)) fail("INVALID", "Invalid milestone state");
+        const evidenceReportIds = this.refs(m.evidenceReportIds, "report");
+        if (m.state === "accepted" && !evidenceReportIds.length) fail("INVALID", "Milestone acceptance requires report evidence");
+        return {milestoneId:key,title:text(m.title,"milestone title",500),weight:finite(m.weight,0.01,1000,"milestone weight"),state:m.state,evidenceReportIds};
+      });
+      for (const link of this.list<ProjectTaskLink>("project-task", projectId)) if (link.milestoneId && !keys.has(link.milestoneId)) fail("CONFLICT", "Relink tasks before removing their milestone");
+      const project: Project = {projectId,title:text(input.title,"project title",500),goal:text(input.goal,"project goal",10000),state:input.state,nextStep:this.optionalText(input.nextStep,"next step"),milestones,revision,createdAt:old?.createdAt ?? this.now(),updatedAt:this.now(),...(input.workspaceId ? {workspaceId:input.workspaceId} : {})};
+      this.put("project",projectId,project,null,project.state);
+      this.event("project.saved", {projectId,revision});
+      return project;
+    });
+  }
+  linkProjectTask(commandId: string, input: ProjectTaskInput) {
+    this.planner();
+    return this.command(commandId,"linkProjectTask",input,() => {
+      const project = this.getProject(input.projectId); this.getTask(input.taskId);
+      if(this.list<RegistrationRecord>("registration").some(r=>r.projectId===input.projectId)) fail("FORBIDDEN","Origin owns registered task links");
+      const linkId = hash([input.projectId,input.taskId]), old = this.get<ProjectTaskLink>("project-task",linkId), revision = this.revision(old,input.expectedRevision);
+      if (!["next","backlog","supporting"].includes(input.stage)) fail("INVALID","Invalid project task stage");
+      if (input.milestoneId && !project.milestones.some(m => m.milestoneId === input.milestoneId)) fail("INVALID","Milestone is not in this project");
+      const link: ProjectTaskLink = {linkId,projectId:project.projectId,taskId:input.taskId,stage:input.stage,rank:finite(input.rank,0,100000,"backlog rank"),revision,updatedAt:this.now(),...(input.milestoneId ? {milestoneId:input.milestoneId} : {})};
+      this.put("project-task",linkId,link,project.projectId);
+      this.event("project.task-linked",{projectId:project.projectId,stage:input.stage},input.taskId);
+      return link;
+    });
+  }
+  unlinkProjectTask(commandId: string, input: {projectId:string;taskId:string;expectedRevision:number}) {
+    this.planner();
+    return this.command(commandId,"unlinkProjectTask",input,() => {
+      if(this.list<RegistrationRecord>("registration").some(r=>r.projectId===input.projectId)) fail("FORBIDDEN","Origin owns registered task links");
+      const linkId = hash([input.projectId,input.taskId]);
+      const old = this.need<ProjectTaskLink>("project-task",linkId); this.revision(old,input.expectedRevision);
+      this.db.prepare("DELETE FROM entities WHERE kind='project-task' AND id=?").run(linkId);
+      this.event("project.task-unlinked",{projectId:input.projectId},input.taskId);
+      return {linkId,removed:true};
+    });
+  }
+  saveCapability(commandId: string, input: CapabilityInput) {
+    this.planner();
+    return this.command(commandId,"saveCapability",input,() => {
+      const capabilityId=id(input.capabilityId ?? randomUUID()),old=this.get<Capability>("capability",capabilityId),revision=this.revision(old,input.expectedRevision);
+      if (!["draft","reusable","retired"].includes(input.state)) fail("INVALID","Invalid capability state");
+      const reportIds=this.refs(input.reportIds,"report");
+      if(input.state === "reusable" && !reportIds.length) fail("INVALID","Reusable capability requires report evidence");
+      const value: Capability={capabilityId,title:text(input.title,"capability title",500),summary:text(input.summary,"capability summary",10000),applicability:this.optionalText(input.applicability,"applicability"),state:input.state,projectIds:this.refs(input.projectIds,"project"),taskIds:this.refs(input.taskIds,"task"),reportIds,revision,createdAt:old?.createdAt ?? this.now(),updatedAt:this.now()};
+      this.put("capability",capabilityId,value);this.event("capability.saved",{capabilityId,revision});return value;
+    });
+  }
+  saveOutcome(commandId: string, input: OutcomeInput) {
+    this.planner();
+    return this.command(commandId,"saveOutcome",input,() => {
+      const outcomeId=id(input.outcomeId ?? randomUUID()),old=this.get<ProjectOutcome>("outcome",outcomeId),revision=this.revision(old,input.expectedRevision);
+      if(old && this.list<RegistrationRecord>("registration").some(r=>r.packet.outcomes.some(o=>mappedId(r.namespace,r.projectExternalId,"outcome",o.externalId)===outcomeId))) {
+        for(const field of ["title","summary","projectIds","taskIds","reportIds","capabilityIds"] as const) if(canonical(old[field])!==canonical(input[field])) fail("FORBIDDEN","Origin owns outcome facts and relations; central may edit only feedback and state");
+      }
+      if (!["draft","accepted","needs_work"].includes(input.state)) fail("INVALID","Invalid outcome state");
+      const reportIds=this.refs(input.reportIds,"report");
+      if(input.state === "accepted" && !reportIds.length) fail("INVALID","Outcome acceptance requires report evidence");
+      const value: ProjectOutcome={outcomeId,title:text(input.title,"outcome title",500),summary:text(input.summary,"outcome summary",10000),feedback:this.optionalText(input.feedback,"feedback"),state:input.state,projectIds:this.refs(input.projectIds,"project"),taskIds:this.refs(input.taskIds,"task"),reportIds,capabilityIds:this.refs(input.capabilityIds,"capability"),revision,createdAt:old?.createdAt ?? this.now(),updatedAt:this.now()};
+      this.put("outcome",outcomeId,value);this.event("outcome.saved",{outcomeId,revision});return value;
+    });
+  }
+
+  registerProject(commandId: string, input: unknown, namespaces?: readonly string[]) {
+    this.planner();
+    // Namespace authorization is checked outside command replay as well.
+    if (namespaces && !namespaces.includes((input as {namespace?:string})?.namespace ?? "")) fail("FORBIDDEN", "Source namespace not authorized");
+    return this.command(commandId, "registerProject", input, () => intakeRegistration({get: this.get.bind(this), put: this.put.bind(this), now: this.now.bind(this)}, input, namespaces));
+  }
+  manageProjectRegistration(commandId: string, input: Parameters<typeof manageRegistration>[1], actor: string) {
+    this.planner();
+    return this.command(commandId, "manageProjectRegistration", {input,actor}, () => manageRegistration({get:this.get.bind(this),put:this.put.bind(this),now:this.now.bind(this)},input,actor));
+  }
+  withdrawProjectRegistration(commandId: string, input: {registrationId:string; namespace:string; expectedRevision:number}, namespaces: readonly string[]) {
+    this.planner();
+    if(!namespaces.includes(input.namespace)) fail("FORBIDDEN","Source namespace not authorized");
+    return this.command(commandId,"withdrawProjectRegistration",input,()=>{
+      const old=this.need<RegistrationRecord>("registration",input.registrationId);
+      if(old.namespace!==input.namespace) fail("FORBIDDEN","Source does not own registration");
+      if(old.sourceRevision!==input.expectedRevision) fail("CONFLICT","Source revision changed");
+      const value={...old,central:{...old.central,withdrawn:true,revision:old.central.revision+1}};
+      this.put("registration",input.registrationId,value);return {withdrawn:true,registrationId:input.registrationId};
+    });
+  }
   snapshot(): Snapshot {
     return {
       schemaVersion: "1",
+      projectRegistrations: this.list<RegistrationRecord>("registration"),
+      workbenchVersion: "1",
+      projects: this.list<Project>("project"),
+      projectTasks: this.list<ProjectTaskLink>("project-task"),
+      outcomes: this.list<ProjectOutcome>("outcome"),
+      capabilities: this.list<Capability>("capability"),
+      attempts: this.list<Attempt>("attempt"),
       generatedAt: this.now(),
       source: this.get<Source>("meta", "source") ?? {
         kind: "task-system",
