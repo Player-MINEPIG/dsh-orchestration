@@ -161,3 +161,22 @@ test("partial delivery and acknowledged cancellation keep their distinct facts",
   assert.match(html, /已确认静止/);
   assert.doesNotMatch(html, /取消请求已发出，等待静止/);
 });
+
+test("collapsed summary reports the matching latest run rather than the waiting task projection", () => {
+  const d = data();
+  d.tasks[1].state = "waiting";
+  d.runs.push({
+    taskId: "step",
+    runId: "rework",
+    parentRunId: "new",
+    state: "running",
+  });
+  const html = recursivePanel(d);
+  const summaries = [
+    ...html.matchAll(/<summary><span>执行步骤<\/span>[\s\S]*?<\/summary>/g),
+  ].map((m) => m[0]);
+  assert.equal(summaries.length, 2);
+  assert.ok(summaries.some((s) => s.includes("执行完成 · 待验收")));
+  assert.ok(summaries.some((s) => s.includes("进行中")));
+  assert.ok(summaries.every((s) => !s.includes("等待中")));
+});

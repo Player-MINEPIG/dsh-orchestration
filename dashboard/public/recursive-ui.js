@@ -95,8 +95,12 @@ export function recursivePanel(data, { rootTaskId } = {}) {
     attempts = data.attempts || [];
   const record = (node) => {
     const task = node.task,
-      step = task.delegationDisplay?.mode === "step";
-    return `<details class="delegation-task" ${step ? "" : "open"} data-task-id="${e(task.taskId)}" data-delegation-key="task:${e(task.taskId)}:${e(node.runs.map((x) => x.run.runId).join(","))}"><summary><span>${step ? "执行步骤" : "独立任务"}</span> <a href="${link(task.taskId)}">${e(task.title)}</a> <small>${e(STATE_LABELS[task.state] || task.state)}</small></summary><p class="hint">${e(task.taskId)} · ${e(task.delegationDisplay?.reason || "既有任务记录")} ${task.parentRunId ? `· 任务创建时父 Run ${e(task.parentRunId)}` : ""}</p>${node.cycle ? '<p role="alert">循环父任务关系，请核实原始记录。</p>' : ""}${node.runs
+      step = task.delegationDisplay?.mode === "step",
+      latest = node.runs[0]?.run,
+      summaryState = latest
+        ? executionLabel(latest)
+        : STATE_LABELS[task.state] || task.state;
+    return `<details class="delegation-task" ${step ? "" : "open"} data-task-id="${e(task.taskId)}" data-delegation-key="task:${e(task.taskId)}:${e(node.runs.map((x) => x.run.runId).join(","))}"><summary><span>${step ? "执行步骤" : "独立任务"}</span> <a href="${link(task.taskId)}">${e(task.title)}</a> <small>${e(summaryState)}</small></summary><p class="hint">${e(task.taskId)} · ${e(task.delegationDisplay?.reason || "既有任务记录")} ${task.parentRunId ? `· 任务创建时父 Run ${e(task.parentRunId)}` : ""}</p>${node.cycle ? '<p role="alert">循环父任务关系，请核实原始记录。</p>' : ""}${node.runs
       .map(({ run, children }) => {
         const route = run.route || {},
           proof = reports.filter((r) => r.runId === run.runId),
