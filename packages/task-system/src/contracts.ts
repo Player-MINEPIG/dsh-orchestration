@@ -30,6 +30,8 @@ export type RunState =
   | "uncertain";
 export type Role = "planner" | "executor" | "both";
 export interface TaskPolicy {
+  /** Explicit native backend grants; inherited and may only narrow. */
+  allowedBackends?: string[];
   allowedNodeIds?: string[];
   allowedWorkspaceIds?: string[];
   allowedTools?: string[];
@@ -77,6 +79,7 @@ export interface Task {
   kind: "ad_hoc" | "scheduled" | "observed";
   createdAt: string;
   updatedAt: string;
+  delegationDisplay?: import("./delegation-presentation.js").DelegationDisplay;
   parentTaskId?: string;
   parentRunId?: string;
   workspaceId?: string;
@@ -105,6 +108,8 @@ export interface Task {
   };
 }
 export interface ExecutionRoute {
+  /** Official ctx.subagents provider name. Absent means native DSH AgentLoop. */
+  backend?: string;
   nodeId: string;
   provider: string;
   model: string;

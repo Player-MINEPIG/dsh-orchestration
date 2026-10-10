@@ -16,6 +16,7 @@ import type { Criterion, VersionRef } from "./workbench-contracts.js";
 import { mappedId } from "./project-registration/protocol.js";
 import { intakeRegistration, manageRegistration, type RegistrationRecord } from "./project-registration/intake.js";
 import type { ObservationCandidate, CapturedText } from "./observation.js";
+import { delegationDisplay, type DelegationDisplayInput } from "./delegation-presentation.js";
 import { Ajv } from "ajv";
 import { CronExpressionParser } from "cron-parser";
 import { DatabaseSync } from "node:sqlite";
@@ -151,6 +152,7 @@ const TERMINAL = new Set<Run["state"]>([
   "blocked",
 ]);
 export interface LedgerOptions {
+  delegationDefaultDisplay?: "task" | "step";
   role?: Role;
   nodeId?: string;
   now?: () => number;
@@ -1352,6 +1354,7 @@ export class TaskLedger {
     )
       fail("INVALID", "Task policy must be an object");
     const policy: TaskPolicy = {
+      allowedBackends: [],
       maxDepth: 8,
       maxChildren: 8,
       maxDescendants: 32,
@@ -1362,8 +1365,9 @@ export class TaskLedger {
       "allowedNodeIds",
       "allowedWorkspaceIds",
       "allowedTools",
+      "allowedBackends",
     ] as const) {
-      const parentValues = parent?.policy?.[field];
+      const parentValues = field === "allowedBackends" && parent ? (parent.policy?.allowedBackends ?? []) : parent?.policy?.[field];
       const values = policy[field];
       if (
         values !== undefined &&
@@ -1944,6 +1948,7 @@ export class TaskLedger {
         this.getNode(input.route.nodeId).defaultWorkspaceId;
       if (workspaceId) input.route = { ...input.route, workspaceId };
       this.validateRoute(input.route);
+      if (input.route.backend && !task.policy?.allowedBackends?.includes(input.route.backend)) fail("FORBIDDEN", "Native backend grant required");
       const node = this.getNode(input.route.nodeId);
       let ancestorRunId = parentRunId;
       while (ancestorRunId) {
@@ -2537,6 +2542,7 @@ export class TaskLedger {
   delegateTask(
     commandId: string,
     input: LeaseRef & {
+      display?: DelegationDisplayInput;
       title: string;
       description?: string;
       route?: ExecutionRoute;
@@ -2546,6 +2552,7 @@ export class TaskLedger {
   ) {
     return this.command(commandId, "delegateTask", input, () => {
       const { run: parentRun } = this.owned(input);
+      const display = delegationDisplay(input.display, this.options.delegationDefaultDisplay ?? "task");
       const task = this.newTask({
         title: input.title,
         description: input.description,
@@ -2560,12 +2567,18 @@ export class TaskLedger {
         route: input.route ?? parentRun.route,
         configuration: input.configuration,
       });
+      task.delegationDisplay = display;
+      this.saveTask(task);
       this.event(
         "task.delegated",
         {
           parentTaskId: parentRun.taskId,
           parentRunId: parentRun.runId,
           nodeId: input.nodeId,
+          parentAttemptId: input.attemptId,
+          parentExecutionId: input.executionId ?? null,
+          parentFence: input.fence,
+          display: { ...display },
         },
         task.taskId,
         run.runId,
@@ -3538,7 +3551,7 @@ export class TaskLedger {
       latest.state === "succeeded" &&
       (!latest.intentSnapshot?.intentRevision ||
         latest.intentSnapshot.intentRevision === task.intentRevision)
-        ? "completed"
+        ? latest.route?.backend && latest.reviewStatus !== "accepted" ? "waiting" : "completed"
         : latest.state === "failed"
           ? "failed"
           : "waiting";
@@ -3609,8 +3622,10 @@ export class TaskLedger {
           kind: "result",
         })
       : undefined;
-
-    if (input.outcome === "partial") run.reviewStatus = "pending_user";
+    run.outcome = input.outcome;
+    run.validation =
+      input.outcome === "unknown" && !input.report ? "not-submitted" : "valid";
+    if (input.outcome === "partial" || (input.outcome === "success" && run.route?.backend)) run.reviewStatus = "pending_user";
     run.state = (
       {
         success: "succeeded",
@@ -4277,6 +4292,7 @@ export class TaskLedger {
       run.reviewStatus = input.decision;
       run.updatedAt = this.now();
       this.saveRun(run);
+      if (run.route?.backend) this.projectTaskState(this.getTask(run.taskId), run);
       this.event(
         "run.reviewed",
         {

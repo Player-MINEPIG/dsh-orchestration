@@ -21,7 +21,7 @@ export function bindCollaboration(ledger: LedgerPort, lease: LeaseRef, taskId: s
     async delegate(id,input) {
       live(); insist(ledger.delegateTask,'COLLABORATION_UNSUPPORTED',503)
       // Select allowed fields explicitly; extra runtime properties cannot overwrite the bound ref.
-      return await ledger.delegateTask(command('delegate',id),{ ...ref,title: input.title,...(input.description !== undefined ? { description: input.description } : {}),...(input.route ? { route: input.route } : {}),...(input.policy ? { policy: input.policy } : {}),...(input.configuration !== undefined ? { configuration: input.configuration } : {}) },{ signal })
+      return await ledger.delegateTask(command('delegate',id),{ ...ref,title: input.title,...(input.display ? { display: input.display } : {}),...(input.description !== undefined ? { description: input.description } : {}),...(input.route ? { route: input.route } : {}),...(input.policy ? { policy: input.policy } : {}),...(input.configuration !== undefined ? { configuration: input.configuration } : {}) },{ signal })
     },
     async history(targetTaskId = taskId) { live(); insist(ledger.scopedHistory,'COLLABORATION_UNSUPPORTED',503); return await ledger.scopedHistory({ ...ref,taskId: targetTaskId },{ signal }) },
     async wait(targetTaskId = taskId,quietMs?: number) { live(); insist(ledger.scopedAllSettled,'COLLABORATION_UNSUPPORTED',503); return await ledger.scopedAllSettled({ ...ref,taskId: targetTaskId,...(quietMs !== undefined ? { quietMs } : {}) },{ signal }) },

@@ -9,3 +9,5 @@ export { apply } from "./settings.js";
 
 export * from "./project-registration/protocol.js";
 export * from "./project-registration/intake.js";
+export * from "./delegation-presentation.js";
+export * from "./official-execution.js";
