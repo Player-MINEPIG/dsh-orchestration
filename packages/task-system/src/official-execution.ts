@@ -16,6 +16,12 @@ export interface OfficialBackend {
   /** An explicit backend grant acknowledges its native tools, not DSH toolFilter. */
   permissionContract: "codex-native";
 }
+/** Deployment defaults; effective configuration is also checked in the live app-server. */
+export function officialProfileConfig(
+  backend: Pick<OfficialBackend, "model" | "reasoningEffort">,
+): string {
+  return `model = ${JSON.stringify(backend.model)}\nmodel_reasoning_effort = ${JSON.stringify(backend.reasoningEffort)}\nsandbox_mode = "read-only"\napproval_policy = "never"\ncli_auth_credentials_store = "file"\nproject_root_markers = []\n[features]\nplugins = false\napps = false\nremote_plugin = false\nhooks = false\n`;
+}
 export function verifyOfficialProfile(
   backend: OfficialBackend,
   workspacePath?: string,
@@ -23,31 +29,17 @@ export function verifyOfficialProfile(
   if (!isAbsolute(backend.codexHome))
     throw new Error("isolated absolute CODEX_HOME required");
   const config = readFileSync(join(backend.codexHome, "config.toml"), "utf8");
-  // Keep the profile deliberately minimal: no alternate providers, MCP, plugins or project overrides.
-  const allowed = new Set([
-    "model",
-    "model_reasoning_effort",
-    "sandbox_mode",
-    "approval_policy",
-    "cli_auth_credentials_store",
-  ]);
-  const values = new Map<string, string>();
-  for (const line of config.split(/\r?\n/)) {
-    if (!line.trim() || line.trim().startsWith("#")) continue;
-    const match = /^([a-z_]+)\s*=\s*"([^"\n]*)"\s*$/.exec(line);
-    if (!match || !allowed.has(match[1]!) || values.has(match[1]!))
-      throw new Error("unsupported isolated Codex config");
-    values.set(match[1]!, match[2]!);
-  }
-  if (
-    values.get("model") !== backend.model ||
-    values.get("model_reasoning_effort") !== backend.reasoningEffort ||
-    values.get("sandbox_mode") !== "read-only" ||
-    values.get("approval_policy") !== "never" ||
-    values.get("cli_auth_credentials_store") !== "file"
-  )
+  // This deliberately narrow format is not evidence that managed layers are absent.
+  // The transport guard checks the effective configuration and loaded thread before any turn.
+  const normalized = (text: string) =>
+    text
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line && !line.startsWith("#"))
+      .join("\n");
+  if (normalized(config) !== normalized(officialProfileConfig(backend)))
     throw new Error(
-      "official Codex profile does not match exact model/effort/read-only contract",
+      "official Codex profile does not match exact model/effort/runtime isolation contract",
     );
   if (workspacePath && existsSync(join(workspacePath, ".codex")))
     throw new Error(

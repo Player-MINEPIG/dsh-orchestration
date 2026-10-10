@@ -11,7 +11,11 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { PassThrough } from "node:stream";
 import { apply as mountOfficial } from "@deepseek-ai/dsh-subagent-codex";
-import { TaskLedger, executeOfficialSubagent } from "../dist/index.js";
+import {
+  TaskLedger,
+  executeOfficialSubagent,
+  officialProfileConfig,
+} from "../dist/index.js";
 import { ExecutorWorker, RecoveryStore } from "../dist/remote/api.js";
 const capabilities = {
   agentOptions: false,
@@ -25,7 +29,7 @@ function profile(t) {
   t.after(() => rmSync(root, { recursive: true, force: true }));
   writeFileSync(
     join(home, "config.toml"),
-    'model = "gpt-6-luna"\nmodel_reasoning_effort = "low"\nsandbox_mode = "read-only"\napproval_policy = "never"\ncli_auth_credentials_store = "file"\n',
+    officialProfileConfig({ model: "gpt-6-luna", reasoningEffort: "low" }),
   );
   return {
     backend: "codex-luna-low",

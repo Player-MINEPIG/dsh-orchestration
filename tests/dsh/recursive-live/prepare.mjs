@@ -11,6 +11,7 @@ import { generateKeyPairSync } from "node:crypto";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { liveConfiguration } from "./config.mjs";
+import { officialProfileConfig } from "../../../packages/task-system/dist/index.js";
 const config = liveConfiguration(),
   { root, workspace } = config;
 const codexHome = resolve(
@@ -38,7 +39,7 @@ mkdirSync(codexHome, { recursive: true });
 symlinkSync(auth, join(codexHome, "auth.json"));
 writeFileSync(
   join(codexHome, "config.toml"),
-  'model = "gpt-6-luna"\nmodel_reasoning_effort = "low"\nsandbox_mode = "read-only"\napproval_policy = "never"\ncli_auth_credentials_store = "file"\n',
+  officialProfileConfig({ model: "gpt-6-luna", reasoningEffort: "low" }),
 );
 const { publicKey, privateKey } = generateKeyPairSync("ed25519");
 writeFileSync(

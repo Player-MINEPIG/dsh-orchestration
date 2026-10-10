@@ -10,6 +10,7 @@ import {
   executeOfficialSubagent,
   authorizeOfficialBackend,
   verifyOfficialProfile,
+  officialProfileConfig,
 } from "../dist/index.js";
 const backend = (home) => ({
   backend: "codex-luna-low",
@@ -32,7 +33,7 @@ function profile(t) {
   t.after(() => rmSync(home, { recursive: true, force: true }));
   writeFileSync(
     join(home, "config.toml"),
-    'model = "gpt-6-luna"\nmodel_reasoning_effort = "low"\nsandbox_mode = "read-only"\napproval_policy = "never"\ncli_auth_credentials_store = "file"\n',
+    officialProfileConfig({ model: "gpt-6-luna", reasoningEffort: "low" }),
   );
   return backend(home);
 }
