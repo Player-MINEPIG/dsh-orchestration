@@ -33,6 +33,8 @@ export interface PlanningInput {
   /** Host-bound existing task; persistence cannot create a duplicate. */
   taskId?: string;
   expectedActionVersion?: string;
+  /** Operator feedback for this retry; persisted with the decision, not the original Task intent. */
+  retryPrompt?: string;
 }
 /** A consumer of the independent decision plugin. All grants are operator-owned policy. */
 export class TaskPlanner {

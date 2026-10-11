@@ -256,3 +256,54 @@ test('main scroll is not carried across filters or project identities',async()=>
  scroll.scrollTop=190;vm.runInContext('render()',p.context);assert.equal(scroll.scrollTop,190,'same-view redraw retains reading position');
  vm.runInContext("state.project='different-project';render()",p.context);assert.equal(scroll.scrollTop,0);
 });
+
+test('review, approval and running tasks expose cancellation without a misleading manual completion menu',async()=>{
+ for(const props of [
+  {status:'review',reviewStatus:'pending_user'},
+  {status:'review',confirmationPending:true},
+  {status:'running'},
+ ]){
+  const p=page(),task={id:'decision',project:'unassigned',title:'Decision',canConfirm:true,canComplete:false,canRequestMaterials:false,canCancel:true,...props};
+  await p.answer({value:{...snapshot,tasks:[task]}});await p.action('task',task.id);
+  assert.doesNotMatch(p.overlay(),/data-action="task-manual"/);
+  assert.match(p.overlay(),/data-action="task-cancel"/);
+  if(props.reviewStatus)assert.match(p.overlay(),/审核通过[\s\S]*审核不通过/);
+  if(props.confirmationPending)assert.match(p.overlay(),/批准执行/);
+  await p.action('task-cancel',task.id);
+  assert.match(p.overlay(),/取消此任务并停止后续派发/);
+  assert.doesNotMatch(p.overlay(),/已完成，/);
+  await p.action('close');assert.match(p.overlay(),/aria-label="Decision"/);
+  assert.equal(p.requests.length,0,'opening and closing confirmation must not submit a decision');
+ }
+});
+
+test('review decisions preserve their distinct accept and reject commands',async()=>{
+ for(const action of ['accept','reject']){
+  const p=page(),task={id:'review',project:'unassigned',title:'Review',status:'review',reviewStatus:'pending_user',canCancel:true,actionVersion:'v1',runId:'r1',confirmationRevision:1};
+  await p.answer({value:{...snapshot,tasks:[task]}});await p.action('task',task.id);await p.action('task-'+action,task.id);
+  const pending=p.action('task-action-confirm');assert.equal(p.requests[0].input.action,action);assert.equal(p.requests[0].input.runId,'r1');
+  await p.answer({value:{}});await p.answer({value:{...snapshot,tasks:[{...task,status:action==='accept'?'done':'error'}]}});await pending;
+ }
+});
+
+test('cancelled task explains why redispatch is disabled and executor cannot cancel',async()=>{
+ const p=page(),task={id:'cancelled',project:'unassigned',title:'Cancelled',status:'cancelled',nativeState:'cancelled',canRetry:false};
+ await p.answer({value:{...snapshot,tasks:[task]}});await p.action('task',task.id);
+ assert.match(p.overlay(),/已取消的任务不支持直接重新派发/);
+ assert.match(p.overlay(),/data-action="task-retry"[^>]*disabled/);
+ const readonly=page();await readonly.answer({value:{...snapshot,tasks:[{...task,status:'review',canCancel:true}],viewContext:{role:'executor',scope:'node',nodeId:'mbp'}}});
+ await readonly.action('task',task.id);assert.doesNotMatch(readonly.overlay(),/data-action="task-cancel"/);
+ await readonly.action('task-cancel',task.id);assert.equal(readonly.requests.length,0);assert.equal(readonly.elements.get('toast').dataset.status,'error');
+});
+
+test('retry feedback survives polling and failed submission, then reaches the action RPC',async()=>{
+ const p=page(),task={id:'feedback',project:'unassigned',title:'Feedback',status:'error',reviewStatus:'rejected',canRetry:true,actionVersion:'v',runId:'r',confirmationRevision:1};
+ const data={...snapshot,tasks:[task]};await p.answer({value:data});await p.action('task',task.id);await p.action('task-retry',task.id);
+ assert.match(p.overlay(),/补充提示词（可选）/);
+ const field={id:'retry-prompt',dataset:{},value:'补上边界测试 <example>'};p.elements.set('retry-prompt',field);p.documentEvents.input({target:field});
+ const poll=p.startPoll();await p.answer({value:{...data,tasks:[{...task,report:'Updated while typing'}]}});await poll;assert.equal(vm.runInContext('state.overlay.retryPrompt',p.context),field.value);assert.equal(p.elements.get('retry-prompt').value,field.value);
+ let submit=p.action('task-action-confirm');const command=p.requests[0].input.commandId;
+ assert.equal(p.requests[0].input.retryPrompt,field.value);await p.answer({error:'暂时离线'});await submit;
+ assert.match(p.overlay(),/补上边界测试 &lt;example&gt;/);
+ submit=p.action('task-action-confirm');assert.equal(p.requests[0].input.commandId,command);await p.answer({value:{}});await p.answer({value:data});await submit;
+});

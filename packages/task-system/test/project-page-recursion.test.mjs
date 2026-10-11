@@ -80,3 +80,14 @@ test('disclosures preserve exact run/type and viewed task across refresh and ful
  // Capture protects a user toggle even if its asynchronous toggle event has not fired yet.
  const key=vm.runInContext("disclosureKey('steps','r-parent')",p.context);vm.runInContext('rememberDisclosures',p.context)({querySelectorAll:()=>[{dataset:{detailState:key},open:false}]});await p.action('detail-fullscreen');assert.doesNotMatch(p.overlay(),/class="recursive-steps"[^>]* open>/);
 });
+
+test('current recursive task is a label while child and project-tree tasks remain navigable',async()=>{
+ const p=page();await p.answer({value:structuredClone(snapshot)});await p.action('task','parent');
+ assert.match(p.overlay(),/<strong aria-current="true">parent<\/strong>/);
+ assert.doesNotMatch(p.overlay(),/data-action="task" data-id="parent"/);
+ assert.match(p.overlay(),/data-action="task" data-id="child"/);
+ await p.action('task','child');assert.match(p.overlay(),/aria-label="child"/);assert.match(p.overlay(),/<strong aria-current="true">child<\/strong>/);
+ await p.action('close');
+ const tree=vm.runInContext("projectRecursion('p')",p.context);
+ assert.match(tree,/data-action="task" data-id="parent"/);assert.match(tree,/data-action="task" data-id="child"/);
+});

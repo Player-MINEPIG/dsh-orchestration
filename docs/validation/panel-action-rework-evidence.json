@@ -1,0 +1,487 @@
+{
+  "test": "original-panel-rejection-and-retry",
+  "transport": "Tailscale direct",
+  "completed": true,
+  "tests": {
+    "panelRuntimeLedgerPlanning": 115,
+    "nativeContext": 4,
+    "workspaceAndRemoteContext": 10
+  },
+  "tasks": [
+    {
+      "acceptanceCriteria": [],
+      "confirmation": {
+        "required": false,
+        "revision": 1,
+        "state": "not_required"
+      },
+      "createdAt": "2026-10-11T12:41:57.261Z",
+      "description": "仅输出文字：第一版：待修改。若收到本次返工补充提示词，则优先按补充提示词输出。不要读取或修改文件，不要执行命令。",
+      "intentRevision": 1,
+      "kind": "ad_hoc",
+      "policy": {
+        "allowedBackends": [
+          "codex-luna-low"
+        ],
+        "maxChildren": 8,
+        "maxDepth": 8,
+        "maxDescendants": 32
+      },
+      "revision": 1,
+      "state": "cancelled",
+      "tags": [],
+      "taskId": "507e87e2-e274-4e6e-8200-e3946294f592",
+      "title": "面板返工真实验收（隔离测试）",
+      "updatedAt": "2026-10-11T12:45:15.949Z",
+      "priority": "normal"
+    },
+    {
+      "acceptanceCriteria": [],
+      "confirmation": {
+        "required": false,
+        "revision": 1,
+        "state": "not_required"
+      },
+      "createdAt": "2026-10-11T12:46:12.115Z",
+      "description": "仅输出文字：第一版：待修改。若收到本次返工补充提示词，则优先按补充提示词输出。不要读取或修改文件，不要执行命令。",
+      "intentRevision": 1,
+      "kind": "ad_hoc",
+      "policy": {
+        "allowedBackends": [
+          "codex-luna-low"
+        ],
+        "maxChildren": 8,
+        "maxDepth": 8,
+        "maxDescendants": 32
+      },
+      "revision": 1,
+      "state": "waiting",
+      "tags": [],
+      "taskId": "2a893d9f-6ad1-4965-a456-ea9f6afc7cba",
+      "title": "面板返工真实验收 v2（隔离测试）",
+      "updatedAt": "2026-10-11T12:48:16.343Z",
+      "priority": "normal"
+    }
+  ],
+  "runs": [
+    {
+      "configuration": null,
+      "createdAt": "2026-10-11T12:41:57.271Z",
+      "currentAttemptId": "6b8c5202-53b0-4163-963e-d210f642d22d",
+      "executionStartedAt": "2026-10-11T12:42:01.404Z",
+      "historyOnly": false,
+      "intentSnapshot": {
+        "acceptanceCriteria": [],
+        "description": "仅输出文字：第一版：待修改。若收到本次返工补充提示词，则优先按补充提示词输出。不要读取或修改文件，不要执行命令。",
+        "intentRevision": 1,
+        "title": "面板返工真实验收（隔离测试）"
+      },
+      "reviewStatus": "rejected",
+      "route": {
+        "backend": "codex-luna-low",
+        "model": "gpt-6-luna",
+        "nodeId": "mbp",
+        "provider": "codex",
+        "reasoningEffort": "low",
+        "requiredCapabilities": [
+          "official-codex"
+        ],
+        "workspaceId": "mbp-workspace"
+      },
+      "runId": "eab51add-b8ff-4a92-bf2f-78c0aacafe31",
+      "state": "succeeded",
+      "taskId": "507e87e2-e274-4e6e-8200-e3946294f592",
+      "updatedAt": "2026-10-11T12:42:41.726Z",
+      "workspaceConstraint": "mbp-workspace",
+      "sessionIds": [
+        "task-e5a75f28cc7960a19ef5f211571baf818c717e87"
+      ]
+    },
+    {
+      "cancellationRequested": true,
+      "configuration": {
+        "reporting": "summary"
+      },
+      "contextNotes": [
+        "50616ac8-ad25-4c31-a109-b3fb5f1b5581"
+      ],
+      "createdAt": "2026-10-11T12:43:24.162Z",
+      "historyOnly": false,
+      "intentSnapshot": {
+        "acceptanceCriteria": [],
+        "description": "仅输出文字：第一版：待修改。若收到本次返工补充提示词，则优先按补充提示词输出。不要读取或修改文件，不要执行命令。",
+        "intentRevision": 1,
+        "title": "面板返工真实验收（隔离测试）"
+      },
+      "retryPolicy": {
+        "baseDelayMs": 30000,
+        "maxDelayMs": 60000,
+        "maxRetries": 0,
+        "resumableTools": []
+      },
+      "route": {
+        "backend": "codex-luna-low",
+        "model": "gpt-6-luna",
+        "nodeId": "mbp",
+        "provider": "codex",
+        "reasoningEffort": "low",
+        "requiredCapabilities": [
+          "official-codex"
+        ]
+      },
+      "runId": "9052b6bc-b9c8-40a3-bc38-b9a5668d7ece",
+      "state": "cancelled",
+      "taskId": "507e87e2-e274-4e6e-8200-e3946294f592",
+      "updatedAt": "2026-10-11T12:45:15.948Z",
+      "sessionIds": []
+    },
+    {
+      "configuration": null,
+      "createdAt": "2026-10-11T12:46:12.164Z",
+      "currentAttemptId": "321f2d03-2f4b-489b-8a85-6ef8a362b49a",
+      "executionStartedAt": "2026-10-11T12:46:15.664Z",
+      "historyOnly": false,
+      "intentSnapshot": {
+        "acceptanceCriteria": [],
+        "description": "仅输出文字：第一版：待修改。若收到本次返工补充提示词，则优先按补充提示词输出。不要读取或修改文件，不要执行命令。",
+        "intentRevision": 1,
+        "title": "面板返工真实验收 v2（隔离测试）"
+      },
+      "reviewStatus": "rejected",
+      "route": {
+        "backend": "codex-luna-low",
+        "model": "gpt-6-luna",
+        "nodeId": "mbp",
+        "provider": "codex",
+        "reasoningEffort": "low",
+        "requiredCapabilities": [
+          "official-codex"
+        ],
+        "workspaceId": "mbp-workspace"
+      },
+      "runId": "0ccea041-e09a-4428-97b8-d1e537ad3ef2",
+      "state": "succeeded",
+      "taskId": "2a893d9f-6ad1-4965-a456-ea9f6afc7cba",
+      "updatedAt": "2026-10-11T12:47:50.841Z",
+      "workspaceConstraint": "mbp-workspace",
+      "sessionIds": [
+        "task-167df39f1c21b7c954042acf343677396c636fc6"
+      ]
+    },
+    {
+      "configuration": {
+        "reporting": "summary"
+      },
+      "contextNotes": [
+        "736be068-c091-44ac-a1b9-e04fa951b64e"
+      ],
+      "createdAt": "2026-10-11T12:48:04.967Z",
+      "currentAttemptId": "f9bef694-8feb-4c97-93f4-ed73298a6eff",
+      "executionStartedAt": "2026-10-11T12:48:08.827Z",
+      "historyOnly": false,
+      "intentSnapshot": {
+        "acceptanceCriteria": [],
+        "description": "仅输出文字：第一版：待修改。若收到本次返工补充提示词，则优先按补充提示词输出。不要读取或修改文件，不要执行命令。",
+        "intentRevision": 1,
+        "title": "面板返工真实验收 v2（隔离测试）"
+      },
+      "retryPolicy": {
+        "baseDelayMs": 30000,
+        "maxDelayMs": 60000,
+        "maxRetries": 0,
+        "resumableTools": []
+      },
+      "reviewStatus": "pending_user",
+      "route": {
+        "backend": "codex-luna-low",
+        "model": "gpt-6-luna",
+        "nodeId": "mbp",
+        "provider": "codex",
+        "reasoningEffort": "low",
+        "requiredCapabilities": [
+          "official-codex"
+        ],
+        "workspaceId": "mbp-workspace"
+      },
+      "runId": "1125506d-5d7b-413c-9080-bd495415f5c8",
+      "state": "succeeded",
+      "taskId": "2a893d9f-6ad1-4965-a456-ea9f6afc7cba",
+      "updatedAt": "2026-10-11T12:48:16.343Z",
+      "workspaceConstraint": "mbp-workspace",
+      "sessionIds": [
+        "task-1805dcd80af9b9117837a55c53706913b1f9ce2d"
+      ]
+    }
+  ],
+  "reports": [
+    {
+      "artifactIds": [],
+      "attemptId": "6b8c5202-53b0-4163-963e-d210f642d22d",
+      "body": "Official subagent ed5b671d-da3b-4afa-8e44-133242a91076; no live progress or continuation supported",
+      "createdAt": "2026-10-11T12:42:08.618Z",
+      "data": {
+        "backend": "codex-luna-low",
+        "carrierSessionId": "task-e5a75f28cc7960a19ef5f211571baf818c717e87",
+        "officialSubagentId": "ed5b671d-da3b-4afa-8e44-133242a91076"
+      },
+      "kind": "progress",
+      "recordedAt": "2026-10-11T12:42:08.618Z",
+      "reportId": "089d4346-f79a-4ab6-ab4f-e20f65186eaa",
+      "revision": 1,
+      "runId": "eab51add-b8ff-4a92-bf2f-78c0aacafe31",
+      "sessionId": "task-e5a75f28cc7960a19ef5f211571baf818c717e87",
+      "taskId": "507e87e2-e274-4e6e-8200-e3946294f592",
+      "title": "Official backend started"
+    },
+    {
+      "artifactIds": [],
+      "attemptId": "6b8c5202-53b0-4163-963e-d210f642d22d",
+      "body": "第一版：待修改",
+      "createdAt": "2026-10-11T12:42:10.586Z",
+      "data": {
+        "acceptance": "pending_user",
+        "backend": "codex-luna-low",
+        "cliSource": "host-configured",
+        "cliVersion": "codex-cli 0.162.0-alpha.17.2",
+        "continuationSupported": false,
+        "model": "gpt-6-luna",
+        "officialSubagentId": "ed5b671d-da3b-4afa-8e44-133242a91076",
+        "permissionContract": "codex-native",
+        "productThreadId": "01a12afc-18a3-78b3-9577-a5894afd47e8",
+        "progressSupported": false,
+        "reasoningEffort": "low",
+        "stopReason": "completed",
+        "verifiedModel": "gpt-6-luna",
+        "verifiedReasoningEffort": "low"
+      },
+      "kind": "result",
+      "recordedAt": "2026-10-11T12:42:10.586Z",
+      "reportId": "34e24720-3ea5-4e49-888a-8afe6fe8f210",
+      "revision": 1,
+      "runId": "eab51add-b8ff-4a92-bf2f-78c0aacafe31",
+      "sessionId": "task-e5a75f28cc7960a19ef5f211571baf818c717e87",
+      "taskId": "507e87e2-e274-4e6e-8200-e3946294f592",
+      "title": "Official Codex execution evidence"
+    },
+    {
+      "artifactIds": [],
+      "body": "仅输出文字：第一版：待修改。若收到本次返工补充提示词，则优先按补充提示词输出。不要读取或修改文件，不要执行命令。\n\n本次返工补充提示词：\n请只输出“第二版：返工提示词已生效”。保持纯文字，不读取或修改文件，不执行命令。",
+      "createdAt": "2026-10-11T12:43:24.141Z",
+      "data": {
+        "actor": "operator:task-center",
+        "retryPrompt": "请只输出“第二版：返工提示词已生效”。保持纯文字，不读取或修改文件，不执行命令。"
+      },
+      "kind": "progress",
+      "recordedAt": "2026-10-11T12:43:24.141Z",
+      "reportId": "50616ac8-ad25-4c31-a109-b3fb5f1b5581",
+      "revision": 1,
+      "taskId": "507e87e2-e274-4e6e-8200-e3946294f592",
+      "title": "Task request"
+    },
+    {
+      "artifactIds": [],
+      "attemptId": "321f2d03-2f4b-489b-8a85-6ef8a362b49a",
+      "body": "Official subagent 24f2a8a1-1c2b-423d-8b40-fb46bea49768; no live progress or continuation supported",
+      "createdAt": "2026-10-11T12:46:24.157Z",
+      "data": {
+        "backend": "codex-luna-low",
+        "carrierSessionId": "task-167df39f1c21b7c954042acf343677396c636fc6",
+        "officialSubagentId": "24f2a8a1-1c2b-423d-8b40-fb46bea49768"
+      },
+      "kind": "progress",
+      "recordedAt": "2026-10-11T12:46:24.157Z",
+      "reportId": "cdaef183-f781-4d36-bb17-da2328c4ba06",
+      "revision": 1,
+      "runId": "0ccea041-e09a-4428-97b8-d1e537ad3ef2",
+      "sessionId": "task-167df39f1c21b7c954042acf343677396c636fc6",
+      "taskId": "2a893d9f-6ad1-4965-a456-ea9f6afc7cba",
+      "title": "Official backend started"
+    },
+    {
+      "artifactIds": [],
+      "attemptId": "321f2d03-2f4b-489b-8a85-6ef8a362b49a",
+      "body": "第一版：待修改",
+      "createdAt": "2026-10-11T12:46:32.357Z",
+      "data": {
+        "acceptance": "pending_user",
+        "backend": "codex-luna-low",
+        "cliSource": "host-configured",
+        "cliVersion": "codex-cli 0.162.0-alpha.17.2",
+        "continuationSupported": false,
+        "model": "gpt-6-luna",
+        "officialSubagentId": "24f2a8a1-1c2b-423d-8b40-fb46bea49768",
+        "permissionContract": "codex-native",
+        "productThreadId": "01a12b00-00c1-7450-8b6c-6968c5d1c104",
+        "progressSupported": false,
+        "reasoningEffort": "low",
+        "stopReason": "completed",
+        "verifiedModel": "gpt-6-luna",
+        "verifiedReasoningEffort": "low"
+      },
+      "kind": "result",
+      "recordedAt": "2026-10-11T12:46:32.358Z",
+      "reportId": "1bfc3280-ffe7-4cf1-9d91-4af0bf55409a",
+      "revision": 1,
+      "runId": "0ccea041-e09a-4428-97b8-d1e537ad3ef2",
+      "sessionId": "task-167df39f1c21b7c954042acf343677396c636fc6",
+      "taskId": "2a893d9f-6ad1-4965-a456-ea9f6afc7cba",
+      "title": "Official Codex execution evidence"
+    },
+    {
+      "artifactIds": [],
+      "body": "仅输出文字：第一版：待修改。若收到本次返工补充提示词，则优先按补充提示词输出。不要读取或修改文件，不要执行命令。\n\n本次返工补充提示词：\n请只输出“第二版：返工提示词已生效”。保持纯文字，不读取或修改文件，不执行命令。",
+      "createdAt": "2026-10-11T12:48:04.933Z",
+      "data": {
+        "actor": "operator:task-center",
+        "retryPrompt": "请只输出“第二版：返工提示词已生效”。保持纯文字，不读取或修改文件，不执行命令。"
+      },
+      "kind": "progress",
+      "recordedAt": "2026-10-11T12:48:04.933Z",
+      "reportId": "736be068-c091-44ac-a1b9-e04fa951b64e",
+      "revision": 1,
+      "taskId": "2a893d9f-6ad1-4965-a456-ea9f6afc7cba",
+      "title": "Task request"
+    },
+    {
+      "artifactIds": [],
+      "attemptId": "f9bef694-8feb-4c97-93f4-ed73298a6eff",
+      "body": "Official subagent b73485bd-2fe7-40e1-93f4-3c03887b39c4; no live progress or continuation supported",
+      "createdAt": "2026-10-11T12:48:13.547Z",
+      "data": {
+        "backend": "codex-luna-low",
+        "carrierSessionId": "task-1805dcd80af9b9117837a55c53706913b1f9ce2d",
+        "officialSubagentId": "b73485bd-2fe7-40e1-93f4-3c03887b39c4"
+      },
+      "kind": "progress",
+      "recordedAt": "2026-10-11T12:48:13.547Z",
+      "reportId": "3a10d2c5-b0b8-42bb-ba54-9186567fe366",
+      "revision": 1,
+      "runId": "1125506d-5d7b-413c-9080-bd495415f5c8",
+      "sessionId": "task-1805dcd80af9b9117837a55c53706913b1f9ce2d",
+      "taskId": "2a893d9f-6ad1-4965-a456-ea9f6afc7cba",
+      "title": "Official backend started"
+    },
+    {
+      "artifactIds": [],
+      "attemptId": "f9bef694-8feb-4c97-93f4-ed73298a6eff",
+      "body": "第二版：返工提示词已生效",
+      "createdAt": "2026-10-11T12:48:16.342Z",
+      "data": {
+        "acceptance": "pending_user",
+        "backend": "codex-luna-low",
+        "cliSource": "host-configured",
+        "cliVersion": "codex-cli 0.162.0-alpha.17.2",
+        "continuationSupported": false,
+        "model": "gpt-6-luna",
+        "officialSubagentId": "b73485bd-2fe7-40e1-93f4-3c03887b39c4",
+        "permissionContract": "codex-native",
+        "productThreadId": "01a12b01-a9f8-7f71-beee-158eba73694e",
+        "progressSupported": false,
+        "reasoningEffort": "low",
+        "stopReason": "completed",
+        "verifiedModel": "gpt-6-luna",
+        "verifiedReasoningEffort": "low"
+      },
+      "kind": "result",
+      "recordedAt": "2026-10-11T12:48:16.342Z",
+      "reportId": "26aa1dd6-4d30-449a-bcea-535b039e5c41",
+      "revision": 1,
+      "runId": "1125506d-5d7b-413c-9080-bd495415f5c8",
+      "sessionId": "task-1805dcd80af9b9117837a55c53706913b1f9ce2d",
+      "taskId": "2a893d9f-6ad1-4965-a456-ea9f6afc7cba",
+      "title": "Official Codex execution evidence"
+    }
+  ],
+  "wire": {
+    "actualCalls": 3,
+    "proof": [
+      {
+        "kind": "request",
+        "method": "thread/start",
+        "model": "gpt-6-luna",
+        "ephemeral": true,
+        "approvalPolicy": "never"
+      },
+      {
+        "kind": "response",
+        "method": "thread/start",
+        "productThreadId": "01a12afc-18a3-78b3-9577-a5894afd47e8",
+        "ephemeral": true,
+        "model": "gpt-6-luna",
+        "reasoningEffort": "low"
+      },
+      {
+        "kind": "event",
+        "method": "turn/completed",
+        "productThreadId": "01a12afc-18a3-78b3-9577-a5894afd47e8",
+        "status": "completed"
+      },
+      {
+        "kind": "request",
+        "method": "thread/start",
+        "model": "gpt-6-luna",
+        "ephemeral": true,
+        "approvalPolicy": "never"
+      },
+      {
+        "kind": "response",
+        "method": "thread/start",
+        "productThreadId": "01a12b00-00c1-7450-8b6c-6968c5d1c104",
+        "ephemeral": true,
+        "model": "gpt-6-luna",
+        "reasoningEffort": "low"
+      },
+      {
+        "kind": "event",
+        "method": "turn/completed",
+        "productThreadId": "01a12b00-00c1-7450-8b6c-6968c5d1c104",
+        "status": "completed"
+      },
+      {
+        "kind": "request",
+        "method": "thread/start",
+        "model": "gpt-6-luna",
+        "ephemeral": true,
+        "approvalPolicy": "never"
+      },
+      {
+        "kind": "response",
+        "method": "thread/start",
+        "productThreadId": "01a12b01-a9f8-7f71-beee-158eba73694e",
+        "ephemeral": true,
+        "model": "gpt-6-luna",
+        "reasoningEffort": "low"
+      },
+      {
+        "kind": "event",
+        "method": "turn/completed",
+        "productThreadId": "01a12b01-a9f8-7f71-beee-158eba73694e",
+        "status": "completed"
+      }
+    ],
+    "dispatches": []
+  },
+  "desktopOverlay": {
+    "before": {
+      "x": 56,
+      "y": 0,
+      "width": 1392,
+      "height": 819
+    },
+    "after": {
+      "x": 0,
+      "y": 0,
+      "width": 1448,
+      "height": 907
+    },
+    "viewport": [
+      1448,
+      907
+    ]
+  },
+  "review": "Self-review: action CAS/idempotency, rejected-vs-cancelled eligibility, source report immutability, workspace grant retention, readonly executor actions and HTML escaping checked.",
+  "limitations": [
+    "Timed plans are discussed only; this change adds no schedule entry.",
+    "No active Codex cancellation tested; failed first UI experiment cancelled only its unclaimed retry."
+  ]
+}

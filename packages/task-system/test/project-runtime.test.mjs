@@ -438,3 +438,35 @@ test('manual completion and original-session supplements never create an executi
   runtime.actOnTask(operator(runtime,third.task.taskId,'cancel','cancel-manual'));assert.equal(h.ledger.getTask(third.task.taskId).state,'cancelled');
  }finally{await h.dispose();}
 });
+
+test('rejected result can be dispatched with immutable operator feedback in the next claim and original evidence preserved',async()=>{
+ for(const outcome of ['partial','success']){
+  const h=await createNativeHarness({config:{role:'planner'}});
+  try{
+   const runtime=h.ctx.taskSystem.projects;h.ledger.registerWorkspace('rework-workspace',{workspaceId:'review-ws',nodeId:'worker',path:join(h.dir,'review-workspace'),label:'Review workspace',state:'ready',createdAt:new Date().toISOString()});h.ledger.registerNode('node',{...worker,workspaceIds:['review-ws']});
+   const task=h.ledger.createTask('rework-task',{title:'Rework fixture',description:'Original instructions',policy:{allowedBackends:['fixture-backend']}}).value;
+   const run=h.ledger.createRun('rework-run',{taskId:task.taskId,route:{nodeId:'worker',provider:'worker-model',model:'small',reasoningEffort:'off',requiredCapabilities:[],...(outcome==='success'?{backend:'fixture-backend',workspaceId:'review-ws'}:{})}}).value;
+   const a=h.ledger.claim('rework-claim',{runId:run.runId,nodeId:'worker',ttlMs:10000}).value.attempt;
+   h.ledger.submit('rework-result',{runId:a.runId,attemptId:a.attemptId,nodeId:a.nodeId,fence:a.fence,outcome,summary:'Original result',report:{title:'Original report',body:'Keep original evidence'}});
+   assert.equal(runtime.snapshot().tasks[0].canRetry,false);
+   runtime.actOnTask(operator(runtime,task.taskId,'reject'));
+   assert.equal(runtime.snapshot().tasks[0].canRetry,true);
+   assert.equal(h.ledger.snapshot().runs.length,1,'rejection alone does not start work');
+   const input={...operator(runtime,task.taskId,'retry'),retryPrompt:'请补充失败用例，并解释修正依据。'};
+   await runtime.actOnTask(input);await runtime.actOnTask(input);
+   await assert.rejects(runtime.actOnTask({...input,retryPrompt:'Different feedback'}),/reused/);
+   const {ProjectRuntime}=await import('../dist/project-runtime.js');
+   const recovered=new ProjectRuntime(h.ctx,h.ledger,'local','planner');
+   h.ledger.recordNodeHeartbeat('available',{nodeId:'worker',runtimeReady:true,activeExecutions:0});recovered.tick();recovered.tick();
+   const runs=h.ledger.snapshot().runs;assert.equal(runs.length,2);
+   const second=runs[1];if(outcome==='success')assert.equal(second.route.workspaceId,'review-ws','official backend retry keeps its explicit workspace grant');
+   const claim=h.ledger.claim('rework-second-claim',{runId:second.runId,nodeId:'worker',ttlMs:10000}).value;
+   assert.equal(claim.executionContext.reports.length,1);assert.match(claim.executionContext.reports[0].body,/Original instructions[\s\S]*请补充失败用例/);
+   assert.equal(recovered.snapshot().runs.find(r=>r.id===second.runId).retryPrompt,input.retryPrompt);
+   assert.equal(h.ledger.getTask(task.taskId).description,'Original instructions');assert.equal(h.ledger.getTask(task.taskId).workspaceId,undefined);
+   assert.equal(h.ledger.getRun(run.runId).reviewStatus,'rejected');assert.equal(h.ledger.getRun(run.runId).state,outcome==='success'?'succeeded':'partial');
+   assert.equal(h.ledger.snapshot().reports.filter(r=>r.kind==='result').length,1);
+   assert.equal(recovered.snapshot().tasks[0].canRetry,false);
+  }finally{await h.dispose();}
+ }
+});

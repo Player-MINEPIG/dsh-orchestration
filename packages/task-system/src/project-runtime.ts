@@ -949,12 +949,18 @@ export class ProjectRuntime {
               "UPDATE pr_dispatch SET generation=generation+1 WHERE task=? RETURNING generation",
             )
             .get(row.task) as { generation: number };
+          const decisionInput = this.ledger.getDecision(row.decision)?.input as unknown as PlanningInput | undefined;
+          const applied = this.ledger.commandReceipt(`apply-decision:${row.decision}`)?.value as { reportId?: string } | undefined;
+          // Bind feedback to every Run created for this dispatch, including an
+          // unclaimed Run returned to the queue; never consume it globally.
+          const contextNotes = decisionInput?.retryPrompt && applied?.reportId ? [applied.reportId] : [];
           const run = this.ledger.createRun(
             `pr:dispatch:${row.task}:${generation}`,
             {
               taskId: row.task,
               route,
               configuration: { decisionId: row.decision, reporting: "summary" },
+              ...(contextNotes.length ? { contextNotes } : {}),
             },
           ).value;
           checks.push({ nodeId: route.nodeId, reason: "assigned" });
@@ -1356,6 +1362,7 @@ export class ProjectRuntime {
     expectedVersion: string;
     runId: string | null;
     confirmationRevision: number;
+    retryPrompt?: string;
     action:
       | "complete-materials"
       | "complete"
@@ -1455,7 +1462,9 @@ export class ProjectRuntime {
     commandId: string;
     taskId: string;
     expectedVersion: string;
+    retryPrompt?: string;
   }) {
+    const retryPrompt = input.retryPrompt === undefined || input.retryPrompt === "" ? "" : text(input.retryPrompt, 20000);
     const requestId = `task-retry:${text(input.commandId, 200)}`;
     const prior = this.ledger.commandReceipt(`apply-decision:${requestId}`);
     if (prior) {
@@ -1463,7 +1472,8 @@ export class ProjectRuntime {
         ?.input as unknown as PlanningInput;
       if (
         record.taskId !== input.taskId ||
-        record.expectedActionVersion !== input.expectedVersion
+        record.expectedActionVersion !== input.expectedVersion ||
+        (record.retryPrompt ?? "") !== retryPrompt
       )
         throw new TaskError("CONFLICT", "Retry command reused");
       this.enqueueDecision(requestId, input.taskId);
@@ -1485,9 +1495,10 @@ export class ProjectRuntime {
       .runs.filter((r) => r.taskId === input.taskId)
       .at(-1);
     let route = previous?.route && { ...previous.route };
-    // Derived workspace choices remain executor-owned. newRun resolves this
-    // Task's bound session workspace; do not promote it to a Task constraint.
-    if (route && !task.workspaceId) delete route.workspaceId;
+    // DSH session selection resolves its own workspace. Official backends use
+    // an explicit workspace grant and do not create a DSH task-session binding.
+    // Retain that original grant so their retry remains claimable by the worker.
+    if (route && !task.workspaceId && !route.backend) delete route.workspaceId;
     if (route) {
       try {
         this.ledger.validateRoute(route);
@@ -1502,7 +1513,8 @@ export class ProjectRuntime {
       ...(route ? { route } : {}),
       ...(projectId ? { projectId } : {}),
       title: task.title,
-      description: task.description,
+      description: retryPrompt ? `${task.description}\n\n本次返工补充提示词：\n${retryPrompt}` : task.description,
+      ...(retryPrompt ? { retryPrompt } : {}),
       ...(task.workspaceId ? { workspaceId: task.workspaceId } : {}),
     });
     this.authorize();
@@ -1737,7 +1749,7 @@ export class ProjectRuntime {
                   ? "部分完成，请先明确剩余工作"
                   : t.state === "inbox"
                     ? "已在等待派发，无需重复提交"
-                    : "仅已结束的失败或受阻任务可重新派发",
+                    : "仅已结束的失败、受阻或审核未通过的任务可重新派发",
         conversationKind: taskProjects.get(t.taskId) ? "project" : "temporary",
         canRestore: attention.handled,
         canReconcile: attention.canReconcile,
@@ -1845,6 +1857,11 @@ export class ProjectRuntime {
         const evidence = candidate && typeof candidate === "object" && !Array.isArray(candidate) && candidate.backend === r.route?.backend ? candidate : {};
         const diagnostic = (key: string) => typeof evidence[key] === "string" && evidence[key].length <= 256 ? evidence[key] : null;
         return {
+        retryPrompt: (r.contextNotes ?? []).flatMap(note => {
+          const report = data.reports.find(report => report.reportId === (typeof note === "string" ? note : note.reportId));
+          const metadata = report?.data;
+          return metadata && typeof metadata === "object" && !Array.isArray(metadata) && metadata.actor === "operator:task-center" && typeof metadata.retryPrompt === "string" ? [metadata.retryPrompt] : [];
+        }).at(-1) ?? null,
         runtimeVersion: diagnostic("cliVersion"),
         runtimeSource: diagnostic("cliSource"),
         actualModel: diagnostic("verifiedModel"),

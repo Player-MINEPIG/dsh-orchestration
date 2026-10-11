@@ -3758,8 +3758,9 @@ export class TaskLedger {
         !uncertain &&
         !confirmationPending &&
         run?.reviewStatus !== "pending_user" &&
-        !["cancelled", "archived", "completed", "inbox"].includes(task.state) &&
-        ["failed", "blocked"].includes(run?.state ?? "") &&
+        !["cancelled", "archived", "inbox"].includes(task.state) &&
+        (task.state !== "completed" || (!task.manualCompletion && run?.reviewStatus === "rejected")) &&
+        (["failed", "blocked"].includes(run?.state ?? "") || run?.reviewStatus === "rejected") &&
         !(run?.historyOnly || run?.observationOnly),
       canCancel:
         task.kind !== "observed" &&
@@ -4502,10 +4503,19 @@ export class TaskLedger {
         proposal.attachTaskId !== task.taskId
       )
         fail("CONFLICT", "Attachment differs from decision");
+      const previousRoute = input.expectedActionVersion
+        ? this.list<Run>("run", task.taskId).at(-1)?.route : undefined;
+      // An official-backend retry may retain its last execution workspace
+      // without turning that executor-owned choice into a Task constraint.
+      const retainsRetryWorkspace = !task.workspaceId && !!fixedRoute?.backend &&
+        previousRoute?.backend === fixedRoute.backend &&
+        previousRoute?.nodeId === fixedRoute.nodeId &&
+        previousRoute?.workspaceId === explicitWorkspaceId;
       if (
         input.persistence === "attach" &&
         explicitWorkspaceId &&
-        task.workspaceId !== explicitWorkspaceId
+        task.workspaceId !== explicitWorkspaceId &&
+        !retainsRetryWorkspace
       )
         fail(
           "CONFLICT",
@@ -4538,6 +4548,8 @@ export class TaskLedger {
         title: "Task request",
         body: input.description || input.title,
         kind: "progress",
+        ...(input.expectedActionVersion && typeof originalInput.retryPrompt === "string"
+          ? { data: { actor: "operator:task-center", retryPrompt: originalInput.retryPrompt } } : {}),
       });
       if (input.deferExecution) {
         if (

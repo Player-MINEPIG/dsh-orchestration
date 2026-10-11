@@ -406,6 +406,7 @@ const projectInputs = {
       expectedVersion: z.string().min(1).max(200),
       runId: z.string().min(1).nullable(),
       confirmationRevision: z.number().int().positive(),
+      retryPrompt: z.string().max(20000).optional(),
       action: z.enum([
         "complete-materials",
         "complete",
