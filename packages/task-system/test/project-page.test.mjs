@@ -231,3 +231,28 @@ test('execution report renders Markdown safely and updates in place when supplem
  for(const tag of ['<h1>Result</h1>','<strong>完成</strong>','<table>','<blockquote>','<ul>','<pre><code class="language-sh"','<details class="report-history">'])assert.ok(html.includes(tag),tag);
  assert.match(html,/已收到执行端补交/);assert.match(html,/target="_blank" rel="noopener noreferrer"/);assert.match(html,/&lt;script&gt;/);assert.doesNotMatch(html,/<script>|<img|href="javascript:/);
 });
+
+test('snapshot refresh preserves main scroll through DOM replacement, read errors and recovery',async()=>{
+ for(const view of ['hub','projects']){
+  const p=page();await p.answer({value:snapshot});if(view==='projects')await p.action('projects');
+  let scroll={scrollTop:420,scrollLeft:75},html=p.content();
+  p.context.document.querySelector=selector=>selector==='#app .page, #app .hub-main'?scroll:null;
+  Object.defineProperty(p.elements.get('app'),'innerHTML',{get:()=>html,set:value=>{html=value;scroll={scrollTop:0,scrollLeft:0};}});
+  let pending=p.startPoll();await p.answer({value:{...snapshot,nodes:[{sampledAt:1}]}});await pending;
+  assert.equal(scroll.scrollTop,420,view+' retains vertical position after polling');assert.equal(scroll.scrollLeft,75);
+  pending=p.startPoll();await p.answer({error:'temporary read failure',errorCode:'gateway/disconnected'});await pending;
+  assert.equal(scroll.scrollTop,420,view+' retains position while showing a read error');
+  pending=p.startRetry();await p.answer({value:{...snapshot,nodes:[{sampledAt:2}]}});await pending;
+  assert.equal(scroll.scrollTop,420,view+' retains position after recovery');
+  await p.action(view==='hub'?'projects':'home');assert.equal(scroll.scrollTop,0,'navigation starts at the destination top');
+ }
+});
+
+test('main scroll is not carried across filters or project identities',async()=>{
+ const p=page();await p.answer({value:snapshot});let scroll={scrollTop:320,scrollLeft:30},html=p.content();
+ p.context.document.querySelector=selector=>selector==='#app .page, #app .hub-main'?scroll:null;
+ Object.defineProperty(p.elements.get('app'),'innerHTML',{get:()=>html,set:value=>{html=value;scroll={scrollTop:0,scrollLeft:0};}});
+ await p.action('filter','review');assert.equal(scroll.scrollTop,0);assert.equal(scroll.scrollLeft,0);
+ scroll.scrollTop=190;vm.runInContext('render()',p.context);assert.equal(scroll.scrollTop,190,'same-view redraw retains reading position');
+ vm.runInContext("state.project='different-project';render()",p.context);assert.equal(scroll.scrollTop,0);
+});
