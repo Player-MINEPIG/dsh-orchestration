@@ -18,4 +18,4 @@
 
 隔离：默认 ~/.dsh、PV只读，Hermes生产数据库未参与。运行目录为本worktree `.runtime/session-collaboration` 和 VPS `/root/dsh-orchestration-tests/session-collaboration-20261011/run1`。中央43971/历史43972，原面板VPS43980与MBP43981。全程Tailscale业务网络，无SSH转发。
 
-剩余：报告最终结构检查、提交并快进合并codex/project-runtime，保护目标既有未跟踪package-lock.json；暂停已完成监督自动化。
+完成：报告结构与内嵌图片检查通过；30a82d3已快进合并codex/project-runtime，既有未跟踪package-lock.json保留。随后仅提交已合并状态记录；监督自动化在收尾时暂停。

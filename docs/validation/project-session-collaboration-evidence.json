@@ -2,10 +2,10 @@
   "phase": "session-collaboration",
   "base": "ab2bf26",
   "branch": "codex/project-session-collaboration",
-  "acceptanceStatus": "passed-awaiting-final-merge",
+  "acceptanceStatus": "passed",
   "mergeAllowed": true,
-  "mergeCommit": null,
-  "mergeNote": "All acceptance gates passed; root will record final merge commit.",
+  "mergeCommit": "30a82d3",
+  "mergeNote": "Fast-forward merged into local codex/project-runtime; follow-up report status commit follows. No push. Existing target untracked package-lock preserved.",
   "localCheck": {
     "tests": 828,
     "passed": 823,
@@ -349,7 +349,7 @@
     "previousPhaseFolded": true
   },
   "implementationCommit": "815543e",
-  "mergeStatus": "pending",
+  "mergeStatus": "merged",
   "acceptedSessionCheck": {
     "sessionId": "session-collaboration-real-v4",
     "projectId": "collab-e10bcf03ebadac2b93a06f2ccd0dc8c4e4b4274f66179b19f53ea028cef74203",
