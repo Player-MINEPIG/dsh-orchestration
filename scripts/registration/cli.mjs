@@ -11,7 +11,8 @@ export async function main(args=process.argv.slice(2)) {
  const packet=()=>validateRegistration(JSON.parse(readFileSync(opt('packet'),'utf8')));
  if(op==='validate') return {valid:true,protocol:packet().protocol};
  if(op==='enqueue') return enqueueRegistration(opt('outbox'),packet());
- if(op==='flush') return flushRegistrations(opt('outbox'),opt('endpoint'),process.env[opt('token-env',false)??'DSH_REGISTRATION_TOKEN']);
+ const trustedNetwork=()=>{const config=opt('trusted-network',false);return config?JSON.parse(readFileSync(resolve(config),'utf8')):undefined;};
+ if(op==='flush') return flushRegistrations(opt('outbox'),opt('endpoint'),process.env[opt('token-env',false)??'DSH_REGISTRATION_TOKEN'],undefined,trustedNetwork());
  if(!['import','serve','list'].includes(op)) throw new Error('Use validate/import/enqueue/flush/serve/list. All paths and endpoints must be explicit.');
  const ledger=TaskLedger.open(resolve(opt('database')),{role:'planner',...(op==='list'?{readOnly:true}:{})});
  if(op==='serve') {

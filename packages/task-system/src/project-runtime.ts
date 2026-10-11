@@ -94,6 +94,7 @@ export class ProjectRuntime {
   ) {
     this.db = ledger.managementDatabase();
     this.workbench = new Workbench(ledger);
+    ledger.projectSnapshot = (nodeId) => this.snapshotForNode(nodeId) as unknown as import("./contracts.js").Json;
     this.db
       .exec(`CREATE TABLE IF NOT EXISTS pr_settings(id INTEGER PRIMARY KEY CHECK(id=1),root TEXT,revision INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS pr_models(owner TEXT PRIMARY KEY,selection TEXT,revision INTEGER NOT NULL);
@@ -1524,6 +1525,15 @@ export class ProjectRuntime {
         wb.backlogs.find((b) => b.backlogId === link.backlogId)?.projectId,
       ]),
     );
+    for (const t of data.tasks) {
+      let parent = t.parentTaskId;
+      const seen = new Set<string>();
+      while (!taskProjects.get(t.taskId) && parent && !seen.has(parent)) {
+        seen.add(parent);
+        if (taskProjects.get(parent)) taskProjects.set(t.taskId, taskProjects.get(parent));
+        parent = data.tasks.find(x => x.taskId === parent)?.parentTaskId;
+      }
+    }
     const projects = wb.projects.map((p) => {
       const runtime = runtimes.get(p.projectId),
         workspace = wb.projectWorkspaces.find(
@@ -1653,6 +1663,10 @@ export class ProjectRuntime {
                             : "queued";
       return {
         id: t.taskId,
+        parentTaskId: t.parentTaskId ?? null,
+        parentRunId: t.parentRunId ?? null,
+        delegationDisplay: t.delegationDisplay?.mode ?? "task",
+        observationOnly: t.kind === "observed" || !!run?.observationOnly,
         project: taskProjects.get(t.taskId) || "unassigned",
         title: t.title,
         description: t.description,
@@ -1768,8 +1782,8 @@ export class ProjectRuntime {
                 : "error"
           : "queued",
         runState: run?.state ?? null,
-        node: run?.route?.nodeId || "待选择执行端",
-        model: run?.route?.model || "待选择",
+        node: run?.route?.nodeId || (run?.observationOnly ? "来源执行（仅观察）" : "待选择执行端"),
+        model: run?.route?.model || (run?.observationOnly ? "来源未声明" : "待选择"),
         effort: run?.route?.reasoningEffort || "默认",
         report:
           report?.body ||
@@ -1801,6 +1815,16 @@ export class ProjectRuntime {
     // Explicit public views only. Never expose Run.configuration or provider credentials.
     return {
       settings: this.settings(),
+      viewContext: {role:"planner",scope:"all",nodeId:this.nodeId,observedAt:data.generatedAt},
+      projectRegistrations: (data.projectRegistrations ?? []).map(r => ({
+        registrationId:r.registrationId,projectId:r.projectId,namespace:r.namespace,mode:r.mode,
+        sourceRevision:r.sourceRevision,observedAt:r.observedAt,staleAfterMs:r.staleAfterMs,
+        origin:{harness:r.origin.harness},central:r.central,
+        unknownOriginalTimes:r.packet.project.createdAt===null,
+        sourceAcceptance:r.packet.outcomes.map(o=>({title:o.title,acceptance:o.acceptance})),
+        artifactAvailability:r.packet.artifacts.map(a=>({uri:a.uri,availability:a.availability})),
+      })),
+      attempts: (data.attempts ?? []).map(a=>({attemptId:a.attemptId,taskId:a.taskId,runId:a.runId,nodeId:a.nodeId,fence:a.fence,state:a.state,sessionId:a.sessionId,executionId:a.executionId})),
       projects,
       tasks,
       nodes: this.ledger.nodeStatuses().map((n) => ({
@@ -1808,14 +1832,34 @@ export class ProjectRuntime {
         state: n.state,
         availableSlots: n.availableSlots ?? null,
       })),
-      runs: data.runs.map((r) => ({
+      runs: data.runs.map((r) => {
+        // Only this Run's current attempt result carries executor diagnostics.
+        // Notes, older attempts and historical source reports cannot claim a live runtime.
+        const candidate = !r.observationOnly && r.route?.backend
+          ? data.reports.findLast(report => report.runId === r.runId && report.attemptId === r.currentAttemptId && report.kind === "result")?.data
+          : undefined;
+        const evidence = candidate && typeof candidate === "object" && !Array.isArray(candidate) && candidate.backend === r.route?.backend ? candidate : {};
+        const diagnostic = (key: string) => typeof evidence[key] === "string" && evidence[key].length <= 256 ? evidence[key] : null;
+        return {
+        runtimeVersion: diagnostic("cliVersion"),
+        runtimeSource: diagnostic("cliSource"),
+        actualModel: diagnostic("verifiedModel"),
+        actualReasoningEffort: diagnostic("verifiedReasoningEffort"),
+        productThreadId: diagnostic("productThreadId"),
         id: r.runId,
+        parentRunId:r.parentRunId ?? null,
+        parentTaskId:data.tasks.find(t=>t.taskId===r.taskId)?.parentTaskId ?? null,
+        outcome:r.outcome ?? null,
+        observationOnly:!!r.observationOnly,
+        executionDriver:(r.observationOnly ? "source" : r.route?.backend ? "official-codex" : "dsh"),
+        reasoningEffort:r.route?.reasoningEffort ?? null,
+        sessionIds:r.sessionIds,
         taskId: r.taskId,
         state: r.state,
         node: r.route?.nodeId || null,
         model: r.route?.model || null,
         reviewStatus: r.reviewStatus ?? null,
-      })),
+      }; }),
       reports: data.reports.map((r) => ({
         id: r.reportId,
         taskId: r.taskId,
@@ -1830,6 +1874,30 @@ export class ProjectRuntime {
         enabled: s.enabled,
       })),
       sampledAt: now(),
+    };
+  }
+  /** Central authority projection: authenticated peer selects its own node scope. */
+  snapshotForNode(nodeId: string) {
+    const all = this.snapshot(), raw = this.ledger.snapshot(), wb = this.workbench.snapshot();
+    const projectIds = new Set(wb.projectWorkspaces.filter(w=>w.nodeId===nodeId).map(w=>w.projectId));
+    const workspaceIds = new Set((raw.workspaces ?? []).filter(w=>w.nodeId===nodeId).map(w=>w.workspaceId));
+    const ids = new Set<string>();
+    for(const r of raw.runs) if(r.route?.nodeId===nodeId) ids.add(r.taskId);
+    for(const a of raw.attempts ?? []) if(a.nodeId===nodeId) ids.add(a.taskId);
+    for(const t of raw.tasks) if(t.workspaceId && workspaceIds.has(t.workspaceId)) ids.add(t.taskId);
+    let changed=true;
+    while(changed){changed=false;for(const t of raw.tasks)if(t.parentTaskId&&ids.has(t.parentTaskId)&&!ids.has(t.taskId)){ids.add(t.taskId);changed=true;}}
+    // Ancestors supply context, without granting visibility into unrelated sibling branches.
+    for(const taskId of [...ids]){let t=raw.tasks.find(t=>t.taskId===taskId);const seen=new Set<string>();while(t?.parentTaskId&&!seen.has(t.parentTaskId)){seen.add(t.parentTaskId);ids.add(t.parentTaskId);t=raw.tasks.find(x=>x.taskId===t!.parentTaskId);}}
+    const tasks=all.tasks.filter(t=>ids.has(t.id)).map(t=>({...t,canHandle:false,canConfirm:false,canComplete:false,canRequestMaterials:false,canCancel:false,canRetry:false,canRestore:false,canReconcile:false,canRequestStatus:false}));
+    for(const t of tasks)if(t.project!=="unassigned")projectIds.add(t.project);
+    const runs=all.runs.filter(r=>ids.has(r.taskId)),runIds=new Set(runs.map(r=>r.id));
+    return {...all,settings:{enabled:false},projects:all.projects.filter(p=>projectIds.has(p.id)).map(p=>({...p,canChat:false,sessionId:null})),tasks,runs,
+      attempts:all.attempts.filter(a=>runIds.has(a.runId)),reports:all.reports.filter(r=>ids.has(r.taskId)),
+      artifacts:all.artifacts.filter(a=>a.taskId&&ids.has(a.taskId)),milestones:all.milestones.filter(m=>projectIds.has(m.projectId)),schedules:[],
+      projectRegistrations:all.projectRegistrations.filter(r=>projectIds.has(r.projectId)),
+      nodes:all.nodes.filter(n=>n.nodeId===nodeId||runs.some(r=>r.node===n.nodeId)),
+      viewContext:{role:"executor",scope:"node",nodeId,observedAt:all.sampledAt},
     };
   }
   async close() {

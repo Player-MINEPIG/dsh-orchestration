@@ -82,13 +82,33 @@ async function directory(parent: string, name: string, identity: unknown) {
 
 /** A route's workspace remains the authorization boundary; project cwd is narrower.
  * The durable session mapping prevents a later run from relocating that session. */
-export async function executionWorkspace(input: {
+type WorkspaceInput = {
   parent: string;
   claim: Claim;
   sessionId: string;
   resume: boolean;
   store: RecoveryStore;
-}): Promise<string> {
+};
+const provisioning = new Map<string, Promise<unknown>>();
+/** Serialize only short filesystem provisioning, never model execution. */
+export async function executionWorkspace(
+  input: WorkspaceInput,
+): Promise<string> {
+  const key = input.parent;
+  const prior = provisioning.get(key) ?? Promise.resolve();
+  const operation = prior
+    .catch(() => {})
+    .then(() => provisionExecutionWorkspace(input));
+  provisioning.set(key, operation);
+  try {
+    return await operation;
+  } finally {
+    if (provisioning.get(key) === operation) provisioning.delete(key);
+  }
+}
+async function provisionExecutionWorkspace(
+  input: WorkspaceInput,
+): Promise<string> {
   const { parent, claim, sessionId, resume, store } = input;
   if (!claim.run.projectContext) return parent;
   const context = projectContext(claim.run.projectContext),
@@ -102,10 +122,27 @@ export async function executionWorkspace(input: {
   const prior = store.sessionWorkspace(key);
   if (prior) {
     insist(prior.projectId === projectId, "TASK_PROJECT_CHANGED", 409);
+    if (claim.run.parentRunId) {
+      const shared = join(
+        parent,
+        component(context.schedulerId, "scheduler"),
+        projectId ? component(projectId, "project") : "temporary-tasks",
+      );
+      insist(
+        prior.path !== parent && prior.path !== shared,
+        "RECURSIVE_WORKSPACE_REQUIRES_NEW_SESSION",
+        409,
+      );
+    }
     await inside(parent, prior.path);
     return prior.path;
   }
   if (resume) {
+    insist(
+      !claim.run.parentRunId,
+      "RECURSIVE_WORKSPACE_REQUIRES_NEW_SESSION",
+      409,
+    );
     // Existing sessions from the pre-project protocol keep their original cwd.
     const legacy = store
       .dispatches()
@@ -116,7 +153,12 @@ export async function executionWorkspace(input: {
           record.claim.attempt.nodeId === claim.attempt.nodeId &&
           !record.claim.run.projectContext,
       );
-    insist(legacy && store.legacySchedulerIs(context.schedulerId,claim.attempt.nodeId), "SESSION_WORKSPACE_MAPPING_REQUIRED", 409);
+    insist(
+      legacy &&
+        store.legacySchedulerIs(context.schedulerId, claim.attempt.nodeId),
+      "SESSION_WORKSPACE_MAPPING_REQUIRED",
+      409,
+    );
     store.rememberSessionWorkspace(key, { path: parent, projectId });
     return parent;
   }
@@ -156,7 +198,10 @@ export async function executionWorkspace(input: {
         component(projectId, "project"),
         { schedulerId: context.schedulerId, projectId, kind: "git-worktrees" },
       );
-      path = join(group, `${component(claim.task.taskId, "task")}-${digest(sessionId).slice(0,12)}`);
+      path = join(
+        group,
+        `${component(claim.task.taskId, "task")}-${digest(sessionId).slice(0, 12)}`,
+      );
       try {
         await lstat(path);
         throw new Error("PROJECT_WORKTREE_CONFLICT");
@@ -170,6 +215,32 @@ export async function executionWorkspace(input: {
       );
       await inside(parent, path);
     }
+  }
+  if (claim.run.parentRunId && path === project) {
+    const children = await directory(scheduler, "delegated-tasks", {
+      schedulerId: context.schedulerId,
+      kind: "recursive-task-workspaces",
+    });
+    const group = await directory(
+      children,
+      component(projectId ?? "temporary", "project"),
+      {
+        schedulerId: context.schedulerId,
+        projectId,
+        kind: "recursive-task-workspaces",
+      },
+    );
+    path = await directory(
+      group,
+      `${component(claim.task.taskId, "task")}-${digest(sessionId).slice(0, 12)}`,
+      {
+        schedulerId: context.schedulerId,
+        projectId,
+        taskId: claim.task.taskId,
+        sessionId,
+        kind: "recursive-task",
+      },
+    );
   }
   const revision = context.project?.revision ?? 0;
   const metadata = await directory(path, ".dsh-project-context", {

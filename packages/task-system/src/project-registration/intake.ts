@@ -118,6 +118,17 @@ export function intakeRegistration(
         )
           throw new TaskError("CONFLICT", "Terminal run evidence immutable");
       }
+  if (
+    old &&
+    old.packet.project.milestones.some(
+      (m) =>
+        !p.project.milestones.some((next) => next.externalId === m.externalId),
+    )
+  )
+    throw new TaskError(
+      "CONFLICT",
+      "Full snapshots cannot drop existing milestone identities",
+    );
   const now = s.now(),
     timestamp = (t: string | null) => t ?? now;
   const put = (
@@ -142,35 +153,7 @@ export function intakeRegistration(
     state: "archived",
     createdAt: old?.importedAt ?? now,
   });
-  put(
-    "project",
-    projectId,
-    {
-      projectId,
-      title: p.project.title,
-      goal: p.project.goal,
-      state: p.project.state,
-      nextStep: p.project.nextStep,
-      workspaceId,
-      milestones: p.project.milestones.map((m) => ({
-        milestoneId: map("milestone", m.externalId),
-        title: m.title,
-        weight: m.weight,
-        state: m.state,
-        evidenceReportIds: m.reportIds.map((x) => map("report", x)),
-      })),
-      revision:
-        (s.get<{ revision: number }>("project", projectId)?.revision ?? 0) + 1,
-      createdAt:
-        p.project.createdAt ??
-        s.get<{ createdAt: string }>("project", projectId)?.createdAt ??
-        now,
-      updatedAt: timestamp(p.project.updatedAt),
-    },
-    null,
-    p.project.state,
-  );
-  for (const [rank, t] of p.tasks.entries()) {
+  for (const t of p.tasks) {
     const taskId = map("task", t.externalId),
       prev = s.get<{ admissionState?: string; admissionRevision?: number }>(
         "task",
@@ -210,24 +193,6 @@ export function intakeRegistration(
       },
       t.parentTaskId ? map("task", t.parentTaskId) : null,
       state,
-    );
-    const linkId = map("link", t.externalId);
-    put(
-      "project-task",
-      linkId,
-      {
-        linkId,
-        projectId,
-        taskId,
-        stage: t.stage,
-        rank: t.rank ?? rank,
-        revision: p.revision,
-        updatedAt: now,
-        ...(t.milestoneId
-          ? { milestoneId: map("milestone", t.milestoneId) }
-          : {}),
-      },
-      projectId,
     );
   }
   for (const r of p.runs) {
@@ -308,31 +273,6 @@ export function intakeRegistration(
         },
         map("task", r.taskId),
       );
-  }
-  for (const o of p.outcomes) {
-    const outcomeId = map("outcome", o.externalId),
-      prev = s.get<{ state: string; feedback: string; revision: number }>(
-        "outcome",
-        outcomeId,
-      );
-    put("outcome", outcomeId, {
-      outcomeId,
-      title: o.title,
-      summary: o.summary,
-      feedback:
-        prev?.feedback ?? "来源验收声明：" + o.acceptance + "；中央尚未复核",
-      state: prev?.state ?? "draft",
-      projectIds: [projectId],
-      taskIds: o.taskIds.map((x) => map("task", x)),
-      reportIds: o.reportIds.map((x) => map("report", x)),
-      capabilityIds: [],
-      revision: (prev?.revision ?? 0) + 1,
-      createdAt:
-        o.createdAt ??
-        s.get<{ createdAt: string }>("outcome", outcomeId)?.createdAt ??
-        now,
-      updatedAt: now,
-    });
   }
   const record: RegistrationRecord = {
     registrationId,

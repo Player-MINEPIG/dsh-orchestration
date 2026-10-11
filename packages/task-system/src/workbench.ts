@@ -1,3 +1,4 @@
+import { assertRegistrationProjectionWritable } from "./project-registration/workbench.js";
 import { createHash, randomUUID } from "node:crypto";
 import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 import type { Receipt, Report, Task } from "./contracts.js";
@@ -194,6 +195,11 @@ export class Workbench {
       | undefined;
     if (row?.version !== 1) fail("SCHEMA", "Unsupported workbench schema");
   }
+  /** Schema only; intake owns its authoritative transaction and source revisions. */
+  prepareRegistration() {
+    this.ledger.assertManagementWritable();
+    this.ensureSchema();
+  }
   private rows(sql: string, ...params: SQLInputValue[]): Row[] {
     return this.db.prepare(sql).all(...params) as Row[];
   }
@@ -305,6 +311,7 @@ export class Workbench {
     }
   }
   private apply(operation: string, data: Data): unknown {
+    assertRegistrationProjectionWritable(this.db, operation, data);
     switch (operation) {
       case "create_domain":
       case "update_domain":

@@ -136,7 +136,10 @@ try {
     "schedulerEnabled",
     "autoExecute",
     "maxConcurrent",
-    "executionTimeoutMs",
+    "decisionBindings",
+    "nodeCapacityOverrides",
+    "planningDecisionEnabled",
+    "sessionDecisionEnabled",
     "healthAlerts",
     "localHeartbeatIntervalMs",
   ];
@@ -166,7 +169,7 @@ try {
       "live edit must preserve the opened task ledger",
     );
     for (const [key, value] of Object.entries(values))
-      assert.equal(service.config[key], value);
+      assert.deepEqual(service.config[key], value);
   };
   const before = readFileSync(profile.patchPath, "utf8");
   await assert.rejects(
@@ -179,7 +182,7 @@ try {
   );
   assert.equal(readFileSync(profile.patchPath, "utf8"), before);
   pass(
-    "only six runtime fields exposed; startup path write rejected without changing profile",
+    "current live runtime fields exposed; startup path write rejected without changing profile",
   );
   const adapter = new ScriptedModel(["hang", "hang", "hang"]);
   ctx.llm.registerAdapter(["test-offline"], adapter);
@@ -243,27 +246,11 @@ try {
   pass(
     "live maxConcurrent change admits the next queued local run without remounting",
   );
-  await mutate({ autoExecute: false, executionTimeoutMs: 100 });
-  const task3 = service.ledger.createTask("task3", {
-    title: "Budget fixture",
-  }).value;
-  const run3 = service.ledger.createRun("run3", {
-    taskId: task3.taskId,
-    route,
-  }).value;
-  const claim3 = service.ledger.claim("claim3", {
-    runId: run3.runId,
-    nodeId: "fixture",
-    ttlMs: 10000,
-  }).value;
-  const started = Date.now();
-  await assert.rejects(native.execute(claim3));
-  assert.ok(Date.now() - started < 1000);
-  assert.equal(adapter.requests.length, 3);
+  await mutate({ autoExecute: false, planningDecisionEnabled: false, sessionDecisionEnabled: true, decisionBindings: {"task-planning":"fixture-preset"}, nodeCapacityOverrides: {fixture: 4} });
+  await assert.rejects(ctx.settings.mutate("task-system", [{op:"set",path:["executionTimeoutMs"],value:100}], read().revision), /volatile|editable/i);
+  assert.equal(service.config.executionTimeoutMs, taskConfig.executionTimeoutMs);
   assert.equal(native.activeCount, 2);
-  pass(
-    "new native attempts use updated timeout; existing attempt timers remain unchanged",
-  );
+  pass("current decision and capacity fields update live; startup execution timeout is not a live-edit field");
   let healthCalls = 0;
   const health = service.ledger.reconcileNodeHealth;
   service.ledger.reconcileNodeHealth = () => {
@@ -318,11 +305,10 @@ try {
   assert.equal(info.databasePath, taskConfig.databasePath);
   assert.equal(info.profilePatch, profile.patchPath);
   assert.equal(info.remote, null);
-  assert.equal(
-    ctx.typert.local.list().filter((d) => d.namespace === "taskPluginSettings")
-      .length,
-    8,
-  );
+  assert.deepEqual(ctx.typert.local.list().filter(d=>d.namespace==="taskPluginSettings").map(d=>d.method).sort(), [
+    "describe","queue","workspaces","executorIdentity","startup","saveStartup","checkConnection","decisionSettings","saveDecisionSettings","decisionConsole","setDecisionPreset",
+    "projectSettings","projectSnapshot","projectPage","saveProjectSettings","createProject","createTemporaryTask","conversationModels","selectConversationModel","sendExecutorMessage","taskConversation","sendTaskMessage","projectConversation","sendProjectMessage","handoffProject","actOnProjectTask","reviewProjectTask"
+  ].sort());
   assert.equal(
     ctx.typert.local.get("taskPluginSettings/describe").parameters.length,
     0,
@@ -331,7 +317,7 @@ try {
     Object.keys(info).some((key) => /key|secret|token|password/i.test(key)),
     false,
   );
-  pass("allowlisted deployment data and eight typed settings Remote methods");
+  pass("allowlisted deployment data and current typed settings/project Remote methods");
   assert.deepEqual(
     await ctx.typertGateway.invoke({
       namespace: "taskPluginSettings",
@@ -363,7 +349,12 @@ try {
     .describe()
     .find((d) => d.ns === "task-system").value;
   assert.equal(persisted.maxConcurrent, 3);
-  assert.equal(persisted.executionTimeoutMs, 100);
+  assert.equal(Object.hasOwn(persisted, "executionTimeoutMs"), false);
+  assert.equal(ctx.taskSystem.config.executionTimeoutMs, taskConfig.executionTimeoutMs);
+  assert.equal(persisted.planningDecisionEnabled, false);
+  assert.equal(persisted.sessionDecisionEnabled, true);
+  assert.deepEqual(persisted.decisionBindings, {"task-planning":"fixture-preset"});
+  assert.deepEqual(persisted.nodeCapacityOverrides, {fixture:4});
   assert.equal(persisted.autoExecute, false);
   pass(
     "saved runtime settings survive a fresh official boot from the same isolated profile",

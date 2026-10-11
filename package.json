@@ -24,7 +24,7 @@
     "test:legacy": "node --test tests/legacy/readers.test.mjs tests/legacy/reporting.test.mjs tests/legacy/quota.test.mjs tests/legacy/compatibility.test.mjs tests/legacy/configured-sources.test.mjs tests/legacy/ad-hoc.test.mjs tests/legacy/diagnostics.test.mjs tests/legacy/context-contract.test.mjs",
     "test:legacy-reference": "node --test tests/legacy/differential-reference.test.mjs",
     "test:management": "node --test tests/management/*.test.mjs",
-    "test:settings:official": "node --expose-internals tests/settings/official-settings-smoke.mjs && node tests/settings/staged-form-smoke.mjs && node --expose-internals tests/settings/official-startup-smoke.mjs && node tests/settings/remote-snapshot-smoke.mjs && node --expose-internals tests/settings/disabled-remote-config-editor.mjs",
+    "test:settings:official": "node --expose-internals tests/settings/official-settings-smoke.mjs && node tests/settings/staged-form-smoke.mjs && node --expose-internals tests/settings/official-startup-smoke.mjs && node tests/settings/remote-snapshot-smoke.mjs && node --expose-internals tests/settings/disabled-remote-config-editor.mjs && node --test tests/settings/project-command-feedback.test.mjs",
     "prototype:projects": "python3 -m http.server 8127 --bind 127.0.0.1 --directory dashboard/prototypes"
   },
   "devDependencies": {
@@ -45,9 +45,7 @@
     "@types/node": "24.10.1",
     "pnpm": "11.7.0",
     "prettier": "3.6.2",
-    "typescript": "5.9.3"
-  },
-  "overrides": {
-    "@openai/codex": "0.162.0-alpha.17.2"
+    "typescript": "5.9.3",
+    "@deepseek-ai/dsh-commands": "0.2.0-rc.2"
   }
 }

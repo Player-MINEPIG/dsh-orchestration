@@ -1,3 +1,5 @@
+> 历史验收脚本。当前 project-runtime 迁移的实际验收入口为 `../runtime-live/README.md`；原插件 UI 与 Tailscale 直连证据以最终报告为准。此目录的独立 dashboard 不是本次交付入口。
+
 # Real VPS → MBP → official Codex test
 
 These scripts use real DSH AgentLoop (`deepseek-official/deepseek-flash/low`) and the official `ctx.subagents` Codex provider (`gpt-6-luna/low`). They never mount ScriptedModel. Execution verification is separate from human/director acceptance.

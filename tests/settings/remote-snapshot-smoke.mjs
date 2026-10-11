@@ -145,6 +145,8 @@ const startup = {
       role: "executor",
       defaultWorkspaceId: null,
       sessionDecisionEnabled: false,
+      planningDecisionEnabled: true,
+      nodeCapacities: [],
     },
   },
   remote: null,

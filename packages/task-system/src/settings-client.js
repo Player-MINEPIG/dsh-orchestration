@@ -9,6 +9,7 @@ window.__ModuleLoader__.load({
       SettingsValueField,
       Switch,
       Button,
+      Modal,
     } = require("@deepseek-ai/dsh-client-ui-primitives");
     const h = React.createElement;
     const keys = [
@@ -3425,6 +3426,7 @@ window.__ModuleLoader__.load({
           } catch (error) {
             const code = error?.code === "task/project" ? error.details?.reason : error?.code;
             const messages = {
+              COORDINATOR_UNAVAILABLE: "中央进度暂时无法连接，请检查执行端与调度端的 Tailscale 连接。",
               PLANNER_REQUIRED: "当前节点为执行端，项目任务中心需要调度端身份。",
               PROJECT_UNAVAILABLE: "本机项目服务尚未就绪，请检查任务插件是否启用。",
               "gateway/internal": "项目服务内部错误，请检查调度端日志后重试。",
@@ -3475,7 +3477,57 @@ window.__ModuleLoader__.load({
       });
     }
 
+    /** Native commands are log-only; rc.2 intentionally hides command-only blank chats.
+     * Show our own human command result using the public client event and official modal.
+     * This never schedules a model, alters the session log, or handles another command.
+     */
+    class ProjectCommandFeedback {
+      constructor() { this.items = []; this.listeners = new Set(); this.serial = 0; }
+      getSnapshot = () => this.items[0] ?? null;
+      subscribe = (listener) => { this.listeners.add(listener); return () => this.listeners.delete(listener); };
+      notify() { for (const listener of this.listeners) listener(); }
+      accept(sessionId, name, result) {
+        if (name !== "project" || !result || !["success", "error"].includes(result.kind)) return;
+        this.items.push({ id: ++this.serial, sessionId, kind: result.kind,
+          text: typeof result.text === "string" ? result.text : "项目命令已完成。" });
+        this.notify();
+      }
+      dismiss = () => { this.items.shift(); this.notify(); };
+      clear() { this.items = []; this.notify(); }
+    }
+    function ProjectCommandResult({ feedback }) {
+      const result = React.useSyncExternalStore(feedback.subscribe, feedback.getSnapshot, feedback.getSnapshot);
+      if (!result) return null;
+      const text = result.text;
+      const pending = text.includes("中央尚未确认");
+      const title = result.kind === "error" ? "项目操作未完成" : pending ? "项目快照待同步" : "项目命令结果";
+      return h(Modal, { open: true, onClose: feedback.dismiss, title, closeLabel: "关闭项目命令结果",
+        description: pending ? "快照已保存在本机；恢复连接后使用 /project sync 重试。" :
+          "这是当前命令的结果；项目进度仍在「项目与任务」面板查看。",
+        footer: h(Button, { onClick: feedback.dismiss, "data-modal-autofocus": true }, "知道了"),
+      }, h("pre", { role: result.kind === "error" ? "alert" : "status",
+        "aria-label": "项目命令详情", style: {
+          whiteSpace: "pre-wrap", overflowWrap: "anywhere", overflow: "auto", maxHeight: "55vh",
+          margin: 0, padding: 12, borderRadius: "var(--dsw-radius-lg, 12px)",
+          background: "var(--dsw-alias-markdown-code-block)", color: "var(--dsw-alias-label-primary)",
+          fontSize: "var(--dsh-content-font-size-secondary, 13px)", lineHeight: 1.6,
+        } }, text));
+    }
+    function mountProjectCommandFeedback(ctx) {
+      const feedback = new ProjectCommandFeedback();
+      ctx.effect(() => {
+        const offEvent = ctx.on("command/executed", (sessionId, name, result) => feedback.accept(sessionId, name, result));
+        const offOverlay = ctx.slots.inject("shell.overlay", () => ctx.slots.register({
+          name: "shell.overlay", id: "task-project-command-result", order: 30,
+          inject: () => ({ feedback }),
+        }, ProjectCommandResult));
+        return () => { offEvent(); offOverlay(); feedback.clear(); };
+      }, "project human command result");
+      return feedback;
+    }
+
     async function apply(ctx) {
+      mountProjectCommandFeedback(ctx);
       const t = ctx.locale.bind(NS);
       ctx.effect(
         () => ctx.locale.register(NS, { en, zh }),
@@ -3672,6 +3724,9 @@ window.__ModuleLoader__.load({
       apply,
       Controller,
       SettingsSaveCoordinator,
+      ProjectCommandFeedback,
+      ProjectCommandResult,
+      mountProjectCommandFeedback,
       startupNeedsRestart,
       RemoteTaskSettingsScope,
       openPlugins,

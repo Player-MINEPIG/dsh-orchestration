@@ -58,6 +58,7 @@ export interface Receipt<T = unknown> {
   value: T;
 }
 export interface Route {
+  backend?: string;
   nodeId: string;
   provider: string;
   model: string;
@@ -69,6 +70,7 @@ export interface TaskPolicy {
   allowedNodeIds?: string[];
   allowedWorkspaceIds?: string[];
   allowedTools?: string[];
+  allowedBackends?: string[];
   /** @deprecated Retained for old records; execution has no elapsed-time cutoff. */
   maxRuntimeMs?: number;
   maxDepth?: number;
@@ -85,6 +87,7 @@ export interface Task {
   policy?: TaskPolicy;
 }
 export interface Run {
+  parentRunId?: string;
   currentAttemptId?: string;
   runId: string;
   taskId: string;
@@ -192,6 +195,7 @@ export interface ObservationCandidate {
   cwd?: string;
 }
 export interface DelegationInput {
+  display?: import("../delegation-presentation.js").DelegationDisplayInput;
   title: string;
   description?: string;
   route?: Route;
@@ -321,6 +325,8 @@ export interface ExecutionCollaboration {
 type MaybePromise<T> = T | Promise<T>;
 /** An adapter must preserve the ledger's transaction, idempotency, lease and fencing guarantees. */
 export interface LedgerPort {
+  /** Authority derives visibility from the authenticated executor node. */
+  projectSnapshot?(nodeId: string): MaybePromise<Json>;
   pendingSessionMessages?(nodeId: string): MaybePromise<SessionMessage[]>;
   getSessionMessage?(messageId: string): MaybePromise<SessionMessage>;
   completeSessionMessage?(

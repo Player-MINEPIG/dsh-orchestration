@@ -75,7 +75,8 @@
     "@deepseek-ai/schemastery": "3.18.4",
     "dsh-jev-plugin": "^0.3.0",
     "@deepseek-ai/dsh-subagent": "0.2.0-rc.2",
-    "@deepseek-ai/dsh-subagent-codex": "0.2.0-rc.2"
+    "@deepseek-ai/dsh-subagent-codex": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-commands": "0.2.0-rc.2"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "4.0.4",
@@ -109,6 +110,9 @@
       "optional": true
     },
     "@deepseek-ai/dsh-subagent-codex": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-commands": {
       "optional": true
     }
   }

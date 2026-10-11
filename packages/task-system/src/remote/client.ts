@@ -458,6 +458,14 @@ export class RemoteLedgerClient implements LedgerPort {
     );
     return response.result as unknown as T;
   }
+  async projectSnapshot(_nodeId?: string): Promise<Json> {
+    // Scope is derived by the gateway; never send a caller-supplied node id.
+    return this.command<Json>(
+      "projectSnapshot",
+      `project-snapshot:${randomUUID()}`,
+      {},
+    );
+  }
   private scoped(input: LeaseRef): Record<string, Json> {
     insist(input.nodeId === this.nodeId, "WRONG_CLIENT_NODE", 403);
     return {
@@ -713,6 +721,7 @@ export class RemoteLedgerClient implements LedgerPort {
       {
         ...this.scoped(input),
         title: input.title,
+        ...(input.display ? { display: input.display as unknown as Json } : {}),
         ...(input.description !== undefined
           ? { description: input.description }
           : {}),

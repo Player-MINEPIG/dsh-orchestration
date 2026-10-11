@@ -49,6 +49,7 @@ export class ExecutorWorker {
   private active = true;
   private configurationPaused = false;
   private executing = 0;
+  private concurrencyBudget?: number;
   get activeExecutions(): number {
     return this.executing + this.messages.activeCount;
   }
@@ -60,7 +61,27 @@ export class ExecutorWorker {
   private polling?: Promise<unknown>;
   lastPollFailed = false;
   private observedQueue: import("./ports.js").Run[] = [];
-  private projectRuns = new Map<string, string>();
+  private projectRuns = new Map<
+    string,
+    { key: string; parentRunId?: string }
+  >();
+  private projectKey(run: import("./ports.js").Run): string | undefined {
+    const context = run.projectContext;
+    return context
+      ? digest([context.schedulerId, context.project?.projectId ?? null])
+      : undefined;
+  }
+  private canEnterProject(
+    run: import("./ports.js").Run,
+    held = this.projectRuns,
+  ): boolean {
+    const key = this.projectKey(run);
+    if (!key || ![...held.values()].some((value) => value.key === key))
+      return true;
+    // Only a currently owned parent may reenter this project's lock. Each child
+    // gets a distinct workspace/session; unrelated root work remains serialized.
+    return !!run.parentRunId && held.get(run.parentRunId)?.key === key;
+  }
   queueSnapshot() {
     return this.observedQueue.map((run) => ({ ...run }));
   }
@@ -109,6 +130,7 @@ export class ExecutorWorker {
   /** One bounded discovery/dispatch pass; caller supplies or configures its cadence. */
   async pollOnce(
     concurrency = 1,
+    options: { waitForCompletion?: boolean } = {},
   ): Promise<PromiseSettledResult<DispatchRecord>[]> {
     insist(this.active, "DRAINING", 503);
     if (this.configurationPaused) return [];
@@ -118,6 +140,7 @@ export class ExecutorWorker {
         concurrency <= 16,
       "INVALID_CONCURRENCY",
     );
+    this.concurrencyBudget = concurrency;
     // Delivery can fail after execution has already finished. Retry the durable
     // result on ordinary polling as well as startup, using the same command ID.
     for (const record of this.options.store.dispatches()) {
@@ -133,7 +156,7 @@ export class ExecutorWorker {
     );
     this.observedQueue = pending.slice(0, 128);
     const { policy, provider } = this.options;
-    const projectKeys = new Set(this.projectRuns.values());
+    const plannedProjects = new Map(this.projectRuns);
     const candidates = pending
       .filter((run) => {
         const route = run.route;
@@ -158,29 +181,35 @@ export class ExecutorWorker {
         );
       })
       .filter((run) => {
-        const context = run.projectContext;
-        if (!context) return true;
-        const key = digest([
-          context.schedulerId,
-          context.project?.projectId ?? null,
-        ]);
-        if (projectKeys.has(key)) return false;
-        projectKeys.add(key);
+        if (!this.canEnterProject(run, plannedProjects)) return false;
+        const key = this.projectKey(run);
+        if (key)
+          plannedProjects.set(run.runId, { key, parentRunId: run.parentRunId });
         return true;
       })
       .slice(
         0,
         Math.max(0, concurrency - this.runs.size - this.messages.activeCount),
       );
-    return await Promise.allSettled(
-      candidates.map((run) =>
-        this.execute(
-          run.runId,
-          `claim-${digest([this.options.policy.nodeId, run.runId, run.retry?.count ?? 0])}`,
-        ),
+    const executions = candidates.map((run) =>
+      this.execute(
+        run.runId,
+        `claim-${digest([this.options.policy.nodeId, run.runId, run.retry?.count ?? 0])}`,
       ),
     );
+    const completion = Promise.allSettled(executions);
+    if (options.waitForCompletion === false) {
+      // `runs` owns every promise through cancellation and dispose. Discovery
+      // may continue while a parent awaits descendants; execution is not detached.
+      void completion.then((results) => {
+        if (results.some((result) => result.status === "rejected"))
+          this.lastPollFailed = true;
+      });
+      return [];
+    }
+    return await completion;
   }
+
   startPolling(
     intervalMs: number | (() => number),
     concurrency: number | (() => number) = 1,
@@ -224,7 +253,9 @@ export class ExecutorWorker {
           recovered = true;
         }
         if (!this.active) return [];
-        return await this.pollOnce(readConcurrency());
+        return await this.pollOnce(readConcurrency(), {
+          waitForCompletion: false,
+        });
       })()
         .then(
           (results) => {
@@ -255,16 +286,11 @@ export class ExecutorWorker {
     await this.options.prepare?.();
     const pending = await ledger.getRun?.(runId);
     if (pending?.projectContext) {
-      const key = digest([
-        pending.projectContext.schedulerId,
-        pending.projectContext.project?.projectId ?? null,
-      ]);
-      insist(
-        ![...this.projectRuns.values()].includes(key),
-        "PROJECT_WORKSPACE_BUSY",
-        409,
-      );
-      this.projectRuns.set(runId, key);
+      insist(this.canEnterProject(pending), "PROJECT_WORKSPACE_BUSY", 409);
+      this.projectRuns.set(runId, {
+        key: this.projectKey(pending)!,
+        parentRunId: pending.parentRunId,
+      });
     }
     const claim = (
       await ledger.claim(commandId, {
@@ -494,6 +520,29 @@ export class ExecutorWorker {
         "DISPATCH_CANCELLED",
         409,
       );
+      const collaboration = bindCollaboration(
+        ledger,
+        lease,
+        claim.task.taskId,
+        abort.signal,
+        availableOperations,
+      );
+      const delegate = collaboration.delegate;
+      const boundedCollaboration = {
+        ...collaboration,
+        delegate: (id: string, input: Parameters<typeof delegate>[1]) => {
+          const target = input.route?.nodeId ?? claim.run.route?.nodeId;
+          if (
+            target === policy.nodeId &&
+            this.concurrencyBudget !== undefined &&
+            this.runs.size + this.messages.activeCount >= this.concurrencyBudget
+          )
+            throw new Error(
+              `RECURSIVE_CAPACITY_EXHAUSTED: executor concurrency ${this.concurrencyBudget} is occupied; no child was created. Increase the executor budget or delegate to another eligible node; waiting here cannot create capacity.`,
+            );
+          return delegate(id, input);
+        },
+      };
       this.executing++;
       let result: ExecutionResult;
       try {
@@ -503,13 +552,7 @@ export class ExecutorWorker {
           resumeSession,
           workspacePath,
           signal: abort.signal,
-          collaboration: bindCollaboration(
-            ledger,
-            lease,
-            claim.task.taskId,
-            abort.signal,
-            availableOperations,
-          ),
+          collaboration: boundedCollaboration,
         });
       } finally {
         this.executing--;

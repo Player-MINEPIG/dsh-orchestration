@@ -121,6 +121,20 @@ function reportFields(report: Record<string, Json>): void {
   if (report.data !== undefined) canonicalData(report.data);
 }
 function delegation(input: Record<string, Json>): void {
+  if (input.display !== undefined) {
+    insist(isRecord(input.display), "INVALID_DISPLAY");
+    fields(input.display, [], ["requested", "complexity"]);
+    insist(
+      [undefined, "task", "step"].includes(input.display.requested as string),
+      "INVALID_DISPLAY",
+    );
+    insist(
+      [undefined, "small", "independent"].includes(
+        input.display.complexity as string,
+      ),
+      "INVALID_DISPLAY",
+    );
+  }
   text(input, "title", 500);
   if (input.description !== undefined)
     insist(
@@ -148,8 +162,9 @@ function delegation(input: Record<string, Json>): void {
     fields(
       route,
       ["nodeId", "provider", "model", "requiredCapabilities"],
-      ["workspaceId", "reasoningEffort"],
+      ["workspaceId", "reasoningEffort", "backend"],
     );
+    if (route.backend !== undefined) text(route, "backend", 100);
     id(route, "nodeId");
     text(route, "provider", 100);
     text(route, "model", 200);
@@ -168,6 +183,7 @@ function delegation(input: Record<string, Json>): void {
         "allowedNodeIds",
         "allowedWorkspaceIds",
         "allowedTools",
+        "allowedBackends",
         "requiredResources",
         "maxRuntimeMs",
         "maxDepth",
@@ -180,6 +196,7 @@ function delegation(input: Record<string, Json>): void {
       "allowedNodeIds",
       "allowedWorkspaceIds",
       "allowedTools",
+      "allowedBackends",
       "requiredResources",
     ])
       if (policy[key] !== undefined)
@@ -211,6 +228,9 @@ function delegation(input: Record<string, Json>): void {
 export function validatePayload(envelope: CommandEnvelope): void {
   const p = envelope.payload;
   switch (envelope.operation) {
+    case "projectSnapshot":
+      fields(p, []);
+      break;
     case "claim":
       fields(p, ["runId", "ttlMs"], ["projectContextVersion"]);
       id(p, "runId");
@@ -456,7 +476,7 @@ export function validatePayload(envelope: CommandEnvelope): void {
       fields(
         p,
         [...ownedFields, "title"],
-        ["description", "route", "policy", "configuration"],
+        ["description", "route", "policy", "configuration", "display"],
       );
       lease(p, envelope.nodeId);
       delegation(p);
@@ -615,6 +635,10 @@ export class RemoteGateway {
     try {
       let result: unknown;
       switch (envelope.operation) {
+        case "projectSnapshot":
+          insist(ledger.projectSnapshot, "PROJECT_SNAPSHOT_UNSUPPORTED", 503);
+          result = await ledger.projectSnapshot(peer.nodeId);
+          break;
         case "sessionMessages": {
           insist(
             ledger.pendingSessionMessages,
@@ -1010,7 +1034,8 @@ export class RemoteGateway {
     if (
       e.operation === "heartbeat" ||
       e.operation === "nodeStatus" ||
-      e.operation === "executorIdentity"
+      e.operation === "executorIdentity" ||
+      e.operation === "projectSnapshot"
     ) {
       insist(this.options.ledger.nodeStatuses, "NODE_STATUS_UNSUPPORTED", 503);
       const status = (await this.options.ledger.nodeStatuses()).find(

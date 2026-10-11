@@ -63,7 +63,7 @@ const base = {
   schedulerEnabled: false,
   autoExecute: false,
   maxConcurrent: 1,
-  executionTimeoutMs: 300000,
+
   healthAlerts: false,
   localHeartbeatIntervalMs: 30000,
 };

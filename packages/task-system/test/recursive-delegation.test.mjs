@@ -333,3 +333,72 @@ test("live test endpoints follow the configured authority and isolate the Codex 
     /same authority/,
   );
 });
+
+test("executor panel snapshot is read without a task lease and scope comes only from authenticated peer", async (t) => {
+  const { generateKeyPairSync } = await import("node:crypto");
+  const {
+    RemoteClient,
+    RemoteLedgerClient,
+    RemoteGateway,
+    RecoveryStore,
+    IdentityVerifier,
+    validatePayload,
+  } = await import("../dist/remote/api.js");
+  const dir = mkdtempSync(join(tmpdir(), "recursive-panel-scope-"));
+  const stores = ["server", "client"].map(
+    (name) => new RecoveryStore(join(dir, name + ".sqlite")),
+  );
+  const key = generateKeyPairSync("ed25519");
+  const seen = [];
+  const gateway = new RemoteGateway({
+    role: "planner",
+    nodeId: "central",
+    store: stores[0],
+    verifier: new IdentityVerifier({
+      audience: "central",
+      peers: [
+        {
+          nodeId: "mbp",
+          keyId: "test",
+          publicKey: key.publicKey,
+          audience: "central",
+          operations: ["projectSnapshot"],
+          workspaces: [],
+          capabilities: [],
+        },
+      ],
+    }),
+    ledger: {
+      nodeStatuses: () => [{ nodeId: "mbp" }],
+      projectSnapshot: (nodeId) => {
+        seen.push(nodeId);
+        return { projects: [{ projectId: "mine" }], observedNodeId: nodeId };
+      },
+    },
+  });
+  t.after(async () => {
+    await gateway.dispose();
+    for (const store of stores) store.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+  const client = new RemoteClient({
+    endpoint: "https://scope-fixture.invalid/commands",
+    nodeId: "mbp",
+    keyId: "test",
+    audience: "central",
+    privateKey: key.privateKey,
+    store: stores[1],
+    fetch: async (_url, options) =>
+      new Response(JSON.stringify(await gateway.handle(options.body))),
+  });
+  const remote = new RemoteLedgerClient(client, "mbp");
+  const result = await remote.projectSnapshot("spoofed-node");
+  assert.deepEqual(seen, ["mbp"]);
+  assert.equal(result.observedNodeId, "mbp");
+  assert.throws(() =>
+    validatePayload({
+      operation: "projectSnapshot",
+      payload: { nodeId: "other" },
+    }),
+  );
+});

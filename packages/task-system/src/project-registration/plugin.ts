@@ -2,11 +2,16 @@ import type { Context } from "@deepseek-ai/cordis";
 import z from "@deepseek-ai/schemastery";
 import { defineTool } from "@deepseek-ai/dsh-tools";
 import { TaskError } from "../ledger.js";
-import { validateRegistration, mappedId } from "./protocol.js";
-import { enqueueRegistration, flushRegistrations } from "./client.js";
+import { validateRegistration } from "./protocol.js";
+import { sendRegistration } from "./service.js";
+import { registerProjectCommands } from "./commands.js";
+import { flushRegistrations } from "./client.js";
 export const name = "dsh-project-registration";
 export const inject = ["tools", "taskSystem"];
+import type { TrustedNetworkTarget } from "../remote/trusted-network.js";
+
 export interface Config {
+  trustedNetwork?: TrustedNetworkTarget | null;
   namespaces: string[];
   outboxPath?: string;
   endpoint?: string;
@@ -14,11 +19,25 @@ export interface Config {
 }
 export const Config: z<Config> = z.object({
   namespaces: z.array(z.string()).required(),
+  trustedNetwork: z
+    .union([
+      z.const(null),
+      z.object({
+        address: z.string().required(),
+        port: z.number().required(),
+        localAddress: z.string().required(),
+        allowHttp: z.const(true).required(),
+      }),
+    ])
+    .default(null),
   outboxPath: z.string().required(false),
   endpoint: z.string().required(false),
   tokenEnv: z.string().required(false),
 });
 export function apply(ctx: Context, config: Config) {
+  ctx.inject(["commands"], (commandsCtx) => {
+    registerProjectCommands(commandsCtx, config);
+  });
   const output = {
     schema: { type: "json" as const },
     render: (_args: unknown, value: unknown) => [
@@ -47,6 +66,8 @@ export function apply(ctx: Context, config: Config) {
           config.outboxPath,
           config.endpoint,
           config.tokenEnv ? process.env[config.tokenEnv] : undefined,
+          undefined,
+          config.trustedNetwork,
         );
       },
     }),
@@ -82,41 +103,19 @@ export function apply(ctx: Context, config: Config) {
             );
           if (toolName === "project_update" && p.previousRevision === 0)
             throw new TaskError("INVALID", "Update requires existing revision");
-          if (config.endpoint) {
-            if (!config.outboxPath)
-              throw new TaskError(
-                "INVALID",
-                "Remote registration requires an explicit outboxPath",
-              );
-            const queued = enqueueRegistration(config.outboxPath, p);
-            try {
-              return {
-                ...queued,
-                ...(await flushRegistrations(
-                  config.outboxPath,
-                  config.endpoint,
-                  config.tokenEnv ? process.env[config.tokenEnv] : undefined,
-                )),
-              };
-            } catch (error) {
-              return {
-                ...queued,
-                delivery: "pending",
-                code: (error as { code?: string }).code ?? "TRANSPORT",
-              };
-            }
-          }
           return JSON.parse(
             JSON.stringify(
-              ctx.taskSystem.ledger.registerProject(
-                mappedId(
-                  p.namespace,
-                  p.projectExternalId,
-                  "command",
-                  p.idempotencyKey,
-                ),
+              await sendRegistration(
+                ctx.taskSystem.ledger,
+                config,
+                toolName === "project_register"
+                  ? "register"
+                  : toolName === "project_submit"
+                    ? "submit"
+                    : toolName === "project_history_intake"
+                      ? "history"
+                      : "sync",
                 p,
-                config.namespaces,
               ),
             ),
           );

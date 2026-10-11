@@ -504,6 +504,16 @@ export class TaskPluginSettings extends TypertRemoteService {
     );
   }
   async projectSnapshot() {
+    const task = this.ctx.get("taskSystem") as TaskSystemService | undefined;
+    if(task?.config.role === "executor") {
+      const remote = this.ctx.get("remoteExecution") as RemoteExecutionService | undefined;
+      if(!remote?.coordinatorLedger) throw new RemoteError("task/project", "Coordinator unavailable", {reason:"COORDINATOR_UNAVAILABLE"});
+      return this.projectOperation(async () => {
+        const result = await remote.coordinatorLedger!.projectSnapshot();
+        const view = result as unknown as {viewContext?:Record<string,unknown>};
+        return {...view,viewContext:{...view.viewContext,coordinatorUrl:remote.coordinatorPanelUrl()}};
+      });
+    }
     return this.projectOperation(() => this.projects().snapshot());
   }
   async projectPage() {

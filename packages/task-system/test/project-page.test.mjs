@@ -9,7 +9,7 @@ const service = task => Object.assign(Object.create(TaskPluginSettings.prototype
 test('project RPC distinguishes executor role, unavailable planner service and business failures', async () => {
   const executor = service({config: {role: 'executor'}});
   const roleError = error => error.isDSHRemoteError === true && error.code === 'task/project' && error.details.reason === 'PLANNER_REQUIRED';
-  await assert.rejects(executor.projectSnapshot(), roleError);
+  await assert.rejects(executor.projectSnapshot(), error => error.code === 'task/project' && error.details.reason === 'COORDINATOR_UNAVAILABLE');
   await assert.rejects(executor.createProject({commandId: 'no-grant', title: 'test', goal: 'test'}), roleError);
   await assert.rejects(service({config:{role:'planner'}}).projectSnapshot(), error => error.details.reason === 'PROJECT_UNAVAILABLE');
   const snapshot = {projects:[],tasks:[]};

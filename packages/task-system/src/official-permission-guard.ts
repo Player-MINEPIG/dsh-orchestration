@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { realpathSync } from "node:fs";
 import { PassThrough, Writable } from "node:stream";
@@ -8,6 +9,7 @@ import type {
 } from "@deepseek-ai/dsh-subprocess";
 import {
   verifyOfficialProfile,
+  recordOfficialRuntime,
   type OfficialBackend,
 } from "./official-execution.js";
 
@@ -308,11 +310,48 @@ export function installOfficialPermissionGuard(
         .filter((key) => key.startsWith("CODEX_"))
         .map((key) => [key, undefined]),
     );
+    // rc.2 fixes a package-local wrapper and offers no CLI path option. This
+    // executor-side seam substitutes only an explicitly configured host binary;
+    // the official provider still owns the entire process and child lifecycle.
+    const argv = backend.cliPath
+      ? [backend.cliPath, "app-server", "--stdio"]
+      : spec.argv;
+    let cliVersion: string | null = null;
+    try {
+      const versionArgs = backend.cliPath
+        ? ["--version"]
+        : [spec.argv[1]!, "--version"];
+      const output = execFileSync(argv[0]!, versionArgs, {
+        encoding: "utf8",
+        timeout: 5000,
+        maxBuffer: 4096,
+        env: { ...process.env, ...env, ...spec.env },
+        stdio: ["ignore", "pipe", "pipe"],
+      }).trim();
+      if (/^codex-cli [0-9][A-Za-z0-9.+-]*$/.test(output)) cliVersion = output;
+    } catch {
+      /* Diagnostic only: protocol, model and permissions decide admission. */
+    }
+    const runtime = {
+      cliVersion,
+      cliSource: backend.cliPath
+        ? "host-configured"
+        : "official-provider-package",
+    } as const;
+    recordOfficialRuntime(backend.codexHome, runtime);
     return guardOfficialTransport(
-      spawn.call(subprocess, { ...spec, env: { ...env, ...spec.env } }),
+      spawn.call(subprocess, { ...spec, argv, env: { ...env, ...spec.env } }),
       backend,
       spec.cwd,
-      onAudit,
+      (audit) => {
+        recordOfficialRuntime(backend.codexHome, {
+          ...runtime,
+          verifiedModel: audit.model,
+          verifiedReasoningEffort: audit.reasoningEffort,
+          productThreadId: audit.productThreadId,
+        });
+        onAudit?.(audit);
+      },
     );
   };
   subprocess.spawn = guarded;

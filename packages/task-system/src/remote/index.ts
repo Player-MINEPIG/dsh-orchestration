@@ -31,12 +31,12 @@ export interface Config {
   pollIntervalMs: number; concurrency: number; executionLimits?: {pollIntervalMs?: number; concurrency?: number};
   /** Compatibility for old connections; new setup writes true after explicit grants. */
   taskSessionsEnabled?: boolean;
-  coordinator?: { endpoint: string; audience: string; authMode?: AuthMode; keyId?: string; privateKeyEnv?: string; trustedNetwork?: TrustedNetworkTarget | null; maxResponseBytes?: number; heartbeatIntervalMs?: number; nativeRoutes: { provider: string; models: { model: string; reasoningEfforts: string[] }[] }[] } | null;
+  coordinator?: { panelUrl?: string; endpoint: string; audience: string; authMode?: AuthMode; keyId?: string; privateKeyEnv?: string; trustedNetwork?: TrustedNetworkTarget | null; maxResponseBytes?: number; heartbeatIntervalMs?: number; nativeRoutes: { provider: string; models: { model: string; reasoningEfforts: string[] }[] }[] } | null;
   /** Forward only observations inside the configured local workspace binding. */
   observationForwarding?: { workspaceId: string } | null;
 }
 const authModeSchema = z.union([z.const('ed25519'),z.const('trusted-network')])
-const operationSchema = z.union([z.const('claim'),z.const('renew'),z.const('submit'),z.const('cancel'),z.const('receipt'),z.const('bindSession'),z.const('markRunning'),z.const('getRun'),z.const('getAttempt'),z.const('acknowledgeCancellation'),z.const('listWork'),z.const('observe'),z.const('delegate'),z.const('taskHistory'),z.const('taskWait'),z.const('taskNote'),z.const('taskReport'),z.const('heartbeat'),z.const('nodeStatus'),z.const('retryBeforeEffects'),z.const('offerApproval'),z.const('approvalStatus'),z.const('cancelApproval'),z.const('executorIdentity'),z.const('sessionContext'),z.const('selectTaskSession'),z.const('sessionMessages'),z.const('sessionMessageReply')])
+const operationSchema = z.union([z.const('claim'),z.const('renew'),z.const('submit'),z.const('cancel'),z.const('receipt'),z.const('bindSession'),z.const('markRunning'),z.const('getRun'),z.const('getAttempt'),z.const('acknowledgeCancellation'),z.const('listWork'),z.const('observe'),z.const('delegate'),z.const('taskHistory'),z.const('taskWait'),z.const('taskNote'),z.const('taskReport'),z.const('heartbeat'),z.const('nodeStatus'),z.const('retryBeforeEffects'),z.const('offerApproval'),z.const('approvalStatus'),z.const('cancelApproval'),z.const('executorIdentity'),z.const('sessionContext'),z.const('selectTaskSession'),z.const('sessionMessages'),z.const('sessionMessageReply'),z.const('projectSnapshot')])
 const addressSchema = z.string().required()
 const portSchema = z.number().step(1).min(1).max(65535).required()
 const networkPolicySchema = z.object({
@@ -58,7 +58,7 @@ const PlainConfig: z<Config> = z.object({
   pollIntervalMs: z.union([z.const(0),z.number().step(1).min(100).max(3600000)]).default(0), concurrency: z.number().step(1).min(1).max(16).default(1),
   executionLimits: z.object({pollIntervalMs:z.union([z.const(0),z.number().step(1).min(100).max(3600000)]).required(false),concurrency:z.number().step(1).min(1).max(16).required(false)}).default({}),
   taskSessionsEnabled: z.boolean().required(false),
-  coordinator: z.union([z.const(null),z.object({ endpoint: z.string().required(),audience: z.string().required(),authMode: authModeSchema.default('ed25519'),keyId: z.string(),privateKeyEnv: z.string(),trustedNetwork: z.union([z.const(null),networkTargetSchema]).default(null),maxResponseBytes: z.number().step(1).min(1024).max(MAX_WIRE_BYTES).default(DEFAULT_MAX_RESPONSE_BYTES),heartbeatIntervalMs: z.union([z.const(0),z.number().step(1).min(1000).max(3600000)]).default(0),nativeRoutes: z.array(z.object({ provider: z.string().required(),models: z.array(z.object({ model: z.string().required(),reasoningEfforts: z.array(z.string()).default([]) })).required() })).default([]) })]).default(null),
+  coordinator: z.union([z.const(null),z.object({ panelUrl: z.string(),endpoint: z.string().required(),audience: z.string().required(),authMode: authModeSchema.default('ed25519'),keyId: z.string(),privateKeyEnv: z.string(),trustedNetwork: z.union([z.const(null),networkTargetSchema]).default(null),maxResponseBytes: z.number().step(1).min(1024).max(MAX_WIRE_BYTES).default(DEFAULT_MAX_RESPONSE_BYTES),heartbeatIntervalMs: z.union([z.const(0),z.number().step(1).min(1000).max(3600000)]).default(0),nativeRoutes: z.array(z.object({ provider: z.string().required(),models: z.array(z.object({ model: z.string().required(),reasoningEfforts: z.array(z.string()).default([]) })).required() })).default([]) })]).default(null),
   observationForwarding: z.union([z.const(null),z.object({ workspaceId: z.string().required() })]).default(null).description('Forward only captured observations whose immutable session cwd resolves within this configured workspace path and allowed root.'),
 })
 export const Config = z.object({...PlainConfig.dict, executionLimits:PlainConfig.dict!.executionLimits!.volatile()})
@@ -102,6 +102,11 @@ export class RemoteExecutionService extends Service {
     if (config.role !== 'executor') this.gateway = new RemoteGateway({ role: config.role,nodeId: config.nodeId,verifier: config.authMode === 'trusted-network' ? new TrustedNetworkVerifier({ ...config.trustedNetwork!,audience: config.audience }) : new IdentityVerifier({ audience: config.audience,peers: config.peers }),ledger,store,maxBodyBytes: config.maxBodyBytes,maxResponseBytes: config.maxResponseBytes })
   }
   /** Read-only settings projection, deliberately excludes keys, grants and credentials. */
+  coordinatorPanelUrl(): string | null {
+    const value=this.config.coordinator?.panelUrl;
+    if(!value)return null;
+    try {const url=new URL(value);return ["http:","https:"].includes(url.protocol)&&!url.username&&!url.password?url.href:null;}catch{return null;}
+  }
   settingsSnapshot() {
     let endpoint: string | null = null
     if (this.config.coordinator) {

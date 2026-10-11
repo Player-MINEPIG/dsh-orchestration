@@ -1,6 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  writeFileSync,
+  rmSync,
+  chmodSync,
+} from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { PassThrough, Writable } from "node:stream";
@@ -66,8 +72,10 @@ function fixture(t, change = {}) {
   let provider,
     terminated = false,
     observedExit = false;
+  const spawns = [];
   const subprocess = {
-    spawn() {
+    spawn(spec) {
+      spawns.push(spec);
       const stdout = new PassThrough(),
         stderr = new PassThrough();
       const emit = (message) => {
@@ -189,6 +197,7 @@ function fixture(t, change = {}) {
     });
   return {
     execute,
+    spawns,
     methods,
     audits,
     config,
@@ -215,6 +224,9 @@ test("actual official provider releases no turn until same-process config, threa
     "mcpServerStatus/list",
     "turn/start",
   ]);
+  assert.equal(result.report.data.verifiedModel, "gpt-6-luna");
+  assert.equal(result.report.data.verifiedReasoningEffort, "low");
+  assert.equal(result.report.data.productThreadId, "fixture-thread");
   assert.equal(f.audits[0].mcpServerCount, 0);
   assert.equal(f.audits[0].productThreadId, "fixture-thread");
   assert.equal(f.observedExit(), true);
@@ -278,6 +290,7 @@ for (const [label, mutate, errorMethod] of [
     const f = fixture(t, { mutate, errorMethod });
     const result = await f.execute();
     assert.equal(result.outcome, "failure");
+    assert.equal(result.report.data.verifiedModel, undefined);
     assert.equal(f.methods.includes("turn/start"), false);
     assert.deepEqual(f.audits, []);
     assert.equal(f.observedExit(), true);
@@ -368,4 +381,36 @@ test("guard retains public handle properties even when inherited getters are non
   rawIn.end();
   stderr.end();
   control.end();
+});
+
+test("execution host selects its own CLI while official lifecycle and permission gates remain intact", async (t) => {
+  const f = fixture(t);
+  const cli = join(f.home, "host-codex");
+  writeFileSync(cli, '#!/bin/sh\nprintf "codex-cli 9.8.7-host\\n"\n');
+  chmodSync(cli, 0o700);
+  f.backend.cliPath = cli;
+  const result = await f.execute();
+  assert.equal(result.outcome, "success");
+  assert.deepEqual(f.spawns[0].argv, [cli, "app-server", "--stdio"]);
+  assert.equal(f.spawns[0].cwd, f.cwd);
+  assert.equal(result.report.data.cliVersion, "codex-cli 9.8.7-host");
+  assert.equal(result.report.data.cliSource, "host-configured");
+  assert.equal(f.audits.length, 1);
+  assert.equal(f.observedExit(), true);
+});
+
+test("CLI version is diagnostic, not an admission version lock", async (t) => {
+  const f = fixture(t);
+  const cli = join(f.home, "host-codex");
+  writeFileSync(cli, "#!/bin/sh\nexit 2\n");
+  chmodSync(cli, 0o700);
+  f.backend.cliPath = cli;
+  const result = await f.execute();
+  assert.equal(result.outcome, "success");
+  assert.equal(result.report.data.cliVersion, null);
+  assert.equal(
+    f.audits.length,
+    1,
+    "actual protocol capabilities still verified",
+  );
 });

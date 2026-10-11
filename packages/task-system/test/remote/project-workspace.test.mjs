@@ -37,3 +37,14 @@ test('a Git project gives subsequent task sessions independent detached worktree
  execFileSync('git',['init',root]);writeFileSync(join(root,'code.txt'),'base');execFileSync('git',['-C',root,'add','code.txt']);execFileSync('git',['-C',root,'-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-m','base']);
  const other=await f.workspace(f.claim('p','code-task'),'code-session');assert.notEqual(other,root);assert.equal(readFileSync(join(other,'code.txt'),'utf8'),'base');writeFileSync(join(other,'code.txt'),'task change');assert.equal(readFileSync(join(root,'code.txt'),'utf8'),'base');assert.equal(await f.workspace(f.claim('p','code-task'),'code-session',true),other);
 });
+
+test('plain recursive task sessions get independent directories and cannot resume an old shared project mapping',async t=>{
+ const f=fixture(t),parent=await f.workspace(f.claim(),'parent');
+ const child=f.claim('p','child');child.run.parentRunId='parent-run';
+ const sibling=f.claim('p','sibling');sibling.run.parentRunId='parent-run';
+ const [a,b]=await Promise.all([f.workspace(child,'child-session'),f.workspace(sibling,'sibling-session')]);
+ assert.notEqual(a,parent);assert.notEqual(a,b);assert.equal(await f.workspace(child,'child-session',true),a);
+ writeFileSync(join(a,'result.txt'),'child');assert.throws(()=>readFileSync(join(parent,'result.txt')));
+ const old=f.claim('p','old-child');await f.workspace(old,'old-session');old.run.parentRunId='parent-run';
+ await assert.rejects(f.workspace(old,'old-session',true),/RECURSIVE_WORKSPACE_REQUIRES_NEW_SESSION/);
+});

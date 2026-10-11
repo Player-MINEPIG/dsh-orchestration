@@ -40,8 +40,8 @@ try {
   assert.match(rawError,/Configuration entry is no longer available/);assert.equal(callbackCalled,false)
   const startup=await settings.startup();assert.ok(startup.remote)
   let rpcError
-  try {await settings.saveStartup({target:'remote',expected:startup.remote.values,changes:{concurrency:2}})} catch(error){rpcError={code:error.code,message:error.message}}
-  assert.equal(rpcError.code,'STARTUP_REMOTE_DISABLED')
+  try {await settings.saveStartup({target:'remote',expected:startup.remote.values,changes:{concurrency:2}})} catch(error){rpcError={code:error.code,reason:error.details?.reason,message:error.message}}
+  assert.equal(rpcError.code,'task/startup');assert.equal(rpcError.reason,'STARTUP_REMOTE_DISABLED')
   assert.equal(readFileSync(profile.patchPath,'utf8'),before);assert.equal(readFileSync(root,'utf8'),rootBefore)
   assert.equal(ctx.get('remoteExecution'),undefined);assert.equal(existsSync(remoteState),false)
   // Public Entry.update does not persist the profile-owned patch. Verify it is
@@ -65,7 +65,7 @@ try {
   assert.ok(service);assert.equal(view.remote.loaded,true);assert.equal(view.remote.loaderDisabled,false);assert.equal(view.remote.values.paused,true)
   assert.equal(service.gateway,undefined);assert.equal(service.nativeWorker,undefined);assert.equal(service.coordinatorLedger,undefined);assert.equal(existsSync(remoteState),false)
   const pausedBefore=readFileSync(profile.patchPath,'utf8')
-  await assert.rejects(controller.saveStartup({target:'remote',expected:view.remote.values,changes:{paused:false}}),{code:'STARTUP_CONNECTION_REQUIRED'})
+  await assert.rejects(controller.saveStartup({target:'remote',expected:view.remote.values,changes:{paused:false}}),error=>error.code==='task/startup'&&error.details?.reason==='STARTUP_CONNECTION_REQUIRED')
   assert.equal(readFileSync(profile.patchPath,'utf8'),pausedBefore)
   const saved=await controller.saveStartup({target:'remote',expected:view.remote.values,changes:{concurrency:2,endpoint:'http://127.0.0.3:45679/commands',audience:'fixture-planner',trustedNetworkTarget:{address:'127.0.0.3',port:45679,localAddress:'127.0.0.2',allowHttp:true}}})
   assert.equal(saved.saved,true)

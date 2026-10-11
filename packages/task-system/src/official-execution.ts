@@ -10,11 +10,32 @@ import type { ExecutionResult } from "./remote/ports.js";
 export interface OfficialBackend {
   backend: string;
   codexHome: string;
+  /** Execution-host selected absolute CLI executable. Never supplied in a task route. */
+  cliPath?: string;
   provider: string;
   model: string;
   reasoningEffort: string;
   /** An explicit backend grant acknowledges its native tools, not DSH toolFilter. */
   permissionContract: "codex-native";
+}
+export interface OfficialRuntimeEvidence {
+  cliVersion: string | null;
+  cliSource: "host-configured" | "official-provider-package";
+  verifiedModel?: string;
+  verifiedReasoningEffort?: string;
+  productThreadId?: string;
+}
+const runtimeEvidence = new Map<string, OfficialRuntimeEvidence>();
+export function recordOfficialRuntime(
+  home: string,
+  evidence: OfficialRuntimeEvidence,
+): void {
+  runtimeEvidence.set(realpathSync(home), evidence);
+}
+export function officialRuntimeEvidence(
+  home: string,
+): OfficialRuntimeEvidence | undefined {
+  return runtimeEvidence.get(realpathSync(home));
 }
 /** Deployment defaults; effective configuration is also checked in the live app-server. */
 export function officialProfileConfig(
@@ -26,6 +47,8 @@ export function verifyOfficialProfile(
   backend: OfficialBackend,
   workspacePath?: string,
 ): void {
+  if (backend.cliPath !== undefined && !isAbsolute(backend.cliPath))
+    throw new Error("host Codex CLI path must be absolute");
   if (!isAbsolute(backend.codexHome))
     throw new Error("isolated absolute CODEX_HOME required");
   const config = readFileSync(join(backend.codexHome, "config.toml"), "utf8");
@@ -144,6 +167,7 @@ export async function executeOfficialSubagent(input: {
   try {
     // Recheck after queueing: a waiting task must not launch a changed profile.
     verifyOfficialProfile(backend, input.workspacePath);
+    runtimeEvidence.delete(realpathSync(backend.codexHome));
     let run;
     try {
       run = await input.subagents.start(backend.backend, {
@@ -167,6 +191,11 @@ export async function executeOfficialSubagent(input: {
         report: {
           title: "Official Codex startup failure",
           body: "No official execution was published. The provider completed startup cleanup; no result or human acceptance is claimed.",
+          data: {
+            backend: backend.backend,
+            ...(officialRuntimeEvidence(backend.codexHome) ?? {}),
+            phase: "startup",
+          },
         },
       };
     }
@@ -205,6 +234,7 @@ export async function executeOfficialSubagent(input: {
         data: {
           officialSubagentId: run.id,
           backend: backend.backend,
+          ...(officialRuntimeEvidence(backend.codexHome) ?? {}),
           stopReason: result.stopReason,
           model: backend.model,
           reasoningEffort: backend.reasoningEffort,

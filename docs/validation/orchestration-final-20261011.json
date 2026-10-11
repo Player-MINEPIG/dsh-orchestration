@@ -1,0 +1,367 @@
+{
+  "baseline": "1052d0d codex/project-runtime",
+  "integrationBranch": "codex/project-runtime-integration",
+  "transport": "Tailscale direct; no SSH forwarding",
+  "execution": {
+    "verification": {
+      "expectedNineRuns": true,
+      "allQuiescent": true,
+      "threeOfficialPending": true,
+      "cancellationRecorded": true,
+      "ordinaryArtifact": true,
+      "lostAckRecovered": true
+    },
+    "kind": "real-vps-mbp-dsh-codex",
+    "runtimeRoot": "/Users/pmp/.codex/worktrees/project-runtime-integration/dsh-orchestration/.runtime/project-runtime-final2",
+    "workspace": "/Users/pmp/.codex/worktrees/project-runtime-integration/dsh-orchestration/.runtime/project-runtime-final2/workspace",
+    "authorityNode": "vps",
+    "executorNode": "mbp",
+    "commandsEndpoint": "http://100.123.230.75:43871/commands",
+    "snapshotEndpoint": "http://100.123.230.75:43871/snapshot",
+    "codexHome": "/Users/pmp/.codex/worktrees/project-runtime-integration/dsh-orchestration/.runtime/project-runtime-final2/codex-home",
+    "dshModel": "deepseek-flash",
+    "codexModel": "gpt-6-luna",
+    "codexEffort": "low",
+    "actualProviderCalls": 8,
+    "recoveryReplayedProvider": false,
+    "deliberateLostResultAck": true,
+    "dispatches": [],
+    "wireProof": [
+      {
+        "kind": "request",
+        "method": "thread/start",
+        "model": "gpt-6-luna",
+        "ephemeral": true,
+        "approvalPolicy": "never"
+      },
+      {
+        "kind": "response",
+        "method": "thread/start",
+        "productThreadId": "01a1295b-faa8-7ba1-9f86-945295b30459",
+        "ephemeral": true,
+        "model": "gpt-6-luna",
+        "reasoningEffort": "low"
+      },
+      {
+        "kind": "event",
+        "method": "turn/completed",
+        "productThreadId": "01a1295b-faa8-7ba1-9f86-945295b30459",
+        "status": "completed"
+      },
+      {
+        "kind": "request",
+        "method": "thread/start",
+        "model": "gpt-6-luna",
+        "ephemeral": true,
+        "approvalPolicy": "never"
+      },
+      {
+        "kind": "response",
+        "method": "thread/start",
+        "productThreadId": "01a1295c-ca39-7e83-af03-51808959278d",
+        "ephemeral": true,
+        "model": "gpt-6-luna",
+        "reasoningEffort": "low"
+      },
+      {
+        "kind": "event",
+        "method": "turn/completed",
+        "productThreadId": "01a1295c-ca39-7e83-af03-51808959278d",
+        "status": "completed"
+      },
+      {
+        "kind": "request",
+        "method": "thread/start",
+        "model": "gpt-6-luna",
+        "ephemeral": true,
+        "approvalPolicy": "never"
+      },
+      {
+        "kind": "response",
+        "method": "thread/start",
+        "productThreadId": "01a1295e-0316-7c30-bf4a-094a0dd94ebd",
+        "ephemeral": true,
+        "model": "gpt-6-luna",
+        "reasoningEffort": "low"
+      },
+      {
+        "kind": "event",
+        "method": "turn/completed",
+        "productThreadId": "01a1295e-0316-7c30-bf4a-094a0dd94ebd",
+        "status": "completed"
+      }
+    ]
+  },
+  "registration": {
+    "at": "2026-10-11T05:07:17.293Z",
+    "transport": "Tailscale direct bound socket; no SSH forwarding",
+    "source": "100.111.163.32",
+    "address": "100.123.230.75",
+    "endpoint": "http://100.123.230.75:43872/v1/registrations",
+    "authority": "same coordinator.sqlite as recursive execution",
+    "officialCommands": true,
+    "modelCalls": 0,
+    "commandCount": 9,
+    "commandEvents": 18,
+    "sourceDefaultProfileChanged": false,
+    "registrationExecutionAttempts": 0,
+    "registrationExecutableRuns": 0,
+    "allAttemptsUnchanged": false,
+    "counts": {
+      "beforeAttempts": 1,
+      "afterAttempts": 2,
+      "registrations": 4,
+      "observedRuns": 17
+    },
+    "pv": {
+      "scope": "finite real historical text/report packet; no media bytes uploaded; not whole-project final approval",
+      "tasks": 21,
+      "runs": 14,
+      "reports": 20,
+      "artifactReferences": 51
+    },
+    "registrations": [
+      {
+        "central": {
+          "evidenceReportIds": [],
+          "note": "",
+          "review": "unreviewed",
+          "revision": 0,
+          "revoked": false,
+          "withdrawn": false
+        },
+        "digest": "d8db5ca9217192da8c88cdf983da8779dd41b7b4e4afdb7a9349bb06e953dba4",
+        "importedAt": "2026-10-11T05:07:03.361Z",
+        "mode": "final",
+        "namespace": "mbp-local-live",
+        "observedAt": "2026-10-11T04:59:54.627Z",
+        "origin": {
+          "harness": "DSH official human commands; deterministic evidence fixture, zero model calls",
+          "nodeId": "mbp",
+          "workspaceUri": "file:///Users/pmp/.codex/worktrees/project-runtime-integration/dsh-orchestration/.runtime/project-runtime-final2/registration-workspace"
+        },
+        "projectExternalId": "runtime-native-live",
+        "projectId": "reg-project-7bc864dd87f1adb95ef741c4fb4f7b51abfedce2ccbc65ea5421dbbc629de3a9",
+        "registrationId": "reg-registration-f3f9f243d99609cbe340a03a416df069bfe80d6b2bda3f4f58f6491969e36679",
+        "sourceRevision": 3,
+        "staleAfterMs": 60000,
+        "updatedAt": "2026-10-11T05:07:05.993Z"
+      },
+      {
+        "central": {
+          "evidenceReportIds": [],
+          "note": "",
+          "review": "unreviewed",
+          "revision": 0,
+          "revoked": false,
+          "withdrawn": false
+        },
+        "digest": "6e3abee0e27be3f23bc7a56c3e90f214bf6d70f10157a13f3dd9d1d3e3b9cdb1",
+        "importedAt": "2026-10-11T05:07:09.337Z",
+        "mode": "final",
+        "namespace": "mbp-local-live",
+        "observedAt": "2026-10-11T04:59:54.632Z",
+        "origin": {
+          "harness": "DSH official human commands; deterministic evidence fixture, zero model calls",
+          "nodeId": "mbp",
+          "workspaceUri": "file:///Users/pmp/.codex/worktrees/project-runtime-integration/dsh-orchestration/.runtime/project-runtime-final2/registration-workspace"
+        },
+        "projectExternalId": "runtime-finished-only",
+        "projectId": "reg-project-f01e3b964e28b21bc4fe6c952558388777cfd5b8b1a48813d4c03284a5872387",
+        "registrationId": "reg-registration-c22b0204ac70346c912084f8429ab7e50e076fac31a759edbd58e16036076aec",
+        "sourceRevision": 1,
+        "staleAfterMs": 60000,
+        "updatedAt": "2026-10-11T05:07:09.337Z"
+      },
+      {
+        "central": {
+          "evidenceReportIds": [],
+          "note": "",
+          "review": "unreviewed",
+          "revision": 0,
+          "revoked": false,
+          "withdrawn": false
+        },
+        "digest": "d1ae9bcb7700ba30c63552321ca2d4f411e8075740b2cea01239202008a6000b",
+        "importedAt": "2026-10-11T05:07:10.053Z",
+        "mode": "history",
+        "namespace": "generic-history",
+        "observedAt": "2026-10-11T04:59:54.632Z",
+        "origin": {
+          "harness": "Generic harness protocol fixture; zero model calls",
+          "nodeId": "mbp",
+          "workspaceUri": "file:///Users/pmp/.codex/worktrees/project-runtime-integration/dsh-orchestration/.runtime/project-runtime-final2/registration-workspace"
+        },
+        "projectExternalId": "runtime-generic-history",
+        "projectId": "reg-project-de5211e7c92edd62226be6ee4f399e206c3eb3784b9f0ec1f3c190970c3abe03",
+        "registrationId": "reg-registration-594589a97c5a2132b3ea944b866170629ae895458fd80a4757e2f368156e0274",
+        "sourceRevision": 1,
+        "staleAfterMs": 60000,
+        "updatedAt": "2026-10-11T05:07:10.053Z"
+      },
+      {
+        "central": {
+          "evidenceReportIds": [],
+          "note": "",
+          "review": "unreviewed",
+          "revision": 0,
+          "revoked": false,
+          "withdrawn": false
+        },
+        "digest": "000815b5bbaaed66ec959da8e926871b02db1dc9ba3a87b15ec8bf27cc13e1e4",
+        "importedAt": "2026-10-11T05:07:13.739Z",
+        "mode": "history",
+        "namespace": "mbp-pv-history",
+        "observedAt": "2026-10-11T04:59:54.636Z",
+        "origin": {
+          "harness": "DSH + Codex CLI (historical evidence)",
+          "nodeId": "pmp-mac",
+          "workspaceUri": "file:///Users/pmp/AI/deepseek-harness/workspace/dsh-tavern-v3-pv"
+        },
+        "projectExternalId": "runtime-real-pv-finite-history",
+        "projectId": "reg-project-f3c7c97d582da0039072d09b87e36947b1b63eb1d97657821143fd416ca722dc",
+        "registrationId": "reg-registration-d6d5dbf127f037d8d6c2a5582bd86e4ace25f3622925f9e09b07ab19cd2c0f7c",
+        "sourceRevision": 1,
+        "staleAfterMs": 60000,
+        "updatedAt": "2026-10-11T05:07:13.739Z"
+      }
+    ],
+    "status": {
+      "transport": "remote",
+      "pending": [],
+      "acknowledged": [
+        {
+          "namespace": "generic-history",
+          "projectExternalId": "runtime-generic-history",
+          "revision": 1
+        },
+        {
+          "namespace": "mbp-pv-history",
+          "projectExternalId": "runtime-real-pv-finite-history",
+          "revision": 1
+        },
+        {
+          "namespace": "mbp-local-live",
+          "projectExternalId": "runtime-finished-only",
+          "revision": 1
+        },
+        {
+          "namespace": "mbp-local-live",
+          "projectExternalId": "runtime-native-live",
+          "revision": 1
+        },
+        {
+          "namespace": "mbp-local-live",
+          "projectExternalId": "runtime-native-live",
+          "revision": 2
+        },
+        {
+          "namespace": "mbp-local-live",
+          "projectExternalId": "runtime-native-live",
+          "revision": 3
+        }
+      ]
+    },
+    "steps": [
+      {
+        "label": "preview",
+        "command": "/project preview",
+        "commandId": "cmd-0d350ab6-1",
+        "kind": "success",
+        "text": "{\n  \"preview\": true,\n  \"file\": \"/Users/pmp/.codex/worktrees/project-runtime-integration/dsh-orchestration/.runtime/project-runtime-final2/registration-workspace/.dsh/project-registration.json\",\n  \"project\": \"本地项目 · 早登记与持续同步\",\n  \"namespace\": \"mbp-local-live\",\n  \"projectExternalId\": \"runtime-native-live\",\n  \"mode\": \"live\",\n  \"revision\": 1,\n  \"tasks\": 1,\n  \"runs\": 1,\n  \"reports\": 1,\n  \"artifacts\": 0,\n  \"workspace\": \"file:///Users/pmp/.codex/worktrees/project-runtime-integration/dsh-orchestration/.runtime/project-runtime-final2/registration-workspace\"\n}"
+      },
+      {
+        "label": "register",
+        "command": "/project register",
+        "commandId": "cmd-0d350ab6-2",
+        "kind": "success",
+        "text": "中央已确认项目快照。\n{\n  \"project\": \"本地项目 · 早登记与持续同步\",\n  \"namespace\": \"mbp-local-live\",\n  \"projectExternalId\": \"runtime-native-live\",\n  \"mode\": \"live\",\n  \"revision\": 1,\n  \"tasks\": 1,\n  \"runs\": 1,\n  \"reports\": 1,\n  \"artifacts\": 0,\n  \"workspace\": \"file:///Users/pmp/.codex/worktrees/project-runtime-integration/dsh-orchestration/.runtime/project-runtime-final2/registration-workspace\"\n}"
+      },
+      {
+        "label": "sync",
+        "command": "/project sync",
+        "commandId": "cmd-0d350ab6-3",
+        "kind": "success",
+        "text": "中央已确认项目快照。\n{\n  \"project\": \"本地项目 · 早登记与持续同步\",\n  \"namespace\": \"mbp-local-live\",\n  \"projectExternalId\": \"runtime-native-live\",\n  \"mode\": \"live\",\n  \"revision\": 2,\n  \"tasks\": 1,\n  \"runs\": 1,\n  \"reports\": 1,\n  \"artifacts\": 0,\n  \"workspace\": \"file:///Users/pmp/.codex/worktrees/project-runtime-integration/dsh-orchestration/.runtime/project-runtime-final2/registration-workspace\"\n}"
+      },
+      {
+        "label": "submit",
+        "command": "/project submit",
+        "commandId": "cmd-0d350ab6-4",
+        "kind": "success",
+        "text": "中央已确认项目快照。\n{\n  \"project\": \"本地项目 · 早登记与持续同步\",\n  \"namespace\": \"mbp-local-live\",\n  \"projectExternalId\": \"runtime-native-live\",\n  \"mode\": \"final\",\n  \"revision\": 3,\n  \"tasks\": 1,\n  \"runs\": 1,\n  \"reports\": 1,\n  \"artifacts\": 0,\n  \"workspace\": \"file:///Users/pmp/.codex/worktrees/project-runtime-integration/dsh-orchestration/.runtime/project-runtime-final2/registration-workspace\"\n}"
+      },
+      {
+        "label": "old-replay",
+        "command": "/project register \"/Users/pmp/.codex/worktrees/project-runtime-integration/dsh-orchestration/.runtime/project-runtime-final2/registration-workspace/live.json\"",
+        "commandId": "cmd-0d350ab6-5",
+        "kind": "success",
+        "text": "中央已确认项目快照。\n{\n  \"project\": \"本地项目 · 早登记与持续同步\",\n  \"namespace\": \"mbp-local-live\",\n  \"projectExternalId\": \"runtime-native-live\",\n  \"mode\": \"live\",\n  \"revision\": 1,\n  \"tasks\": 1,\n  \"runs\": 1,\n  \"reports\": 1,\n  \"artifacts\": 0,\n  \"workspace\": \"file:///Users/pmp/.codex/worktrees/project-runtime-integration/dsh-orchestration/.runtime/project-runtime-final2/registration-workspace\"\n}"
+      },
+      {
+        "label": "finished-only-submit",
+        "command": "/project submit \"/Users/pmp/.codex/worktrees/project-runtime-integration/dsh-orchestration/.runtime/project-runtime-final2/registration-workspace/finished.json\"",
+        "commandId": "cmd-0d350ab6-6",
+        "kind": "success",
+        "text": "中央已确认项目快照。\n{\n  \"project\": \"本地项目 · 完成后一次性提交\",\n  \"namespace\": \"mbp-local-live\",\n  \"projectExternalId\": \"runtime-finished-only\",\n  \"mode\": \"final\",\n  \"revision\": 1,\n  \"tasks\": 1,\n  \"runs\": 1,\n  \"reports\": 1,\n  \"artifacts\": 0,\n  \"workspace\": \"file:///Users/pmp/.codex/worktrees/project-runtime-integration/dsh-orchestration/.runtime/project-runtime-final2/registration-workspace\"\n}"
+      },
+      {
+        "label": "generic-history",
+        "command": "/project history \"/Users/pmp/.codex/worktrees/project-runtime-integration/dsh-orchestration/.runtime/project-runtime-final2/registration-workspace/generic.json\"",
+        "commandId": "cmd-0d350ab6-7",
+        "kind": "success",
+        "text": "中央已确认项目快照。\n{\n  \"project\": \"通用协议 · 其他 Harness 历史补录\",\n  \"namespace\": \"generic-history\",\n  \"projectExternalId\": \"runtime-generic-history\",\n  \"mode\": \"history\",\n  \"revision\": 1,\n  \"tasks\": 1,\n  \"runs\": 1,\n  \"reports\": 1,\n  \"artifacts\": 0,\n  \"workspace\": \"file:///Users/pmp/.codex/worktrees/project-runtime-integration/dsh-orchestration/.runtime/project-runtime-final2/registration-workspace\"\n}"
+      },
+      {
+        "label": "pv-real-history",
+        "command": "/project history \"/Users/pmp/.codex/worktrees/project-runtime-integration/dsh-orchestration/.runtime/project-runtime-final2/registration-workspace/pv.json\"",
+        "commandId": "cmd-0d350ab6-8",
+        "kind": "success",
+        "text": "中央已确认项目快照。\n{\n  \"project\": \"PV 本地真实项目 · 有限历史补录\",\n  \"namespace\": \"mbp-pv-history\",\n  \"projectExternalId\": \"runtime-real-pv-finite-history\",\n  \"mode\": \"history\",\n  \"revision\": 1,\n  \"tasks\": 21,\n  \"runs\": 14,\n  \"reports\": 20,\n  \"artifacts\": 51,\n  \"workspace\": \"file:///Users/pmp/AI/deepseek-harness/workspace/dsh-tavern-v3-pv\"\n}"
+      },
+      {
+        "label": "status",
+        "command": "/project status",
+        "commandId": "cmd-0d350ab6-9",
+        "kind": "success",
+        "text": "{\n  \"transport\": \"remote\",\n  \"pending\": [],\n  \"acknowledged\": [\n    {\n      \"namespace\": \"generic-history\",\n      \"projectExternalId\": \"runtime-generic-history\",\n      \"revision\": 1\n    },\n    {\n      \"namespace\": \"mbp-pv-history\",\n      \"projectExternalId\": \"runtime-real-pv-finite-history\",\n      \"revision\": 1\n    },\n    {\n      \"namespace\": \"mbp-local-live\",\n      \"projectExternalId\": \"runtime-finished-only\",\n      \"revision\": 1\n    },\n    {\n      \"namespace\": \"mbp-local-live\",\n      \"projectExternalId\": \"runtime-native-live\",\n      \"revision\": 1\n    },\n    {\n      \"namespace\": \"mbp-local-live\",\n      \"projectExternalId\": \"runtime-native-live\",\n      \"revision\": 2\n    },\n    {\n      \"namespace\": \"mbp-local-live\",\n      \"projectExternalId\": \"runtime-native-live\",\n      \"revision\": 3\n    }\n  ]\n}"
+      }
+    ],
+    "secretAudit": {
+      "tokenInHostConfig": false,
+      "tokenInExtraPatch": false,
+      "tokenInPacketsReceiptsEvidence": false,
+      "tokenEnvReference": "DSH_RUNTIME_REGISTRATION_TOKEN"
+    }
+  },
+  "automatedChecks": {
+    "tests": 807,
+    "pass": 802,
+    "fail": 0,
+    "skipped": 5
+  },
+  "originalWorktreePreserved": {
+    "tracked": true,
+    "untracked": true
+  },
+  "uiAcceptance": {
+    "status": "passed",
+    "surfaces": [
+      "official MBP task plugin",
+      "official VPS task plugin"
+    ],
+    "slashPreviewVisible": true,
+    "slashSubmitCentralAcknowledged": true,
+    "readOnlyExecutor": true,
+    "nestedStepsAndProof": true,
+    "detailsStateSurvivesFullscreen": true,
+    "sourceGraphFinalReview": "passed: original VPS project page shows observed-only nodes, unknown source time and separate central review",
+    "executorRefreshAfterTransientFailure": "passed: previous snapshot retained, fresh central read recovered"
+  },
+  "additionalChecks": {
+    "finalFrontendTests": 9,
+    "commandFeedbackTests": 2,
+    "officialSettingsSmokeGroups": 5,
+    "distribution": "passed"
+  }
+}
