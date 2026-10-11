@@ -1,3 +1,5 @@
+import { validateCollaborationInput } from "../project-collaboration/authority.js";
+import { TaskError } from "../ledger.js";
 import {
   byteLimit,
   canonical,
@@ -228,6 +230,14 @@ function delegation(input: Record<string, Json>): void {
 export function validatePayload(envelope: CommandEnvelope): void {
   const p = envelope.payload;
   switch (envelope.operation) {
+    case "projectCollaborate":
+      fields(p, ["input"]);
+      try { validateCollaborationInput(p.input); }
+      catch (error) {
+        if (error instanceof TaskError) throw new ProtocolError(error.code, 400);
+        throw error;
+      }
+      break;
     case "projectSnapshot":
       fields(p, []);
       break;
@@ -296,13 +306,17 @@ export function validatePayload(envelope: CommandEnvelope): void {
       if (p.providerStatus !== undefined) {
         insist(isRecord(p.providerStatus), "INVALID_PROVIDER_STATUS");
         const status = p.providerStatus as Record<string, Json>;
-        fields(status, ["state", "providers"]);
+        fields(status, ["state", "providers"], ["executionRoutes"]);
         const states = ["not-probed", "ready", "unavailable"];
         insist(states.includes(String(status.state)), "INVALID_PROVIDER_STATE");
         insist(
           Array.isArray(status.providers) && status.providers.length <= 32,
           "INVALID_PROVIDER_LIST",
         );
+        if (status.executionRoutes !== undefined) {
+          insist(Array.isArray(status.executionRoutes) && status.executionRoutes.length <= 128, "INVALID_EXECUTION_ROUTES");
+          for (const route of status.executionRoutes) validateCollaborationInput({ action: "nodes", sessionId: "heartbeat", cwd: "/", route });
+        }
         const providers = new Set<string>();
         for (const entry of status.providers) {
           insist(isRecord(entry), "INVALID_PROVIDER_STATUS");
@@ -629,12 +643,16 @@ export class RemoteGateway {
       !recorded || envelope.operation === "approvalStatus",
     );
     const old = store.admit(envelope, now);
-    if (old) return await this.reconcile(peer.nodeId, old);
+    if (old && !(envelope.operation === "projectCollaborate" && old.state === "uncertain")) return await this.reconcile(peer.nodeId, old);
     const commandId = `remote-${digest([peer.nodeId, envelope.commandId])}`;
     const p = envelope.payload;
     try {
       let result: unknown;
       switch (envelope.operation) {
+        case "projectCollaborate":
+          insist(ledger.projectCollaborate, "PROJECT_COLLABORATION_UNSUPPORTED", 503);
+          result = await ledger.projectCollaborate(peer.nodeId, commandId, p.input as unknown as import("../project-collaboration/types.js").ProjectCollaborationInput);
+          break;
         case "projectSnapshot":
           insist(ledger.projectSnapshot, "PROJECT_SNAPSHOT_UNSUPPORTED", 503);
           result = await ledger.projectSnapshot(peer.nodeId);
@@ -966,6 +984,11 @@ export class RemoteGateway {
           break;
         }
       }
+      if (envelope.operation === "projectCollaborate") {
+        const durable = { commandId, acceptedAt: new Date().toISOString(), value: result };
+        if (old?.state === "uncertain") return store.resolve(peer.nodeId, envelope.commandId, durable, this.options.maxResponseBytes);
+        result = durable;
+      }
       const json = JSON.parse(JSON.stringify(result)) as Json;
       canonical(json);
       const receipt = this.bounded({
@@ -981,6 +1004,13 @@ export class RemoteGateway {
       );
       return receipt;
     } catch (error) {
+      if (envelope.operation === "projectCollaborate" && (error instanceof TaskError || error instanceof ProtocolError)) {
+        const durable = { commandId, acceptedAt: new Date().toISOString(), value: { collaborationError: { code: error.code, message: error.message } } };
+        if (old?.state === "uncertain") return store.resolve(peer.nodeId, envelope.commandId, durable, this.options.maxResponseBytes);
+        const result = JSON.parse(JSON.stringify(durable)) as Json;
+        store.complete(peer.nodeId, envelope.commandId, result, this.options.maxResponseBytes);
+        return { commandId: envelope.commandId, state: "done", result };
+      }
       // An arbitrary adapter exception is not proof that its transaction failed.
       store.uncertain(peer.nodeId, envelope.commandId);
       return { commandId: envelope.commandId, state: "uncertain" };
@@ -1035,7 +1065,8 @@ export class RemoteGateway {
       e.operation === "heartbeat" ||
       e.operation === "nodeStatus" ||
       e.operation === "executorIdentity" ||
-      e.operation === "projectSnapshot"
+      e.operation === "projectSnapshot" ||
+      e.operation === "projectCollaborate"
     ) {
       insist(this.options.ledger.nodeStatuses, "NODE_STATUS_UNSUPPORTED", 503);
       const status = (await this.options.ledger.nodeStatuses()).find(

@@ -36,7 +36,7 @@ export interface Config {
   observationForwarding?: { workspaceId: string } | null;
 }
 const authModeSchema = z.union([z.const('ed25519'),z.const('trusted-network')])
-const operationSchema = z.union([z.const('claim'),z.const('renew'),z.const('submit'),z.const('cancel'),z.const('receipt'),z.const('bindSession'),z.const('markRunning'),z.const('getRun'),z.const('getAttempt'),z.const('acknowledgeCancellation'),z.const('listWork'),z.const('observe'),z.const('delegate'),z.const('taskHistory'),z.const('taskWait'),z.const('taskNote'),z.const('taskReport'),z.const('heartbeat'),z.const('nodeStatus'),z.const('retryBeforeEffects'),z.const('offerApproval'),z.const('approvalStatus'),z.const('cancelApproval'),z.const('executorIdentity'),z.const('sessionContext'),z.const('selectTaskSession'),z.const('sessionMessages'),z.const('sessionMessageReply'),z.const('projectSnapshot')])
+const operationSchema = z.union([z.const('claim'),z.const('renew'),z.const('submit'),z.const('cancel'),z.const('receipt'),z.const('bindSession'),z.const('markRunning'),z.const('getRun'),z.const('getAttempt'),z.const('acknowledgeCancellation'),z.const('listWork'),z.const('observe'),z.const('delegate'),z.const('taskHistory'),z.const('taskWait'),z.const('taskNote'),z.const('taskReport'),z.const('heartbeat'),z.const('nodeStatus'),z.const('retryBeforeEffects'),z.const('offerApproval'),z.const('approvalStatus'),z.const('cancelApproval'),z.const('executorIdentity'),z.const('sessionContext'),z.const('selectTaskSession'),z.const('sessionMessages'),z.const('sessionMessageReply'),z.const('projectSnapshot'),z.const('projectCollaborate')])
 const addressSchema = z.string().required()
 const portSchema = z.number().step(1).min(1).max(65535).required()
 const networkPolicySchema = z.object({
@@ -65,7 +65,7 @@ export const Config = z.object({...PlainConfig.dict, executionLimits:PlainConfig
 interface HostWebServer { register(route: { kind: 'exact'; path: string; handler: (req: IncomingMessage,res: ServerResponse) => Promise<void> }): () => void }
 /** An independently replaceable taskSystem service supplies only this structural ledger seam. */
 export interface TaskSystemPort {
-  ledger: LedgerPort; native?: NativeExecutionPort; config?: { decisionBindings?: Record<string,string>; autoAdmitObservations?: boolean; defaultWorkspaceId?: string | null; sessionDecisionEnabled?: boolean; decisionTtlMs?: number };
+  ledger: LedgerPort; native?: NativeExecutionPort; config?: { officialBackends?: Array<{ backend: string; provider: string; model: string; reasoningEffort: string }>; decisionBindings?: Record<string,string>; autoAdmitObservations?: boolean; defaultWorkspaceId?: string | null; sessionDecisionEnabled?: boolean; decisionTtlMs?: number };
   subscribeObservations?(sink: (candidate: ObservationCandidate, options: { signal: AbortSignal }) => Promise<unknown> | unknown): () => void;
 }
 export class RemoteExecutionService extends Service {
@@ -118,6 +118,7 @@ export class RemoteExecutionService extends Service {
     return {
       role: this.config.role, nodeId: this.config.nodeId,
       paused: this.config.paused === true,
+      coordinatorConfigured: Boolean(this.config.coordinator),
       endpoint, pollIntervalMs: this.config.pollIntervalMs,
       concurrency: this.config.concurrency,
       polling: this.config.paused !== true && this.active && !!this.nativeWorker && this.config.pollIntervalMs > 0,
@@ -243,13 +244,19 @@ export class RemoteExecutionService extends Service {
     insist(this.active,'DRAINING',503)
     insist(this.config.role !== 'planner','EXECUTOR_HEARTBEAT_REQUIRED',403)
     insist(this.coordinatorLedger && this.config.coordinator,'COORDINATOR_REQUIRED',503)
-    const native = (this.ctx.get('taskSystem') as TaskSystemPort | undefined)?.native
+    const taskSystem = this.ctx.get('taskSystem') as TaskSystemPort | undefined
+    const native = taskSystem?.native
     const nativeActive = native?.activeCount ?? 0
     insist(Number.isSafeInteger(nativeActive) && nativeActive >= 0 && nativeActive <= 128,'INVALID_NATIVE_ACTIVE_COUNT')
     const activeExecutions = Math.max(nativeActive,[...this.workers].reduce((count,worker) => count + worker.activeExecutions,0))
     const providers = [...new Set(this.config.coordinator.nativeRoutes.map(route => route.provider))].map(provider => ({ provider,state: 'not-probed' }))
+    const executionRoutes = [
+      ...this.config.coordinator.nativeRoutes.flatMap(p => p.models.flatMap(m => (m.reasoningEfforts.length ? m.reasoningEfforts : [undefined]).map(reasoningEffort => ({ nodeId: this.config.nodeId, provider: p.provider, model: m.model, ...(reasoningEffort ? { reasoningEffort } : {}), requiredCapabilities: [] as string[] })))),
+      ...(taskSystem?.config?.officialBackends ?? []).map(b => ({ nodeId: this.config.nodeId, provider: b.provider, model: b.model, reasoningEffort: b.reasoningEffort, backend: b.backend, requiredCapabilities: ['official-codex'] }))
+    ]
+    while (executionRoutes.length && Buffer.byteLength(JSON.stringify({ state: 'not-probed', providers, executionRoutes })) > 8192) executionRoutes.pop()
     this.lastHeartbeatSample = Math.max(Date.now(),this.lastHeartbeatSample + 1)
-    const receipt = await this.coordinatorLedger.recordNodeHeartbeat(`heartbeat-${randomUUID()}`,{ nodeId: this.config.nodeId,sampledAt: this.lastHeartbeatSample,runtimeReady: typeof native?.executeExternal === 'function',activeExecutions,providerStatus: { state: 'not-probed',providers } })
+    const receipt = await this.coordinatorLedger.recordNodeHeartbeat(`heartbeat-${randomUUID()}`,{ nodeId: this.config.nodeId,sampledAt: this.lastHeartbeatSample,runtimeReady: typeof native?.executeExternal === 'function',activeExecutions,providerStatus: { state: 'not-probed',providers,executionRoutes } })
     this.lastHeartbeatAcknowledgedAt = new Date().toISOString()
     return receipt
   }

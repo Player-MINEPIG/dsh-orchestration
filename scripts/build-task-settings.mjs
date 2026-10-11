@@ -25,3 +25,9 @@ writeFileSync(
   new URL("../packages/task-system/dist/project-page.html", import.meta.url),
   page.replace("/*__TASK_MARKDOWN__*/", () => markdownBrowser),
 );
+
+// Ship the session-scoped skill with the plugin; no global harness files are written.
+copyFileSync(
+  new URL("../packages/task-system/src/project-collaboration/SKILL.md", import.meta.url),
+  new URL("../packages/task-system/dist/project-collaboration/SKILL.md", import.meta.url),
+);

@@ -3499,10 +3499,12 @@ window.__ModuleLoader__.load({
       const result = React.useSyncExternalStore(feedback.subscribe, feedback.getSnapshot, feedback.getSnapshot);
       if (!result) return null;
       const text = result.text;
-      const pending = text.includes("中央尚未确认");
-      const title = result.kind === "error" ? "项目操作未完成" : pending ? "项目快照待同步" : "项目命令结果";
+      const collaborationPending = /^COLLABORATION_PENDING:/.test(text);
+      const pending = !collaborationPending && text.includes("中央尚未确认");
+      const title = collaborationPending ? "会话协作待确认" : result.kind === "error" ? "项目操作未完成" : pending ? "项目快照待同步" : "项目命令结果";
       return h(Modal, { open: true, onClose: feedback.dismiss, title, closeLabel: "关闭项目命令结果",
-        description: pending ? "快照已保存在本机；恢复连接后使用 /project sync 重试。" :
+        description: collaborationPending ? "协作请求待中央确认，恢复连接后重试原 /project 命令。" :
+          pending ? "快照已保存在本机；恢复连接后使用 /project sync 重试。" :
           "这是当前命令的结果；项目进度仍在「项目与任务」面板查看。",
         footer: h(Button, { onClick: feedback.dismiss, "data-modal-autofocus": true }, "知道了"),
       }, h("pre", { role: result.kind === "error" ? "alert" : "status",

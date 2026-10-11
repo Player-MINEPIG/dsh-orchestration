@@ -4,6 +4,7 @@ import type {} from "@deepseek-ai/dsh-commands";
 import { readFileSync, statSync, existsSync } from "node:fs";
 import { resolve, isAbsolute } from "node:path";
 import { TaskError } from "../ledger.js";
+import type { SessionCollaboration } from "../project-collaboration/session.js";
 import { validateRegistration } from "./protocol.js";
 import { flushRegistrations, registrationOutboxStatus } from "./client.js";
 import {
@@ -13,12 +14,15 @@ import {
 } from "./service.js";
 
 const help = [
+  "/project 或 /project start [标题] — 激活当前会话的中央项目协作",
+  "/project attach <projectId> — 连接当前节点、工作目录的中央项目",
+  "/project leave — 暂停当前会话协作模式",
   "/project preview [packet.json] — 校验并预览，不上报",
   "/project register [packet.json] — 登记首个实时快照",
   "/project sync [packet.json] — 上报实时更新并重试待发送快照",
   "/project submit [packet.json] — 提交完成快照",
   "/project history [packet.json] — 补录历史项目",
-  "/project status — 查看本机待发送与中央已确认的快照",
+  "/project status — 查看会话协作绑定、待确认操作和快照发送状态",
   "省略文件时读取当前会话工作目录的 .dsh/project-registration.json；文件名含空格可用双引号。",
   "快照使用 dsh.project-registration/v1。此命令直接执行，不调用模型、不扫描工作区；历史资料需先整理为协议文件。",
 ].join("\n");
@@ -60,13 +64,14 @@ function readPacket(file: string) {
 export function registerProjectCommands(
   ctx: Context,
   config: RegistrationConfig,
+  collaboration?: SessionCollaboration,
 ) {
   return ctx.commands.register({
     name: "project",
     description:
-      "登记、同步和补录当前项目到中央任务面板（直接执行，不调用模型）",
+      "激活会话项目协作，或上报已整理的项目证据（不调用模型）",
     input: {
-      hint: "register | sync | submit | history | preview | status [packet.json]",
+      hint: "start [标题] | attach 项目ID | leave | status | help",
     },
     handler: async ({ agent, rawInput, signal }) => {
       try {
@@ -77,9 +82,16 @@ export function registerProjectCommands(
             "Owned execution cannot import unrelated project evidence",
           );
         const match = rawInput.trim().match(/^(\S+)(?:\s+([\s\S]*))?$/);
-        const action = match?.[1] ?? "help",
+        const action = match?.[1] ?? "start",
           path = match?.[2] ?? "";
         if (action === "help") return { kind: "success", text: help };
+        if (["start", "attach", "leave"].includes(action)) {
+          if (!collaboration) throw new TaskError("UNAVAILABLE", "当前宿主未启用会话协作。");
+          if (action === "attach" && (!path || /\s/.test(path))) throw new TaskError("INVALID", "用法：/project attach <projectId>");
+          if (action === "leave" && path) throw new TaskError("INVALID", "leave 不接受参数");
+          const result = action === "leave" ? collaboration.leave(agent) : await collaboration.activate(agent, action === "start" ? path || undefined : undefined, action === "attach" ? path : undefined);
+          return { kind: "success", text: `${action === "leave" ? "当前会话协作已暂停。" : "中央已确认，当前会话协作模式已激活。"}\n${JSON.stringify(result, null, 2)}` };
+        }
         if (action === "status") {
           if (path)
             throw new TaskError("INVALID", "status does not accept a path");
@@ -90,6 +102,7 @@ export function registerProjectCommands(
             kind: "success",
             text: JSON.stringify(
               {
+                collaboration: collaboration?.localStatus(agent) ?? null,
                 transport: config.endpoint ? "remote" : "central-local",
                 ...status,
               },

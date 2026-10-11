@@ -14,3 +14,7 @@
         executionTools: null
     - id: task-system-settings
       name: '@dsh-task/task-system'
+    - id: project-registration
+      name: '@dsh-task/task-system/project-registration/plugin'
+      config:
+        namespaces: ['local']

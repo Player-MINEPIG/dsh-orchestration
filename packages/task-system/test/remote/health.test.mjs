@@ -96,7 +96,7 @@ test('actual Cordis opt-in heartbeat reports native presence and actual executio
   const run=f.ledger.createRun('run',{taskId:task.taskId,route:{nodeId:'worker',provider:'fixture',model:'fixture',workspaceId:'workspace',requiredCapabilities:['read']}}).value
   const running=service.nativeWorker.execute(run.runId,'claim');await started;await service.heartbeatNow()
   let own=f.ledger.nodeStatuses().find(n=>n.nodeId==='worker')
-  assert.equal(own.runtimeReady,true);assert.equal(own.activeExecutions,1);assert.deepEqual(own.providerStatus,status)
+  assert.equal(own.runtimeReady,true);assert.equal(own.activeExecutions,1);assert.deepEqual(own.providerStatus,{...status,executionRoutes:[{nodeId:'worker',provider:'fixture',model:'fixture',requiredCapabilities:[]}]})
   release();assert.equal((await running).state,'acknowledged')
   delete local.native;t.mock.timers.tick(1000)
   for(let i=0;i<100&&f.ledger.nodeStatuses().find(n=>n.nodeId==='worker').runtimeReady;i++)await immediate()

@@ -233,6 +233,7 @@ export interface ReportInput {
 /** One authority owns this transactional ledger. Never execute an external effect inside a transaction. */
 export class TaskLedger {
   projectSnapshot?: (nodeId: string) => Json;
+  projectCollaborate?: (nodeId: string, commandId: string, input: import("./project-collaboration/types.js").ProjectCollaborationInput) => Json | Promise<Json>;
   readonly role: Role;
   readonly nodeId: string;
   private readonly clock: () => number;

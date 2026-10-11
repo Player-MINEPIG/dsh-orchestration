@@ -6,6 +6,8 @@ import { validateRegistration } from "./protocol.js";
 import { sendRegistration } from "./service.js";
 import { registerProjectCommands } from "./commands.js";
 import { flushRegistrations } from "./client.js";
+import { SessionCollaboration, collaborationAuthority, type CollaborationPort } from "../project-collaboration/session.js";
+import type {} from "../remote/index.js";
 export const name = "dsh-project-registration";
 export const inject = ["tools", "taskSystem"];
 import type { TrustedNetworkTarget } from "../remote/trusted-network.js";
@@ -35,8 +37,24 @@ export const Config: z<Config> = z.object({
   tokenEnv: z.string().required(false),
 });
 export function apply(ctx: Context, config: Config) {
+  const collaboration = new SessionCollaboration(
+    ctx.taskSystem.ledger,
+    ctx.taskSystem.config.nodeId,
+    (nodeId, commandId, input) => {
+      const invoke = collaborationAuthority(
+        ctx.taskSystem.config.role,
+        ctx.taskSystem.ledger as unknown as { projectCollaborate?: CollaborationPort },
+        ctx.get("remoteExecution") as unknown as Parameters<typeof collaborationAuthority>[2],
+      );
+      return invoke(nodeId, commandId, input);
+    },
+    agent => Boolean(ctx.taskSystem.native?.scopeFor(agent)),
+  );
+  ctx.inject(["systemPrompt"], promptCtx => {
+    promptCtx.systemPrompt.section({ name: "session-project-collaboration", order: 95, interpolate: false, text: ({ agent }) => collaboration.prompt(agent) });
+  });
   ctx.inject(["commands"], (commandsCtx) => {
-    registerProjectCommands(commandsCtx, config);
+    registerProjectCommands(commandsCtx, config, collaboration);
   });
   const output = {
     schema: { type: "json" as const },
@@ -44,6 +62,39 @@ export function apply(ctx: Context, config: Config) {
       { type: "text" as const, text: JSON.stringify(value) },
     ],
   };
+  for (const [toolName, action, description] of [
+    ["project_status", "status", "Read the bound central project's actual tasks, runs and review state."],
+    ["project_nodes", "nodes", "Read eligible execution nodes and routes for the bound project."],
+    ["project_dispatch", "dispatch", "Dispatch one authorized task under the bound project. Reuse requestId and identical arguments after an uncertain response."],
+    ["project_progress", "update", "Sync factual progress and evidence to the bound central project; each update has a stable requestId."],
+    ["project_finish", "submit", "Submit completion evidence for central/user review; this does not approve the project."],
+  ] as const) {
+    const parameters: Record<string, any> = action === "status" || action === "nodes" ? {} : {
+      requestId: { type: "string", required: true, description: "Stable operation ID; reuse with identical arguments on retries, including a new tool call." },
+    };
+    if (action === "dispatch") Object.assign(parameters, {
+      title: { type: "string", required: true },
+      description: { type: "string", required: true },
+      routeJson: { type: "string", description: "Optional JSON route selected from project_nodes; omit for central configured routing." },
+    });
+    if (action === "update" || action === "submit") parameters.summary = { type: "string", required: true };
+    ctx.tools.register(defineTool({
+      name: toolName,
+      description: `Available only after /project activates this user session. ${description} Project identity is supplied by the plugin.`,
+      parameters,
+      output,
+      execute: async (args, exec) => {
+        const input: { title?: string; description?: string; summary?: string; route?: unknown } = {};
+        if (action === "dispatch") {
+          input.title = args.title as string;
+          input.description = args.description as string;
+          if (args.routeJson) input.route = JSON.parse(args.routeJson as string);
+        }
+        if (action === "update" || action === "submit") input.summary = args.summary as string;
+        return JSON.parse(JSON.stringify(await collaboration.invoke(exec.agent, action, input, String(exec.callId), args.requestId as string | undefined)));
+      },
+    }));
+  }
   ctx.tools.register(
     defineTool({
       name: "project_sync",

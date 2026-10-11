@@ -311,3 +311,18 @@ test("executor view includes its registered source project as observation only a
     "executor shows central facts without duplicating the business ledger",
   );
 });
+
+test('session collaboration without runs is visible only to its owner node in original project projection', async () => {
+  const h = await createNativeHarness({ config: { role: 'both', nodeId: 'central' } });
+  try {
+    h.ledger.registerNode('collaboration-owner', {nodeId:'mbp',roles:['executor'],enabled:true,workspaceIds:[],capabilities:[],models:[],lastSeenAt:new Date().toISOString()});
+    const result=await h.ledger.projectCollaborate('mbp','activate-empty-project',{action:'activate',sessionId:'local-conversation',cwd:h.dir,title:'No tasks yet'});
+    const own=h.ctx.taskSystem.projects.snapshotForNode('mbp');
+    const other=h.ctx.taskSystem.projects.snapshotForNode('other');
+    assert.equal(own.projectCollaborations.length,1);
+    assert.equal(own.projects.find(p=>p.id===result.projectId)?.stage,'会话协作');
+    assert.equal(own.projects.find(p=>p.id===result.projectId)?.canChat,false);
+    assert.equal(other.projectCollaborations.length,0);
+    assert(!other.projects.some(p=>p.id===result.projectId));
+  } finally { await h.dispose(); }
+});

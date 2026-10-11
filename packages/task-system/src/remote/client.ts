@@ -7,6 +7,7 @@ import {
   DEFAULT_MAX_RESPONSE_BYTES,
   digest,
   insist,
+  ProtocolError,
   isRecord,
   signEnvelope,
 } from "./protocol.js";
@@ -443,7 +444,7 @@ export class RemoteLedgerClient implements LedgerPort {
     operation: Operation,
     commandId: string,
     payload: Record<string, Json>,
-    options?: { signal?: AbortSignal },
+    options?: { signal?: AbortSignal; diagnostic?: boolean },
   ): Promise<T> {
     const response = await this.client.send(
       operation,
@@ -457,6 +458,25 @@ export class RemoteLedgerClient implements LedgerPort {
       503,
     );
     return response.result as unknown as T;
+  }
+  async projectCollaborate(nodeId: string, commandId: string, input: import("../project-collaboration/types.js").ProjectCollaborationInput): Promise<Json> {
+    insist(nodeId === this.nodeId, "WRONG_CLIENT_NODE", 403);
+    let receipt: { value: Json };
+    try {
+      receipt = await this.command<{ value: Json }>("projectCollaborate", commandId, { input: JSON.parse(JSON.stringify(input)) }, { diagnostic: true });
+    } catch (error) {
+      // Only this operation exposes definitive HTTP request rejections. A transport
+      // failure or server failure still cannot establish whether work committed.
+      if (error instanceof ProtocolError && error.status >= 400 && error.status < 500) throw error;
+      throw new ProtocolError("REMOTE_OUTCOME_UNCERTAIN", 503);
+    }
+    const result = receipt.value;
+    if (isRecord(result) && isRecord(result.collaborationError)) {
+      const error = new ProtocolError(String(result.collaborationError.code), 409);
+      error.message = `${error.code}: ${String(result.collaborationError.message)}`;
+      throw error;
+    }
+    return result;
   }
   async projectSnapshot(_nodeId?: string): Promise<Json> {
     // Scope is derived by the gateway; never send a caller-supplied node id.

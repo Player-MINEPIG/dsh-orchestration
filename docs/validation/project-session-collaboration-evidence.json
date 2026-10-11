@@ -1,0 +1,42 @@
+{
+  "phase": "session-collaboration",
+  "base": "ab2bf26",
+  "branch": "codex/project-session-collaboration",
+  "mergeAllowed": false,
+  "localCheck": {
+    "tests": 825,
+    "passed": 820,
+    "skipped": 5,
+    "failed": 0
+  },
+  "finalTargeted": {
+    "authority": 8,
+    "sessionPanelFeedback": 15,
+    "failed": 0
+  },
+  "distribution": "passed before final state/UI fixes",
+  "officialSettings": "passed; final feedback regression 3/3",
+  "review": "two P2 fixed and independently confirmed",
+  "actualDsh": {
+    "activationConfirmed": true,
+    "skillDrivenToolCalls": true,
+    "initialDispatchSucceeded": false,
+    "persistedSessionId": "session-collaboration-real",
+    "independentProcessSkillRestore": true,
+    "resumeModelCalled": false
+  },
+  "actualCodexRuns": 0,
+  "ui": "original isolated MBP offline activation feedback verified after restart; same activationId retained",
+  "networkBlock": [
+    "Tailscale ping timeout",
+    "Tailscale HTTP port43971 timeout",
+    "public SSH banner timeout",
+    "Tailscale SSH timeout"
+  ],
+  "reportStructure": {
+    "mainTextChars": 6203,
+    "embeddedImages": 5,
+    "stylesheetClosedBeforeMain": true,
+    "renderedReportVerified": false
+  }
+}

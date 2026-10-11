@@ -192,7 +192,12 @@ test("browser companion exposes the same served form in Settings and its install
     registrations = [],
     disposed = [];
   const effects = [];
+  const listeners = new Map();
   const ctx = {
+    on(name, listener) {
+      listeners.set(name, listener);
+      return () => listeners.delete(name);
+    },
     locale: { bind: () => (k) => k, register: () => () => {} },
     configForms: {
       get: (id) => (assert.equal(id, "task-system"), {}),
@@ -234,7 +239,9 @@ test("browser companion exposes the same served form in Settings and its install
     },
   };
   await ui.apply(ctx);
-  assert.equal(registrations.length, 4);
+  assert.equal(registrations.length, 5);
+  assert.ok(listeners.has("command/executed"));
+  assert.ok(registrations.some(r => r.options.name === "shell.overlay" && r.options.id === "task-project-command-result"));
   const section = registrations.find(
     (r) => r.options.name === "settings.section",
   );
@@ -251,13 +258,14 @@ test("browser companion exposes the same served form in Settings and its install
     row.options.inject().hooks.taskSettings,
   );
   for (const cleanup of effects.splice(0).reverse()) cleanup?.();
-  assert.equal(disposed.length, 4);
+  assert.equal(disposed.length, 5);
+  assert.equal(listeners.size, 0);
   registrations.length = 0;
   ctx.configForms.whileServed = () => () => {};
   await ui.apply(ctx);
   assert.equal(
     registrations.length,
-    2,
+    3,
     "hide both entries while the Host does not serve task-system settings",
   );
   for (const cleanup of effects.splice(0).reverse()) cleanup?.();

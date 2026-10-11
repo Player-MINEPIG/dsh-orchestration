@@ -56,3 +56,19 @@ test('pending and failure results remain visible in order and untrusted text is 
   result.props.footer.props.onClick();
   assert.equal(ui.ProjectCommandResult({ feedback }), null);
 });
+
+
+test('pending collaboration activation instructs retry of original command, while historical snapshots retain sync guidance', () => {
+  const feedback = new ui.ProjectCommandFeedback();
+  feedback.accept('s', 'project', { kind: 'error', text: 'COLLABORATION_PENDING: 中央尚未确认此操作；使用相同参数重试。' });
+  let modal = ui.ProjectCommandResult({ feedback });
+  assert.equal(modal.props.title, '会话协作待确认');
+  assert.match(modal.props.description, /重试原 \/project 命令/);
+  assert.doesNotMatch(modal.props.description, /快照|\/project sync/);
+  assert.equal(modal.props.children[0].props.role, 'alert');
+  modal.props.onClose();
+  feedback.accept('s', 'project', { kind: 'success', text: '已保存到本机待发送队列，中央尚未确认。' });
+  modal = ui.ProjectCommandResult({ feedback });
+  assert.equal(modal.props.title, '项目快照待同步');
+  assert.match(modal.props.description, /\/project sync/);
+});

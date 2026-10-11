@@ -1,3 +1,4 @@
+import { ProjectCollaborationAuthority } from "./project-collaboration/authority.js";
 import {
   executeOfficialSubagent,
   verifyOfficialProfile,
@@ -2263,6 +2264,11 @@ export class TaskSystemService extends Service {
             0,
           ),
           providerStatus: {
+            executionRoutes: this.config.officialBackends.map(backend => ({
+              nodeId: this.config.nodeId, provider: backend.provider, model: backend.model,
+              reasoningEffort: backend.reasoningEffort, backend: backend.backend,
+              requiredCapabilities: ["official-codex"],
+            })),
             state: "not-probed",
             providers: [
               ...new Set(
@@ -2428,6 +2434,9 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
       config.role,
       config.projectAgentOptions,
     );
+    const collaboration = new ProjectCollaborationAuthority(ledger, { planner: () => service.projects?.planner });
+    service.projects.collaboration = collaboration;
+    ledger.projectCollaborate = collaboration.projectCollaborate.bind(collaboration);
     ctx.inject(["workspaceRegistry"], async () => {
       await service.projects!.syncWorkspaces();
     });
@@ -2557,6 +2566,11 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
       "project_submit",
       "project_history_intake",
       "project_sync",
+      "project_status",
+      "project_nodes",
+      "project_dispatch",
+      "project_progress",
+      "project_finish",
     ]);
     ctx.tools.guard((exec) =>
       allowed.has(exec.name)

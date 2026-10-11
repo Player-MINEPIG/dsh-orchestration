@@ -68,6 +68,7 @@ export interface ProjectAgentOptions {
 
 /** Authenticated owner operations. Model tools never select a directory or project ID. */
 export class ProjectRuntime {
+  collaboration?: import("./project-collaboration/authority.js").ProjectCollaborationAuthority;
   private readonly db;
   private readonly workbench: Workbench;
   private readonly jobs = new Map<
@@ -1512,6 +1513,7 @@ export class ProjectRuntime {
   snapshot() {
     const wb = this.workbench.snapshot(),
       data = this.ledger.snapshot();
+    const projectCollaborations = this.collaboration?.collaborationSummaries() ?? [];
     const runtimes = new Map(
       (
         this.db
@@ -1535,6 +1537,7 @@ export class ProjectRuntime {
       }
     }
     const projects = wb.projects.map((p) => {
+      const collaboration = projectCollaborations.find(c => c.projectId === p.projectId);
       const runtime = runtimes.get(p.projectId),
         workspace = wb.projectWorkspaces.find(
           (w) => w.projectId === p.projectId && w.isDefault,
@@ -1550,9 +1553,9 @@ export class ProjectRuntime {
             ? "正在推进"
             : runtime
               ? "准备工作区"
-              : "历史项目",
+              : collaboration ? "会话协作" : "历史项目",
         workspace:
-          runtime?.cwd ||
+          runtime?.cwd || collaboration?.cwd ||
           (data.workspaces ?? []).find(
             (w) => w.workspaceId === workspace?.workspaceId,
           )?.path ||
@@ -1816,6 +1819,7 @@ export class ProjectRuntime {
     return {
       settings: this.settings(),
       viewContext: {role:"planner",scope:"all",nodeId:this.nodeId,observedAt:data.generatedAt},
+      projectCollaborations,
       projectRegistrations: (data.projectRegistrations ?? []).map(r => ({
         registrationId:r.registrationId,projectId:r.projectId,namespace:r.namespace,mode:r.mode,
         sourceRevision:r.sourceRevision,observedAt:r.observedAt,staleAfterMs:r.staleAfterMs,
@@ -1880,8 +1884,11 @@ export class ProjectRuntime {
   snapshotForNode(nodeId: string) {
     const all = this.snapshot(), raw = this.ledger.snapshot(), wb = this.workbench.snapshot();
     const projectIds = new Set(wb.projectWorkspaces.filter(w=>w.nodeId===nodeId).map(w=>w.projectId));
+    for (const c of all.projectCollaborations) if (c.ownerNodeId === nodeId) projectIds.add(c.projectId);
+    const ownedProjects = new Set(all.projectCollaborations.filter(c => c.ownerNodeId === nodeId).map(c => c.projectId));
     const workspaceIds = new Set((raw.workspaces ?? []).filter(w=>w.nodeId===nodeId).map(w=>w.workspaceId));
     const ids = new Set<string>();
+    for (const t of all.tasks) if (ownedProjects.has(t.project)) ids.add(t.id);
     for(const r of raw.runs) if(r.route?.nodeId===nodeId) ids.add(r.taskId);
     for(const a of raw.attempts ?? []) if(a.nodeId===nodeId) ids.add(a.taskId);
     for(const t of raw.tasks) if(t.workspaceId && workspaceIds.has(t.workspaceId)) ids.add(t.taskId);
@@ -1895,6 +1902,7 @@ export class ProjectRuntime {
     return {...all,settings:{enabled:false},projects:all.projects.filter(p=>projectIds.has(p.id)).map(p=>({...p,canChat:false,sessionId:null})),tasks,runs,
       attempts:all.attempts.filter(a=>runIds.has(a.runId)),reports:all.reports.filter(r=>ids.has(r.taskId)),
       artifacts:all.artifacts.filter(a=>a.taskId&&ids.has(a.taskId)),milestones:all.milestones.filter(m=>projectIds.has(m.projectId)),schedules:[],
+      projectCollaborations:all.projectCollaborations.filter(c=>c.ownerNodeId===nodeId),
       projectRegistrations:all.projectRegistrations.filter(r=>projectIds.has(r.projectId)),
       nodes:all.nodes.filter(n=>n.nodeId===nodeId||runs.some(r=>r.node===n.nodeId)),
       viewContext:{role:"executor",scope:"node",nodeId,observedAt:all.sampledAt},

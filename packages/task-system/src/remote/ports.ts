@@ -327,6 +327,7 @@ type MaybePromise<T> = T | Promise<T>;
 export interface LedgerPort {
   /** Authority derives visibility from the authenticated executor node. */
   projectSnapshot?(nodeId: string): MaybePromise<Json>;
+  projectCollaborate?(nodeId: string, commandId: string, input: import("../project-collaboration/types.js").ProjectCollaborationInput): MaybePromise<Json>;
   pendingSessionMessages?(nodeId: string): MaybePromise<SessionMessage[]>;
   getSessionMessage?(messageId: string): MaybePromise<SessionMessage>;
   completeSessionMessage?(
