@@ -2,41 +2,414 @@
   "phase": "session-collaboration",
   "base": "ab2bf26",
   "branch": "codex/project-session-collaboration",
-  "mergeAllowed": false,
+  "acceptanceStatus": "passed-awaiting-final-merge",
+  "mergeAllowed": true,
+  "mergeCommit": null,
+  "mergeNote": "All acceptance gates passed; root will record final merge commit.",
   "localCheck": {
-    "tests": 825,
-    "passed": 820,
+    "tests": 828,
+    "passed": 823,
     "skipped": 5,
+    "failed": 0,
+    "scope": "after route fix, before client ordering fix"
+  },
+  "finalRemote": {
+    "tests": 115,
+    "passed": 114,
+    "skipped": 1,
     "failed": 0
   },
   "finalTargeted": {
-    "authority": 8,
-    "sessionPanelFeedback": 15,
+    "clientAndRelated": 18,
+    "authorityAndNative": 10,
     "failed": 0
   },
-  "distribution": "passed before final state/UI fixes",
-  "officialSettings": "passed; final feedback regression 3/3",
-  "review": "two P2 fixed and independently confirmed",
+  "distribution": "passed",
+  "officialSettings": "passed; command feedback targeted regression 3/3",
+  "review": {
+    "stateFixes": "two P2 fixed and independently confirmed",
+    "routes": "approved; native fixture updated to require ready workspace",
+    "orderingRetry": "approved; explicit HTTP409 OUT_OF_ORDER only, 3 total attempts, unknown outcomes not automatically replayed"
+  },
   "actualDsh": {
     "activationConfirmed": true,
+    "bareProjectCommandUiConfirmed": true,
     "skillDrivenToolCalls": true,
-    "initialDispatchSucceeded": false,
-    "persistedSessionId": "session-collaboration-real",
+    "persistedSessionId": "session-collaboration-real-v4",
+    "projectId": "collab-e10bcf03ebadac2b93a06f2ccd0dc8c4e4b4274f66179b19f53ea028cef74203",
     "independentProcessSkillRestore": true,
-    "resumeModelCalled": false
+    "resumeModelCalled": true,
+    "startToolCalls": [
+      {
+        "seq": 11,
+        "name": "project_status",
+        "callId": "call_00_ET_QxXRgROPYzGCkvrHd6nZ1601"
+      },
+      {
+        "seq": 13,
+        "name": "project_nodes",
+        "callId": "call_01_ET_S6vqpIa7ItDPu1GAafFD7139"
+      },
+      {
+        "seq": 18,
+        "name": "project_dispatch",
+        "callId": "call_00_YdRQnA8j64c3RqKx6QA41903"
+      },
+      {
+        "seq": 20,
+        "name": "project_dispatch",
+        "callId": "call_01_IqgFLFF2PRI5oHmOfPoJ5485"
+      },
+      {
+        "seq": 25,
+        "name": "project_progress",
+        "callId": "call_00_KyRr2AsIBIjoZwJfyjtn3313"
+      }
+    ],
+    "resumeBeforeEvents": 33,
+    "resumeEventCount": 52,
+    "resumeToolCalls": [
+      {
+        "seq": 40,
+        "name": "project_status",
+        "callId": "call_00_xlS8Mss3LMN62YtmhwMz0637"
+      },
+      {
+        "seq": 45,
+        "name": "project_finish",
+        "callId": "call_00_JGY4xQT8259acO4yE4M01766"
+      }
+    ],
+    "resumeDispatchCount": 0
   },
-  "actualCodexRuns": 0,
-  "ui": "original isolated MBP offline activation feedback verified after restart; same activationId retained",
-  "networkBlock": [
-    "Tailscale ping timeout",
-    "Tailscale HTTP port43971 timeout",
-    "public SSH banner timeout",
-    "Tailscale SSH timeout"
+  "actualCodexRuns": 2,
+  "codexProof": [
+    {
+      "kind": "request",
+      "method": "thread/start",
+      "model": "gpt-6-luna",
+      "ephemeral": true,
+      "approvalPolicy": "never"
+    },
+    {
+      "kind": "response",
+      "method": "thread/start",
+      "productThreadId": "01a12a37-248d-7981-8def-7fd5c1eb1d15",
+      "ephemeral": true,
+      "model": "gpt-6-luna",
+      "reasoningEffort": "low"
+    },
+    {
+      "kind": "event",
+      "method": "turn/completed",
+      "productThreadId": "01a12a37-248d-7981-8def-7fd5c1eb1d15",
+      "status": "completed"
+    },
+    {
+      "kind": "request",
+      "method": "thread/start",
+      "model": "gpt-6-luna",
+      "ephemeral": true,
+      "approvalPolicy": "never"
+    },
+    {
+      "kind": "response",
+      "method": "thread/start",
+      "productThreadId": "01a12a38-16ad-7b90-ba38-1d7be91c1d68",
+      "ephemeral": true,
+      "model": "gpt-6-luna",
+      "reasoningEffort": "low"
+    },
+    {
+      "kind": "event",
+      "method": "turn/completed",
+      "productThreadId": "01a12a38-16ad-7b90-ba38-1d7be91c1d68",
+      "status": "completed"
+    }
   ],
+  "central": {
+    "binding": {
+      "backlogId": "collab-backlog-e10bcf03ebadac2b93a06f2ccd0dc8c4e4b4274f66179b19f53ea028cef74203",
+      "cwd": "/Users/pmp/.codex/worktrees/project-session-collaboration/dsh-orchestration/.runtime/session-collaboration/conversation-workspace",
+      "goal": "待明确项目目标",
+      "ownerNodeId": "mbp",
+      "projectId": "collab-e10bcf03ebadac2b93a06f2ccd0dc8c4e4b4274f66179b19f53ea028cef74203",
+      "sessionId": "session-collaboration-real-v4",
+      "state": "pending_review",
+      "summary": "阶段：两项工作均已真实执行结束，现提交待用户复核（未做验收结论，未替用户关闭审查）。\n\n【执行结果核对（来自 project_status 真实回执）】\n- 任务一 requestId=collab-e10bcf03-task-1-checklist-v1，taskId=collab-task-fd7f86613d7d0bf869e0220021cb2ecbaf53d95306fb15e289d7c6c80e8c953d，runId=95f8c967-067b-4be8-a445-b954e63f6b31\n  状态 run.state=succeeded，reviewStatus=pending_user，attempt=9444b976…（settled，node mbp）\n  产出（reportId=1b1d1c7e-9a11-415f-bc90-e00f65ab491c，kind=result）：三条中文，逐条对应“恢复后先查中央已有任务与 requestId / 重试前用原 requestId 查状态确认是否已存在或正在执行 / 仅在确认未创建或已失败后用相同 requestId 重试”，符合“避免重复派发”的要求，条数、语种、格式均达标。\n- 任务二 requestId=collab-e10bcf03-task-2-acceptance-v1，taskId=collab-task-d205366ab1121307df192cf14ee44ac79e30dab537170019d277e9a4594da79b，runId=3797dc36-2e99-47d4-88eb-0a23806121b0\n  状态 run.state=succeeded，reviewStatus=pending_user，attempt=b2baa215…（settled，node mbp）\n  产出（reportId=74aadf2e-4a10-41c8-bb35-5df4cc494658，kind=result）：三条中文，覆盖“执行完成仅表示已提交结果与证据、不代表正确或可用”“验收由用户或中央审查方依据证据判定，可拒绝或要求返工”“提交完成不等于批准，执行者不得代用户关闭审查”，与任务要求逐点吻合，条数、语种、格式均达标。\n\n【执行证据】\n- 两个 Run 均使用路线 mbp / codex / gpt-6-luna / low / workspaceId=mbp-workspace / backend=codex-luna-low，符合“本机 Codex（GPT-6 Luna，low）”要求。\n- 两条均为纯文字产出，artifactIds 为空，全程未读取或修改任何文件，符合任务约束。\n- 每个任务各有一条 progress（Official backend started）和一条 result 报告，attempt 均 settled，无失败重试记录。\n\n【一致性检查】\n- 本次未重复派发：沿用原 taskId/runId，未新建任务，也未新增 requestId 之外的派发请求。\n- 未发现与任务要求不符的产出，无遗留阻塞。\n\n【待用户复核】\n请确认上述两份三条中文列表是否满足验收要求。提交完成不等于验收通过，如不达标可要求返工；最终批准与否由你判定。",
+      "title": "会话自动协作真实验收",
+      "updatedAt": "2026-10-11T09:09:05.796Z"
+    },
+    "runs": [
+      {
+        "runId": "95f8c967-067b-4be8-a445-b954e63f6b31",
+        "taskId": "collab-task-fd7f86613d7d0bf869e0220021cb2ecbaf53d95306fb15e289d7c6c80e8c953d",
+        "state": "succeeded",
+        "reviewStatus": "pending_user",
+        "route": {
+          "nodeId": "mbp",
+          "provider": "codex",
+          "model": "gpt-6-luna",
+          "reasoningEffort": "low",
+          "backend": "codex-luna-low"
+        },
+        "createdAt": "2026-10-11T09:06:21.322Z",
+        "updatedAt": "2026-10-11T09:07:07.095Z"
+      },
+      {
+        "runId": "3797dc36-2e99-47d4-88eb-0a23806121b0",
+        "taskId": "collab-task-d205366ab1121307df192cf14ee44ac79e30dab537170019d277e9a4594da79b",
+        "state": "succeeded",
+        "reviewStatus": "pending_user",
+        "route": {
+          "nodeId": "mbp",
+          "provider": "codex",
+          "model": "gpt-6-luna",
+          "reasoningEffort": "low",
+          "backend": "codex-luna-low"
+        },
+        "createdAt": "2026-10-11T09:06:23.796Z",
+        "updatedAt": "2026-10-11T09:08:05.311Z"
+      }
+    ],
+    "reports": [
+      {
+        "reportId": "10209424-a380-4441-8aa1-642037b662bf",
+        "taskId": "collab-task-fd7f86613d7d0bf869e0220021cb2ecbaf53d95306fb15e289d7c6c80e8c953d",
+        "runId": "95f8c967-067b-4be8-a445-b954e63f6b31",
+        "kind": "progress",
+        "title": "Official backend started",
+        "body": "Official subagent 627d0632-8bf5-4b5e-9a35-66cd2bf10187; no live progress or continuation supported",
+        "artifactIds": [],
+        "createdAt": "2026-10-11T09:07:01.851Z"
+      },
+      {
+        "reportId": "1b1d1c7e-9a11-415f-bc90-e00f65ab491c",
+        "taskId": "collab-task-fd7f86613d7d0bf869e0220021cb2ecbaf53d95306fb15e289d7c6c80e8c953d",
+        "runId": "95f8c967-067b-4be8-a445-b954e63f6b31",
+        "kind": "result",
+        "title": "Official Codex execution evidence",
+        "body": "1. 会话恢复后先查询中央任务列表，核对已有任务及其 requestId。\n2. 重试派发前使用原 requestId 查询任务状态，并确认任务是否已存在或正在执行。\n3. 仅在确认原任务未创建或已失败后，才使用相同 requestId 重试派发。",
+        "artifactIds": [],
+        "createdAt": "2026-10-11T09:07:07.095Z"
+      },
+      {
+        "reportId": "15e7f501-4344-4dbe-9a58-f1d6b7e73e9c",
+        "taskId": "collab-task-d205366ab1121307df192cf14ee44ac79e30dab537170019d277e9a4594da79b",
+        "runId": "3797dc36-2e99-47d4-88eb-0a23806121b0",
+        "kind": "progress",
+        "title": "Official backend started",
+        "body": "Official subagent c1db3e1f-d9bd-4b94-b11d-22419c573577; no live progress or continuation supported",
+        "artifactIds": [],
+        "createdAt": "2026-10-11T09:08:03.213Z"
+      },
+      {
+        "reportId": "74aadf2e-4a10-41c8-bb35-5df4cc494658",
+        "taskId": "collab-task-d205366ab1121307df192cf14ee44ac79e30dab537170019d277e9a4594da79b",
+        "runId": "3797dc36-2e99-47d4-88eb-0a23806121b0",
+        "kind": "result",
+        "title": "Official Codex execution evidence",
+        "body": "1. 执行完成只表示执行者已提交结果与证据，不代表结果正确或可用。\n2. 人工验收由用户或中央审查方依据证据作出判断，可以拒绝结果或要求返工。\n3. 提交完成不等于获得批准，执行者不得代替用户关闭审查。",
+        "artifactIds": [],
+        "createdAt": "2026-10-11T09:08:05.311Z"
+      }
+    ],
+    "attempts": [
+      {
+        "attemptId": "9444b976-22ef-40f9-9729-d5eeac206ea7",
+        "runId": "95f8c967-067b-4be8-a445-b954e63f6b31",
+        "taskId": "collab-task-fd7f86613d7d0bf869e0220021cb2ecbaf53d95306fb15e289d7c6c80e8c953d",
+        "state": "settled",
+        "nodeId": "mbp"
+      },
+      {
+        "attemptId": "b2baa215-8d49-48c3-9b67-15feef22c12f",
+        "runId": "3797dc36-2e99-47d4-88eb-0a23806121b0",
+        "taskId": "collab-task-d205366ab1121307df192cf14ee44ac79e30dab537170019d277e9a4594da79b",
+        "state": "settled",
+        "nodeId": "mbp"
+      }
+    ]
+  },
+  "ui": {
+    "status": "passed in Chrome on both original panels",
+    "executor": "100.111.163.32:43981",
+    "coordinator": "100.123.230.75:43980",
+    "verified": [
+      "source session",
+      "cwd",
+      "summary",
+      "pending review",
+      "two task reports",
+      "bare /project activated feedback"
+    ],
+    "screenshots": [
+      {
+        "file": "/private/tmp/session-mbp-complete.png",
+        "mime": "image/jpeg",
+        "caption": "MBP 原任务面板：两个任务均已执行完成，等待复核"
+      },
+      {
+        "file": "/private/tmp/session-mbp-project.png",
+        "mime": "image/jpeg",
+        "caption": "MBP 原项目详情：来源会话、工作目录、摘要与待复核"
+      },
+      {
+        "file": "/private/tmp/session-vps-evidence.png",
+        "mime": "image/jpeg",
+        "caption": "VPS 中央原面板：实际执行报告与运行证据"
+      },
+      {
+        "file": "/private/tmp/session-vps-project.png",
+        "mime": "image/jpeg",
+        "caption": "VPS 中央原项目详情：会话协作提交待复核"
+      },
+      {
+        "file": "/private/tmp/session-project-command.png",
+        "mime": "image/jpeg",
+        "caption": "原 DSH 命令反馈：裸 /project 已获中央确认并激活"
+      }
+    ]
+  },
+  "rejectedAttempts": [
+    {
+      "attempt": "v2",
+      "reason": "route lacked workspace; repaired before successful v4",
+      "evidencePath": ".runtime/session-collaboration/evidence/failed-routing-v2"
+    },
+    {
+      "attempt": "v3",
+      "reason": "session negotiation network timeout; cancelled",
+      "actualCodexCalls": 0,
+      "evidencePath": ".runtime/session-collaboration/evidence/failed-session-negotiation-v3"
+    }
+  ],
+  "historyRegression": {
+    "status": "passed",
+    "isModelExecution": false,
+    "isRealPvData": false,
+    "taskCount": 1,
+    "observedRunCount": 1,
+    "reportCount": 1,
+    "artifactCount": 0,
+    "localAuthorityRows": 0,
+    "at": "2026-10-11T09:14:17.817Z",
+    "ok": true,
+    "evidenceKind": "deterministic generic-history fixture; NOT real model or PV evidence",
+    "officialCommands": true,
+    "modelCalls": 0,
+    "source": "100.111.163.32",
+    "address": "100.123.230.75",
+    "endpoint": "http://100.123.230.75:43972/v1/registrations",
+    "transport": "Tailscale direct bound socket; no forwarding",
+    "centralDatabase": "same coordinator.sqlite as session collaboration",
+    "registration": {
+      "namespace": "generic-history",
+      "projectExternalId": "session-collaboration-generic-history-fixture",
+      "sourceRevision": 1
+    },
+    "observedRuns": [
+      {
+        "runId": "reg-run-183926e5319eeb97d88373f815eb51248b7aa568487d3b7b678381ce2bdf0078",
+        "taskId": "reg-task-91ee1f33b8661a87a32a55d6360c24423b2aa702db0d34b846c637d7a44e1cb9",
+        "observationOnly": true
+      }
+    ],
+    "executionAttempts": 0,
+    "beforeTotalAttempts": 4,
+    "afterTotalAttempts": 4,
+    "commandEvents": 4
+  },
+  "isolation": {
+    "local": ".runtime/session-collaboration",
+    "vps": "/root/dsh-orchestration-tests/session-collaboration-20261011/run1",
+    "commandPort": 43971,
+    "intakePort": 43972,
+    "transport": "direct Tailscale; no SSH port forwarding",
+    "defaultDshModified": false,
+    "pvModified": false,
+    "hermesProductionUsed": false
+  },
+  "boundaries": [
+    "one-shot ephemeral read-only text tasks",
+    "no file write, continuation or token-level live-progress claim",
+    "CLI installation/configuration owned by execution host",
+    "three-level recursive real acceptance belongs to prior ab2bf26 phase, not rerun in this phase"
+  ],
+  "rawEvidencePath": ".runtime/session-collaboration/evidence",
   "reportStructure": {
-    "mainTextChars": 6203,
-    "embeddedImages": 5,
     "stylesheetClosedBeforeMain": true,
-    "renderedReportVerified": false
+    "singleHead": true,
+    "singleBody": true,
+    "embeddedImages": 9,
+    "renderedReportVerified": false,
+    "mainTextChars": 7596,
+    "strictTagNestingValidated": true,
+    "allEmbeddedImageMimeSignaturesMatch": true,
+    "previousPhaseFolded": true
+  },
+  "implementationCommit": "815543e",
+  "mergeStatus": "pending",
+  "acceptedSessionCheck": {
+    "sessionId": "session-collaboration-real-v4",
+    "projectId": "collab-e10bcf03ebadac2b93a06f2ccd0dc8c4e4b4274f66179b19f53ea028cef74203",
+    "state": "pending_review",
+    "runIds": [
+      "95f8c967-067b-4be8-a445-b954e63f6b31",
+      "3797dc36-2e99-47d4-88eb-0a23806121b0"
+    ],
+    "taskCount": 2,
+    "runCount": 2,
+    "attemptCount": 2,
+    "actualCodexCalls": 2,
+    "resumeTools": [
+      "project_status",
+      "project_finish"
+    ],
+    "proof": [
+      {
+        "kind": "request",
+        "method": "thread/start",
+        "model": "gpt-6-luna",
+        "ephemeral": true,
+        "approvalPolicy": "never"
+      },
+      {
+        "kind": "response",
+        "method": "thread/start",
+        "productThreadId": "01a12a37-248d-7981-8def-7fd5c1eb1d15",
+        "ephemeral": true,
+        "model": "gpt-6-luna",
+        "reasoningEffort": "low"
+      },
+      {
+        "kind": "event",
+        "method": "turn/completed",
+        "productThreadId": "01a12a37-248d-7981-8def-7fd5c1eb1d15",
+        "status": "completed"
+      },
+      {
+        "kind": "request",
+        "method": "thread/start",
+        "model": "gpt-6-luna",
+        "ephemeral": true,
+        "approvalPolicy": "never"
+      },
+      {
+        "kind": "response",
+        "method": "thread/start",
+        "productThreadId": "01a12a38-16ad-7b90-ba38-1d7be91c1d68",
+        "ephemeral": true,
+        "model": "gpt-6-luna",
+        "reasoningEffort": "low"
+      },
+      {
+        "kind": "event",
+        "method": "turn/completed",
+        "productThreadId": "01a12a38-16ad-7b90-ba38-1d7be91c1d68",
+        "status": "completed"
+      }
+    ],
+    "accepted": true
   }
 }
