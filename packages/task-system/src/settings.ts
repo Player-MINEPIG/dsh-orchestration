@@ -1,3 +1,4 @@
+import { scheduledPlanInput, scheduledPlanControl } from "./scheduled-plans.js";
 import { readDecisionPreferences, saveDecisionPreference } from "./decision-preferences.js";
 import {
   DecisionSettings,
@@ -333,6 +334,9 @@ export function hasTaskConfigOverride(patches: readonly unknown[]): boolean {
 }
 
 const projectInputs = {
+  scheduleOptions:null,
+  createScheduledPlan:scheduledPlanInput,
+  controlScheduledPlan:scheduledPlanControl,
   projectSettings: null,
   projectSnapshot: null,
   projectPage: null,
@@ -497,6 +501,9 @@ export class TaskPluginSettings extends TypertRemoteService {
       ? { enabled: true, ...task.projects.settings() }
       : { enabled: false };
   }
+  async scheduleOptions() { return this.projectOperation(()=>this.projects().scheduleOptions()); }
+  async createScheduledPlan(input:unknown) { return this.projectOperation(()=>this.projects().createScheduledPlan(projectInputs.createScheduledPlan.parse(input))); }
+  async controlScheduledPlan(input:unknown) { return this.projectOperation(()=>this.projects().controlScheduledPlan(projectInputs.controlScheduledPlan.parse(input))); }
   async createTemporaryTask(input: unknown) {
     return this.projectOperation(() =>
       this.projects().createTemporary(

@@ -1,0 +1,433 @@
+{
+  "acceptedAt": "2026-10-11T13:19:04.950Z",
+  "branch": "codex/scheduled-plans",
+  "base": "4f80aa2",
+  "projectId": "scheduled-plans-live-project",
+  "projectSetup": "Workbench management API created a fresh empty test project; plan and controls operated through original DSH panel in Chrome",
+  "transport": "Tailscale direct; no forwarding",
+  "vps": "100.123.230.75:43980",
+  "mbp": "100.111.163.32:43981",
+  "centralDatabase": "/root/dsh-orchestration-tests/session-collaboration-20261011/run1/coordinator.sqlite",
+  "schedule": {
+    "enabled": false,
+    "input": {},
+    "intervalMs": 60000,
+    "misfire": "once",
+    "nextDueAt": "2026-10-11T13:19:17.567Z",
+    "overlap": "skip",
+    "revision": 5,
+    "route": {
+      "backend": "codex-luna-low",
+      "model": "gpt-6-luna",
+      "nodeId": "mbp",
+      "provider": "codex",
+      "reasoningEffort": "low",
+      "requiredCapabilities": [
+        "official-codex"
+      ],
+      "workspaceId": "mbp-workspace"
+    },
+    "scheduleId": "scheduled-plan-3fce87f049ae87150b02af786e7be57d69b3de5c297f10f2bc8db7812c4e2836",
+    "taskId": "scheduled-task-3fce87f049ae87150b02af786e7be57d69b3de5c297f10f2bc8db7812c4e2836",
+    "templateId": "panel-scheduled-task",
+    "templateVersion": 1
+  },
+  "runs": [
+    {
+      "configuration": {
+        "input": {},
+        "templateRef": {
+          "templateId": "panel-scheduled-task",
+          "version": 1
+        },
+        "trigger": {
+          "observedAt": "2026-10-11T13:15:43.618Z",
+          "scheduledFor": "2026-10-11T13:15:43.568Z"
+        }
+      },
+      "createdAt": "2026-10-11T13:15:43.628Z",
+      "currentAttemptId": "1939c159-5708-4a77-8dde-7c6ab48d34e6",
+      "executionStartedAt": "2026-10-11T13:15:47.899Z",
+      "historyOnly": false,
+      "intentSnapshot": {
+        "acceptanceCriteria": [],
+        "description": "这是定时计划真实验收。只输出两行中文：第一行写“周期执行完成”，第二行写本次上下文中提供的 Run ID。不要读取或修改文件，不要执行命令，不要派发子任务。",
+        "intentRevision": 1,
+        "title": "一分钟协同检查（隔离真实验收）"
+      },
+      "projectContext": {
+        "project": {
+          "acceptanceCriteria": [],
+          "description": "",
+          "goal": "原面板创建计划，经 Tailscale 派发 GPT-6 Luna / low，暂停恢复并逐次查看结果",
+          "projectId": "scheduled-plans-live-project",
+          "revision": 1,
+          "title": "定时计划真实验收"
+        },
+        "schedulerId": "scheduler-3a08d308-f309-45fc-a05f-c5895537b600",
+        "version": 1
+      },
+      "retryPolicy": {
+        "baseDelayMs": 30000,
+        "maxDelayMs": 60000,
+        "maxRetries": 0,
+        "resumableTools": []
+      },
+      "reviewStatus": "pending_user",
+      "route": {
+        "backend": "codex-luna-low",
+        "model": "gpt-6-luna",
+        "nodeId": "mbp",
+        "provider": "codex",
+        "reasoningEffort": "low",
+        "requiredCapabilities": [
+          "official-codex"
+        ],
+        "workspaceId": "mbp-workspace"
+      },
+      "runId": "b2591bc0-a3b3-4ca4-97a8-99e030268865",
+      "state": "succeeded",
+      "taskId": "scheduled-task-3fce87f049ae87150b02af786e7be57d69b3de5c297f10f2bc8db7812c4e2836",
+      "updatedAt": "2026-10-11T13:16:03.730Z",
+      "workspaceConstraint": "mbp-workspace",
+      "sessionIds": [
+        "task-2bd14901-2d39-4720-b87b-11d6ad8944c1"
+      ],
+      "occurrenceId": "0d4d4e547fd1b24ea242c2652dff98cc6315f1d5e463f6ef00d214ae4bb31364"
+    },
+    {
+      "configuration": {
+        "input": {},
+        "templateRef": {
+          "templateId": "panel-scheduled-task",
+          "version": 1
+        },
+        "trigger": {
+          "observedAt": "2026-10-11T13:18:17.702Z",
+          "scheduledFor": "2026-10-11T13:18:17.567Z"
+        }
+      },
+      "createdAt": "2026-10-11T13:18:17.710Z",
+      "currentAttemptId": "4402e2bc-8bce-42fc-ad22-49cb0dddbc8d",
+      "executionStartedAt": "2026-10-11T13:18:19.513Z",
+      "historyOnly": false,
+      "intentSnapshot": {
+        "acceptanceCriteria": [],
+        "description": "这是定时计划真实验收。只输出两行中文：第一行写“周期执行完成”，第二行写本次上下文中提供的 Run ID。不要读取或修改文件，不要执行命令，不要派发子任务。",
+        "intentRevision": 1,
+        "title": "一分钟协同检查（隔离真实验收）"
+      },
+      "projectContext": {
+        "project": {
+          "acceptanceCriteria": [],
+          "description": "",
+          "goal": "原面板创建计划，经 Tailscale 派发 GPT-6 Luna / low，暂停恢复并逐次查看结果",
+          "projectId": "scheduled-plans-live-project",
+          "revision": 1,
+          "title": "定时计划真实验收"
+        },
+        "schedulerId": "scheduler-3a08d308-f309-45fc-a05f-c5895537b600",
+        "version": 1
+      },
+      "retryPolicy": {
+        "baseDelayMs": 30000,
+        "maxDelayMs": 60000,
+        "maxRetries": 0,
+        "resumableTools": []
+      },
+      "reviewStatus": "pending_user",
+      "route": {
+        "backend": "codex-luna-low",
+        "model": "gpt-6-luna",
+        "nodeId": "mbp",
+        "provider": "codex",
+        "reasoningEffort": "low",
+        "requiredCapabilities": [
+          "official-codex"
+        ],
+        "workspaceId": "mbp-workspace"
+      },
+      "runId": "e4408886-5cf1-4b57-a5b5-7cfb15184507",
+      "state": "succeeded",
+      "taskId": "scheduled-task-3fce87f049ae87150b02af786e7be57d69b3de5c297f10f2bc8db7812c4e2836",
+      "updatedAt": "2026-10-11T13:18:35.781Z",
+      "workspaceConstraint": "mbp-workspace",
+      "sessionIds": [
+        "task-2bd14901-2d39-4720-b87b-11d6ad8944c1"
+      ],
+      "occurrenceId": "bd7618b27d70d4c5eeddfd0b31cba83caa469827a255d4efb672af123f0729dc"
+    }
+  ],
+  "reports": [
+    {
+      "artifactIds": [],
+      "attemptId": "1939c159-5708-4a77-8dde-7c6ab48d34e6",
+      "body": "Official subagent 47d1a9ac-e71d-4711-b63a-dd3828220022; no live progress or continuation supported",
+      "createdAt": "2026-10-11T13:16:01.549Z",
+      "data": {
+        "backend": "codex-luna-low",
+        "carrierSessionId": "task-2bd14901-2d39-4720-b87b-11d6ad8944c1",
+        "officialSubagentId": "47d1a9ac-e71d-4711-b63a-dd3828220022"
+      },
+      "kind": "progress",
+      "recordedAt": "2026-10-11T13:16:01.549Z",
+      "reportId": "ae30e7ce-c252-44aa-b69c-2b5967892608",
+      "revision": 1,
+      "runId": "b2591bc0-a3b3-4ca4-97a8-99e030268865",
+      "sessionId": "task-2bd14901-2d39-4720-b87b-11d6ad8944c1",
+      "taskId": "scheduled-task-3fce87f049ae87150b02af786e7be57d69b3de5c297f10f2bc8db7812c4e2836",
+      "title": "Official backend started"
+    },
+    {
+      "artifactIds": [],
+      "attemptId": "1939c159-5708-4a77-8dde-7c6ab48d34e6",
+      "body": "周期执行完成\nb2591bc0-a3b3-4ca4-97a8-99e030268865",
+      "createdAt": "2026-10-11T13:16:03.729Z",
+      "data": {
+        "acceptance": "pending_user",
+        "backend": "codex-luna-low",
+        "cliSource": "host-configured",
+        "cliVersion": "codex-cli 0.162.0-alpha.17.2",
+        "continuationSupported": false,
+        "model": "gpt-6-luna",
+        "officialSubagentId": "47d1a9ac-e71d-4711-b63a-dd3828220022",
+        "permissionContract": "codex-native",
+        "productThreadId": "01a12b1b-1e24-7c90-a6eb-ea018a0bd8e7",
+        "progressSupported": false,
+        "reasoningEffort": "low",
+        "stopReason": "completed",
+        "verifiedModel": "gpt-6-luna",
+        "verifiedReasoningEffort": "low"
+      },
+      "kind": "result",
+      "recordedAt": "2026-10-11T13:16:03.729Z",
+      "reportId": "3b5538de-26e6-4dc8-9ab7-fc69093a24b0",
+      "revision": 1,
+      "runId": "b2591bc0-a3b3-4ca4-97a8-99e030268865",
+      "sessionId": "task-2bd14901-2d39-4720-b87b-11d6ad8944c1",
+      "taskId": "scheduled-task-3fce87f049ae87150b02af786e7be57d69b3de5c297f10f2bc8db7812c4e2836",
+      "title": "Official Codex execution evidence"
+    },
+    {
+      "artifactIds": [],
+      "attemptId": "4402e2bc-8bce-42fc-ad22-49cb0dddbc8d",
+      "body": "Official subagent 1c2674ca-5296-4e42-b483-6bba23cd7aba; no live progress or continuation supported",
+      "createdAt": "2026-10-11T13:18:31.774Z",
+      "data": {
+        "backend": "codex-luna-low",
+        "carrierSessionId": "task-2bd14901-2d39-4720-b87b-11d6ad8944c1",
+        "officialSubagentId": "1c2674ca-5296-4e42-b483-6bba23cd7aba"
+      },
+      "kind": "progress",
+      "recordedAt": "2026-10-11T13:18:31.774Z",
+      "reportId": "6ccf3142-2545-4187-bcd3-6682c26dbae5",
+      "revision": 1,
+      "runId": "e4408886-5cf1-4b57-a5b5-7cfb15184507",
+      "sessionId": "task-2bd14901-2d39-4720-b87b-11d6ad8944c1",
+      "taskId": "scheduled-task-3fce87f049ae87150b02af786e7be57d69b3de5c297f10f2bc8db7812c4e2836",
+      "title": "Official backend started"
+    },
+    {
+      "artifactIds": [],
+      "attemptId": "4402e2bc-8bce-42fc-ad22-49cb0dddbc8d",
+      "body": "周期执行完成\ne4408886-5cf1-4b57-a5b5-7cfb15184507",
+      "createdAt": "2026-10-11T13:18:35.781Z",
+      "data": {
+        "acceptance": "pending_user",
+        "backend": "codex-luna-low",
+        "cliSource": "host-configured",
+        "cliVersion": "codex-cli 0.162.0-alpha.17.2",
+        "continuationSupported": false,
+        "model": "gpt-6-luna",
+        "officialSubagentId": "1c2674ca-5296-4e42-b483-6bba23cd7aba",
+        "permissionContract": "codex-native",
+        "productThreadId": "01a12b1d-6a76-72d0-afb4-b1289ca93752",
+        "progressSupported": false,
+        "reasoningEffort": "low",
+        "stopReason": "completed",
+        "verifiedModel": "gpt-6-luna",
+        "verifiedReasoningEffort": "low"
+      },
+      "kind": "result",
+      "recordedAt": "2026-10-11T13:18:35.781Z",
+      "reportId": "2fbe5b75-6639-45f2-af6e-7734680c73ac",
+      "revision": 1,
+      "runId": "e4408886-5cf1-4b57-a5b5-7cfb15184507",
+      "sessionId": "task-2bd14901-2d39-4720-b87b-11d6ad8944c1",
+      "taskId": "scheduled-task-3fce87f049ae87150b02af786e7be57d69b3de5c297f10f2bc8db7812c4e2836",
+      "title": "Official Codex execution evidence"
+    }
+  ],
+  "attempts": [
+    {
+      "attemptId": "1939c159-5708-4a77-8dde-7c6ab48d34e6",
+      "createdAt": "2026-10-11T13:15:47.899Z",
+      "executionId": "exec-aa4ba6d163a7fb1c89bfc7f1f3d62227cfa932bd1f94f2ceba020885b536607e",
+      "fence": 1,
+      "leaseExpiresAt": "2026-10-11T13:18:47.899Z",
+      "nodeId": "mbp",
+      "runId": "b2591bc0-a3b3-4ca4-97a8-99e030268865",
+      "sessionId": "task-2bd14901-2d39-4720-b87b-11d6ad8944c1",
+      "state": "settled",
+      "taskId": "scheduled-task-3fce87f049ae87150b02af786e7be57d69b3de5c297f10f2bc8db7812c4e2836",
+      "updatedAt": "2026-10-11T13:16:03.730Z"
+    },
+    {
+      "attemptId": "4402e2bc-8bce-42fc-ad22-49cb0dddbc8d",
+      "createdAt": "2026-10-11T13:18:19.513Z",
+      "executionId": "exec-9e8110ffe04e2e87a4b5b26637432d7c276e99069afe348cf85433935ab9290a",
+      "fence": 1,
+      "leaseExpiresAt": "2026-10-11T13:21:19.513Z",
+      "nodeId": "mbp",
+      "runId": "e4408886-5cf1-4b57-a5b5-7cfb15184507",
+      "sessionId": "task-2bd14901-2d39-4720-b87b-11d6ad8944c1",
+      "state": "settled",
+      "taskId": "scheduled-task-3fce87f049ae87150b02af786e7be57d69b3de5c297f10f2bc8db7812c4e2836",
+      "updatedAt": "2026-10-11T13:18:35.782Z"
+    }
+  ],
+  "scheduleEvents": [
+    {
+      "at": "2026-10-11T13:14:43.550Z",
+      "detail": {
+        "scheduleId": "scheduled-plan-3fce87f049ae87150b02af786e7be57d69b3de5c297f10f2bc8db7812c4e2836"
+      },
+      "eventId": "ee0d36ad-161a-4cd5-9d89-dbdc1f2816ad",
+      "taskId": "scheduled-task-3fce87f049ae87150b02af786e7be57d69b3de5c297f10f2bc8db7812c4e2836",
+      "type": "schedule.created"
+    },
+    {
+      "at": "2026-10-11T13:14:43.568Z",
+      "detail": {
+        "nextDueAt": "2026-10-11T13:15:43.568Z",
+        "scheduleId": "scheduled-plan-3fce87f049ae87150b02af786e7be57d69b3de5c297f10f2bc8db7812c4e2836"
+      },
+      "eventId": "258f5667-1dd3-46a5-99b8-5f07ceacdb53",
+      "taskId": "scheduled-task-3fce87f049ae87150b02af786e7be57d69b3de5c297f10f2bc8db7812c4e2836",
+      "type": "schedule.resumed"
+    },
+    {
+      "at": "2026-10-11T13:15:43.635Z",
+      "detail": {
+        "observedAt": "2026-10-11T13:15:43.634Z",
+        "occurrenceId": "0d4d4e547fd1b24ea242c2652dff98cc6315f1d5e463f6ef00d214ae4bb31364",
+        "runId": "b2591bc0-a3b3-4ca4-97a8-99e030268865",
+        "scheduleId": "scheduled-plan-3fce87f049ae87150b02af786e7be57d69b3de5c297f10f2bc8db7812c4e2836",
+        "scheduledFor": "2026-10-11T13:15:43.568Z",
+        "status": "admitted"
+      },
+      "eventId": "932cb6c9-b131-4469-b46c-19a59064eb04",
+      "runId": "b2591bc0-a3b3-4ca4-97a8-99e030268865",
+      "taskId": "scheduled-task-3fce87f049ae87150b02af786e7be57d69b3de5c297f10f2bc8db7812c4e2836",
+      "type": "schedule.occurrence"
+    },
+    {
+      "at": "2026-10-11T13:16:10.355Z",
+      "detail": {
+        "nextDueAt": "2026-10-11T13:16:43.568Z",
+        "scheduleId": "scheduled-plan-3fce87f049ae87150b02af786e7be57d69b3de5c297f10f2bc8db7812c4e2836"
+      },
+      "eventId": "04ed022e-3e6e-404b-9e9d-a396aaa9f1ac",
+      "taskId": "scheduled-task-3fce87f049ae87150b02af786e7be57d69b3de5c297f10f2bc8db7812c4e2836",
+      "type": "schedule.paused"
+    },
+    {
+      "at": "2026-10-11T13:17:17.567Z",
+      "detail": {
+        "nextDueAt": "2026-10-11T13:18:17.567Z",
+        "scheduleId": "scheduled-plan-3fce87f049ae87150b02af786e7be57d69b3de5c297f10f2bc8db7812c4e2836"
+      },
+      "eventId": "ce3f1de4-4f17-4c55-ae06-efe985af3167",
+      "taskId": "scheduled-task-3fce87f049ae87150b02af786e7be57d69b3de5c297f10f2bc8db7812c4e2836",
+      "type": "schedule.resumed"
+    },
+    {
+      "at": "2026-10-11T13:18:17.714Z",
+      "detail": {
+        "observedAt": "2026-10-11T13:18:17.713Z",
+        "occurrenceId": "bd7618b27d70d4c5eeddfd0b31cba83caa469827a255d4efb672af123f0729dc",
+        "runId": "e4408886-5cf1-4b57-a5b5-7cfb15184507",
+        "scheduleId": "scheduled-plan-3fce87f049ae87150b02af786e7be57d69b3de5c297f10f2bc8db7812c4e2836",
+        "scheduledFor": "2026-10-11T13:18:17.567Z",
+        "status": "admitted"
+      },
+      "eventId": "eb00bafd-cec9-4bff-97be-ff4ef273124a",
+      "runId": "e4408886-5cf1-4b57-a5b5-7cfb15184507",
+      "taskId": "scheduled-task-3fce87f049ae87150b02af786e7be57d69b3de5c297f10f2bc8db7812c4e2836",
+      "type": "schedule.occurrence"
+    },
+    {
+      "at": "2026-10-11T13:18:54.461Z",
+      "detail": {
+        "nextDueAt": "2026-10-11T13:19:17.567Z",
+        "scheduleId": "scheduled-plan-3fce87f049ae87150b02af786e7be57d69b3de5c297f10f2bc8db7812c4e2836"
+      },
+      "eventId": "e488e1ce-167c-4ca3-8ee1-618493ed2702",
+      "taskId": "scheduled-task-3fce87f049ae87150b02af786e7be57d69b3de5c297f10f2bc8db7812c4e2836",
+      "type": "schedule.paused"
+    }
+  ],
+  "pausedCheckpoint": {
+    "generatedAt": "2026-10-11T13:17:07.287Z",
+    "enabled": false,
+    "runCount": 1,
+    "oldNextDueAt": "2026-10-11T13:16:43.568Z"
+  },
+  "actualCalls": 2,
+  "officialWireProof": [
+    {
+      "kind": "request",
+      "method": "thread/start",
+      "model": "gpt-6-luna",
+      "ephemeral": true,
+      "approvalPolicy": "never"
+    },
+    {
+      "kind": "response",
+      "method": "thread/start",
+      "productThreadId": "01a12b1b-1e24-7c90-a6eb-ea018a0bd8e7",
+      "ephemeral": true,
+      "model": "gpt-6-luna",
+      "reasoningEffort": "low"
+    },
+    {
+      "kind": "event",
+      "method": "turn/completed",
+      "productThreadId": "01a12b1b-1e24-7c90-a6eb-ea018a0bd8e7",
+      "status": "completed"
+    },
+    {
+      "kind": "request",
+      "method": "thread/start",
+      "model": "gpt-6-luna",
+      "ephemeral": true,
+      "approvalPolicy": "never"
+    },
+    {
+      "kind": "response",
+      "method": "thread/start",
+      "productThreadId": "01a12b1d-6a76-72d0-afb4-b1289ca93752",
+      "ephemeral": true,
+      "model": "gpt-6-luna",
+      "reasoningEffort": "low"
+    },
+    {
+      "kind": "event",
+      "method": "turn/completed",
+      "productThreadId": "01a12b1d-6a76-72d0-afb4-b1289ca93752",
+      "status": "completed"
+    }
+  ],
+  "checks": {
+    "targetedTests": 107,
+    "officialRuntimeChecks": 13,
+    "plannerOriginalPanel": true,
+    "executorOriginalPanelReadOnly": true,
+    "oldRunResultPreservedAfterSecondRun": true,
+    "testPlanPaused": true,
+    "workerStopped": true,
+    "defaultDshAndPvUnmodified": true,
+    "hermesProductionUntouched": true
+  },
+  "review": "Reviewed RPC bridge, authority, route and workspace grants, idempotency, revision, pause/resume, occurrence dedup and per-Run result selection. Frontend bridge omission found in live UI and fixed before acceptance."
+}

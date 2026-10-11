@@ -470,3 +470,8 @@ test('rejected result can be dispatched with immutable operator feedback in the 
   }finally{await h.dispose();}
  }
 });
+
+test('scheduled plans expose assigned ownership before first Run and restrict the executor projection',async()=>{
+ const h=await createNativeHarness({config:{role:'planner'}});
+ try{h.ledger.registerWorkspace('scheduled-ws',{workspaceId:'ws',nodeId:'worker',path:h.dir,label:'Scheduled workspace',state:'ready',createdAt:new Date().toISOString()});h.ledger.registerNode('scheduled-node',{...worker,workspaceIds:['ws']});const runtime=h.ctx.taskSystem.projects,options=runtime.scheduleOptions();const created=runtime.createScheduledPlan({commandId:'scheduled-new',title:'Regular check',description:'Return a report',projectId:null,routeId:options.routes[0].id,cadence:{mode:'interval',minutes:1}});const own=runtime.snapshotForNode('worker');assert.equal(own.schedules.length,1);assert.equal(own.schedules[0].scheduleId,created.scheduleId);assert.equal(own.tasks.find(t=>t.id===created.taskId).kind,'scheduled');assert.equal(own.tasks[0].canCancel,false);assert.equal(runtime.snapshotForNode('unrelated').schedules.length,0);assert.equal(own.runs.length,0);}finally{await h.dispose();}
+});

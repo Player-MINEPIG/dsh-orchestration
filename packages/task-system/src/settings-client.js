@@ -3292,6 +3292,9 @@ window.__ModuleLoader__.load({
     const projectMethods = [
       "projectSettings",
       "createTemporaryTask",
+      "scheduleOptions",
+      "createScheduledPlan",
+      "controlScheduledPlan",
       "projectSnapshot",
       "projectPage",
       "saveProjectSettings",
@@ -3313,7 +3316,7 @@ window.__ModuleLoader__.load({
       namespace: "taskPluginSettings",
       method,
       invocation: { kind: "direct" },
-      parameters: ["projectSettings", "projectSnapshot", "projectPage", "conversationModels"].includes(method)
+      parameters: ["projectSettings", "projectSnapshot", "projectPage", "conversationModels", "scheduleOptions"].includes(method)
         ? []
         : [
             {

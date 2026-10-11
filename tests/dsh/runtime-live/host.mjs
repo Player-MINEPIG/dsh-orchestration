@@ -22,7 +22,8 @@ if(!taskConfig?.databasePath||!isAbsolute(taskConfig.databasePath))throw Error('
 const testParent=resolve(config.testRoot||stateDir),inside=p=>{const r=relative(testParent,resolve(p));return r!== '..'&&!r.startsWith('../')&&!isAbsolute(r);};
 if(!inside(stateDir)||!inside(taskConfig.databasePath)||(remoteConfig?.statePath&&!inside(remoteConfig.statePath)))throw Error('Host state and databases must remain below the declared isolated testRoot');
 if(!['planner','executor'].includes(taskConfig.role))throw Error('Declare test host role');
-if(taskConfig.schedulerEnabled!==false||taskConfig.autoExecute!==false)throw Error('UI acceptance host must not add another automatic executor/scheduler');
+const scheduleAcceptance=config.allowScheduledPlanTest===true&&taskConfig.role==='planner'&&taskConfig.keepAlive===true;
+if((taskConfig.schedulerEnabled!==false&&!scheduleAcceptance)||taskConfig.autoExecute!==false)throw Error('Only an explicitly enabled isolated planner may run the scheduler; automatic local execution stays disabled');
 const req=createRequire(join(resolve(runtimeRoot),'package.json'));
 const {initProfile}=await import(req.resolve('@deepseek-ai/dsh-app-boot'));
 const home=join(stateDir,'home'),profileName='runtime-ui-'+taskConfig.role,profileDir=join(home,'profiles',profileName);

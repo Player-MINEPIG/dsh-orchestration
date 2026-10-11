@@ -4677,6 +4677,58 @@ export class TaskLedger {
       fail("INVALID", "Invalid overlap/misfire policy");
     return task;
   }
+  /** Atomic preparation; the UI links the project before enabling the plan. */
+  prepareScheduledPlan(commandId: string, input: {
+    requestHash: string; taskId: string; scheduleId: string;
+    title: string; description: string; route: ExecutionRoute;
+    intervalMs?: number; cron?: string; timeZone?: string;
+  }) {
+    this.planner();
+    return this.command(commandId, "prepareScheduledPlan", input, () => {
+      const task = this.newTask({taskId:input.taskId,title:input.title,description:input.description,kind:"scheduled",
+        ...(input.route.backend ? {policy:{allowedBackends:[input.route.backend]}} : {})});
+      const templateId = "panel-scheduled-task", version = 1;
+      if (!this.get("template", `${templateId}@${version}`)) {
+        const template: Template = {templateId,version,name:"Scheduled task",description:"Execute the Task intent for this scheduled occurrence",inputSchema:{type:"object",additionalProperties:false},defaults:{},resultContract:{}};
+        this.validateTemplate(template);
+        this.put("template", `${templateId}@${version}`, template);
+      }
+      const nextDueAt = input.cron
+        ? CronExpressionParser.parse(input.cron,{tz:input.timeZone??"UTC",currentDate:this.now()}).next().toISOString()!
+        : new Date(this.clock()+(input.intervalMs??0)).toISOString();
+      const schedule: Schedule = {scheduleId:input.scheduleId,taskId:task.taskId,templateId,templateVersion:version,
+        enabled:false,revision:1,intervalMs:input.intervalMs,cron:input.cron,timeZone:input.timeZone,
+        nextDueAt,overlap:"skip",misfire:"once",input:{},route:input.route};
+      this.validateSchedule(schedule);
+      this.put("schedule",schedule.scheduleId,schedule,task.taskId);
+      this.event("schedule.created",{scheduleId:schedule.scheduleId},task.taskId);
+      return {taskId:task.taskId,scheduleId:schedule.scheduleId,requestHash:input.requestHash};
+    });
+  }
+  controlScheduledPlan(commandId: string, input: {scheduleId:string;expectedRevision:number;enabled:boolean}) {
+    this.planner();
+    return this.command(commandId,"controlScheduledPlan",input,()=>{
+      const prior=this.getSchedule(input.scheduleId);
+      if(prior.retiredAt || (prior.revision??1)!==input.expectedRevision) fail("CONFLICT","Schedule changed; refresh before acting");
+      if(typeof input.enabled!=="boolean") fail("INVALID","Invalid enabled state");
+      const task=this.getTask(prior.taskId);
+      if(input.enabled && ["cancelled","archived"].includes(task.state)) fail("CONFLICT","Cancelled or archived Task cannot resume its schedule");
+      const next={...prior,enabled:input.enabled,revision:(prior.revision??1)+1};
+      if(input.enabled){
+        this.validateSchedule(next);
+        next.nextDueAt=next.cron
+          ? CronExpressionParser.parse(next.cron,{tz:next.timeZone??"UTC",currentDate:this.now()}).next().toISOString()!
+          : new Date(this.clock()+next.intervalMs!).toISOString();
+      }
+      this.put("schedule",next.scheduleId,next,next.taskId);
+      this.event(input.enabled?"schedule.resumed":"schedule.paused",{scheduleId:next.scheduleId,nextDueAt:next.nextDueAt},next.taskId);
+      return next;
+    });
+  }
+  scheduleHistory(scheduleId: string) {
+    this.getSchedule(scheduleId);
+    return this.list<{occurrenceId:string;runId?:string;status:string;scheduledFor?:string;observedAt?:string}>("occurrence",scheduleId);
+  }
   createSchedule(commandId: string, schedule: Schedule) {
     this.planner();
     return this.command(commandId, "createSchedule", schedule, () => {
@@ -4766,6 +4818,7 @@ export class TaskLedger {
         fail("INVALID", "Schedule enabled must be boolean");
       if (s.retiredAt) fail("CONFLICT", "Schedule retired");
       s.enabled = input.enabled;
+      s.revision = (s.revision ?? 1) + 1;
       this.put("schedule", s.scheduleId, s, s.taskId);
       return s;
     });
@@ -4832,6 +4885,9 @@ export class TaskLedger {
         });
       const occurrence = {
         occurrenceId: key,
+        scheduleId: s.scheduleId,
+        scheduledFor: input.occurrenceAt,
+        observedAt: this.now(),
         ...(run ? { runId: run.runId } : {}),
         status: run
           ? "admitted"

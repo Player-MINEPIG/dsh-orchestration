@@ -307,7 +307,7 @@ try {
   assert.equal(info.remote, null);
   assert.deepEqual(ctx.typert.local.list().filter(d=>d.namespace==="taskPluginSettings").map(d=>d.method).sort(), [
     "describe","queue","workspaces","executorIdentity","startup","saveStartup","checkConnection","decisionSettings","saveDecisionSettings","decisionConsole","setDecisionPreset",
-    "projectSettings","projectSnapshot","projectPage","saveProjectSettings","createProject","createTemporaryTask","conversationModels","selectConversationModel","sendExecutorMessage","taskConversation","sendTaskMessage","projectConversation","sendProjectMessage","handoffProject","actOnProjectTask","reviewProjectTask"
+    "projectSettings","projectSnapshot","projectPage","saveProjectSettings","createProject","createTemporaryTask","scheduleOptions","createScheduledPlan","controlScheduledPlan","conversationModels","selectConversationModel","sendExecutorMessage","taskConversation","sendTaskMessage","projectConversation","sendProjectMessage","handoffProject","actOnProjectTask","reviewProjectTask"
   ].sort());
   assert.equal(
     ctx.typert.local.get("taskPluginSettings/describe").parameters.length,

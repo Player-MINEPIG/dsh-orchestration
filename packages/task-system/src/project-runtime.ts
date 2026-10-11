@@ -18,6 +18,7 @@ import { isAbsolute, join } from "node:path";
 import { TaskLedger, TaskError, canonical } from "./ledger.js";
 import { Workbench } from "./workbench.js";
 import { WorkspaceManager } from "./workspaces.js";
+import { ScheduledPlans } from "./scheduled-plans.js";
 import type { TaskPlanner, PlanningInput } from "./planning.js";
 import type { ExecutionRoute, Json, Role } from "./contracts.js";
 
@@ -1678,6 +1679,7 @@ export class ProjectRuntime {
                             : "queued";
       return {
         id: t.taskId,
+        kind: t.kind,
         parentTaskId: t.parentTaskId ?? null,
         parentRunId: t.parentRunId ?? null,
         delegationDisplay: t.delegationDisplay?.mode ?? "task",
@@ -1868,6 +1870,8 @@ export class ProjectRuntime {
         actualReasoningEffort: diagnostic("verifiedReasoningEffort"),
         productThreadId: diagnostic("productThreadId"),
         id: r.runId,
+        occurrenceId: r.occurrenceId ?? null,
+        createdAt: r.createdAt,
         parentRunId:r.parentRunId ?? null,
         parentTaskId:data.tasks.find(t=>t.taskId===r.taskId)?.parentTaskId ?? null,
         outcome:r.outcome ?? null,
@@ -1883,6 +1887,7 @@ export class ProjectRuntime {
       }; }),
       reports: data.reports.map((r) => ({
         id: r.reportId,
+        kind: r.kind,
         taskId: r.taskId,
         runId: r.runId,
         title: r.title,
@@ -1891,12 +1896,21 @@ export class ProjectRuntime {
       artifacts: wb.artifacts.map((a) => ({ id: a.artifactId, ...a })),
       milestones: wb.milestones,
       schedules: (data.schedules ?? []).map((s) => ({
-        scheduleId: s.scheduleId,
-        enabled: s.enabled,
+        scheduleId:s.scheduleId,taskId:s.taskId,title:data.tasks.find(t=>t.taskId===s.taskId)?.title??s.scheduleId,
+        project:taskProjects.get(s.taskId)??"unassigned",enabled:s.enabled,revision:s.revision??1,retiredAt:s.retiredAt??null,
+        intervalMs:s.intervalMs??null,cron:s.cron??null,timeZone:s.timeZone??null,nextDueAt:s.nextDueAt,
+        overlap:s.overlap,misfire:s.misfire??"once",node:s.route?.nodeId??null,model:s.route?.model??null,
+        blocked:["cancelled","archived"].includes(data.tasks.find(t=>t.taskId===s.taskId)?.state??""),
+        occurrences:this.ledger.scheduleHistory(s.scheduleId),
       })),
+      scheduleRuntime:{enabled:!!(this.ctx.get("taskSystem") as {config?:{schedulerEnabled?:boolean;keepAlive?:boolean}}|undefined)?.config?.schedulerEnabled,
+        ticking:!!(this.ctx.get("taskSystem") as {config?:{keepAlive?:boolean}}|undefined)?.config?.keepAlive},
       sampledAt: now(),
     };
   }
+  scheduleOptions() { this.authorize(); return new ScheduledPlans(this.ledger).options(); }
+  createScheduledPlan(input:unknown) { this.authorize(); return new ScheduledPlans(this.ledger).create(input); }
+  controlScheduledPlan(input:unknown) { this.authorize(); return new ScheduledPlans(this.ledger).control(input); }
   /** Central authority projection: authenticated peer selects its own node scope. */
   snapshotForNode(nodeId: string) {
     const all = this.snapshot(), raw = this.ledger.snapshot(), wb = this.workbench.snapshot();
@@ -1906,6 +1920,7 @@ export class ProjectRuntime {
     const workspaceIds = new Set((raw.workspaces ?? []).filter(w=>w.nodeId===nodeId).map(w=>w.workspaceId));
     const ids = new Set<string>();
     for (const t of all.tasks) if (ownedProjects.has(t.project)) ids.add(t.id);
+    for(const s of raw.schedules??[]) if(s.route?.nodeId===nodeId) ids.add(s.taskId);
     for(const r of raw.runs) if(r.route?.nodeId===nodeId) ids.add(r.taskId);
     for(const a of raw.attempts ?? []) if(a.nodeId===nodeId) ids.add(a.taskId);
     for(const t of raw.tasks) if(t.workspaceId && workspaceIds.has(t.workspaceId)) ids.add(t.taskId);
@@ -1918,7 +1933,7 @@ export class ProjectRuntime {
     const runs=all.runs.filter(r=>ids.has(r.taskId)),runIds=new Set(runs.map(r=>r.id));
     return {...all,settings:{enabled:false},projects:all.projects.filter(p=>projectIds.has(p.id)).map(p=>({...p,canChat:false,sessionId:null})),tasks,runs,
       attempts:all.attempts.filter(a=>runIds.has(a.runId)),reports:all.reports.filter(r=>ids.has(r.taskId)),
-      artifacts:all.artifacts.filter(a=>a.taskId&&ids.has(a.taskId)),milestones:all.milestones.filter(m=>projectIds.has(m.projectId)),schedules:[],
+      artifacts:all.artifacts.filter(a=>a.taskId&&ids.has(a.taskId)),milestones:all.milestones.filter(m=>projectIds.has(m.projectId)),schedules:all.schedules.filter(s=>ids.has(s.taskId)),
       projectCollaborations:all.projectCollaborations.filter(c=>c.ownerNodeId===nodeId),
       projectRegistrations:all.projectRegistrations.filter(r=>projectIds.has(r.projectId)),
       nodes:all.nodes.filter(n=>n.nodeId===nodeId||runs.some(r=>r.node===n.nodeId)),

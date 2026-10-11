@@ -307,3 +307,18 @@ test('retry feedback survives polling and failed submission, then reaches the ac
  assert.match(p.overlay(),/补上边界测试 &lt;example&gt;/);
  submit=p.action('task-action-confirm');assert.equal(p.requests[0].input.commandId,command);await p.answer({value:{}});await p.answer({value:data});await submit;
 });
+
+test('schedule entry is separate from temporary tasks; history opens the selected Run result',async()=>{
+ const p=page(),s={scheduleId:'s',taskId:'scheduled',title:'Recurring',project:'unassigned',enabled:true,revision:2,intervalMs:60000,nextDueAt:'2026-10-01T13:00:00Z',overlap:'skip',node:'mbp',model:'small',occurrences:[{runId:'one',scheduledFor:'2026-10-01T12:00:00Z',status:'admitted'},{runId:'two',scheduledFor:'2026-10-01T12:01:00Z',status:'admitted'}]};
+ await p.answer({value:{...snapshot,scheduleRuntime:{enabled:true,ticking:true},tasks:[{id:'scheduled',kind:'scheduled',title:'Recurring',project:'unassigned',status:'pending_user'},{id:'temp',kind:'adhoc',title:'One off',project:'unassigned',status:'queued'}],schedules:[s],runs:[{id:'one',taskId:'scheduled',state:'succeeded',model:'small',node:'mbp'},{id:'two',taskId:'scheduled',state:'succeeded',model:'small',node:'mbp'}],reports:[{id:'r1',taskId:'scheduled',runId:'one',kind:'result',body:'First result'},{id:'r2',taskId:'scheduled',runId:'two',kind:'result',body:'Second result'}]}});
+ await p.action('projects');assert.match(p.content(),/定时计划/);await p.action('temporary-tasks');assert.match(p.content(),/One off/);assert.doesNotMatch(p.content(),/Recurring/);await p.action('schedules');assert.match(p.content(),/Recurring/);await p.action('schedule-detail','s');assert.match(p.content(),/触发历史/);await p.action('schedule-run','one');assert.match(p.overlay(),/First result/);assert.doesNotMatch(p.overlay(),/Second result/);
+});
+test('schedule create preserves draft and command on failure; pause submits expected revision',async()=>{
+ const p=page();await p.answer({value:snapshot});let pending=p.action('create-schedule');assert.equal(p.requests[0].method,'scheduleOptions');await p.answer({value:{projects:[],routes:[{id:'route',label:'MBP Luna'}]}});await pending;
+ vm.runInContext("Object.assign(state.overlay.draft,{title:'Check',description:'Report',routeId:'route',minutes:'1'})",p.context);
+ pending=p.action('create-schedule-confirm');const request=p.requests[0].input;assert.equal(p.requests[0].method,'createScheduledPlan');assert.equal(request.cadence.minutes,1);await p.answer({error:'Connection failed'});await pending;assert.match(p.overlay(),/Check/);assert.equal(vm.runInContext('state.overlay.commandId',p.context),request.commandId);
+ vm.runInContext("state.records.schedules=[{scheduleId:'s',enabled:true,revision:7,title:'Check'}]",p.context);await p.action('schedule-control','s');pending=p.action('schedule-control-confirm');assert.equal(p.requests[0].input.expectedRevision,7);assert.equal(p.requests[0].input.enabled,false);await p.answer({error:'Changed'});await pending;
+});
+test('executor cannot create or control scheduled plans through project RPC',async()=>{
+ const executor=service({config:{role:'executor'}}),denied=e=>e.details?.reason==='PLANNER_REQUIRED';await assert.rejects(executor.scheduleOptions(),denied);await assert.rejects(executor.createScheduledPlan({}),denied);await assert.rejects(executor.controlScheduledPlan({}),denied);
+});
