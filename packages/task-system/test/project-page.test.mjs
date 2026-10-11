@@ -63,7 +63,7 @@ test('legacy task detail exposes temporary conversation and visible disabled ret
  assert.match(p.overlay(),/临时任务对话/);assert.match(p.overlay(),/重新尝试派发/);
  const open=p.action('task-chat',task.id);assert.equal(p.requests[0].method,'taskConversation');assert.equal(p.requests[0].input.taskId,task.id);
  await p.answer({value:{taskId:task.id,projectId:null,workspace:'/planner/temporary-tasks/task-1',generation:1,messages:[],turns:[],sessions:[]}});await open;
- assert.match(p.content(),/临时任务规划/);assert.match(p.content(),/返回任务中心/);assert.doesNotMatch(p.content(),/整理并继续/);
+ assert.match(p.content(),/临时任务规划/);assert.match(p.content(),/返回上一位置/);assert.doesNotMatch(p.content(),/整理并继续/);
  await p.action('home');assert.equal(vm.runInContext('state.filter',p.context),'error');assert.equal(vm.runInContext('state.view',p.context),'hub');
  vm.runInContext("state.tasks[0].canRetry=false;state.tasks[0].retryDisabledReason='执行结果不确定，请先核实执行端'",p.context);await p.action('task',task.id);
  assert.match(p.overlay(),/重新尝试派发/);assert.match(p.overlay(),/disabled aria-disabled="true"/);assert.match(p.overlay(),/执行结果不确定/);
@@ -84,8 +84,8 @@ test('project center provides task return and temporary area; project details re
  await p.answer({value:{...snapshot,settings:{root:'/projects',revision:1},projects:[project]}});
  assert.doesNotMatch(p.content(),/data-action="temporary-tasks"|data-action="settings"/);
  await p.action('projects');assert.match(p.content(),/data-action="home"/);assert.match(p.content(),/data-action="temporary-tasks"/);assert.doesNotMatch(p.content(),/data-action="settings"/);
- await p.action('project','p');assert.match(p.content(),/data-action="projects" aria-label="返回项目中心"/);
- await p.action('projects');await p.action('temporary-tasks');assert.match(p.content(),/data-action="projects" aria-label="返回项目中心"/);assert.match(p.content(),/新建临时任务/);
+ await p.action('project','p');assert.match(p.content(),/data-action="nav-back" data-id="projects" aria-label="返回上一位置"/);
+ await p.action('projects');await p.action('temporary-tasks');assert.match(p.content(),/data-action="nav-back" data-id="projects" aria-label="返回上一位置"/);assert.match(p.content(),/新建临时任务/);
  await p.action('home');assert.equal(vm.runInContext('state.view',p.context),'hub');
 });
 
@@ -337,4 +337,51 @@ test('plain task details separate requirements, saved context and history; machi
 test('progress query is adjacent to current progress and disappears after completion',async()=>{
  const p=page(),t={id:'running',title:'Working',project:'unassigned',status:'running',runState:'running',canRequestStatus:true,executionStartedAt:'2026-10-11T13:00:00Z'};await p.answer({value:{...snapshot,tasks:[t]}});await p.action('task',t.id);assert.match(p.overlay(),/<h3>执行进度<\/h3>[\s\S]*?data-action="task-status"[\s\S]*?<\/section>/);assert.equal((p.overlay().match(/data-action="task-status"/g)||[]).length,1);
  const poll=p.startPoll();await p.answer({value:{...snapshot,tasks:[{...t,runState:'succeeded',status:'review',canRequestStatus:false,executionEndedAt:'2026-10-11T13:01:00Z'}]}});await poll;assert.doesNotMatch(p.overlay(),/data-action="task-status"|尚无步骤回报|点击“请求运行状态”/);
+});
+
+
+test('cross-page return restores task detail, filter and scroll without rolling back fresh records',async()=>{
+ const p=page(),t={id:'t',project:'p',title:'Task',description:'Goal',status:'review',runId:'r',runState:'succeeded',recommendation:[],candidateChecks:[]};
+ const pr={id:'p',title:'Project',goal:'Goal',workspace:'/p',session:0,messages:[]};
+ await p.answer({value:{...snapshot,projects:[pr],tasks:[t],runs:[{id:'r',taskId:'t',state:'succeeded'}],schedules:[{scheduleId:'s',taskId:'t',title:'Plan',project:'p',intervalMs:60000,occurrences:[]}]}});
+ let main={scrollTop:240,scrollLeft:12},body={scrollTop:0,scrollLeft:0},html=p.content(),overlay=p.overlay();
+ p.context.document.querySelector=selector=>selector==='#app .page, #app .hub-main'?main:selector==='#overlays .modal-body'?body:null;
+ Object.defineProperty(p.elements.get('app'),'innerHTML',{get:()=>html,set:value=>{html=value;main={scrollTop:0,scrollLeft:0};}});
+ Object.defineProperty(p.elements.get('overlays'),'innerHTML',{get:()=>overlay,set:value=>{overlay=value;body={scrollTop:0,scrollLeft:0};}});
+ await p.action('filter','review');main.scrollTop=240;await p.action('task','t');body.scrollTop=320;
+ await p.action('schedule-detail','s');assert.equal(vm.runInContext('state.view',p.context),'schedule-detail');
+ main.scrollTop=125;await p.action('schedule-run','r');assert.match(p.overlay(),/本次执行结果/);
+ await p.action('nav-back');assert.equal(vm.runInContext('state.view',p.context),'schedule-detail');assert.equal(vm.runInContext('state.overlay',p.context),null);assert.equal(main.scrollTop,125);
+ vm.runInContext("state.tasks[0].description='Fresh requirement'",p.context);
+ await p.action('nav-back');assert.equal(vm.runInContext('state.view',p.context),'hub');assert.equal(vm.runInContext('state.filter',p.context),'review');assert.match(p.overlay(),/Fresh requirement/);assert.equal(body.scrollTop,320);assert.equal(main.scrollTop,240);
+ await p.action('close');assert.equal(p.overlay(),'');assert.equal(main.scrollTop,240);assert.equal(vm.runInContext('navigationHistory.length',p.context),0);
+});
+
+test('project navigation returns to full panel with its exact tab, scope and search',async()=>{
+ const p=page();await p.answer({value:{...snapshot,projects:[{id:'p',title:'Project',goal:'Goal',session:0,messages:[]}]}});
+ await p.action('fullpanel');await p.action('panel-tab','tasks');vm.runInContext("state.scope='p';state.search='needle'",p.context);
+ await p.action('project','p');await p.action('nav-back');
+ assert.equal(vm.runInContext('state.view',p.context),'fullpanel');assert.equal(vm.runInContext('state.panelTab',p.context),'tasks');assert.equal(vm.runInContext('state.scope',p.context),'p');assert.equal(vm.runInContext('state.search',p.context),'needle');
+ await p.action('nav-back');assert.equal(vm.runInContext('state.view',p.context),'hub');
+});
+
+test('back without an origin uses its declared fallback and does not replay commands',async()=>{
+ const p=page();await p.answer({value:snapshot});vm.runInContext("state.view='schedules'",p.context);
+ await p.action('nav-back','projects');assert.equal(vm.runInContext('state.view',p.context),'projects');assert.equal(p.requests.length,0);
+});
+
+
+test('project picker cancellation returns to its source without leaving a stale navigation entry',async()=>{
+ const p=page();await p.answer({value:snapshot});await p.action('fullpanel');await p.action('panel-tab','reports');
+ await p.action('pick-project');await p.action('scope-cancel');assert.equal(vm.runInContext('state.view',p.context),'fullpanel');assert.equal(vm.runInContext('state.panelTab',p.context),'reports');
+ await p.action('pick-project');await p.action('scope-select','all');assert.equal(vm.runInContext('state.view',p.context),'fullpanel');
+ await p.action('nav-back');assert.equal(vm.runInContext('state.view',p.context),'hub');
+});
+
+
+test('a completed review action keeps the task return route without replaying the mutation',async()=>{
+ const p=page(),t={id:'t',project:'unassigned',title:'Task',status:'review',canAccept:true,runId:'r',actionVersion:'v',confirmationRevision:0};
+ const data={...snapshot,tasks:[t]};await p.answer({value:data});await p.action('task','t');await p.action('task-accept','t');
+ const pending=p.action('task-action-confirm');await p.answer({value:{}});await p.answer({value:data});await pending;
+ assert.match(p.overlay(),/返回上一位置/);await p.action('close');assert.equal(p.overlay(),'');assert.equal(p.requests.length,0);assert.equal(vm.runInContext('navigationHistory.length',p.context),0);
 });

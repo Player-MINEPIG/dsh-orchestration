@@ -1,0 +1,28 @@
+{
+  "date": "2026-10-12",
+  "branch": "codex/panel-navigation-spacing",
+  "base": "80b57ab",
+  "tests": {
+    "passed": 47,
+    "failed": 0
+  },
+  "mbp": {
+    "navigation": "review filter -> task -> plan -> first run -> plan -> task -> filtered hub",
+    "sourceDetailScroll": 643.5,
+    "returnedDetailScroll": 643.5,
+    "filterRetained": true
+  },
+  "spacingPx": {
+    "textToCard": 16,
+    "sectionToHeading": 28,
+    "headingToHistory": 16
+  },
+  "review": "Code reviewed against affected routes and fresh-state preservation. Fixed review completion dropping the navigation marker; regression passes.",
+  "businessMutations": 0,
+  "newModelInvocations": 0,
+  "vps": {
+    "navigation": "task -> project -> original task -> plan",
+    "passed": true,
+    "screenshot": "docs/reports/assets/nav-vps-spacing.jpg"
+  }
+}

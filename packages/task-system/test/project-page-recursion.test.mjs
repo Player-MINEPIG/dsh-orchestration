@@ -87,7 +87,7 @@ test('current recursive task is a label while child and project-tree tasks remai
  assert.doesNotMatch(p.overlay(),/data-action="task" data-id="parent"/);
  assert.match(p.overlay(),/data-action="task" data-id="child"/);
  await p.action('task','child');assert.match(p.overlay(),/aria-label="child"/);assert.doesNotMatch(p.overlay(),/<h3>子任务协作<\/h3>/);
- await p.action('close');
+ await p.action('close');assert.match(p.overlay(),/aria-label="parent"/);await p.action('close');
  const tree=vm.runInContext("projectRecursion('p')",p.context);
  assert.match(tree,/data-action="task" data-id="parent"/);assert.match(tree,/data-action="task" data-id="child"/);
 });
