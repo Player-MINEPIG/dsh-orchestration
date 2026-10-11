@@ -91,6 +91,7 @@ export class ProjectCollaborationAuthority {
         if (!input.title?.trim()) fail("INVALID", "Dispatch requires a task title");
         const planner = typeof this.options.planner === "function" ? this.options.planner() : this.options.planner;
         if (!input.route && !planner) fail("ROUTE_REQUIRED", "Configure the central planner or provide an explicit route");
+        if (input.route && !input.route.workspaceId) fail("WORKSPACE_REQUIRED", "Explicit dispatch routes must include a ready workspaceId from project_nodes.routes");
         if (input.route) this.ledger.validateRoute(input.route);
         if (input.route?.backend && !this.publicRoutes().some(route => ["nodeId", "provider", "model", "reasoningEffort", "backend"].every(key => route[key as keyof ExecutionRoute] === input.route![key as keyof ExecutionRoute]))) fail("BACKEND_UNAVAILABLE", "Requested native backend is not advertised by an available execution host");
         const task = this.ledger.createTask(`${key}:task`, { taskId: `collab-task-${hash(key)}`, title: input.title!, description: input.description || input.title!, ...(input.route?.backend ? { policy: { allowedBackends: [input.route.backend] } } : {}), ...(input.route?.workspaceId ? { workspaceId: input.route.workspaceId } : {}) }).value;
@@ -104,6 +105,15 @@ export class ProjectCollaborationAuthority {
             // but do not leave an unstartable task blocking project submission.
             this.ledger.cancel(`${key}:unrouted`, { taskId: task.taskId, reason: "Central planner could not select an available execution route" });
             fail("ROUTE_REQUIRED", "Central planner could not select an available execution route; the unstarted task was cancelled");
+          }
+          if (!input.route) {
+            const nodeId = (decision.proposal as { executor?: { id?: string } }).executor?.id;
+            const workspaceId = nodeId ? this.ledger.getNode(nodeId).defaultWorkspaceId : undefined;
+            const workspace = (this.ledger.snapshot().workspaces ?? []).find(w => w.workspaceId === workspaceId && w.nodeId === nodeId && w.state === "ready");
+            if (!workspace || !this.ledger.getNode(nodeId!).workspaceIds.includes(workspace.workspaceId)) {
+              this.ledger.cancel(`${key}:no-workspace`, { taskId: task.taskId, reason: "Planned executor has no ready default workspace" });
+              fail("WORKSPACE_REQUIRED", "Planned executor has no ready default workspace; use a complete route from project_nodes.routes. The unstarted task was cancelled");
+            }
           }
           dispatched = planner.apply(`${key}:plan`, { deferExecution: Boolean(needsConfirmation) }).value;
         } else dispatched = needsConfirmation ? { task, pendingConfirmation: true } : this.ledger.createRun(`${key}:run`, { taskId: task.taskId, route: input.route }).value;
@@ -154,7 +164,13 @@ export class ProjectCollaborationAuthority {
           validateCollaborationInput({ action: "nodes", sessionId: "route-validation", cwd: "/", route });
           if (route.nodeId !== status.nodeId) continue;
           this.ledger.validateRoute(route);
-          routes.push(route);
+          const node = this.ledger.getNode(status.nodeId);
+          for (const workspace of (this.ledger.snapshot().workspaces ?? [])) {
+            if (workspace.nodeId !== status.nodeId || workspace.state !== "ready" || !node.workspaceIds.includes(workspace.workspaceId)) continue;
+            const executable = { ...route, workspaceId: workspace.workspaceId };
+            this.ledger.validateRoute(executable);
+            routes.push(executable);
+          }
         } catch { /* Advertisements are evidence, never grants. */ }
       }
     }

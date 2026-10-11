@@ -75,7 +75,7 @@ export function apply(ctx: Context, config: Config) {
     if (action === "dispatch") Object.assign(parameters, {
       title: { type: "string", required: true },
       description: { type: "string", required: true },
-      routeJson: { type: "string", description: "Optional JSON route selected from project_nodes; omit for central configured routing." },
+      routeJson: { type: "string", description: "Optional JSON string: copy one COMPLETE object from project_nodes.routes, preserving workspaceId, requiredCapabilities (including []), backend when returned, and all other returned route fields. Do not invent fields such as routeId or reconstruct a tuple from node metadata. If no complete eligible route exists, report the blocker. Omit only to request configured central routing." },
     });
     if (action === "update" || action === "submit") parameters.summary = { type: "string", required: true };
     ctx.tools.register(defineTool({

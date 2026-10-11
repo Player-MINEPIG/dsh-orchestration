@@ -9,7 +9,7 @@ import { TaskLedger } from '../dist/ledger.js';
 import { Workbench } from '../dist/workbench.js';
 import { TaskPlanner, taskDecisionCatalog } from '../dist/planning.js';
 import { ProjectCollaborationAuthority } from '../dist/project-collaboration/authority.js';
-import { RecoveryStore, RemoteGateway, RemoteClient, RemoteLedgerClient, IdentityVerifier, signEnvelope, httpHandler } from '../dist/remote/api.js';
+import { RecoveryStore, RemoteGateway, RemoteClient, RemoteLedgerClient, ExecutorWorker, IdentityVerifier, signEnvelope, httpHandler } from '../dist/remote/api.js';
 function fixture(t, options = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'collaboration-authority-'));
   const ledger = TaskLedger.open(join(dir, 'central.sqlite'), { role: 'planner', nodeId: 'central', ...options });
@@ -185,4 +185,29 @@ test('actual planner route refusal cancels only the unstarted task and does not 
   assert.equal(accepted.confirmed, true);
   assert.equal(accepted.binding.state, 'active');
   assert.equal(f.ledger.snapshot().runs.length, 1);
+});
+
+test('advertised routes contain only ready workspace IDs and can be dispatched unchanged and claimed by ExecutorWorker', async t => {
+  const f = fixture(t); await f.call('activate', 'activate');
+  const node = f.ledger.getNode('other');
+  f.ledger.registerWorkspace('unready-workspace', { workspaceId: 'not-ready', nodeId: 'other', path: '/private/path/not-advertised', label: 'Unavailable', state: 'planned', createdAt: new Date().toISOString() });
+  f.ledger.registerNode('worker-with-backend', { ...node, capabilities: [...node.capabilities, 'official-codex'], workspaceIds: [...node.workspaceIds, 'not-ready'] });
+  const advertised = { nodeId: 'other', provider: 'fixture', model: 'fixture', reasoningEffort: 'low', backend: 'fixture-host-profile', requiredCapabilities: ['official-codex'] };
+  f.ledger.recordNodeHeartbeat('routes-heartbeat', { nodeId: 'other', sampledAt: Date.now(), runtimeReady: true, activeExecutions: 0, providerStatus: { state: 'not-probed', providers: [], executionRoutes: [advertised] } });
+  const nodes = await f.call('nodes', 'nodes');
+  assert.deepEqual(nodes.routes, [{ ...advertised, workspaceId: 'ws-other' }]);
+  assert.equal(JSON.stringify(nodes).includes('/private/path'), false);
+  await assert.rejects(f.call('incomplete', 'dispatch', { title: 'Reject incomplete route before persistence', route: advertised }), { code: 'WORKSPACE_REQUIRED' });
+  assert.equal(f.ledger.snapshot().tasks.length, 0); assert.equal(f.ledger.snapshot().runs.length, 0);
+  assert.equal(new Workbench(f.ledger).snapshot().backlogTasks.length, 0);
+  const dispatched = await f.call('complete', 'dispatch', { title: 'Use exact advertised route', route: nodes.routes[0] });
+  const run = f.ledger.snapshot().runs.find(r => r.taskId === dispatched.taskId);
+  assert.equal(run.route.workspaceId, 'ws-other');
+  const store = new RecoveryStore(join(f.dir, 'executor-worker.sqlite'));
+  let calls = 0;
+  const worker = new ExecutorWorker({ ledger: f.ledger, store, policy: { role: 'executor', nodeId: 'other', capabilities: ['read', 'official-codex'], workspaces: [{ workspaceId: 'ws-other', nodeId: 'other', path: f.dir, allowedRoot: f.dir }] }, provider: { id: 'fixture', capabilities: ['read', 'official-codex'], supports: route => route.backend === 'fixture-host-profile', async execute(request) { calls++; assert.equal(request.claim.run.route.workspaceId, 'ws-other'); return { outcome: 'success', summary: 'Fixture execution was actually claimed and settled' }; } } });
+  f.resources.push(store, worker);
+  await worker.pollOnce(1);
+  assert.equal(calls, 1);
+  assert.equal(f.ledger.getRun(run.runId).state, 'succeeded');
 });

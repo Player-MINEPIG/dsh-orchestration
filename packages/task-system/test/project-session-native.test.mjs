@@ -113,8 +113,9 @@ test("official /project activates skill for this session only; real tools sync/s
     }
     const nativeStatus=await invokeTool("project_status",{},"after-finish");
     assert.equal(nativeStatus.value.binding.state,"pending_review");
-    h.ctx.taskSystem.ledger.registerNode("test-worker", {nodeId:"worker",roles:["executor"],enabled:true,capabilities:[],models:[{provider:"fixture",model:"fixture",reasoningEfforts:["low"]}],workspaceIds:[]});
-    const dispatchArgs={requestId:"work-1",title:"One requested task",description:"Perform the authorized test task",routeJson:JSON.stringify({nodeId:"worker",provider:"fixture",model:"fixture",reasoningEffort:"low",requiredCapabilities:[]})};
+    h.ctx.taskSystem.ledger.registerWorkspace("test-worker-workspace", {workspaceId:"worker-workspace",nodeId:"worker",path:h.dir,label:"Test worker workspace",state:"ready",createdAt:new Date().toISOString()});
+    h.ctx.taskSystem.ledger.registerNode("test-worker", {nodeId:"worker",roles:["executor"],enabled:true,capabilities:[],models:[{provider:"fixture",model:"fixture",reasoningEfforts:["low"]}],workspaceIds:["worker-workspace"]});
+    const dispatchArgs={requestId:"work-1",title:"One requested task",description:"Perform the authorized test task",routeJson:JSON.stringify({nodeId:"worker",provider:"fixture",model:"fixture",reasoningEffort:"low",workspaceId:"worker-workspace",requiredCapabilities:[]})};
     const dispatched=await invokeTool("project_dispatch",dispatchArgs,"dispatch-first");
     assert.equal(dispatched.isError,false,JSON.stringify(dispatched));
     const replay=await invokeTool("project_dispatch",dispatchArgs,"dispatch-new-tool-call");

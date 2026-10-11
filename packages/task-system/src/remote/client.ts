@@ -212,6 +212,10 @@ export class RemoteClient {
     insist(!this.busy, "CLIENT_SEND_IN_PROGRESS", 409);
     this.busy = true;
     try {
+      // Shared stores allocate unique sequences, but independent connections can
+      // arrive out of order. Retry only an explicit pre-admission rejection,
+      // at most twice, retaining the business command and payload unchanged.
+      for (let orderingRetry = 0; ; orderingRetry++) {
       const { store, nodeId, keyId, privateKey, audience } = this.options;
       const requestHash = digest({ operation, payload });
       const authMode = this.options.authMode ?? "ed25519";
@@ -294,7 +298,7 @@ export class RemoteClient {
         });
         if (!response.ok) {
           let code = "REMOTE_REJECTED";
-          if (diagnostic && response.body) {
+          if ((diagnostic || response.status === 409) && response.body) {
             const reader = response.body.getReader(),
               chunks: Uint8Array[] = [];
             let bytes = 0;
@@ -375,8 +379,14 @@ export class RemoteClient {
           payload,
           state: "uncertain",
         });
+        if (error instanceof ProtocolError && error.status === 409 && error.code === "OUT_OF_ORDER" && orderingRetry < 2) {
+          await new Promise(resolve => setTimeout(resolve, 25 * (orderingRetry + 1)));
+          insist(this.active && !signal?.aborted, "TRANSPORT_ABORTED", 503);
+          continue;
+        }
         if (diagnostic) throw error;
         return { commandId, state: "uncertain" };
+      }
       }
     } finally {
       this.busy = false;
