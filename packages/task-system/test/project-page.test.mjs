@@ -110,7 +110,7 @@ test('project root settings are available to planners and hidden from executor s
 test('task panel shows multi-hour elapsed time and refreshes an explicitly requested progress response without redispatch',async()=>{
  const p=page(),task={id:'long-task',project:'unassigned',title:'Long task',status:'running',canRequestStatus:true,canCancel:true,actionVersion:'v1',runId:'run1',executionStartedAt:new Date(Date.now()-9000000).toISOString(),executionEndedAt:null};
  await p.answer({value:{...snapshot,tasks:[task]}});assert.match(p.content(),/已运行 2小时 30分/);
- await p.action('task',task.id);assert.match(p.overlay(),/请求运行状态/);
+ await p.action('task',task.id);assert.match(p.overlay(),/刷新执行状态/);
  const pending=p.action('task-status',task.id);assert.equal(p.requests[0].method,'actOnProjectTask');assert.equal(p.requests[0].input.action,'status');
  await p.action('task-status',task.id);assert.equal(p.requests.length,1);
  await p.answer({value:{}});
@@ -321,4 +321,20 @@ test('schedule create preserves draft and command on failure; pause submits expe
 });
 test('executor cannot create or control scheduled plans through project RPC',async()=>{
  const executor=service({config:{role:'executor'}}),denied=e=>e.details?.reason==='PLANNER_REQUIRED';await assert.rejects(executor.scheduleOptions(),denied);await assert.rejects(executor.createScheduledPlan({}),denied);await assert.rejects(executor.controlScheduledPlan({}),denied);
+});
+
+function expandedContentOnly(html){let depth=0;return html.split(/(<\/?details\b[^>]*>)/).filter(part=>{if(/^<details\b/.test(part)){depth++;return false}if(/^<\/details/.test(part)){depth--;return false}return depth===0}).join('');}
+test('plain task details separate requirements, saved context and history; machine IDs stay collapsed and linked executions use arrow cards',async()=>{
+ const p=page(),uuid='e4408886-5cf1-4b57-a5b5-7cfb15184507',t={id:'scheduled-task-long-id',title:'Check',project:'p',description:'Current task requirements',status:'review',nativeState:'ready',runId:uuid,run:uuid,runState:'succeeded',executionStartedAt:'2026-10-11T13:00:00Z',executionEndedAt:'2026-10-11T13:01:00Z',report:'Finished\n'+uuid,reportId:'report-secret-long-id',canRequestStatus:false};
+ const r={id:uuid,taskId:t.id,state:'succeeded',createdAt:t.executionStartedAt,inputSnapshot:{description:'Saved execution requirements',project:{title:'Project',goal:'Deliver a useful result'},notes:[{id:'note-id',title:'User reference',body:'Useful supplied context'}]}};
+ await p.answer({value:{...snapshot,projects:[{id:'p',title:'Project',goal:'Deliver',messages:[]}],tasks:[t],runs:[r],reports:[{id:t.reportId,runId:uuid,taskId:t.id,kind:'result',body:t.report}]}});await p.action('task',t.id);const html=p.overlay(),visible=expandedContentOnly(html);
+ for(const title of ['任务要求','执行进度','执行报告','本次执行输入','项目上下文','执行历史','关联内容'])assert.ok(visible.includes(title),title);
+ assert.match(visible,/Current task requirements/);assert.match(visible,/Saved execution requirements/);assert.match(visible,/Useful supplied context/);assert.doesNotMatch(visible,/子任务协作|点击“请求运行状态”|data-action="task-status"/);
+ // Check rendered text, excluding identifier-bearing navigation attributes.
+ const text=visible.replace(/<[^>]+>/g,'');assert.doesNotMatch(text,/e4408886|scheduled-task-long-id|report-secret-long-id/);assert.match(html,/e4408886/);assert.match(visible,/class="link-card" data-action="schedule-run"/);assert.match(visible,/class="link-arrow" aria-hidden="true"/);
+ await p.action('schedule-run',uuid);assert.match(p.overlay(),/本次执行结果/);assert.match(p.overlay(),/Saved execution requirements/);assert.doesNotMatch(expandedContentOnly(p.overlay()).replace(/<[^>]+>/g,''),/e4408886/);
+});
+test('progress query is adjacent to current progress and disappears after completion',async()=>{
+ const p=page(),t={id:'running',title:'Working',project:'unassigned',status:'running',runState:'running',canRequestStatus:true,executionStartedAt:'2026-10-11T13:00:00Z'};await p.answer({value:{...snapshot,tasks:[t]}});await p.action('task',t.id);assert.match(p.overlay(),/<h3>执行进度<\/h3>[\s\S]*?data-action="task-status"[\s\S]*?<\/section>/);assert.equal((p.overlay().match(/data-action="task-status"/g)||[]).length,1);
+ const poll=p.startPoll();await p.answer({value:{...snapshot,tasks:[{...t,runState:'succeeded',status:'review',canRequestStatus:false,executionEndedAt:'2026-10-11T13:01:00Z'}]}});await poll;assert.doesNotMatch(p.overlay(),/data-action="task-status"|尚无步骤回报|点击“请求运行状态”/);
 });

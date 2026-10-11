@@ -66,7 +66,7 @@ test('source aggregation task without a run never presents a pending executor se
 
 test('executor progress help points to central refresh instead of a missing write action',async()=>{
  const p=page(),data=structuredClone(snapshot);data.viewContext={role:'executor',nodeId:'mbp'};data.tasks[0].executionStartedAt='2026-10-11T00:00:00Z';
- await p.answer({value:data});await p.action('task','parent');assert.match(p.overlay(),/使用“刷新进度”读取最新记录/);assert.doesNotMatch(p.overlay(),/点击“请求运行状态”/);
+ await p.answer({value:data});await p.action('task','parent');assert.doesNotMatch(p.overlay(),/刷新执行状态|尚无步骤回报/);assert.doesNotMatch(p.overlay(),/点击“请求运行状态”/);
 });
 test('disclosures preserve exact run/type and viewed task across refresh and fullscreen, including explicit close',async()=>{
  const p=page();await p.answer({value:structuredClone(snapshot)});await p.action('task','parent');
@@ -86,7 +86,7 @@ test('current recursive task is a label while child and project-tree tasks remai
  assert.match(p.overlay(),/<strong aria-current="true">parent<\/strong>/);
  assert.doesNotMatch(p.overlay(),/data-action="task" data-id="parent"/);
  assert.match(p.overlay(),/data-action="task" data-id="child"/);
- await p.action('task','child');assert.match(p.overlay(),/aria-label="child"/);assert.match(p.overlay(),/<strong aria-current="true">child<\/strong>/);
+ await p.action('task','child');assert.match(p.overlay(),/aria-label="child"/);assert.doesNotMatch(p.overlay(),/<h3>子任务协作<\/h3>/);
  await p.action('close');
  const tree=vm.runInContext("projectRecursion('p')",p.context);
  assert.match(tree,/data-action="task" data-id="parent"/);assert.match(tree,/data-action="task" data-id="child"/);

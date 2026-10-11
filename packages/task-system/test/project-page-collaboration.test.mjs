@@ -20,7 +20,7 @@ const collaboration={projectId:project.id,backlogId:'b1',ownerNodeId:'mbp',sessi
 const snapshot={projects:[project],tasks:[],runs:[],attempts:[],settings:{root:null,revision:0},nodes:[],projectCollaborations:[collaboration],projectRegistrations:[]};
 test('existing executor panel displays owned collaboration before any run and adds no mutation or remote-session links',async()=>{
  const p=page();await p.answer({value:{...structuredClone(snapshot),viewContext:{role:'executor',nodeId:'mbp',scope:'node'}}});await p.action('projects');assert.match(p.content(),/会话协作 · 已激活/);assert.match(p.content(),/当前会话协作 · 中央跟进/);assert.doesNotMatch(p.content(),/来源项目 · 已登记/);
- await p.action('project',project.id);const html=p.content();assert.match(html,/aria-label="会话协作"/);assert.match(html,/source-session/);assert.match(html,/Storyboard approved; rendering next/);assert.match(html,/2026-10-12T08:00:00.000Z/);assert.match(html,/中央尚未验收/);assert.match(html,/会话协作已登记，尚无任务执行记录/);assert.doesNotMatch(html,/data-action="(?:chat|create|task-approve|task-accept)"/);assert.doesNotMatch(html,/<a[^>]+source-session/);
+ await p.action('project',project.id);const html=p.content();assert.match(html,/aria-label="会话协作"/);assert.match(html,/source-session/);assert.match(html,/Storyboard approved; rendering next/);assert.match(html,/2026\/10\/12/);assert.match(html,/中央尚未验收/);assert.match(html,/会话协作已登记，尚无任务执行记录/);assert.doesNotMatch(html,/data-action="(?:chat|create|task-approve|task-accept)"/);assert.doesNotMatch(html,/<a[^>]+source-session/);
 });
 test('a collaboration-only update refreshes the original panel into pending central review',async()=>{
  const p=page();await p.answer({value:structuredClone(snapshot)});await p.action('project',project.id);

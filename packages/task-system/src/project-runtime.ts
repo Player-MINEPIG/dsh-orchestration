@@ -1864,6 +1864,14 @@ export class ProjectRuntime {
           const metadata = report?.data;
           return metadata && typeof metadata === "object" && !Array.isArray(metadata) && metadata.actor === "operator:task-center" && typeof metadata.retryPrompt === "string" ? [metadata.retryPrompt] : [];
         }).at(-1) ?? null,
+        inputSnapshot: r.intentSnapshot ? {
+          title:r.intentSnapshot.title,description:r.intentSnapshot.description,goal:r.intentSnapshot.goal??null,
+          project:r.projectContext?.project??null,
+          criteria:r.intentSnapshot.acceptanceCriteria,
+          notes:(r.contextNotes??[]).flatMap(note=>{const report=data.reports.find(x=>x.reportId===(typeof note==='string'?note:note.reportId));return report?[{id:report.reportId,title:report.title,body:report.body}]:[]}),
+        } : null,
+        executionStartedAt:r.executionStartedAt??null,
+        executionEndedAt:["queued","running"].includes(r.state)?null:r.updatedAt,
         runtimeVersion: diagnostic("cliVersion"),
         runtimeSource: diagnostic("cliSource"),
         actualModel: diagnostic("verifiedModel"),

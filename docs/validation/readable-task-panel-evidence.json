@@ -1,0 +1,27 @@
+{
+  "date": "2026-10-12",
+  "branch": "codex/readable-task-panel",
+  "base": "92ef721",
+  "tests": {
+    "passed": 67,
+    "failed": 0
+  },
+  "browser": {
+    "vps": "http://100.123.230.75:43980/",
+    "mbp": "http://100.111.163.32:43981/",
+    "verified": [
+      "labeled requirements and stored input context",
+      "no IDs outside collapsed technical records for tested task",
+      "two real scheduled runs displayed as history, no child tree",
+      "first run card resolves b2591bc0-a3b3-4ca4-97a8-99e030268865",
+      "related project and schedule navigation",
+      "executor remains read-only"
+    ]
+  },
+  "newModelInvocations": 0,
+  "review": "Affected projection, permissions, HTML escaping, report preservation and navigation reviewed; no blocking findings.",
+  "screenshots": [
+    "docs/reports/assets/readable-vps-task.jpg",
+    "docs/reports/assets/readable-mbp-relations.jpg"
+  ]
+}
