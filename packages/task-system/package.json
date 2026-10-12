@@ -1,6 +1,6 @@
 {
   "name": "@dsh-task/task-system",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "type": "module",
   "license": "MIT",
   "description": "Durable task management and authenticated multi-device execution inside DSH",
@@ -11,6 +11,7 @@
     "./planning": "./dist/planning.js",
     "./task-pack": "./dist/task-pack/index.mjs",
     "./task-pack/plugin": "./dist/task-pack/plugin.mjs",
+    "./activity/plugin": "./dist/task-pack/activity/plugin.mjs",
     "./task-pack/readers": "./dist/task-pack/readers/index.mjs",
     "./task-pack/quota": "./dist/task-pack/quota/index.mjs",
     "./task-pack/quota/plugin": "./dist/task-pack/quota/plugin.mjs",

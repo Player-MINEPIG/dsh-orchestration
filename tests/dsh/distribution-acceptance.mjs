@@ -44,6 +44,7 @@ try {
   assert.ok(pack.files.some(file => file.path === 'dist/dsh-plugin.js'));
   assert.ok(pack.files.some(file => file.path === 'dsh.bundle.yml'));
   assert.ok(pack.files.some(file => file.path === 'dist/task-pack/plugin.mjs'));
+  assert.ok(pack.files.some(file => file.path === 'dist/task-pack/activity/plugin.mjs'));
   assert.ok(!pack.files.some(file => file.path.startsWith('src/')));
   stage('built-tarball', { filename: pack.filename, integrity: pack.integrity });
   const profile = 'task-native-acceptance';
@@ -67,7 +68,7 @@ try {
     const out = join(scratch, `probe-${role}.json`);
     const probeModule = pathToFileURL(join(root, 'tests/dsh', absent ? 'cli-absence-probe.mjs' : 'cli-probe.mjs')).href;
     const probePatch = join(scratch, `probe-${role}.yml`);
-    writeFileSync(probePatch, `${absent ? '' : `${role === 'both' ? `- id: task-system\n  config:\n    databasePath: ${JSON.stringify(env.DSH_TASK_DATABASE)}\n    nodeId: local\n    role: both\n    keepAlive: true\n    executionTools: [legacy_report_prepare]\n    trustedUnconfinedTools: true\n` : ''}- insert:\n    - id: installed-legacy-task-pack\n      name: '@dsh-task/task-system/task-pack/plugin'\n      config:\n        artifactDirectory: ${JSON.stringify(join(scratch, 'native-artifacts'))}\n    - id: installed-quota-monitor\n      name: '@dsh-task/task-system/task-pack/quota/plugin'\n      config:\n        enabled: false\n    - id: installed-native-approval-bridge\n      name: '@dsh-task/task-system/approval-bridge'\n      config:\n        enabled: false\n`}\n- insert:\n    - id: acceptance-probe\n      name: ${JSON.stringify(probeModule)}\n`);
+    writeFileSync(probePatch, `${absent ? '' : `${role === 'both' ? `- id: task-system\n  config:\n    databasePath: ${JSON.stringify(env.DSH_TASK_DATABASE)}\n    nodeId: local\n    role: both\n    keepAlive: true\n    executionTools: [legacy_report_prepare, activity_sources_read, activity_report_prepare]\n    trustedUnconfinedTools: true\n` : ''}- insert:\n    - id: installed-legacy-task-pack\n      name: '@dsh-task/task-system/task-pack/plugin'\n      config:\n        artifactDirectory: ${JSON.stringify(join(scratch, 'native-artifacts'))}\n    - id: installed-activity-reports\n      name: '@dsh-task/task-system/activity/plugin'\n      config: {}\n    - id: installed-quota-monitor\n      name: '@dsh-task/task-system/task-pack/quota/plugin'\n      config:\n        enabled: false\n    - id: installed-native-approval-bridge\n      name: '@dsh-task/task-system/approval-bridge'\n      config:\n        enabled: false\n`}\n- insert:\n    - id: acceptance-probe\n      name: ${JSON.stringify(probeModule)}\n`);
     const args = [dshBin, '--profile', profile];
     if (!absent) args.push('--patch', join(root, 'profiles', `${role}.patch.yml`));
     args.push('--patch', probePatch);

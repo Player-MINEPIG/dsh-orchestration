@@ -11,6 +11,7 @@ import {
 } from "./remote/protocol.js";
 import { NATIVE_PROVIDER_UNAVAILABLE_SUMMARY } from "./contracts.js";
 import { TRANSIENT_RECEIPT_TTL_MS } from "./receipt-retention.js";
+import { scheduleInput } from "./schedule-window.js";
 import { projectContext } from "./project-context.js";
 import { validateCriteria } from "./workbench-contracts.js";
 import type { Criterion, VersionRef } from "./workbench-contracts.js";
@@ -4667,7 +4668,13 @@ export class TaskLedger {
       schedule.templateId,
       schedule.templateVersion,
     );
-    validateSchema(template.inputSchema, schedule.input, "Schedule input");
+    let effectiveInput: Json = schedule.input;
+    try {
+      effectiveInput = scheduleInput(schedule, schedule.nextDueAt);
+    } catch {
+      fail("INVALID", "Invalid schedule calendar window");
+    }
+    validateSchema(template.inputSchema, effectiveInput, "Schedule input");
     if (schedule.route) this.validateRoute(schedule.route);
     if (Boolean(schedule.cron) === (schedule.intervalMs !== undefined))
       fail("INVALID", "Choose cron or intervalMs");
@@ -4787,6 +4794,7 @@ export class TaskLedger {
         "overlap",
         "misfire",
         "input",
+        "calendarWindow",
         "route",
       ];
       if (Object.keys(input.changes).some((k) => !allowed.includes(k)))
@@ -4890,7 +4898,7 @@ export class TaskLedger {
               templateId: template.templateId,
               version: template.version,
             },
-            input: s.input,
+            input: scheduleInput(s, input.occurrenceAt),
             trigger: {
               scheduledFor: input.occurrenceAt,
               observedAt: this.now(),

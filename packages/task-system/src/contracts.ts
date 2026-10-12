@@ -301,6 +301,8 @@ export interface Schedule {
   revision?: number;
   retiredAt?: string;
   input: Json;
+  /** Optional per-occurrence input window for calendar reports. */
+  calendarWindow?: { timeZone: string; dayOffset: -1 | 0 };
   route?: ExecutionRoute;
 }
 export interface Workspace {

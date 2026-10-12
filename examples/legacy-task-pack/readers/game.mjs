@@ -39,7 +39,7 @@ function evaluateTask(spec, lines, observed, evidenceRefs) {
   let success = matches(lines, spec.successMarkers);
   if (spec.successAllMarkers) success = spec.successAllMarkers.every(marker => matches(lines, [marker]).length) ? matches(lines, spec.successAllMarkers) : [];
   const failed = matches(lines, spec.failureMarkers), starts = matches(lines, spec.startMarkers);
-  const disabled = matches(lines, spec.disabledMarkers).length > 0 || spec.enabled === false;
+  const disabled = matches(lines, spec.disabledMarkers).length > 0 || spec.enabled === false || (spec.enabledWhenMarkers && !matches(lines, spec.enabledWhenMarkers).length);
   const enabled = !disabled;
   const lastSuccess = success.at(-1), lastFailure = failed.at(-1);
   if (spec.terminalPolicy && !['latest', 'failure_precedence'].includes(spec.terminalPolicy)) throw new SourceError('config', 'Invalid terminalPolicy');
@@ -47,7 +47,11 @@ function evaluateTask(spec, lines, observed, evidenceRefs) {
   const missingOutcome = spec.missingOutcome ?? 'uncertain';
   if (!['failed', 'uncertain', 'not_observed', 'skipped_nonblocking'].includes(missingOutcome)) throw new SourceError('config', 'Invalid missingOutcome policy');
   let outcome = !enabled ? 'disabled' : !observed ? 'not_observed' : terminal === lastSuccess && lastSuccess ? 'success' : terminal ? 'failed' : missingOutcome;
-  if (enabled && observed && spec.skipWhenAllMarkers?.length && spec.skipWhenAllMarkers.every(marker => matches(lines, [marker]).length)) outcome = 'skipped_nonblocking';
+  if (enabled && observed && spec.skipWhenAllMarkers?.length && spec.skipWhenAllMarkers.every(marker => matches(lines, [marker]).length)) {
+    const skip = matches(lines, spec.skipWhenAllMarkers).at(-1);
+    if (!spec.skipOnlyAfterFailure || !lastFailure || (skip.time ?? skip.contextTime) > (lastFailure.time ?? lastFailure.contextTime) ||
+      ((skip.time ?? skip.contextTime) === (lastFailure.time ?? lastFailure.contextTime) && skip.line > lastFailure.line)) outcome = 'skipped_nonblocking';
+  }
   if (spec.manual) outcome = enabled ? 'not_observed' : 'disabled';
   const relevant = [...starts, ...success, ...failed].sort((a, b) => a.time - b.time || a.line - b.line);
   const retryCount = matches(lines, spec.retryMarkers).length;
@@ -211,7 +215,8 @@ export async function readGameDaily({ scope, window: inputWindow, reportMeta: in
     runs.sort((a, b) => a.start - b.start || a.index - b.index);
     const withinScheduler = scheduler.started_at && scheduler.ended_at ? runs.filter(run => run.start >= Date.parse(scheduler.started_at) - 120000 && run.end <= Date.parse(scheduler.ended_at) + 120000) : [];
     const candidates = withinScheduler.length ? withinScheduler : runs;
-    const selected = config.mergeRunKinds ? config.mergeRunKinds.map(kind => {
+    const selected = config.mergeRuns ? candidates.filter((run, index) => index === 0 || !config.retryResultMarker ||
+      String(run.result?.hsr_result ?? run.result?.general_result ?? '').includes(config.retryResultMarker)) : config.mergeRunKinds ? config.mergeRunKinds.map(kind => {
       const matching = runs.filter(run => run.kind === kind), bounded = withinScheduler.filter(run => run.kind === kind);
       return (bounded.length ? bounded : matching).at(config.runSelection === 'latest' ? -1 : 0);
     }).filter(Boolean) : [candidates.at(config.runSelection === 'latest' ? -1 : 0)].filter(Boolean);
@@ -239,7 +244,7 @@ export async function readGameDaily({ scope, window: inputWindow, reportMeta: in
     if (sources.some(source => source.source_id.startsWith(config.id + '.') && source.read_status === 'partial')) warnings.push('Only a configured log tail was read; earlier activity may be absent.');
     if (observed) warnings.push('Top-level result is retained as evidence; task markers determine task outcomes.');
     if (cascade) warnings.push('Cascade is suspected from timestamps only; root cause is unconfirmed.');
-    const statuses = [...new Set(selected.map(run => run.result?.general_result ?? run.result?.maa_result ?? run.result?.status).filter(value => value !== null && value !== undefined && String(value).trim()).map(String))];
+    const statuses = [...new Set(selected.map(run => run.result?.general_result ?? run.result?.maa_result ?? run.result?.hsr_result ?? run.result?.status).filter(value => value !== null && value !== undefined && String(value).trim()).map(String))];
     const status = statuses.join('; ');
     automations.push({ automation_id: config.id, engine: config.engine ?? 'configured', game: config.game ?? config.id,
       account: config.account ?? 'operator-unspecified', instance: config.instance ?? 'default', expected_to_run: config.expectedToRun !== false,

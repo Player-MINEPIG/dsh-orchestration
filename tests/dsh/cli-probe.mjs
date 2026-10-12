@@ -7,7 +7,7 @@ import { ScriptedModel } from './scripted-model.mjs';
 import { dailyInput, WINDOW } from '../legacy/synthetic-fixtures.mjs';
 
 export const name = 'task-system-acceptance-probe';
-export const inject = ['taskSystem', 'tools', 'llm', 'quotaMonitor'];
+export const inject = ['taskSystem', 'tools', 'llm', 'quotaMonitor', 'sessionPersistence'];
 export async function apply(ctx) {
   const service = ctx.taskSystem;
   const ledger = service.ledger;
@@ -19,6 +19,8 @@ export async function apply(ctx) {
   assert.equal(ledger.history('cli-retained-task').reports.length, 1);
   assert.ok(ctx.tools.get('task_query'));
   assert.ok(ctx.tools.get('legacy_report_prepare'), 'installed optional task-pack plugin must register its native tool');
+  assert.ok(ctx.tools.get('activity_sources_read'));
+  assert.ok(ctx.tools.get('activity_report_prepare'));
   assert.equal(ctx.quotaMonitor.enabled, false);
   assert.equal((await ctx.quotaMonitor.tick()).status, 'disabled');
   const requireInstalled = createRequire(join(process.env.DSH_TEST_PROFILE_DIR, 'package.json'));
@@ -39,7 +41,7 @@ export async function apply(ctx) {
     const require = createRequire(join(process.env.DSH_TEST_PROFILE_DIR, 'package.json'));
     const { createLegacyTemplates } = await import(pathToFileURL(require.resolve('@dsh-task/task-system/task-pack')).href);
     const template = createLegacyTemplates().find(item => item.defaults.kind === 'agent_daily');
-    ledger.registerNode('cli-native-node', { nodeId: service.config.nodeId, roles: ['both'], capabilities: ['legacy.task-pack.v1'], models: [{ provider: 'cli-offline', model: 'script', reasoningEfforts: [] }], workspaceIds: [], maxConcurrent: 1, enabled: true, lastSeenAt: new Date().toISOString() });
+    ledger.registerNode('cli-native-node', { nodeId: service.config.nodeId, roles: ['both'], capabilities: ['legacy.task-pack.v1'], models: [{ provider: 'cli-offline', model: 'script', reasoningEfforts: [] }, { provider: 'cli-activity', model: 'script', reasoningEfforts: [] }], workspaceIds: [], maxConcurrent: 1, enabled: true, lastSeenAt: new Date().toISOString() });
     const task = ledger.createTask('cli-native-task', { title: 'Installed native task-pack report', policy: { allowedTools: ['legacy_report_prepare'] } }).value;
     const run = ledger.createRun('cli-native-run', { taskId: task.taskId, configuration: { template, input: { sourceIds: ['synthetic-fixture'], windowStart: WINDOW.start, windowEnd: WINDOW.end } }, route: { nodeId: service.config.nodeId, provider: 'cli-offline', model: 'script', requiredCapabilities: ['legacy.task-pack.v1'] } }).value;
     const adapter = new ScriptedModel([
@@ -62,6 +64,32 @@ export async function apply(ctx) {
     assert.equal(ledger.history(task.taskId).artifacts.length, 1);
     assert.equal(adapter.requests.length, 2);
     preparedArtifact = true;
+    const { makeTemplate } = await import(pathToFileURL(require.resolve('@dsh-task/task-system/activity/plugin')).href.replace(/plugin\.mjs$/, 'report.mjs'));
+    const activityTemplate = makeTemplate('daily');
+    const activityTask = ledger.createTask('cli-activity-task', { title: 'Installed official activity reader', tags: ['daily-report'], policy: { allowedTools: ['activity_sources_read', 'activity_report_prepare'] } }).value;
+    const activityRun = ledger.createRun('cli-activity-run', { taskId: activityTask.taskId, configuration: { template: activityTemplate, input: { windowStart: new Date(Date.now() - 86400000).toISOString(), windowEnd: new Date(Date.now() + 86400000).toISOString(), timeZone: 'UTC' } }, route: { nodeId: service.config.nodeId, provider: 'cli-activity', model: 'script', requiredCapabilities: [] } }).value;
+    const activityAdapter = new ScriptedModel([
+      { name: 'activity_sources_read', args: {} },
+      options => {
+        const response = options.messages.findLast(message => message.role === 'tool');
+        assert.equal(response?.isError, false, JSON.stringify(response?.content));
+        const capture = JSON.parse(response.content.filter(block => block.type === 'text').map(block => block.text).join('\n'));
+        assert.deepEqual(capture.sources[0].errors, []);
+        assert.deepEqual(capture.sources[0].entries, [], 'Task-injected work must not become human conversation activity');
+        return { name: 'activity_report_prepare', args: { sourceReceiptId: capture.sourceReceiptId, kind: 'daily', summaries: [] } };
+      },
+      options => {
+        const response = options.messages.findLast(message => message.role === 'tool');
+        assert.equal(response?.isError, false, JSON.stringify(response?.content));
+        const result = JSON.parse(response.content.filter(block => block.type === 'text').map(block => block.text).join('\n'));
+        return { name: 'task_settle', args: { outcome: result.outcome, summary: result.summary, reportTitle: result.report.title, reportBody: result.report.body, reportData: result.report.data, reportSchemaId: result.report.schemaId } };
+      },
+    ]);
+    ctx.llm.registerAdapter(['cli-activity'], activityAdapter);
+    const activityClaim = ledger.claim('cli-activity-claim', { runId: activityRun.runId, nodeId: service.config.nodeId, ttlMs: 10000 }).value;
+    const activityResult = await service.native.execute(activityClaim);
+    assert.equal(activityResult.run.state, 'succeeded');
+    assert.equal(ledger.history(activityTask.taskId).reports.at(-1).schemaId, 'dsh_agent_activity_daily.v1');
   }
   writeFileSync(process.env.DSH_TASK_PROBE_OUT, JSON.stringify({
     ok: true, role: service.config.role, native: Boolean(service.native),

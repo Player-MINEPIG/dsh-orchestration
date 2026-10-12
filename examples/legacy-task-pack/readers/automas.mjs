@@ -5,6 +5,7 @@ import { SourceError, assertRows, normalizeWindow, parseTime, inWindow, decodeTe
 import { calendarWindow, dateInZone } from './time.mjs';
 import { parseLogLines, readGameDaily } from './game.mjs';
 import { hsrRules, oneDragonRules, maaRules } from './presets.mjs';
+import { sraRules } from './sra.mjs';
 
 /** Data-only defaults matching the three original producer adapters. Override every ID/rule. */
 export function autoMasDefinitions({ manualAnnihilationDue = false } = {}) {
@@ -19,6 +20,7 @@ export function autoMasDefinitions({ manualAnnihilationDue = false } = {}) {
 const defaultClassifiers = [
   { kind: 'maa_annihilation', anyResultKeys: ['maa_result'], anyText: ['taskqueueviewmodel', 'maaassistantarknights'], requireAnyText: ['剿灭作战', 'selected annihilation', '"annihilation"'] },
   { kind: 'maa_routine', anyResultKeys: ['maa_result'], anyText: ['taskqueueviewmodel', 'maaassistantarknights'] },
+  { kind: 'hsr_sra', anyResultKeys: ['hsr_result'], anyText: ['sra stderr:', 'sra: 已启动任务执行', 'starrailassistant'] },
   { kind: 'hsr', anyText: ['starrail', '每日实训', '开拓力', 'march7th'] },
   { kind: 'zzz', anyText: ['一条龙', 'one_dragon', 'zenless', '绝区零'] },
 ];
@@ -27,9 +29,13 @@ function classify(result, text, classifiers) {
   return classifiers.find(rule => (!rule.requireAnyText || rule.requireAnyText.some(marker => lower.includes(marker.toLowerCase()))) &&
     ((rule.anyResultKeys ?? []).some(key => Object.hasOwn(result, key)) || (rule.anyText ?? []).some(marker => lower.includes(marker.toLowerCase()))))?.kind;
 }
-function accountLabels(scriptConfig, definitions) {
+function accountLabels(scriptConfig, definitions, queueConfig) {
   const accounts = new Map();
+  const active = (queueConfig.instances ?? []).map(item => queueConfig[String(item.uid)]).find(entry => entry?.Info?.TimeEnabled && entry.SubConfigsInfo?.TimeSet?.instances?.length);
+  const queueItems = active?.SubConfigsInfo?.QueueItem;
+  const selected = queueItems ? new Set((queueItems.instances ?? []).map(item => String(queueItems[String(item.uid)]?.Info?.ScriptId))) : null;
   for (const item of scriptConfig.instances ?? []) {
+    if (selected && !selected.has(String(item.uid))) continue;
     const entry = scriptConfig[String(item.uid)] ?? {}, info = entry.Info ?? {};
     const sourceName = `${info.Name ?? item.type ?? ''} ${info.Path ?? info.RootPath ?? ''}`.toLowerCase().replaceAll('-', '');
     const definition = definitions.find(def => (def.scriptTypes ?? []).includes(String(item.type ?? '').toLowerCase()) || (def.scriptMarkers ?? []).some(marker => sourceName.includes(marker.toLowerCase().replaceAll('-', ''))));
@@ -60,7 +66,6 @@ export async function readAutoMasDaily({ scope, window: inputWindow, reportMeta,
     try { return await scope.json(path, { encoding }); } catch (error) { errors.push(`${source_id}: ${error.message}`); return {}; }
   }
   const scripts = await config(scriptConfigFile, 'automas.script_config'), queues = await config(queueConfigFile, 'automas.queue_config');
-  const accounts = accountLabels(scripts, automations);
   let inventory = historyFiles ? assertRows(historyFiles, scope, 'historyFiles').map(path => typeof path === 'string' ? { resultFile: path } : path) : [];
   if (historyRoot) {
     let date = dateInZone(Date.parse(window.start), reportMeta.source_timezone);
@@ -109,6 +114,10 @@ export async function readAutoMasDaily({ scope, window: inputWindow, reportMeta,
       }
     } catch (error) { errors.push(`Screenshot directory ${directoryIndex + 1}: ${error.message}`); extraMissing.push(`screenshot.directory${directoryIndex + 1}`); }
   }
+  // Switch only the legacy default definition; explicit caller rules remain authoritative.
+  automations = automations.map(def => def.id === 'hsr_march7thassistant' && def.engine === 'March7thAssistant' && byKind.has('hsr_sra')
+    ? { ...def, engine: 'StarRailAssistant (SRA)', historyKinds: ['hsr_sra'], scriptTypes: ['hsrconfig'], scriptMarkers: ['srsra', 'starrailassistant'], ...sraRules() } : def);
+  const accounts = accountLabels(scripts, automations, queues);
   const report = await readGameDaily({ scope, window, reportMeta, scheduler: { ...queueSettings(queues), appLog, frontendLog, expectedItems: automations.length, encoding, ...scheduler },
     automations: automations.map(def => ({ ...def, account: def.account ?? accounts.get(def.id) ?? 'unknown', runs: (def.historyKinds ?? [def.id]).flatMap(kind => byKind.get(kind) ?? []) })),
     screenshots: imageInputs, additionalSources });

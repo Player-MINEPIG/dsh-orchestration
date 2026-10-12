@@ -27,6 +27,27 @@ test('Unauthorized source IDs/model paths and oversize evidence do not become tr
   await assert.rejects(readConfiguredSources({ registry, authorizedIds: input.sourceIds, input, maxOutputBytes: 1024 }), /SOURCE_OUTPUT_TOO_LARGE/);
   const abort = new AbortController(); abort.abort(new Error('Read cancelled')); await assert.rejects(readConfiguredSources({ registry, authorizedIds: input.sourceIds, input, signal: abort.signal }), /Read cancelled/);
 });
+test('Fixed operator game collector validates current day, identity and bounded output', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'dsh-fixed-collector-'));
+  try {
+    const original = (await readConfiguredSources({ registry, authorizedIds: input.sourceIds, input })).sources[0].data.game;
+    const script = join(directory, 'collect.mjs');
+    await writeFile(script, `const r=${JSON.stringify(original)}; r.report_meta.business_date=process.argv[2]; r.report_meta.report_timezone=process.argv[3]; console.log(JSON.stringify(r));`);
+    const config = { executable: process.execPath, cwd: directory, args: [script, '{date}', '{timeZone}'], automationIds: ['custom-example'] };
+    const local = [{ id: 'game', root: directory, manifest: 'manifest.json' }];
+    await writeFile(join(directory, 'manifest.json'), JSON.stringify({ gameCollector: config }));
+    const result = await readConfiguredSources({ registry: local, authorizedIds: ['game'], nodeId: original.report_meta.device_id, input });
+    assert.equal(result.sources[0].data.game.report_meta.business_date, '2026-09-15');
+    await assert.rejects(readConfiguredSources({ registry: local, authorizedIds: ['game'], nodeId: 'wrong-node', input }), /Wrong source device/);
+    await assert.rejects(readConfiguredSources({ registry: local, authorizedIds: ['game'], input, maxOutputBytes: 1024 }), /SOURCE_OUTPUT_TOO_LARGE/);
+    await writeFile(join(directory, 'manifest.json'), JSON.stringify({ gameCollector: { ...config, args: [script, '2000-01-01', '{timeZone}'] } }));
+    await assert.rejects(readConfiguredSources({ registry: local, authorizedIds: ['game'], input }), /differs from pinned/);
+    await writeFile(script, 'setInterval(() => {}, 1000);');
+    const controller = new AbortController(); const pending = readConfiguredSources({ registry: local, authorizedIds: ['game'], input, signal: controller.signal });
+    const timer = setTimeout(() => controller.abort(new Error('Stopped collector')), 100);
+    try { await assert.rejects(pending, /Stopped collector/); } finally { clearTimeout(timer); }
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
 test('Configured quota snapshots are read-only full evidence under the current task window', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'dsh-configured-quota-'));
   try {

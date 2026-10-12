@@ -3,6 +3,7 @@ import { createSourceScope, readCodexDaily, readHermesDaily, readGameDaily, read
 import { readQuotaSnapshots } from './quota/index.mjs';
 import { readAutomationDiagnostics } from './diagnostics/index.mjs';
 import { canonicalJson, ReportContractError } from './reporting.mjs';
+import { readGameCollector } from './readers/collector.mjs';
 
 /** Registry entries are operator configuration. A caller supplies IDs, never paths/SQL/code. */
 export async function readConfiguredSources({ registry, authorizedIds, sourceIds = authorizedIds, input, nodeId, timeZone = 'Asia/Shanghai', maxOutputBytes = 1024 * 1024, signal }) {
@@ -19,6 +20,10 @@ export async function readConfiguredSources({ registry, authorizedIds, sourceIds
   for (const sourceId of sourceIds) {
     signal?.throwIfAborted(); const entry = entries.get(sourceId); const scope = await createSourceScope(resolve(entry.root)); const manifest = await scope.json(entry.manifest);
     const data = {};
+    if (manifest.gameCollector) {
+      if (manifest.game || manifest.automas) throw new ReportContractError('Choose one game source reader');
+      data.game = await readGameCollector({ config: manifest.gameCollector, window, nodeId, maxOutputBytes, signal });
+    }
     if (manifest.codex) data.codex = await readCodexDaily({ ...manifest.codex, scope, window });
     if (manifest.hermes) data.hermes = await readHermesDaily({ ...manifest.hermes, scope, window });
     if (manifest.quota) data.quota = await readQuotaSnapshots({ ...manifest.quota, scope, window });
