@@ -636,7 +636,7 @@ export class RemoteGateway {
     validatePayload(envelope);
     // An authenticated exact command retry may read its receipt after the lease
     // settled or expired. Mutable lease checks apply only to new commands.
-    const recorded = store.receipt(peer.nodeId, envelope.commandId);
+    const recorded = store.receipt(peer.nodeId, envelope.commandId, now);
     await this.authorize(
       envelope,
       peer,

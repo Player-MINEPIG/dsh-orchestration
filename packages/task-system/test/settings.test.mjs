@@ -208,10 +208,12 @@ test("browser companion exposes the same served form in Settings and its install
     },
     remote: {
       $host: { isLoopback: true },
-      $mount: async (contribution) => (
-        assert.equal(contribution.descriptors.length, 27),
-        () => {}
-      ),
+      $mount: async (contribution) => {
+        assert.equal(contribution.descriptors.length, 30);
+        for (const method of ["scheduleOptions", "createScheduledPlan", "controlScheduledPlan"])
+          assert.ok(contribution.descriptors.some(descriptor => descriptor.method === method));
+        return () => {};
+      },
     },
     get(name) {
       assert.equal(name, "remote.taskPluginSettings");

@@ -2,8 +2,8 @@
   "ok": true,
   "dshVersion": "0.2.0-rc.2",
   "upstreamCommit": "639ed015397290b3745d163aafe02ffee4aa3f84",
-  "node": "v24.19.0",
-  "scratch": "/var/folders/1p/0r3r_j49633fr1f0r0q6wyt80000gn/T/dsh-task-distribution-mjq9kv",
+  "node": "v26.5.1",
+  "scratch": "/var/folders/1p/0r3r_j49633fr1f0r0q6wyt80000gn/T/dsh-task-distribution-PJWwjS",
   "stages": [
     {
       "name": "official-pinned-runtime",
@@ -12,8 +12,8 @@
     {
       "name": "built-tarball",
       "ok": true,
-      "filename": "dsh-task-task-system-0.2.2.tgz",
-      "integrity": "sha512-2Z/sCTx4q3NKGjxI862SrX/3DfYe8aXvcnVqvSQeFRpyPsLWUkiQQJrD7zIVt7TpGkcWiAL7xwgZo4xZezhBLA=="
+      "filename": "dsh-task-task-system-0.2.4.tgz",
+      "integrity": "sha512-Z2ZpY9AZ2TDjrW8w3NNcjNHTj1LG+CPDr59K+EjS5ild5TFdl6+czRf3+RilkhRgkammRzaUlABRr5JymtWpEg=="
     },
     {
       "name": "actual-plugin-add",

@@ -226,7 +226,8 @@ export class RemoteClient {
         authMode,
         authBinding: this.authBinding,
       };
-      const existing = store.outbound(commandId);
+      const now = (this.options.now ?? Date.now)();
+      const existing = store.outbound(commandId, now);
       if (existing) {
         insist(
           isRecord(existing) && existing.digest === requestHash,
@@ -254,7 +255,6 @@ export class RemoteClient {
         // Retrying this exact command is safe at the gateway: stored pending/uncertain
         // work is never dispatched again. It may only return its existing receipt.
       }
-      const now = (this.options.now ?? Date.now)();
       const common = {
         nodeId,
         audience,
@@ -282,7 +282,7 @@ export class RemoteClient {
         operation,
         payload,
         state: "sending",
-      });
+      }, now);
       try {
         const response = await this.transportFetch(this.endpoint, {
           method: "POST",
@@ -369,7 +369,7 @@ export class RemoteClient {
           payload,
           state: receipt.state as Json,
           receipt: receipt as Json,
-        });
+        }, now);
         return receipt as unknown as CommandReceipt;
       } catch (error) {
         store.saveOutbound(commandId, {
@@ -378,7 +378,7 @@ export class RemoteClient {
           operation,
           payload,
           state: "uncertain",
-        });
+        }, now);
         if (error instanceof ProtocolError && error.status === 409 && error.code === "OUT_OF_ORDER" && orderingRetry < 2) {
           await new Promise(resolve => setTimeout(resolve, 25 * (orderingRetry + 1)));
           insist(this.active && !signal?.aborted, "TRANSPORT_ABORTED", 503);

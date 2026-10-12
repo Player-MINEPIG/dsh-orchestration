@@ -2,6 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import { dirname } from "node:path";
 import { closeSync, mkdirSync, openSync } from "node:fs";
+import { isTransientReceipt, TRANSIENT_RECEIPT_TTL_MS } from "../receipt-retention.js";
 import {
   byteLimit,
   canonical,
@@ -74,6 +75,15 @@ export class RecoveryStore {
       CREATE TABLE IF NOT EXISTS outbound (id TEXT PRIMARY KEY, data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
       PRAGMA user_version=1;`);
+    // Existing receipts have unknown provenance and remain durable. Only new,
+    // explicitly classified observations receive an expiry.
+    this.transaction(() => {
+      for (const table of ["commands", "outbound"]) {
+        if (!this.db.prepare(`PRAGMA table_info(${table})`).all().some(row => row.name === "expires"))
+          this.db.exec(`ALTER TABLE ${table} ADD COLUMN expires INTEGER`);
+        this.db.exec(`CREATE INDEX IF NOT EXISTS ${table}_expiry ON ${table}(expires) WHERE expires IS NOT NULL`);
+      }
+    });
     // This is a nonsecret execution-owner identity, never an authentication key.
     this.db
       .prepare(
@@ -211,6 +221,7 @@ export class RecoveryStore {
     return this.transaction(() => {
       const { nodeId: node, nonce, sequence, commandId: id } = envelope;
       this.db.prepare("DELETE FROM nonces WHERE expires < ?").run(now);
+      this.db.prepare("DELETE FROM commands WHERE expires <= ?").run(now);
       insist(
         !this.db
           .prepare("SELECT 1 FROM nonces WHERE node=? AND nonce=?")
@@ -253,8 +264,8 @@ export class RecoveryStore {
             : {}),
         };
       this.db
-        .prepare("INSERT INTO commands(node,id,digest,state) VALUES(?,?,?,?)")
-        .run(node, id, hash, "pending");
+        .prepare("INSERT INTO commands(node,id,digest,state,expires) VALUES(?,?,?,?,?)")
+        .run(node, id, hash, "pending", isTransientReceipt(envelope.operation) ? now + TRANSIENT_RECEIPT_TTL_MS : null);
       return undefined;
     });
   }
@@ -329,10 +340,10 @@ export class RecoveryStore {
       return { commandId, state: "done", result: json };
     });
   }
-  receipt(node: string, commandId: string): CommandReceipt | undefined {
+  receipt(node: string, commandId: string, now?: number): CommandReceipt | undefined {
     const row = this.db
-      .prepare("SELECT state,result FROM commands WHERE node=? AND id=?")
-      .get(node, commandId);
+      .prepare("SELECT state,result FROM commands WHERE node=? AND id=? AND (? IS NULL OR expires IS NULL OR expires > ?)")
+      .get(node, commandId, now ?? null, now ?? null);
     return row
       ? {
           commandId,
@@ -411,15 +422,17 @@ export class RecoveryStore {
       return sequence;
     });
   }
-  saveOutbound(id: string, data: Json): void {
-    this.db
-      .prepare(
-        "INSERT INTO outbound(id,data) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data",
-      )
-      .run(id, canonical(data));
+  saveOutbound(id: string, data: Json, now = Date.now()): void {
+    const operation = data && typeof data === "object" && !Array.isArray(data) ? data.operation : undefined;
+    this.transaction(() => {
+      this.db.prepare("DELETE FROM outbound WHERE expires <= ?").run(now);
+      this.db.prepare(
+        "INSERT INTO outbound(id,data,expires) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data,expires=excluded.expires",
+      ).run(id, canonical(data), isTransientReceipt(operation) ? now + TRANSIENT_RECEIPT_TTL_MS : null);
+    });
   }
-  outbound(id: string): Json | undefined {
-    const row = this.db.prepare("SELECT data FROM outbound WHERE id=?").get(id);
+  outbound(id: string, now?: number): Json | undefined {
+    const row = this.db.prepare("SELECT data FROM outbound WHERE id=? AND (? IS NULL OR expires IS NULL OR expires > ?)").get(id, now ?? null, now ?? null);
     return row ? (JSON.parse(String(row.data)) as Json) : undefined;
   }
   pendingObservations(

@@ -10,6 +10,7 @@ import {
   canonicalSchema,
 } from "./remote/protocol.js";
 import { NATIVE_PROVIDER_UNAVAILABLE_SUMMARY } from "./contracts.js";
+import { TRANSIENT_RECEIPT_TTL_MS } from "./receipt-retention.js";
 import { projectContext } from "./project-context.js";
 import { validateCriteria } from "./workbench-contracts.js";
 import type { Criterion, VersionRef } from "./workbench-contracts.js";
@@ -330,6 +331,11 @@ export class TaskLedger {
       CREATE TABLE IF NOT EXISTS run_context_sessions(run_id TEXT NOT NULL,session_id TEXT NOT NULL,PRIMARY KEY(run_id,session_id));
     `);
     }
+    if (!options.readOnly) {
+      // Keep commands' three-column layout compatible with the prior release.
+      this.db.exec("CREATE TABLE IF NOT EXISTS transient_command_expiry(id TEXT PRIMARY KEY,expires INTEGER NOT NULL); CREATE INDEX IF NOT EXISTS command_expiry ON transient_command_expiry(expires)");
+    }
+    this.receiptExpirySupported = !!this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='transient_command_expiry'").get();
     if (!options.readOnly)
       this.db
         .prepare(
@@ -345,6 +351,7 @@ export class TaskLedger {
     }
   }
   private configurationPaused = false;
+  private receiptExpirySupported = false;
   configurationBlockers() {
     return (
       this.db
@@ -558,6 +565,7 @@ export class TaskLedger {
     operation: string,
     input: unknown,
     fn: () => T,
+    transient = false,
   ): Receipt<T> {
     id(commandId, "commandId");
     if (canonical(input).length > 2_000_000)
@@ -566,6 +574,9 @@ export class TaskLedger {
     const digest = hash({ operation, input });
     this.db.exec("BEGIN IMMEDIATE");
     try {
+      const now = this.clock();
+      this.db.prepare("DELETE FROM commands WHERE id IN (SELECT id FROM transient_command_expiry WHERE expires <= ?)").run(now);
+      this.db.prepare("DELETE FROM transient_command_expiry WHERE expires <= ?").run(now);
       const old = this.db
         .prepare("SELECT digest,receipt FROM commands WHERE id=?")
         .get(commandId) as { digest: string; receipt: string } | undefined;
@@ -581,8 +592,10 @@ export class TaskLedger {
         value: fn(),
       };
       this.db
-        .prepare("INSERT INTO commands VALUES(?,?,?)")
+        .prepare("INSERT INTO commands(id,digest,receipt) VALUES(?,?,?)")
         .run(commandId, digest, canonical(result));
+      if (transient)
+        this.db.prepare("INSERT INTO transient_command_expiry(id,expires) VALUES(?,?)").run(commandId, now + TRANSIENT_RECEIPT_TTL_MS);
       this.db.exec("COMMIT");
       return result;
     } catch (e) {
@@ -1218,7 +1231,7 @@ export class TaskLedger {
           source: input.source ?? "authenticated-peer",
         });
       return this.nodeStatuses().find((n) => n.nodeId === input.nodeId)!;
-    });
+    }, true);
   }
   nodeStatuses(at = this.clock()): NodeStatus[] {
     const ttl = finite(
@@ -4358,8 +4371,10 @@ export class TaskLedger {
   }
   commandReceipt<T = Json>(commandId: string): Receipt<T> | undefined {
     const row = this.db
-      .prepare("SELECT receipt FROM commands WHERE id=?")
-      .get(commandId) as { receipt: string } | undefined;
+      .prepare(this.receiptExpirySupported
+        ? "SELECT receipt FROM commands WHERE id=? AND NOT EXISTS (SELECT 1 FROM transient_command_expiry WHERE id=commands.id AND expires <= ?)"
+        : "SELECT receipt FROM commands WHERE id=?")
+      .get(...(this.receiptExpirySupported ? [commandId, this.clock()] : [commandId])) as { receipt: string } | undefined;
     return row ? JSON.parse(row.receipt) : undefined;
   }
   getDecision(decisionId: string) {

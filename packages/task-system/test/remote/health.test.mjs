@@ -6,11 +6,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setImmediate as immediate } from 'node:timers/promises'
 import { Context } from '@deepseek-ai/cordis'
+import { DatabaseSync } from 'node:sqlite'
+import { TRANSIENT_RECEIPT_TTL_MS } from '../../dist/receipt-retention.js'
 import { TaskLedger } from '../../dist/index.js'
 import * as plugin from '../../dist/remote/index.js'
 import { RecoveryStore,RemoteGateway,RemoteClient,RemoteLedgerClient,IdentityVerifier,signEnvelope } from '../../dist/remote/api.js'
 const key=generateKeyPairSync('ed25519') // Disposable fixture, never production key material.
-const operations=['heartbeat','nodeStatus','claim','markRunning','bindSession','renew','submit','getRun','getAttempt','receipt']
+const operations=['heartbeat','nodeStatus','listWork','claim','markRunning','bindSession','renew','submit','getRun','getAttempt','receipt']
 function fixture(t,{clock=true}={}) {
   const root=mkdtempSync(join(tmpdir(),'dsh-health-')), resources=[]; let ms=Date.now(), sequence=0
   const now=()=>clock?ms:Date.now()
@@ -29,6 +31,42 @@ function fixture(t,{clock=true}={}) {
   return {root,resources,ledger,node,peer,serverStore,gateway,client,remote:new RemoteLedgerClient(client,'worker'),now,advance:delta=>ms+=delta,signed}
 }
 const status={state:'not-probed',providers:[{provider:'fixture',state:'not-probed'}]}
+
+test('days of idle polling and heartbeats retain a bounded window on both peers and the ledger',async t=>{
+  const f=fixture(t)
+  const durable=f.ledger.createTask('read-looking-business-command',{title:'Retain the business receipt'});
+  const count=(file,table)=>{
+    const db=new DatabaseSync(join(f.root,file),{readOnly:true});
+    try{return Number(db.prepare(`SELECT count(*) AS n FROM ${table}`).get().n)}finally{db.close()}
+  }
+  for(let i=0;i<1440;i++){
+    await f.client.send('listWork',`poll-${i}`,{});
+    await f.remote.recordNodeHeartbeat(`sample-${i}`,{nodeId:'worker',sampledAt:f.now(),runtimeReady:true,activeExecutions:0,providerStatus:status});
+    await f.remote.ownNodeStatus();
+    f.advance(60000);
+  }
+  assert.ok(count('server.sqlite','commands')<=30);
+  assert.ok(count('client.sqlite','outbound')<=30);
+  assert.ok(count('ledger.sqlite','commands')<=14); // nodes/workspace/task plus ten samples
+  assert.deepEqual(f.ledger.createTask('read-looking-business-command',{title:'Retain the business receipt'}),durable);
+  const state=f.ledger.nodeStatuses().find(n=>n.nodeId==='worker');
+  assert.equal(state.runtimeReady,true);
+  assert.equal(Date.parse(state.observedAt),f.now()-60000);
+});
+
+test('expired read cache refreshes after restart, while a recent exact retry stays identical',async t=>{
+  const f=fixture(t)
+  const first=await f.client.send('nodeStatus','same-read',{});
+  await f.remote.recordNodeHeartbeat('new-sample',{nodeId:'worker',sampledAt:f.now(),runtimeReady:true,activeExecutions:0});
+  assert.deepEqual(await f.client.send('nodeStatus','same-read',{}),first);
+  f.advance(TRANSIENT_RECEIPT_TTL_MS+1);
+  await f.client.dispose();f.resources.splice(f.resources.indexOf(f.client),1);
+  const store=new RecoveryStore(join(f.root,'client.sqlite'));f.resources.push(store);
+  const client=new RemoteClient({endpoint:'https://fixture.invalid/commands',nodeId:'worker',audience:'planner',keyId:'fixture',privateKey:key.privateKey,store,now:f.now,fetch:async(_url,options)=>new Response(JSON.stringify(await f.gateway.handle(options.body)))});f.resources.push(client);
+  const fresh=await client.send('nodeStatus','same-read',{});
+  assert.notDeepEqual(fresh,first);
+  assert.equal(fresh.result.state,'stale');
+});
 
 test('actual TaskLedger signed heartbeat tracks finite stale/recovery, own-only status, capacity, and preserves all grants',async t=>{
   const f=fixture(t), before=f.ledger.getNode('worker')
