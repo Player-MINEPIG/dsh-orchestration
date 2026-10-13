@@ -544,6 +544,7 @@ export class RemoteLedgerClient implements LedgerPort {
       outcome: input.outcome,
       summary: input.summary,
       ...(input.report ? { report: input.report as unknown as Json } : {}),
+      ...(input.resultValidationFailure ? {resultValidationFailure:input.resultValidationFailure as unknown as Json}:{}),
       ...(input.preDispatchFailure
         ? { preDispatchFailure: input.preDispatchFailure as unknown as Json }
         : {}),

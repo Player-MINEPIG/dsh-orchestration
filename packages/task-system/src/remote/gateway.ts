@@ -14,6 +14,7 @@ import {
   parseCommandEnvelope,
   ProtocolError,
   validatePreDispatchFailure,
+  validateResultValidationFailure,
 } from "./protocol.js";
 import type {
   CommandEnvelope,
@@ -532,7 +533,7 @@ export function validatePayload(envelope: CommandEnvelope): void {
       fields(
         p,
         ["runId", "attemptId", "fence", "outcome", "summary"],
-        ["report", "executionId", "preDispatchFailure"],
+        ["report", "executionId", "preDispatchFailure", "resultValidationFailure"],
       );
       lease(p, envelope.nodeId);
       insist(
@@ -542,6 +543,7 @@ export function validatePayload(envelope: CommandEnvelope): void {
         "INVALID_OUTCOME",
       );
       text(p, "summary", 5000);
+      if(p.resultValidationFailure!==undefined){validateResultValidationFailure(p.resultValidationFailure);insist(p.outcome==="failure"&&p.report===undefined&&p.preDispatchFailure===undefined,"INVALID_RESULT_VALIDATION_FAILURE");}
       if (p.preDispatchFailure !== undefined) {
         validatePreDispatchFailure(p.preDispatchFailure);
         insist(
@@ -804,6 +806,7 @@ export class RemoteGateway {
             ...(p.report
               ? { report: p.report as unknown as Settlement["report"] }
               : {}),
+            ...(p.resultValidationFailure ? {resultValidationFailure:p.resultValidationFailure as unknown as Settlement["resultValidationFailure"]}:{}),
             ...(p.preDispatchFailure
               ? {
                   preDispatchFailure:

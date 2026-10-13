@@ -77,6 +77,7 @@ export class ProjectRuntime {
     { done: Promise<void>; abort: AbortController }
   >();
   private accepting = true;
+  private readonly resultRetries = new Map<string,Promise<unknown>>();
   planner?: TaskPlanner;
   private readonly temporaryCreations = new Map<
     string,
@@ -804,6 +805,14 @@ export class ProjectRuntime {
   /** Persisted inbox admission; only pre-claim unavailability may move to the next candidate. */
   tick() {
     if (!this.accepting) return;
+    if(this.planner)for(const run of this.ledger.snapshot().runs){
+      if(!run.resultValidationFailure||this.resultRetries.has(run.runId))continue;
+      const info=this.ledger.resultRetryInfo(run.runId),view=this.ledger.taskActionState(run.taskId);
+      if(!info.eligible||!view.canRetry)continue;
+      const feedback=`报告校验失败，自动重试 ${info.count+1}/${info.limit}。沿用原任务会话和已有成果，结合原上下文判断需要修正报告还是补做任务。无需重复提供已有成果。\n校验错误：${run.resultValidationFailure.code}\n${run.resultValidationFailure.issues.map(x=>'- '+x).join('\n')}`;
+      const job=this.retryTask({commandId:`auto-result:${run.runId}`,taskId:run.taskId,expectedVersion:view.version,retryPrompt:feedback,automaticResultRetry:true}).catch(()=>undefined).finally(()=>this.resultRetries.delete(run.runId));
+      this.resultRetries.set(run.runId,job);
+    }
     // Task requeue is the durable source of truth. Repair the dispatch view even
     // if the host stopped between the operator command and queue admission.
     for (const pending of this.db
@@ -955,12 +964,16 @@ export class ProjectRuntime {
           // Bind feedback to every Run created for this dispatch, including an
           // unclaimed Run returned to the queue; never consume it globally.
           const contextNotes = decisionInput?.retryPrompt && applied?.reportId ? [applied.reportId] : [];
+          const previous=decisionInput?.retrySourceRunId?this.ledger.getRun(decisionInput.retrySourceRunId):undefined;
+          const priorConfig=previous?.configuration&&typeof previous.configuration==="object"&&!Array.isArray(previous.configuration)?previous.configuration:{};
+          const retryConfig=previous?{...priorConfig,taskRetry:{sourceRunId:previous.runId,automatic:!!decisionInput?.automaticResultRetry,count:decisionInput?.automaticResultRetry?this.ledger.resultRetryInfo(previous.runId).count+1:0}}:{};
           const run = this.ledger.createRun(
             `pr:dispatch:${row.task}:${generation}`,
             {
               taskId: row.task,
               route,
-              configuration: { decisionId: row.decision, reporting: "summary" },
+              configuration: { ...retryConfig, decisionId: row.decision, reporting: "summary" },
+              ...(previous?.parentRunId?{parentRunId:previous.parentRunId}:{}),
               ...(contextNotes.length ? { contextNotes } : {}),
             },
           ).value;
@@ -1459,11 +1472,16 @@ export class ProjectRuntime {
       expectedActionVersion: input.expectedVersion,
     });
   }
+  setReportRetryLimit(input:{commandId:string;taskId:string;expectedRevision:number;maxRetries:number}) {
+    this.authorize();
+    return this.ledger.updateTask(input.commandId,{taskId:input.taskId,expectedRevision:input.expectedRevision,maxResultRetries:input.maxRetries});
+  }
   private async retryTask(input: {
     commandId: string;
     taskId: string;
     expectedVersion: string;
     retryPrompt?: string;
+    automaticResultRetry?: boolean;
   }) {
     const retryPrompt = input.retryPrompt === undefined || input.retryPrompt === "" ? "" : text(input.retryPrompt, 20000);
     const requestId = `task-retry:${text(input.commandId, 200)}`;
@@ -1507,6 +1525,7 @@ export class ProjectRuntime {
         route = undefined;
       }
     }
+    if(input.automaticResultRetry && !route) throw new TaskError("CONFIGURATION", "Original execution route is unavailable for automatic retry");
     await this.planner.plan({
       requestId,
       taskId: input.taskId,
@@ -1516,6 +1535,7 @@ export class ProjectRuntime {
       title: task.title,
       description: retryPrompt ? `${task.description}\n\n本次返工补充提示词：\n${retryPrompt}` : task.description,
       ...(retryPrompt ? { retryPrompt } : {}),
+      ...(previous ? {retrySourceRunId:previous.runId,automaticResultRetry:!!input.automaticResultRetry}:{}),
       ...(task.workspaceId ? { workspaceId: task.workspaceId } : {}),
     });
     this.authorize();
@@ -1690,6 +1710,9 @@ export class ProjectRuntime {
         status,
         actionVersion: attention.version,
         runId: run?.runId ?? null,
+        revision:t.revision??1,
+        maxResultRetries:t.policy?.maxResultRetries??2,
+        resultRetry:run?this.ledger.resultRetryInfo(run.runId):null,
         executionStartedAt: run?.executionStartedAt ?? null,
         executionEndedAt:
           run && !["queued", "running"].includes(run.state)
@@ -1870,6 +1893,8 @@ export class ProjectRuntime {
           criteria:r.intentSnapshot.acceptanceCriteria,
           notes:(r.contextNotes??[]).flatMap(note=>{const report=data.reports.find(x=>x.reportId===(typeof note==='string'?note:note.reportId));return report?[{id:report.reportId,title:report.title,body:report.body}]:[]}),
         } : null,
+        settlementSummary: (() => {const d=data.events.findLast(e=>e.runId===r.runId&&e.type==="run.settled")?.detail;return d&&typeof d==="object"&&!Array.isArray(d)&&typeof d.summary==="string"?d.summary:null;})(),
+        diagnosticReport: (() => {const d=data.reports.findLast(x=>x.runId===r.runId&&["note","progress"].includes(x.kind)&&x.schemaId==="execution-diagnostic.v1");return d?{id:d.reportId,title:d.title,body:d.body}:null;})(),
         executionStartedAt:r.executionStartedAt??null,
         executionEndedAt:["queued","running"].includes(r.state)?null:r.updatedAt,
         runtimeVersion: diagnostic("cliVersion"),
@@ -1950,6 +1975,7 @@ export class ProjectRuntime {
   }
   async close() {
     this.accepting = false;
+    await Promise.allSettled(this.resultRetries.values());
     await Promise.allSettled([...this.creations.values()].map((j) => j.done));
     for (const job of this.jobs.values()) job.abort.abort();
     await Promise.allSettled([...this.jobs.values()].map((j) => j.done));

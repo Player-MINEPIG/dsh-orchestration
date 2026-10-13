@@ -57,3 +57,44 @@ test('native decision wait renews the lease before evaluating and still finishes
     assert.ok(Date.now()>originalExpiry);assert.equal(result.run.state,'succeeded');assert.equal(h.adapter.requests.length,1)
   } finally {await h.dispose();await decisions.close()}
 })
+
+for (const recover of [false, true]) test(`report rejection resumes one session with two retry budget; recover=${recover}`,async()=>{
+ const rejected={name:'task_settle',args:{outcome:'success',summary:'Original work remains in the session',reportBody:'Unique saved output',reportData:{wrong:true}}};
+ const accepted={name:'task_settle',args:{outcome:'success',summary:'Corrected',reportData:{verified:true}}};
+ const h=await createNativeHarness({script:[rejected,recover?accepted:rejected,rejected]});
+ try {
+  const l=h.ledger,runtime=h.ctx.taskSystem.projects;
+  l.registerWorkspace('w',{workspaceId:'default',nodeId:'local',path:h.dir,label:'fixture',state:'ready',createdAt:new Date().toISOString()});
+  l.registerNode('n',{nodeId:'local',roles:['both'],models:[{provider:'test-offline',model:'script',reasoningEfforts:[]}],capabilities:[],workspaceIds:['default'],defaultWorkspaceId:'default',enabled:true,lastSeenAt:new Date().toISOString()});
+  l.recordNodeHeartbeat('online',{nodeId:'local',runtimeReady:true,activeExecutions:0});
+  const template={"templateId": "checked", "version": 1, "name": "checked", "description": "", "inputSchema": {"type": "object"}, "defaults": {}, "resultContract": {"type": "object", "required": ["report"], "properties": {"report": {"type": "object", "required": ["data"], "properties": {"data": {"type": "object", "required": ["verified"], "properties": {"verified": {"const": true}}}}}}}};
+  const task=l.createTask('t',{title:'Daily',description:'Original immutable instruction'}).value;
+  const input={windowStart:'2026-10-11T00:00:00Z',windowEnd:'2026-10-12T00:00:00Z'};
+  let run=l.createRun('r',{taskId:task.taskId,configuration:{template,input},route:{nodeId:'local',provider:'test-offline',model:'script',requiredCapabilities:[]}}).value;
+  const sessions=[];
+  for(let i=0;i<(recover?2:3);i++){
+   const claim=l.claim('c'+i,{runId:run.runId,nodeId:'local',ttlMs:10000}).value;
+   const result=await h.ctx.taskSystem.native.execute(claim);sessions.push(result.sessionId);
+   assert.equal(result.run.state,recover&&i===1?'succeeded':'failed');
+   const count=l.snapshot().runs.length;
+   for(let j=0;j<30;j++){runtime.tick();await new Promise(r=>setTimeout(r,5));if(l.snapshot().runs.length>count)break;}
+   if(recover&&i===1||i===2){assert.equal(l.snapshot().runs.length,count);break;}
+   run=l.snapshot().runs.at(-1);
+   assert.equal(l.snapshot().runs.length,count+1);
+   assert.deepEqual(run.configuration.input,input);assert.deepEqual(run.configuration.templateRef,{templateId:'checked',version:1});
+   assert.equal(run.configuration.taskRetry.count,i+1);
+   const notes=l.executionContext(run.runId).reports;
+   assert.match(JSON.stringify(notes),/SCHEMA_VALIDATION/);assert.doesNotMatch(JSON.stringify(notes),/Unique saved output|Original immutable instruction/);
+  }
+  assert.equal(new Set(sessions).size,1,'automatic redispatch must resume the original native session');
+  assert.equal(l.getTask(task.taskId).description,'Original immutable instruction');
+  assert.equal(l.history(task.taskId).reports.filter(r=>r.kind==='result').length,recover?1:0);
+  assert.equal(l.resultRetryInfo(l.snapshot().runs.at(-1).runId).eligible,false);
+  if(!recover){
+   const current=runtime.snapshot().tasks.find(t=>t.id===task.taskId);assert.equal(current.resultRetry.count,2);assert.equal(current.canRetry,true);
+   const {TaskLedger}=await import('../dist/ledger.js');const {join}=await import('node:path');const reopened=TaskLedger.open(join(h.dir,'tasks.sqlite'),{readOnly:true});try{assert.equal(reopened.resultRetryInfo(l.snapshot().runs.at(-1).runId).count,2);assert.equal(reopened.resultRetryInfo(l.snapshot().runs.at(-1).runId).eligible,false);}finally{reopened.close();}
+   await runtime.actOnTask({commandId:'manual-after-budget',taskId:task.taskId,action:'retry',expectedVersion:current.actionVersion,retryPrompt:'Operator reviewed failure'});
+   assert.equal(l.snapshot().runs.length,4);assert.equal(l.snapshot().runs.at(-1).configuration.taskRetry.count,0);
+  }
+ } finally {await h.dispose();}
+});

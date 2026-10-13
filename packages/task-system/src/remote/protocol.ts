@@ -11,6 +11,17 @@ export function validatePreDispatchFailure(value: unknown): asserts value is Pre
   for (const [key,max] of [['provider',100],['model',200]] as const) insist(typeof value[key] === 'string' && value[key].length > 0 && Buffer.byteLength(value[key]) <= max, 'INVALID_PRE_DISPATCH_FAILURE')
 }
 
+/** A trusted host has drained the session; its candidate report was rejected, not accepted. */
+export interface ResultValidationFailure { kind: 'native-result-validation-failure-v1'; code: 'SCHEMA_VALIDATION' | 'RESULT_VALIDATION'; issues: string[]; sessionId: string; quiescent: true; sessionPersisted: true }
+export function validateResultValidationFailure(value: unknown): asserts value is ResultValidationFailure {
+  insist(isRecord(value), 'INVALID_RESULT_VALIDATION_FAILURE')
+  const fields=['kind','code','issues','sessionId','quiescent','sessionPersisted']
+  insist(Object.keys(value).length===fields.length&&fields.every(k=>Object.hasOwn(value,k)), 'INVALID_RESULT_VALIDATION_FAILURE')
+  insist(value.kind==='native-result-validation-failure-v1'&&['SCHEMA_VALIDATION','RESULT_VALIDATION'].includes(String(value.code))&&value.quiescent===true&&value.sessionPersisted===true, 'INVALID_RESULT_VALIDATION_FAILURE')
+  insist(typeof value.sessionId==='string'&&value.sessionId.length>0&&value.sessionId.length<=200, 'INVALID_RESULT_VALIDATION_FAILURE')
+  insist(Array.isArray(value.issues)&&value.issues.length<=10&&value.issues.every(x=>typeof x==='string'&&x.length<=1000), 'INVALID_RESULT_VALIDATION_FAILURE')
+}
+
 export type Role = 'planner' | 'executor' | 'both'
 export type Operation = 'claim' | 'renew' | 'submit' | 'cancel' | 'receipt' | 'bindSession' | 'markRunning' | 'getRun' | 'getAttempt' | 'acknowledgeCancellation' | 'listWork' | 'observe' | 'delegate' | 'taskHistory' | 'taskWait' | 'taskNote' | 'taskReport' | 'heartbeat' | 'nodeStatus' | 'retryBeforeEffects' | 'offerApproval' | 'approvalStatus' | 'cancelApproval' | 'executorIdentity' | 'sessionContext' | 'selectTaskSession' | 'sessionMessages' | 'sessionMessageReply' | 'projectSnapshot' | 'projectCollaborate'
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json }

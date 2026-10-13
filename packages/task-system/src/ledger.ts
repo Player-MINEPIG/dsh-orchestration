@@ -8,6 +8,7 @@ import {
   canonical as wireCanonical,
   canonicalData,
   canonicalSchema,
+  validateResultValidationFailure,
 } from "./remote/protocol.js";
 import { NATIVE_PROVIDER_UNAVAILABLE_SUMMARY } from "./contracts.js";
 import { TRANSIENT_RECEIPT_TTL_MS } from "./receipt-retention.js";
@@ -69,6 +70,7 @@ export class TaskError extends Error {
   constructor(
     public readonly code: string,
     message: string,
+    public readonly validationIssues?: string[],
   ) {
     super(message);
     this.name = "TaskError";
@@ -186,6 +188,7 @@ export interface ResultValidationContext {
 }
 export type ResultValidator = (context: ResultValidationContext) => {
   valid: boolean;
+  errors?: string[];
 };
 export interface TaskInput {
   taskId?: string;
@@ -1429,6 +1432,7 @@ export class TaskLedger {
       )
         fail("FORBIDDEN", "Child delegation budget expanded");
     }
+    if(policy.maxResultRetries!==undefined){finite(policy.maxResultRetries,0,5,"report retry limit");if(!Number.isInteger(policy.maxResultRetries))fail("INVALID","Report retry count must be integer");if(parent&&policy.maxResultRetries>(parent.policy?.maxResultRetries??2))fail("FORBIDDEN","Child report retry budget expanded");}
     if (policy.maxSafeRetries !== undefined) {
       finite(policy.maxSafeRetries, 0, 5, "task safe retry limit");
       if (!Number.isInteger(policy.maxSafeRetries))
@@ -1573,6 +1577,7 @@ export class TaskLedger {
       targetAt?: string | null;
       userImmediacy?: number;
       importance?: number;
+      maxResultRetries?: number;
       urgency?: number;
     },
   ) {
@@ -1605,6 +1610,7 @@ export class TaskLedger {
           "CONFLICT",
           "Cancel or reconcile active execution before changing task intent",
         );
+      if(input.maxResultRetries!==undefined){finite(input.maxResultRetries,0,5,"report retry limit");if(!Number.isInteger(input.maxResultRetries))fail("INVALID","Report retry count must be integer");if(t.parentTaskId&&input.maxResultRetries>(this.getTask(t.parentTaskId).policy?.maxResultRetries??2))fail("FORBIDDEN","Child report retry budget expanded");t.policy={...t.policy,maxResultRetries:input.maxResultRetries};}
       if (input.title !== undefined) t.title = text(input.title, "title", 500);
       if (input.description !== undefined)
         t.description = optionalText(input.description, "description");
@@ -1782,6 +1788,7 @@ export class TaskLedger {
       "trigger",
       "decisionId",
       "continuationOf",
+      "taskRetry",
     ]);
     if (Object.keys(config).some((k) => !allowed.has(k)))
       fail("INVALID", "Unsupported Run configuration field");
@@ -1822,6 +1829,12 @@ export class TaskLedger {
       fail("INVALID", "Invalid terminal notification setting");
     if (result.input !== undefined) canonicalData(result.input);
     if (result.trigger !== undefined) canonicalData(result.trigger);
+    if (config.taskRetry !== undefined) {
+      const retry = config.taskRetry as {sourceRunId?: unknown; automatic?: unknown; count?: unknown};
+      if (!retry || typeof retry !== "object" || Array.isArray(retry) || Object.keys(retry).sort().join(",") !== "automatic,count,sourceRunId" || typeof retry.sourceRunId !== "string" || typeof retry.automatic !== "boolean" || !Number.isInteger(retry.count) || (retry.count as number) < 0 || (retry.count as number) > 5)
+        fail("INVALID", "Invalid report retry configuration");
+      result.taskRetry = config.taskRetry;
+    }
     // Old command provenance stays in events, not in the execution configuration.
     return result;
   }
@@ -3432,6 +3445,11 @@ export class TaskLedger {
    */
   validateResultContract(context: ResultValidationContext): void {
     const { run, submission: input } = context;
+    if(input.resultValidationFailure){
+      try{validateResultValidationFailure(input.resultValidationFailure);}catch{fail("INVALID","Invalid result validation failure attestation");}
+      if(input.outcome!=="failure"||input.report||input.preDispatchFailure||!context.attempt.sessionId||context.attempt.sessionId!==input.resultValidationFailure.sessionId||!context.attempt.executionId)fail("INVALID","Result rejection must belong to a drained native session");
+      return;
+    }
     if (input.preDispatchFailure !== undefined) {
       this.validatePreDispatchFailure(run, context.attempt, input);
       return;
@@ -3486,6 +3504,7 @@ export class TaskLedger {
             "Required semantic validator is not mounted",
           );
         let valid = false;
+        let issues: string[] = [];
         try {
           const verdict = validator!.validate(
             structuredClone({
@@ -3507,14 +3526,11 @@ export class TaskLedger {
             );
           }
           valid = verdict?.valid === true;
+          issues = Array.isArray(verdict?.errors)?verdict.errors.filter((x):x is string=>typeof x==="string").slice(0,10).map(x=>x.slice(0,1000)):[];
         } catch {
           fail("RESULT_VALIDATION", "Semantic result validation failed");
         }
-        if (!valid)
-          fail(
-            "RESULT_VALIDATION",
-            "Semantic result validation rejected the result",
-          );
+        if (!valid) throw new TaskError("RESULT_VALIDATION", "Semantic result validation rejected the result", issues);
       }
     }
   }
@@ -3610,6 +3626,8 @@ export class TaskLedger {
       phase: "authority",
       executionContext: this.executionContext(run.runId),
     });
+    if(input.resultValidationFailure)run.resultValidationFailure=structuredClone(input.resultValidationFailure);
+    if(input.resultValidationFailure)this.event("run.result_validation_failed",{...input.resultValidationFailure,attemptId:attempt.attemptId},run.taskId,run.runId);
     if (input.preDispatchFailure) {
       this.event(
         "run.pre_dispatch_failed",
@@ -4562,10 +4580,10 @@ export class TaskLedger {
       const report = this.report({
         taskId: task.taskId,
         title: "Task request",
-        body: input.description || input.title,
+        body: originalInput.automaticResultRetry === true && typeof originalInput.retryPrompt === "string" ? originalInput.retryPrompt : input.description || input.title,
         kind: "progress",
         ...(input.expectedActionVersion && typeof originalInput.retryPrompt === "string"
-          ? { data: { actor: "operator:task-center", retryPrompt: originalInput.retryPrompt } } : {}),
+          ? { data: { actor: originalInput.automaticResultRetry === true ? "scheduler:report-validation" : "operator:task-center", retryPrompt: originalInput.retryPrompt } } : {}),
       });
       if (input.deferExecution) {
         if (
@@ -5092,6 +5110,15 @@ export class TaskLedger {
       ).map((x) => JSON.parse(x.data) as Event),
     };
   }
+  resultRetryInfo(runId: string) {
+    const run=this.getRun(runId),task=this.getTask(run.taskId),config=run.configuration;
+    const retry=config&&typeof config==="object"&&!Array.isArray(config)?config.taskRetry:null;
+    const count=retry&&typeof retry==="object"&&!Array.isArray(retry)&&retry.automatic===true&&typeof retry.count==="number"?retry.count:0;
+    const limit=task.policy?.maxResultRetries??2;
+    const latest=this.list<Run>("run",task.taskId).at(-1);
+    const eligible=!!run.resultValidationFailure&&run.state==="failed"&&latest?.runId===runId&&count<limit&&!['cancelled','archived','completed'].includes(task.state)&&!this.taskActionState(task.taskId).handled;
+    return {limit,count,remaining:Math.max(0,limit-count),eligible};
+  }
   allSettled(taskId: string, quietMs = 1000, rootRunId?: string) {
     finite(quietMs, 0, 300000, "quiet window");
     this.getTask(taskId);
@@ -5105,7 +5132,7 @@ export class TaskLedger {
     const pending = runs.filter(
       (r) =>
         !(r.historyOnly || r.observationOnly) &&
-        (!TERMINAL.has(r.state) || r.state === "uncertain"),
+        (!TERMINAL.has(r.state) || r.state === "uncertain" || this.resultRetryInfo(r.runId).eligible),
     );
     const unstarted = tasks.filter(
       (t) =>

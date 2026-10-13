@@ -379,7 +379,7 @@ test('signed external native result preflight requires this execution source pre
     await h.ctx.loader.create({ id: 'external-source-pack', name: pathToFileURL(resolve('examples/legacy-task-pack/plugin.mjs')).href, config: { ...packPolicy, sourceRegistry: [{ id: 'synthetic-source', root: resolve('examples/legacy-task-pack/readers/fixtures'), manifest: 'manifest.json' }] } });
     await h.ctx.loader.await();
     const keys = generateKeyPairSync('ed25519');
-    const peer = { keyId: 'preflight-key', nodeId: 'worker', publicKey: keys.publicKey, audience: 'planner', operations: ['claim', 'renew', 'submit', 'cancel', 'receipt', 'bindSession', 'markRunning', 'getRun', 'getAttempt', 'acknowledgeCancellation', 'listWork', 'taskWait'], workspaces: ['workspace'], capabilities: ['legacy.task-pack.v1'] };
+    const peer = { keyId: 'preflight-key', nodeId: 'worker', publicKey: keys.publicKey, audience: 'planner', operations: ['claim', 'renew', 'submit', 'cancel', 'receipt', 'bindSession', 'markRunning', 'getRun', 'getAttempt', 'acknowledgeCancellation', 'listWork', 'taskWait', 'taskReport'], workspaces: ['workspace'], capabilities: ['legacy.task-pack.v1'] };
     ledger.registerWorkspace('workspace', { workspaceId: 'workspace', nodeId: 'worker', path: h.dir, label: 'Native source preparation fixture', state: 'ready', createdAt: new Date().toISOString() });
     ledger.registerNode('node', { nodeId: 'worker', roles: ['executor'], capabilities: ['legacy.task-pack.v1'], models: [{ provider: 'test-offline', model: 'script', reasoningEfforts: [] }], workspaceIds: ['workspace'], enabled: true, lastSeenAt: new Date().toISOString() });
     const template = createLegacyTemplates(packPolicy).find(item => item.defaults.kind === 'game_daily');
@@ -406,9 +406,10 @@ test('signed external native result preflight requires this execution source pre
     // payload; executor preflight must additionally prove fresh source preparation.
     h.adapter.script.push({ name: 'task_settle', args: { outcome: 'success', summary: prepared.summary, reportTitle: copied.title, reportBody: copied.body, reportData: copied.data, reportSchemaId: copied.schemaId } });
     assert.equal((await worker.pollOnce(1))[0].status, 'fulfilled');
-    assert.equal(ledger.getRun(second.run.runId).state, 'uncertain');
+    assert.equal(ledger.getRun(second.run.runId).state, 'failed');
+    assert.equal(ledger.getRun(second.run.runId).resultValidationFailure.code, 'RESULT_VALIDATION');
     assert.equal(ledger.getRun(second.run.runId).validation, undefined);
-    assert.equal(ledger.history(second.task.taskId).reports.length, 0);
+    assert.equal(ledger.history(second.task.taskId).reports.filter(r=>r.kind==='result').length, 0);
     assert.equal(h.adapter.requests.length, 4);
     assert.equal(h.ledger.snapshot().tasks.length, 0);
   } finally { await worker?.dispose(); await client?.dispose(); await gateway?.dispose(); for (const store of stores) store.close(); unmountPack(); ledger.close(); await h.dispose(); }

@@ -148,6 +148,7 @@ export interface LeaseRef {
   executionId?: string;
 }
 export interface Settlement extends LeaseRef {
+  resultValidationFailure?: import("./protocol.js").ResultValidationFailure;
   preDispatchFailure?: PreDispatchFailure;
   outcome: "success" | "partial" | "failure" | "blocked" | "unknown";
   summary: string;
@@ -444,7 +445,7 @@ export interface ExecutionRequest {
 }
 export type ExecutionResult = Pick<
   Settlement,
-  "outcome" | "summary" | "report" | "preDispatchFailure"
+  "outcome" | "summary" | "report" | "preDispatchFailure" | "resultValidationFailure"
 > & { retryWitness?: SafeRetryWitness; retryAllowed?: boolean };
 /** Host-owned implementation. Must enforce declared capabilities and await abort quiescence. */
 export interface ExecutionProvider {

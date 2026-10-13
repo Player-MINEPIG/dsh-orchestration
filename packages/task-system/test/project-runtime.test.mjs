@@ -479,3 +479,37 @@ test('scheduled plans expose assigned ownership before first Run and restrict th
 test('execution detail exposes the immutable intent and only referenced context notes',async()=>{
  const h=await createNativeHarness({config:{role:'planner'}});try{const l=h.ledger;l.registerNode('input-node',worker);const t=l.createTask('input-task',{title:'Inspect input',description:'Original instructions'}).value;const note=l.appendReport('input-note',{taskId:t.taskId,title:'Provided reference',body:'Relevant context'}).value;l.appendReport('unreferenced',{taskId:t.taskId,title:'Later material',body:'Do not pretend this was sent'});const r=l.createRun('input-run',{taskId:t.taskId,route:{nodeId:'worker',provider:'worker-model',model:'small',reasoningEffort:'off',requiredCapabilities:[]},contextNotes:[note.reportId]}).value;l.updateTask('edit-current',{taskId:t.taskId,expectedRevision:l.getTask(t.taskId).revision??1,description:'Changed for future work'});const snapshot=h.ctx.taskSystem.projects.snapshot();assert.equal(snapshot.tasks.find(x=>x.id===t.taskId).description,'Changed for future work');const input=snapshot.runs.find(x=>x.id===r.runId).inputSnapshot;assert.equal(input.description,'Original instructions');assert.deepEqual(input.notes,[{id:note.reportId,title:'Provided reference',body:'Relevant context'}]);}finally{await h.dispose();}
 });
+
+
+test('same-run diagnostic notes expose evidence without accepting or changing the execution result',async()=>{
+ const h=await createNativeHarness({config:{role:'planner'}});try{const l=h.ledger;l.registerNode('diagnostic-node',worker);const t=l.createTask('diag-task',{title:'Daily',description:'Report'}).value;const r=l.createRun('diag-run',{taskId:t.taskId,route:{nodeId:'worker',provider:'worker-model',model:'small',reasoningEffort:'off',requiredCapabilities:[]}}).value;const a=l.claim('diag-claim',{runId:r.runId,nodeId:'worker',ttlMs:10000}).value.attempt;l.submit('diag-unknown',{runId:r.runId,attemptId:a.attemptId,nodeId:a.nodeId,fence:a.fence,outcome:'unknown',summary:'Native result rejected: SCHEMA_VALIDATION'});l.appendReport('diag-note',{taskId:t.taskId,runId:r.runId,kind:'note',title:'Saved evidence',body:'24 summaries; not accepted',schemaId:'execution-diagnostic.v1'});l.appendReport('unrelated-note',{taskId:t.taskId,kind:'note',title:'Other note',body:'Not this execution',schemaId:'execution-diagnostic.v1'});const v=h.ctx.taskSystem.projects.snapshot(),run=v.runs.find(x=>x.id===r.runId);assert.equal(run.diagnosticReport.body,'24 summaries; not accepted');assert.equal(run.settlementSummary,'Native result rejected: SCHEMA_VALIDATION');assert.equal(run.state,'uncertain');assert.equal(v.tasks.find(x=>x.id===t.taskId).reportId,null);assert.equal(l.snapshot().reports.filter(x=>x.kind==='result').length,0);}finally{await h.dispose();}
+});
+
+test('per-task report retry limit is revision checked and bounded',async()=>{
+ const h=await createNativeHarness({config:{role:'planner'}});
+ try{const l=h.ledger,r=h.ctx.taskSystem.projects,t=l.createTask('retry-policy',{title:'Configurable retries'}).value;
+ assert.equal(r.snapshot().tasks.find(x=>x.id===t.taskId).maxResultRetries,2);
+ r.setReportRetryLimit({commandId:'disable-retries',taskId:t.taskId,expectedRevision:t.revision,maxRetries:0});
+ assert.equal(l.getTask(t.taskId).policy.maxResultRetries,0);
+ assert.throws(()=>r.setReportRetryLimit({commandId:'stale-limit',taskId:t.taskId,expectedRevision:t.revision,maxRetries:1}),/revision|changed/i);
+ assert.throws(()=>r.setReportRetryLimit({commandId:'bad-limit',taskId:t.taskId,expectedRevision:l.getTask(t.taskId).revision,maxRetries:6}));
+ }finally{await h.dispose();}
+});
+
+test('child report rejection keeps parent waiting while its bounded retry is pending',async()=>{
+ const h=await createNativeHarness({config:{role:'planner'}});try{
+  const l=h.ledger,runtime=h.ctx.taskSystem.projects;l.registerNode('n',{...worker,maxConcurrent:2});
+  const parent=l.createTask('parent',{title:'Parent',policy:{settlementQuietMs:0}}).value;
+  const root=l.createRun('root',{taskId:parent.taskId,route:{nodeId:'worker',provider:'worker-model',model:'small',reasoningEffort:'off',requiredCapabilities:[]}}).value;
+  l.claim('parent-claim',{runId:root.runId,nodeId:'worker',ttlMs:10000});
+  const child=l.createTask('child',{title:'Child',parentTaskId:parent.taskId,parentRunId:root.runId}).value;
+  const run=l.createRun('child-run',{taskId:child.taskId,parentRunId:root.runId,route:root.route}).value;
+  const a=l.claim('child-claim',{runId:run.runId,nodeId:'worker',ttlMs:10000}).value.attempt,ref={runId:run.runId,attemptId:a.attemptId,nodeId:a.nodeId,fence:a.fence,executionId:'child-execution'};
+  l.markRunning('start',ref);l.bindSession('session',{...ref,sessionId:'child-session'});
+  l.submit('rejected',{...ref,outcome:'failure',summary:'Rejected',resultValidationFailure:{kind:'native-result-validation-failure-v1',code:'SCHEMA_VALIDATION',issues:['Missing required result'],sessionId:'child-session',quiescent:true,sessionPersisted:true}});
+  assert.equal(l.allSettled(parent.taskId,0,root.runId).settled,false);
+  l.recordNodeHeartbeat('online',{nodeId:'worker',runtimeReady:true,activeExecutions:0});
+  for(let i=0;i<30&&l.snapshot().runs.length<3;i++){runtime.tick();await new Promise(r=>setTimeout(r,5));}
+  assert.equal(l.snapshot().runs.length,3);assert.equal(l.snapshot().runs.at(-1).parentRunId,root.runId);assert.equal(l.allSettled(parent.taskId,0,root.runId).settled,false);
+ }finally{await h.dispose();}
+});

@@ -43,6 +43,8 @@ export interface TaskPolicy {
   maxDescendants?: number;
   settlementQuietMs?: number;
   maxSafeRetries?: number;
+  /** Additional executions after a rejected result; same Task/session. Defaults to two. */
+  maxResultRetries?: number;
 }
 export type Outcome = "success" | "partial" | "failure" | "blocked" | "unknown";
 export interface Source {
@@ -131,6 +133,7 @@ export interface ProjectExecutionContext {
   };
 }
 export interface Run {
+  resultValidationFailure?: import("./remote/protocol.js").ResultValidationFailure;
   runId: string;
   taskId: string;
   parentRunId?: string;
@@ -444,6 +447,7 @@ export interface NativePreDispatchFailure {
   model: string;
 }
 export interface Settlement extends LeaseRef {
+  resultValidationFailure?: import("./remote/protocol.js").ResultValidationFailure;
   /** Trusted native host attestation only. Never exposed in the model settlement tool. */
   preDispatchFailure?: NativePreDispatchFailure;
   outcome: Outcome;

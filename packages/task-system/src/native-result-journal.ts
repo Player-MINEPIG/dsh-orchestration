@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { closeSync, fsyncSync, lstatSync, mkdirSync, openSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { validateResultValidationFailure } from "./remote/protocol.js";
 import type { LeaseRef, Receipt, Run, Settlement } from "./contracts.js";
 
 /** Only the trusted native owner can attest these facts, after disposal and flush.
@@ -167,9 +168,15 @@ function validateReady(value: unknown): asserts value is NativeReadyResult {
     "executionId",
     "outcome",
     "summary",
+    "resultValidationFailure",
     "report",
     "notifications",
   ]);
+  if (settlement.resultValidationFailure !== undefined) {
+    try { validateResultValidationFailure(settlement.resultValidationFailure); } catch { fail("INVALID", "Invalid result rejection attestation"); }
+    if (settlement.outcome !== "failure" || settlement.report !== undefined || (settlement.resultValidationFailure as {sessionId:string}).sessionId !== value.sessionId)
+      fail("INVALID", "Result rejection does not match native session");
+  }
   for (const key of ["runId", "attemptId", "nodeId", "fence", "executionId"])
     if (settlement[key] !== ref[key])
       fail("INVALID", "Settlement must match the exact native lease");

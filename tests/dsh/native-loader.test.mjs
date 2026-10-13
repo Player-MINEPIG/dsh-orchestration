@@ -533,7 +533,7 @@ test('native curation is reversible, preserves history, and remains forbidden to
   finally { await executor.dispose(); }
 });
 
-test('malformed structured native result immediately records unvalidated uncertainty without persisting raw errors', async () => {
+test('malformed structured native result records retryable failure and bounded diagnostic without raw data', async () => {
   const h = await harness({ script: [{ name: 'task_settle', args: { outcome: 'success', summary: 'Claimed success', reportData: { wrongField: 'sensitive-provider-detail' }, reportSchemaId: 'strict-v1' } }] });
   try {
     h.ledger.registerNode('strict-node', { nodeId: 'local', roles: ['both'], capabilities: [], models: [{ provider: 'test-offline', model: 'script', reasoningEfforts: [] }], workspaceIds: [], enabled: true, lastSeenAt: new Date().toISOString() });
@@ -542,20 +542,22 @@ test('malformed structured native result immediately records unvalidated uncerta
     const task = h.ledger.createTask('strict-task', { title: 'Validate structured result' }).value;
     const run = h.ledger.createRun('strict-run', { taskId: task.taskId, configuration: { template, input: {} }, route: { nodeId: 'local', provider: 'test-offline', model: 'script', requiredCapabilities: [] } }).value;
     const claim = h.ledger.claim('strict-claim', { runId: run.runId, nodeId: 'local', ttlMs: 10000 }).value;
-    await assert.rejects(h.ctx.taskSystem.native.execute(claim));
+    await h.ctx.taskSystem.native.execute(claim);
     const settled = h.ledger.getRun(run.runId);
-    assert.equal(settled.state, 'uncertain');
+    assert.equal(settled.state, 'failed');
+    assert.equal(settled.resultValidationFailure.code, 'SCHEMA_VALIDATION');
     assert.equal(settled.validation, undefined);
     const history = h.ledger.history(task.taskId);
-    assert.equal(history.reports.length, 0);
+    assert.equal(history.reports.length, 1);
+    assert.equal(history.reports[0].schemaId, 'execution-diagnostic.v1');
     const settlement = history.events.find(event => event.type === 'run.settled');
-    assert.match(settlement.detail.summary, /^Native execution interrupted: [A-Z_]+$/);
+    assert.match(settlement.detail.summary, /报告校验未通过：SCHEMA_VALIDATION/);
     assert.ok(!JSON.stringify(history).includes('sensitive-provider-detail'));
     assert.equal(h.ctx.taskSystem.native.activeCount, 0);
   } finally { await h.dispose(); }
 });
 
-test('trusted semantic validation rejects shape-valid native success and records truthful uncertainty', async () => {
+test('trusted semantic validation rejects shape-valid native success with retry feedback', async () => {
   const h = await harness({ script: [{ name: 'task_settle', args: { outcome: 'success', summary: 'Claimed all items verified', reportData: { items: ['one'], count: 2 } } }] });
   let checked = 0;
   try {
@@ -569,11 +571,12 @@ test('trusted semantic validation rejects shape-valid native success and records
     const task = h.ledger.createTask('semantic-task', { title: 'Semantic native result rejection' }).value;
     const run = h.ledger.createRun('semantic-run', { taskId: task.taskId, configuration: { template, input: {} }, route: { nodeId: 'local', provider: 'test-offline', model: 'script', requiredCapabilities: [] } }).value;
     const claim = h.ledger.claim('semantic-claim', { runId: run.runId, nodeId: 'local', ttlMs: 10000 }).value;
-    await assert.rejects(h.ctx.taskSystem.native.execute(claim), { code: 'RESULT_VALIDATION' });
+    await h.ctx.taskSystem.native.execute(claim);
     assert.equal(checked, 1, 'valid JSON shape alone does not establish semantic success');
-    assert.equal(h.ledger.getRun(run.runId).state, 'uncertain');
+    assert.equal(h.ledger.getRun(run.runId).state, 'failed');
+    assert.equal(h.ledger.getRun(run.runId).resultValidationFailure.code, 'RESULT_VALIDATION');
     assert.equal(h.ledger.getRun(run.runId).validation, undefined);
-    assert.equal(h.ledger.history(task.taskId).reports.length, 0);
+    assert.equal(h.ledger.history(task.taskId).reports.filter(r=>r.kind==='result').length, 0);
     assert.equal(h.adapter.requests.length, 1);
     dispose();
   } finally { await h.dispose(); }

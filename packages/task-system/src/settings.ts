@@ -338,6 +338,7 @@ const projectInputs = {
   createScheduledPlan:scheduledPlanInput,
   controlScheduledPlan:scheduledPlanControl,
   projectSettings: null,
+  setReportRetryLimit:z.object({commandId:z.string().min(1).max(200),taskId:z.string().min(1),expectedRevision:z.number().int().positive(),maxRetries:z.number().int().min(0).max(5)}).strict(),
   projectSnapshot: null,
   projectPage: null,
   saveProjectSettings: z
@@ -590,6 +591,7 @@ export class TaskPluginSettings extends TypertRemoteService {
       ),
     );
   }
+  async setReportRetryLimit(input:unknown){return this.projectOperation(()=>this.projects().setReportRetryLimit(projectInputs.setReportRetryLimit.parse(input)));}
   async actOnProjectTask(input: unknown) {
     return this.projectOperation(
       async () =>

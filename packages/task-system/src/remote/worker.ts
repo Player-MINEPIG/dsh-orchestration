@@ -8,6 +8,7 @@ import {
   insist,
   isRecord,
   validatePreDispatchFailure,
+  validateResultValidationFailure,
 } from "./protocol.js";
 import { resolvedClaimContext } from "./context.js";
 import { authorizedWorkspace } from "./policy.js";
@@ -751,6 +752,7 @@ export class ExecutorWorker {
 }
 function validateResult(result: ExecutionResult, maxBytes: number): void {
   insist(isRecord(result), "INVALID_EXECUTION_RESULT");
+  if(result.resultValidationFailure!==undefined){validateResultValidationFailure(result.resultValidationFailure);insist(result.outcome==="failure"&&!result.report&&!result.preDispatchFailure&&!result.retryWitness,"INVALID_RESULT_VALIDATION_FAILURE");}
   if (result.preDispatchFailure !== undefined) {
     validatePreDispatchFailure(result.preDispatchFailure);
     insist(

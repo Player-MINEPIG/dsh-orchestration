@@ -35,6 +35,9 @@ export interface PlanningInput {
   expectedActionVersion?: string;
   /** Operator feedback for this retry; persisted with the decision, not the original Task intent. */
   retryPrompt?: string;
+  /** Host-owned previous Run; keeps its pinned template/window and parent binding. */
+  retrySourceRunId?: string;
+  automaticResultRetry?: boolean;
 }
 /** A consumer of the independent decision plugin. All grants are operator-owned policy. */
 export class TaskPlanner {

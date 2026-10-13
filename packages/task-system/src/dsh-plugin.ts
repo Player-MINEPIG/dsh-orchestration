@@ -1261,10 +1261,7 @@ export class NativeExecutionProvider {
         try {
           this.validateOutcome(owned, outcome);
         } catch (error) {
-          return {
-            outcome: "unknown",
-            summary: `Native result rejected: ${error instanceof TaskError && /^[A-Z_]{1,40}$/.test(error.code) ? error.code : "result-preflight-failed"}`,
-          };
+          return await this.rejectedOutcome(owned,outcome,error);
         }
         return outcome;
       } catch (error) {
@@ -1380,6 +1377,18 @@ export class NativeExecutionProvider {
       },
     });
     return outcome;
+  }
+
+  private async rejectedOutcome(owned: OwnedAttempt, outcome: OutcomeInput, error: unknown): Promise<OutcomeInput> {
+    if(!(error instanceof TaskError)||!["SCHEMA_VALIDATION","RESULT_VALIDATION"].includes(error.code))throw error;
+    await this.release(owned);
+    if(owned.aborted||!this.accepting)throw new Error("result rejection interrupted before quiescence");
+    const issues=error.validationIssues?.length?error.validationIssues:[error.message];
+    const bounded=issues.slice(0,10).map(x=>x.slice(0,1000));
+    const report={title:"报告校验未通过 · 保留本次提交",body:`本次报告未通过校验，不作为完成证明。\n\n校验问题：\n${bounded.map(x=>"- "+x).join("\n")}\n\n最后提交的说明：\n${outcome.summary}\n\n最后提交的报告正文（未验收）：\n${(outcome.report?.body??"未提交正文").slice(0,24000)}`,schemaId:"execution-diagnostic.v1"};
+    if(owned.external){if(!owned.collaboration)throw new Error("diagnostic authority unavailable");await owned.collaboration.report(`result-diagnostic:${owned.ref.attemptId}`,report);}
+    else this.owner.ledger.appendScopedReport(`result-diagnostic:${owned.ref.attemptId}`,{...owned.ref,...report});
+    return {outcome:"failure",summary:`报告校验未通过：${error.code}`,resultValidationFailure:{kind:"native-result-validation-failure-v1",code:error.code as "SCHEMA_VALIDATION"|"RESULT_VALIDATION",issues:bounded,sessionId:owned.agent?.id??owned.claim.attempt.sessionId!,quiescent:true,sessionPersisted:true}};
   }
 
   private validateOutcome(owned: OwnedAttempt, outcome: OutcomeInput): void {
@@ -1820,7 +1829,7 @@ export class NativeExecutionProvider {
       }
       if (owned.aborted || !this.accepting)
         throw new Error("attempt interrupted before result commitment");
-      const pending = owned.pending;
+      let pending = owned.pending;
       if (!pending && owned.retryObservation) {
         if (renewal) {
           clearInterval(renewal);
@@ -1846,7 +1855,7 @@ export class NativeExecutionProvider {
           };
         }
       }
-      if (pending) this.validateOutcome(owned, pending.outcome);
+      if(pending){try{this.validateOutcome(owned,pending.outcome);}catch(error){pending={...pending,outcome:await this.rejectedOutcome(owned,pending.outcome,error)};}}
       if (renewal) {
         clearInterval(renewal);
         renewal = undefined;

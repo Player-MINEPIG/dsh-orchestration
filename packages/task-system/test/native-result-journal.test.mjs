@@ -537,3 +537,10 @@ test("process exit after journal commit never schedules another recovery", () =>
     f.close();
   }
 });
+
+test('rejected report recovery preserves failure feedback and rejects mismatched sessions',()=>{
+ const f=fixture();try{const v=ready();v.settlement={...v.ref,outcome:'failure',summary:'Rejected',resultValidationFailure:{kind:'native-result-validation-failure-v1',code:'SCHEMA_VALIDATION',issues:['Result/report missing data'],sessionId:v.sessionId,quiescent:true,sessionPersisted:true}};
+ f.journal.ready(v);f.reopen();assert.deepEqual(f.journal.pending()[0].settlement,v.settlement);
+ const invalid=ready(2);invalid.settlement={...invalid.ref,...v.settlement,runId:invalid.ref.runId,attemptId:invalid.ref.attemptId,executionId:invalid.ref.executionId};assert.throws(()=>f.journal.ready(invalid));
+ }finally{f.close();}
+});

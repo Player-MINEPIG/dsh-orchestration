@@ -3309,6 +3309,7 @@ window.__ModuleLoader__.load({
       "handoffProject",
       "reviewProjectTask",
       "actOnProjectTask",
+      "setReportRetryLimit",
     ];
     const projectDescriptors = projectMethods.map((method) => ({
       id: `@dsh-task/task-system#taskPluginSettings/${method}`,
