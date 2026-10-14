@@ -28,7 +28,9 @@ test('retried child runs appear only under their exact parent run and cycles ter
  const p=page(),data=structuredClone(snapshot);data.runs.push({id:'r-parent-two',taskId:'parent',state:'running'},{id:'r-child-two',taskId:'child',parentRunId:'r-parent-two',state:'running'});
  await p.answer({value:data});await p.action('task','parent');const html=p.overlay();
  assert.equal(html.split('data-run-id="r-child"').length,2);assert.equal(html.split('data-run-id="r-child-two"').length,2);
- assert.ok(html.indexOf('data-run-id="r-child"')<html.indexOf('data-run-id="r-parent-two"'));
+ assert.ok(html.indexOf('data-run-id="r-parent-two"')<html.indexOf('data-run-id="r-child-two"'));
+ assert.ok(html.indexOf('data-run-id="r-child-two"')<html.indexOf('data-run-id="r-parent"'));
+ assert.ok(html.indexOf('data-run-id="r-parent"')<html.indexOf('data-run-id="r-child"'));
  vm.runInContext("state.records.runs.push({id:'cycle',taskId:'parent',parentRunId:'r-child',state:'running'})",p.context);await p.action('task','parent');assert.match(p.overlay(),/循环引用/);
 });
 test('executor sees central scoped progress in original panel and never offers local management actions',async()=>{

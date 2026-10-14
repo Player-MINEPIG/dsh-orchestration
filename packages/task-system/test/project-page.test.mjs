@@ -415,3 +415,28 @@ test('report retry settings save once with task revision and remain read-only on
  assert.match(p.overlay(),/自动重新派发最多 0 次/);
  const executor=service({config:{role:'executor'}});await assert.rejects(executor.setReportRetryLimit({commandId:'x',taskId:t.id,expectedRevision:7,maxRetries:2}),error=>error.details.reason==='PLANNER_REQUIRED');
 });
+
+test('needs-attention filter is visible and distinct from review',async()=>{
+ const p=page();await p.answer({value:{...snapshot,tasks:[{id:'error',title:'Broken daily',project:'unassigned',status:'error'},{id:'review',title:'Review daily',project:'unassigned',status:'review'}]}});
+ assert.match(p.content(),/data-id="error" data-status="error"[^>]*><span>需处理<\/span><b>1<\/b>/);
+ await p.action('filter','error');assert.match(p.content(),/Broken daily/);assert.doesNotMatch(p.content(),/Review daily/);
+});
+test('mobile hub retains the actual outer scroll container across heartbeat, errors and back navigation',async()=>{
+ const p=page();p.context.innerWidth=393;await p.answer({value:snapshot});let hub={scrollTop:430,scrollLeft:0},inner={scrollTop:0,scrollLeft:0},html=p.content();
+ p.context.document.querySelector=selector=>selector==='#app .hub-layout'?hub:selector==='#app .page, #app .hub-main'?inner:null;
+ Object.defineProperty(p.elements.get('app'),'innerHTML',{get:()=>html,set:value=>{html=value;hub={scrollTop:0,scrollLeft:0};inner={scrollTop:0,scrollLeft:0};}});
+ let pending=p.startPoll();await p.answer({value:{...snapshot,nodes:[{observedAt:1}]}});await pending;assert.equal(hub.scrollTop,430);assert.equal(inner.scrollTop,0);
+ pending=p.startPoll();await p.answer({error:'temporary failure'});await pending;assert.equal(hub.scrollTop,430);
+ pending=p.startRetry();await p.answer({value:{...snapshot,nodes:[{observedAt:2}]}});await pending;assert.equal(hub.scrollTop,430);
+ await p.action('projects');assert.equal(hub.scrollTop,0);await p.action('nav-back');assert.equal(hub.scrollTop,430);
+});
+test('history is bounded, keeps selected page through polling, and never renders array indexes as relations',async()=>{
+ const p=page(),t={id:'daily',title:'Daily',project:'unassigned',status:'review',runId:'r12'},runs=Array.from({length:12},(_,i)=>({id:'r'+(i+1),taskId:t.id,state:'succeeded',node:'PC_AU',createdAt:new Date(2026,9,i+1).toISOString()}));
+ const data={...snapshot,tasks:[t],runs};await p.answer({value:data});await p.action('task',t.id);
+ const history=()=>p.overlay().split('<h3>执行历史</h3>')[1].split('<h3>关联内容</h3>')[0];
+ assert.equal((history().match(/data-action="schedule-run"/g)||[]).length,5);assert.match(history(),/第 12 次执行/);assert.doesNotMatch(history(),/第 7 次执行|activity-relation/);
+ await p.action('history-older',t.id);assert.match(history(),/第 7 次执行/);assert.doesNotMatch(history(),/第 12 次执行/);
+ const pending=p.startPoll();await p.answer({value:{...data,nodes:[{observedAt:2}]}});await pending;assert.match(history(),/第 7 次执行/);
+ await p.action('history-older',t.id);assert.equal((history().match(/data-action="schedule-run"/g)||[]).length,2);assert.match(history(),/data-action="history-older"[^>]*disabled/);
+ await p.action('history-newer',t.id);assert.match(history(),/第 7 次执行/);
+});
