@@ -3,13 +3,13 @@ import assert from 'node:assert/strict'
 import { createNativeHarness } from '../../../tests/dsh/native-harness.mjs'
 
 // Completely scripted provider; no external model, network, keys or profile edits.
-test('native Task execution resumes the same persisted session on the next run',async()=>{
+for (const kind of ['ad_hoc', 'scheduled']) test(`native ${kind} session lifetime follows task versus scheduled occurrence`,async()=>{
   const h=await createNativeHarness({script:[{name:'task_settle',args:{outcome:'success',summary:'first fixture'}},{name:'task_settle',args:{outcome:'success',summary:'second fixture'}}]})
   try {
     const l=h.ledger
     l.registerWorkspace('workspace',{workspaceId:'default',nodeId:'local',path:h.dir,label:'fixture',state:'ready',createdAt:new Date().toISOString()})
     l.registerNode('node',{nodeId:'local',roles:['both'],models:[{provider:'test-offline',model:'script',reasoningEfforts:[]}],capabilities:[],workspaceIds:['default'],defaultWorkspaceId:'default',enabled:true,lastSeenAt:new Date().toISOString()})
-    const task=l.createTask('task',{title:'Two run fixture'}).value
+    const task=l.createTask('task',{title:'Two run fixture',kind}).value
     const sessions=[]
     for (const i of [1,2]) {
       const run=l.createRun(`run-${i}`,{taskId:task.taskId,route:{nodeId:'local',provider:'test-offline',model:'script',requiredCapabilities:[]}}).value
@@ -17,8 +17,8 @@ test('native Task execution resumes the same persisted session on the next run',
       const result=await h.ctx.taskSystem.native.execute(claim)
       assert.equal(result.run.state,'succeeded');sessions.push(result.sessionId)
     }
-    assert.equal(sessions[0],sessions[1]);assert.equal(h.adapter.requests.length,2)
-    assert.match(JSON.stringify(h.adapter.requests[1].messages),/newly assigned run/)
+    if(kind==='scheduled')assert.notEqual(sessions[0],sessions[1]);else assert.equal(sessions[0],sessions[1]);assert.equal(h.adapter.requests.length,2)
+    if(kind==='ad_hoc')assert.match(JSON.stringify(h.adapter.requests[1].messages),/newly assigned run/);else assert.doesNotMatch(JSON.stringify(h.adapter.requests[1].messages),/first fixture/)
     assert.equal(l.history(task.taskId).runs.length,2)
   } finally {await h.dispose()}
 })
@@ -68,7 +68,7 @@ for (const recover of [false, true]) test(`report rejection resumes one session 
   l.registerNode('n',{nodeId:'local',roles:['both'],models:[{provider:'test-offline',model:'script',reasoningEfforts:[]}],capabilities:[],workspaceIds:['default'],defaultWorkspaceId:'default',enabled:true,lastSeenAt:new Date().toISOString()});
   l.recordNodeHeartbeat('online',{nodeId:'local',runtimeReady:true,activeExecutions:0});
   const template={"templateId": "checked", "version": 1, "name": "checked", "description": "", "inputSchema": {"type": "object"}, "defaults": {}, "resultContract": {"type": "object", "required": ["report"], "properties": {"report": {"type": "object", "required": ["data"], "properties": {"data": {"type": "object", "required": ["verified"], "properties": {"verified": {"const": true}}}}}}}};
-  const task=l.createTask('t',{title:'Daily',description:'Original immutable instruction'}).value;
+  const task=l.createTask('t',{title:'Daily',kind:'scheduled',description:'Original immutable instruction'}).value;
   const input={windowStart:'2026-10-11T00:00:00Z',windowEnd:'2026-10-12T00:00:00Z'};
   let run=l.createRun('r',{taskId:task.taskId,configuration:{template,input},route:{nodeId:'local',provider:'test-offline',model:'script',requiredCapabilities:[]}}).value;
   const sessions=[];

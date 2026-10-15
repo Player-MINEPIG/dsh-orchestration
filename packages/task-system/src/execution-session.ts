@@ -15,7 +15,7 @@ export async function chooseExecutionSession(input: {
     task: Claim["task"];
     run: Pick<
       Claim["run"],
-      "runId" | "route" | "retry" | "workspaceConstraint"
+      "runId" | "route" | "retry" | "workspaceConstraint" | "configuration"
     >;
     attempt: Pick<Claim["attempt"], "attemptId" | "nodeId">;
   };
@@ -45,6 +45,11 @@ export async function chooseExecutionSession(input: {
       ...(workspaceId ? { workspaceId } : {}),
       session: { mode: "reuse", sessionId: claim.run.retry.sessionId },
     };
+  const config = claim.run.configuration && typeof claim.run.configuration === "object" && !Array.isArray(claim.run.configuration)
+    ? claim.run.configuration as Record<string, unknown> : {};
+  // Each scheduled occurrence has a new evidence window. Explicit redispatch and
+  // transport recovery continue the existing session, retaining previous results.
+  const independentScheduleRun = claim.task.kind === "scheduled" && !config.taskRetry && !config.continuationOf;
   // Older text-only profiles have no workspace grant. Preserve that mode without
   // inventing a directory or offering a decision that could grant filesystem access.
   if (!workspaceId) {
@@ -64,7 +69,7 @@ export async function chooseExecutionSession(input: {
       );
     return {
       expectedTaskSessionId: context.taskSessionId ?? null,
-      session: current
+      session: current && !independentScheduleRun
         ? { mode: "reuse", sessionId: current.sessionId }
         : { mode: "new" },
     };
@@ -119,7 +124,9 @@ export async function chooseExecutionSession(input: {
   const snapshot = buildSnapshot();
   // An authority-owned binding is already a decision. Validate its identity,
   // workspace and current grants, rather than asking a model to choose again.
-  const selection = snapshot.taskSessionId
+  const selection = independentScheduleRun
+    ? defaultTaskSessionSelection({ ...snapshot, taskSessionId: undefined }, "independent-scheduled-run")
+    : snapshot.taskSessionId
     ? defaultTaskSessionSelection(snapshot, "existing-task-binding")
     : input.decisions
     ? await (

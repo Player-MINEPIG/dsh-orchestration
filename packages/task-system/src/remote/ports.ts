@@ -81,6 +81,7 @@ export interface TaskPolicy {
 }
 export interface Task {
   taskId: string;
+  kind?: string;
   title: string;
   description: string;
   workspaceId?: string;
