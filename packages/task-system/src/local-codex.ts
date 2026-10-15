@@ -25,7 +25,12 @@ export function localCodexPermission(mode: Mode) {
   if (!["read-only", "workspace-write", "danger-full-access"].includes(mode)) throw new Error("Unknown parent permission mode");
   return mode === "read-only"
     ? { sandbox: "read-only", approval: "never", reviewer: "user", label: "只读（继承父会话）" }
-    : { sandbox: "workspace-write", approval: "on-request", reviewer: "auto_review", label: "工作区写入 · Codex 自动审批" };
+    : { sandbox: "workspace-write", approval: "on-request", reviewer: "auto_review", label: "Codex 自动审批 · 工作区写入沙箱" };
+}
+export function localCodexReasoningEffort(requested: string | undefined, fallback: string) {
+  const value = requested ?? fallback;
+  if (!/^[a-z][a-z0-9_-]{0,31}$/.test(value)) throw new Error("Invalid Codex reasoningEffort; use an effort name supported by the configured model");
+  return value;
 }
 export interface LocalCodexTask {
   id: string; sessionId: string; requestId: string; title: string; description: string;
@@ -88,7 +93,8 @@ export class LocalCodexStore {
     return this.list(sessionId).map(task => ({
       id: task.id, title: task.title, description: task.description, status: task.status, direct: true,
       stateLabel: ({ queued: "等待开始", running: "执行中", review: "待确认", done: "已完成", error: "需处理", cancelled: "已取消", unknown: "状态待核实" })[task.status],
-      source: "local-codex", node: "本机 · Codex Desktop", model: task.model,
+      source: "local-codex", node: "本机 · Codex Desktop", model: task.model, reasoningEffort: task.reasoningEffort,
+      parentMode: task.parentMode, permission: localCodexPermission(task.parentMode),
       time: task.createdAt, report: task.report, permissionLabel: localCodexPermission(task.parentMode).label,
       jobId: task.jobId, threadId: task.threadId, cwd: task.cwd,
       acceptance: task.acceptance,
@@ -134,7 +140,7 @@ export class LocalCodexService extends Service {
       this.store.db.close();
     });
   }
-  delegate(agent: Agent, input: { requestId: string; title: string; prompt: string }, signal: AbortSignal) {
+  delegate(agent: Agent, input: { requestId: string; title: string; prompt: string; reasoningEffort?: string }, signal: AbortSignal) {
     signal.throwIfAborted();
     if (!input.requestId.trim() || input.requestId.length > 200 || !input.title.trim() || input.title.length > 240 || !input.prompt.trim() || input.prompt.length > 100000) throw new Error("Provide a commandId, title and bounded full task description");
     if (this.closing) throw new Error("Local Codex service is stopping");
@@ -146,13 +152,13 @@ export class LocalCodexService extends Service {
     localCodexPermission(policy.mode);
     const prior = this.store.list(String(agent.id)).find(task => task.requestId === input.requestId);
     if (prior) {
-      if (prior.title !== input.title || prior.description !== input.prompt || prior.cwd !== cwd) throw new Error("requestId already used with different instructions");
+      if (prior.title !== input.title || prior.description !== input.prompt || prior.cwd !== cwd || (input.reasoningEffort !== undefined && prior.reasoningEffort !== input.reasoningEffort)) throw new Error("requestId already used with different instructions or reasoningEffort");
       return this.receipt(prior);
     }
     if (this.active.size >= this.config.maxConcurrent) throw new Error("Local Codex capacity reached; wait for an existing job before retrying");
     const task: LocalCodexTask = {
       id: `local-codex-${randomUUID()}`, sessionId: String(agent.id), requestId: input.requestId,
-      title: input.title, description: input.prompt, cwd, model: this.config.model, reasoningEffort: this.config.reasoningEffort,
+      title: input.title, description: input.prompt, cwd, model: this.config.model, reasoningEffort: localCodexReasoningEffort(input.reasoningEffort, this.config.reasoningEffort),
       parentMode: policy.mode, cliPath: findDesktopCodex(this.config.cliPath), status: "queued",
       createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
     };
@@ -170,7 +176,8 @@ export class LocalCodexService extends Service {
     } catch (error) { task.status = "error"; task.report = String(error); this.store.save(task); throw error; }
   }
   private receipt(task: LocalCodexTask) {
-    return { taskId: task.id, jobId: task.jobId, status: task.status, permission: localCodexPermission(task.parentMode),
+    return { taskId: task.id, jobId: task.jobId, status: task.status, model: task.model, reasoningEffort: task.reasoningEffort,
+      parentMode: task.parentMode, permission: localCodexPermission(task.parentMode),
       localOnly: true, message: "已记录到当前会话任务面板。用 codex_status 查看持久结果，用 job_output 等待回传；核查文件或测试后，用 task_accept 提交验收依据并标记已完成。不要重复派发。" };
   }
   private async execute(task: LocalCodexTask, signal: AbortSignal) {

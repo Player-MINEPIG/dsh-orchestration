@@ -28,6 +28,8 @@ Each execution gets an isolated temporary Codex home. Only authentication is cop
 
 In an ordinary session, call `task_delegate` with a stable `commandId`, a `title` and the full task prompt in `description`; `backend: "codex"` is optional. The same ID and identical instructions return the existing task instead of running it twice. Local delegation rejects ledger-only `route`, `policy`, `configuration` and `display` options. Existing owned-task delegation still uses its authoritative ledger, and cannot bypass it by selecting this backend.
 
+`reasoningEffort` optionally overrides the host's configured effort for one local task. For the default model, supported values include `low`, `medium`, `high`, `xhigh`, `max` and `ultra`; other models must support the requested value. Omission uses the host default (`high` unless configured otherwise). Receipts and `codex_status` return the selected model, effort, original parent mode and separate sandbox/approval/reviewer fields. Retrying an existing ID cannot change its effort; omitting the override on a retry returns the original selection even if the host default has changed. Owned ledger tasks continue to use `route.reasoningEffort`.
+
 Use `job_output` to collect the background result, `codex_status` to read persistent local results, and the standard DSH job cancellation tool to stop running work. A successful exit alone does not establish success: a completed Codex turn and final report are also required. The session's **任务** tab shows the result as **待确认**.
 
 After independently checking the files, tests or other acceptance criteria, the original parent session can call `task_accept({taskId, evidence})`. The verification evidence is persisted and displayed in the task details, and the task becomes **已完成**. Other sessions cannot accept it; running, failed, cancelled and unknown tasks cannot be accepted. Repeating the same acceptance is idempotent. This records the parent's verification; it is not an automated proof that the evidence is correct.
@@ -41,6 +43,8 @@ After independently checking the files, tests or other acceptance criteria, the 
 | danger-full-access | workspace-write | on-request | auto_review |
 
 Unknown parent modes fail closed. Writable parents use Codex's automatic approval reviewer, including workspace-write parents. The child starts with workspace-write rather than unrestricted access; escalations are decided by Codex auto-review. This maps DSH's three permission modes, not arbitrary extra restrictions added by third-party parent plugins. Windows uses Codex's unelevated sandbox. No dangerous-bypass flag is used.
+
+Sandbox scope and approval mode are independent: `sandbox: workspace-write` with `approval: on-request` and `reviewer: auto_review` **is automatic approval**. A full-access parent intentionally uses this same combination; it does not cause unrestricted child execution. The tool description and permission label state both dimensions explicitly.
 
 Tasks, reports and acceptance records live in a separate SQLite database, scoped to the original parent session. They never enter the scheduler ledger, dispatch outbox or central task protocol. Reopening the panel or starting a new parent turn retains them. On restart, unfinished tasks become **状态待核实** and are not automatically relaunched. Completed results and acceptance survive restart. CLI profile/thread data is temporary, so this adapter does not support child continuation/resume.
 

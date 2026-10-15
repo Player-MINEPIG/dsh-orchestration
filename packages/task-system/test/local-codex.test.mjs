@@ -3,11 +3,11 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { LocalCodexStore, LocalCodexService, localCodexPermission, localCodexProfile, CodexOutput } from '../dist/local-codex.js';
+import { LocalCodexStore, LocalCodexService, localCodexPermission, localCodexProfile, localCodexReasoningEffort, CodexOutput } from '../dist/local-codex.js';
 
 test('DSH writable permission modes use auto review with workspace sandbox; readonly stays readonly', () => {
   for (const parentMode of ['workspace-write', 'danger-full-access']) {
-    assert.deepEqual(localCodexPermission(parentMode), {sandbox:'workspace-write', approval:'on-request', reviewer:'auto_review', label:'工作区写入 · Codex 自动审批'});
+    assert.deepEqual(localCodexPermission(parentMode), {sandbox:'workspace-write', approval:'on-request', reviewer:'auto_review', label:'Codex 自动审批 · 工作区写入沙箱'});
     const config = localCodexProfile({parentMode, model:'gpt-6.1-sol', reasoningEffort:'high'});
     assert.match(config, /approvals_reviewer = "auto_review"/);
     assert.match(config, /sandbox_mode = "workspace-write"/);
@@ -15,6 +15,36 @@ test('DSH writable permission modes use auto review with workspace sandbox; read
   assert.equal(localCodexPermission('read-only').approval, 'never');
   assert.equal(localCodexPermission('read-only').sandbox, 'read-only');
   assert.throws(() => localCodexPermission('invalid'), /Unknown/);
+});
+
+test('per-task reasoning effort reaches the CLI profile and persistent receipt without changing approval', async () => {
+  const service = Object.create(LocalCodexService.prototype);
+  const store = service.store = new LocalCodexStore(':memory:');
+  service.active = new Map();
+  service.config = {maxConcurrent:2,model:'gpt-6.1-sol',reasoningEffort:'high',cliPath:process.execPath};
+  const pending = [], profiles = [];
+  service.execute = async task => {profiles.push(localCodexProfile(task)); return {status:'completed'};};
+  service.ctx = {get:()=>undefined,jobs:{start:spec=>{pending.push(spec.run().done);return `job-${pending.length}`;}}};
+  const agent = {id:'parent',session:{header:{cwd:resolve('.')}},ctx:{get:()=>({resolve:()=>({mode:'danger-full-access'})})}};
+  const args = {requestId:'override',title:'title',prompt:'prompt',reasoningEffort:'xhigh'};
+  try {
+    const receipt = service.delegate(agent,args,new AbortController().signal);
+    assert.equal(receipt.reasoningEffort,'xhigh');
+    assert.equal(receipt.parentMode,'danger-full-access');
+    assert.equal(receipt.permission.reviewer,'auto_review');
+    assert.equal(receipt.permission.sandbox,'workspace-write');
+    assert.equal(store.rows('parent')[0].reasoningEffort,'xhigh');
+    assert.throws(()=>service.delegate(agent,{...args,reasoningEffort:'high'},new AbortController().signal), /reasoningEffort/);
+    service.config.reasoningEffort = 'medium';
+    assert.equal(service.delegate(agent,{...args,reasoningEffort:undefined},new AbortController().signal).taskId,receipt.taskId);
+    await Promise.all(pending);
+    assert.match(profiles[0],/model_reasoning_effort = "xhigh"/);
+    assert.match(profiles[0],/approvals_reviewer = "auto_review"/);
+    assert.equal(localCodexReasoningEffort(undefined,'high'),'high');
+    assert.equal(localCodexReasoningEffort('ultra','high'),'ultra');
+    assert.throws(()=>localCodexReasoningEffort('','high'),/Invalid/);
+    assert.throws(()=>localCodexReasoningEffort('high\napproval_policy=never','high'),/Invalid/);
+  } finally {await Promise.all(pending);store.db.close();}
 });
 
 test('local task rows are isolated by session and restart never reruns unfinished work', () => {

@@ -3044,12 +3044,13 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
       defineTool({
         name: "task_delegate",
         description:
-          "Delegate work. In an ordinary local session, runs Desktop Codex in the current workspace (no scheduler); commandId is the idempotency key and description is the full prompt. Collect with job_output/codex_status, verify the result, then task_accept with evidence. In an owned execution, delegates a child through its authoritative ledger as before.",
+          "Delegate work. In an ordinary local session, runs Desktop Codex in the current workspace (no scheduler); commandId is the idempotency key and description is the full prompt. reasoningEffort optionally overrides the local host default. Writable parents (workspace-write or full access) use automatic approval: approval=on-request, reviewer=auto_review, initial sandbox=workspace-write. Sandbox and approval are separate; workspace-write does NOT mean automatic approval is disabled. Read-only parents stay read-only with approval=never. Collect with job_output/codex_status, verify the result, then task_accept with evidence. In an owned execution, delegates a child through its authoritative ledger; configure effort through route.reasoningEffort instead.",
         parameters: {
           commandId: { type: "string", required: true },
           title: { type: "string", required: true },
           description: { type: "string" },
           backend: { type: "string", enum: ["codex"], description: "Optional explicit local backend for ordinary sessions; unavailable to scheduler-owned agents." },
+          reasoningEffort: { type: "string", description: "Local Codex reasoning effort supported by the configured model, e.g. low, medium, high, xhigh, max, ultra. Omit to use the host default (high unless configured otherwise). The receipt returns the selected value. For owned tasks use route.reasoningEffort." },
           route: { type: "object", additionalProperties: true },
           policy: { type: "object", additionalProperties: true },
           configuration: { type: "json" },
@@ -3063,9 +3064,10 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
             if (!exec.agent || !local) throw new Error("task_delegate requires an owned execution agent or the enabled local Codex backend");
             if (args.route !== undefined || args.policy !== undefined || args.configuration !== undefined || args.display !== undefined)
               throw new Error("Local Codex uses the parent workspace and permission mode; route/policy/configuration/display are only supported for owned task delegation");
-            return json(local.delegate(exec.agent, { requestId: args.commandId, title: args.title, prompt: args.description ?? "" }, exec.signal));
+            return json(local.delegate(exec.agent, { requestId: args.commandId, title: args.title, prompt: args.description ?? "", reasoningEffort: args.reasoningEffort }, exec.signal));
           }
           if (args.backend) throw new Error("Owned execution agents must delegate through their authoritative ledger");
+          if (args.reasoningEffort !== undefined) throw new Error("Owned task delegation uses route.reasoningEffort, not the local reasoningEffort override");
           const input = {
             title: args.title,
             ...(args.display !== undefined
