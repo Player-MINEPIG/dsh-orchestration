@@ -3533,7 +3533,7 @@ window.__ModuleLoader__.load({
       return feedback;
     }
 
-    const sessionTaskLabels = { all: "全部", running: "执行中", queued: "等待开始", review: "待确认", error: "需处理", done: "已完成", handled: "已处理", cancelled: "已取消", cancelling: "取消中", archived: "已归档" };
+    const sessionTaskLabels = { all: "全部", running: "执行中", queued: "等待开始", review: "待确认", error: "需处理", done: "已完成", handled: "已处理", cancelled: "已取消", cancelling: "取消中", archived: "已归档", unknown: "状态待核实" };
     class SessionTaskMonitor {
       constructor(invoke, sessionId) {
         this.invoke = invoke; this.sessionId = sessionId; this.listeners = new Set();
@@ -3577,13 +3577,14 @@ window.__ModuleLoader__.load({
         error && h("p", { role: "alert", className: "stm-notice" }, error, value ? " 下方保留上次成功读取的数据。" : ""),
         value?.pendingDispatches > 0 && h("p", { className: "stm-notice" }, `${value.pendingDispatches} 项派发请求等待中央确认，尚未计入任务总数。`),
         value?.unavailableTasks > 0 && h("p", { className: "stm-notice" }, `${value.unavailableTasks} 项已派发任务暂未出现在中央快照中，尚未计入下方分类。`),
+        value?.externalDispatchCount > 0 && h("p", { className: "stm-notice" }, `含 ${value.externalDispatchCount} 次通过 shell 启动的 Codex CLI 调用，按启动次数计数（含续跑）。这些调用没有进入任务账本；进程结束归入“已处理”，不代表任务已验收。`),
         h("div", { className: "stm-filters", role: "group", "aria-label": "按任务状态筛选" }, Object.entries(sessionTaskLabels).filter(([key]) => ["all", "running", "queued", "review", "error", "done"].includes(key) || counts[key] || filter === key).map(([key, label]) => h("button", { key, type: "button", "aria-pressed": filter === key, "data-status": key, onClick: () => setFilter(key) }, label, h("b", null, counts[key] ?? 0)))),
         h("input", { type: "search", "aria-label": "搜索会话任务", placeholder: "搜索任务或执行端", value: search, onChange: event => setSearch(event.target.value) }),
         h("div", { className: "stm-list", "aria-busy": loading }, visible.map(task => {
           const runs = (value?.runs ?? []).filter(run => run.taskId === task.id).reverse();
           return h("details", { key: task.id }, h("summary", null, h("div", { className: "stm-row" }, h("span", { className: "stm-title" }, task.title), h("span", { className: "stm-status", "data-status": task.status }, task.stateLabel || sessionTaskLabels[task.status] || task.status)), h("div", { className: "stm-muted" }, `${task.direct ? "直接派发" : "后续委派"} · ${task.node || "等待分配执行端"}${task.model ? " · " + task.model : ""} · 展开详情`)),
-            h("div", { className: "stm-body" }, h("h3", null, "任务要求"), h("div", { className: "stm-text" }, task.description || "未提供任务要求"), h("h3", null, "最新结果"), h("div", { className: "stm-text" }, task.report || "尚无结果报告"),
-              h("h3", null, `执行记录 · ${runs.length} 次`), h("ul", null, runs.slice(0, 5).map(run => h("li", { key: run.id }, `${runLabel(run)} · ${run.node || "待分配"} · ${new Date(run.createdAt).toLocaleString()}`))),
+            h("div", { className: "stm-body" }, h("h3", null, task.source === "codex-cli" ? "调用来源" : "任务要求"), h("div", { className: "stm-text" }, task.description || "未提供任务要求"), h("h3", null, task.source === "codex-cli" ? "进程状态" : "最新结果"), h("div", { className: "stm-text" }, task.report || "尚无结果报告"),
+              task.source === "codex-cli" ? h("p", { className: "stm-muted" }, `启动于 ${new Date(task.time).toLocaleString()} · 完整调用与输出可在本会话轨迹中查看。`) : h(React.Fragment, null, h("h3", null, `执行记录 · ${runs.length} 次`), h("ul", null, runs.slice(0, 5).map(run => h("li", { key: run.id }, `${runLabel(run)} · ${run.node || "待分配"} · ${new Date(run.createdAt).toLocaleString()}`)))),
               runs.length > 5 && h("p", { className: "stm-muted" }, "此处显示最近 5 次执行；完整历史可在总任务面板查看。")));
         })),
         !visible.length && h("div", { className: "stm-empty" }, !value ? (loading ? "正在读取任务…" : "读取失败，请重试") : tasks.length ? "当前筛选没有任务" : "当前会话尚未派发任务"),

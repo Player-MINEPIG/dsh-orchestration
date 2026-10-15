@@ -3,6 +3,7 @@ import { SessionId } from "@deepseek-ai/dsh-session";
 import type { SessionPersistence } from "@deepseek-ai/dsh-session-persistence";
 import type { TaskLedger } from "./ledger.js";
 import type { ProjectRuntime } from "./project-runtime.js";
+import { sessionCodexJobs, type CodexJobRecord, codexJobRows, type SessionJobRegistry } from "./session-codex-jobs.js";
 
 const record = (value: unknown): Record<string, unknown> | undefined =>
   value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
@@ -37,22 +38,26 @@ export function dispatchedTaskIds(events: readonly SessionEvent[]): string[] {
   return [...ids];
 }
 
-/** Cache only identifiers, never conversation text; bound retained sessions. */
+/** Cache dispatch metadata, never raw commands or conversation text; bound retained sessions. */
 export class SessionDispatchIndex {
-  private cache = new Map<string, { revision: unknown; identity: symbol; ids: string[] }>();
+  private cache = new Map<string, { revision: unknown; identity: symbol; ids: string[]; codexJobs: CodexJobRecord[] }>();
   async read(persistence: SessionPersistence, sessionId: string) {
+    return (await this.readHistory(persistence, sessionId)).ids;
+  }
+  async readHistory(persistence: SessionPersistence, sessionId: string) {
     const id = SessionId(sessionId), stat = await persistence.stat(id);
-    if (!stat) return [];
+    if (!stat) return { ids: [], codexJobs: [] };
     const prior = this.cache.get(sessionId);
-    if (prior?.identity === persistence.identity && prior.revision === stat.revision) return prior.ids;
+    if (prior?.identity === persistence.identity && prior.revision === stat.revision) return prior;
     const handle = await persistence.open(id, "read");
     try {
       const { events } = await handle.read(handle.inheritedEventCount);
       const ids = dispatchedTaskIds(events);
+      const entry = { revision: stat.revision, identity: persistence.identity, ids, codexJobs: sessionCodexJobs(events) };
       this.cache.delete(sessionId);
-      this.cache.set(sessionId, { revision: stat.revision, identity: persistence.identity, ids });
+      this.cache.set(sessionId, entry);
       if (this.cache.size > 32) this.cache.delete(this.cache.keys().next().value!);
-      return ids;
+      return entry;
     } finally { await handle.close(); }
   }
 }
@@ -74,7 +79,7 @@ export function sessionDispatchOperations(ledger: TaskLedger, sessionId: string)
 }
 
 /** Reuse the task center's public rows and classification, scoped before returning to the browser. */
-export function sessionTaskSnapshot(snapshot: unknown, roots: readonly string[], sessionId: string, pending = 0) {
+export function sessionTaskSnapshot(snapshot: unknown, roots: readonly string[], sessionId: string, pending = 0, codexJobs: readonly CodexJobRecord[] = [], registry?: SessionJobRegistry) {
   const candidate = record(snapshot);
   if (!candidate || !Array.isArray(candidate.tasks) || !Array.isArray(candidate.runs)) throw new Error("Invalid task snapshot");
   const view = snapshot as ReturnType<ProjectRuntime["snapshot"]>;
@@ -86,17 +91,19 @@ export function sessionTaskSnapshot(snapshot: unknown, roots: readonly string[],
       ids.add(task.id); changed = true;
     }
   }
-  const tasks = view.tasks.filter(task => ids.has(task.id)).map(task => ({
+  const ledgerTasks = view.tasks.filter(task => ids.has(task.id)).map(task => ({
     id: task.id, title: task.title, description: task.description, status: task.status,
     stateLabel: task.stateLabel, parentTaskId: task.parentTaskId, direct: direct.has(task.id),
     node: task.node, model: task.model, time: task.time, report: task.report,
     runId: task.runId, runState: task.runState, reviewStatus: task.reviewStatus,
   }));
+  const tasks = [...ledgerTasks, ...codexJobRows(codexJobs, sessionId, registry)];
   const visible = new Set(tasks.map(task => task.id));
   const counts: Record<string, number> = { all: tasks.length };
   for (const task of tasks) counts[task.status] = (counts[task.status] ?? 0) + 1;
   return {
     sessionId, tasks, counts, directCount: tasks.filter(task => task.direct).length,
+    externalDispatchCount: codexJobs.length,
     pendingDispatches: pending, unavailableTasks: roots.filter(id => !visible.has(id)).length,
     sampledAt: view.sampledAt ?? view.viewContext?.observedAt ?? new Date().toISOString(),
     runs: view.runs.filter(run => visible.has(run.taskId)).map(run => ({
