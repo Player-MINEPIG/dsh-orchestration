@@ -36,7 +36,7 @@ export interface LocalCodexTask {
   id: string; sessionId: string; requestId: string; title: string; description: string;
   cwd: string; model: string; reasoningEffort: string; parentMode: Mode;
   status: "queued" | "running" | "review" | "done" | "error" | "cancelled" | "unknown";
-  createdAt: string; updatedAt: string; jobId?: string; report?: string; threadId?: string;
+  createdAt: string; updatedAt: string; returnedAt?: string; jobId?: string; report?: string; threadId?: string;
   cliPath: string; exitCode?: number | null;
   acceptance?: { sessionId: string; evidence: string; acceptedAt: string };
 }
@@ -72,6 +72,7 @@ export class LocalCodexStore {
   }
   save(task: LocalCodexTask) {
     task.updatedAt = new Date().toISOString();
+    if (["review", "error", "cancelled"].includes(task.status)) task.returnedAt ??= task.updatedAt;
     this.db.prepare("INSERT INTO session_codex_tasks VALUES (?,?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data")
       .run(task.id, task.sessionId, task.requestId, JSON.stringify(task));
   }
@@ -84,6 +85,7 @@ export class LocalCodexStore {
     if (!task) throw new Error("Local task not found in this parent session");
     if (task.status === "done" && task.acceptance?.evidence === evidence) return task;
     if (task.status !== "review") throw new Error("Only a returned result awaiting review can be accepted");
+    task.returnedAt ??= task.updatedAt; // Preserve the pre-acceptance result time for older records.
     task.status = "done";
     task.acceptance = { sessionId, evidence, acceptedAt: new Date().toISOString() };
     this.save(task);
@@ -95,7 +97,9 @@ export class LocalCodexStore {
       stateLabel: ({ queued: "等待开始", running: "执行中", review: "待确认", done: "已完成", error: "需处理", cancelled: "已取消", unknown: "状态待核实" })[task.status],
       source: "local-codex", node: "本机 · Codex Desktop", model: task.model, reasoningEffort: task.reasoningEffort,
       parentMode: task.parentMode, permission: localCodexPermission(task.parentMode),
-      time: task.createdAt, report: task.report, permissionLabel: localCodexPermission(task.parentMode).label,
+      time: task.createdAt,
+      returnedAt: task.returnedAt ?? (["review", "done", "error", "cancelled"].includes(task.status) ? task.updatedAt : undefined),
+      report: task.report, permissionLabel: localCodexPermission(task.parentMode).label,
       jobId: task.jobId, threadId: task.threadId, cwd: task.cwd,
       acceptance: task.acceptance,
     }));

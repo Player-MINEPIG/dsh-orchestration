@@ -10,6 +10,7 @@ export interface CodexJobRecord {
   seq: number;
   startedAt: number;
   acknowledgedAt: number;
+  returnedAt?: number;
   commandHash: string;
   state?: JobState;
   exitCode?: number;
@@ -17,7 +18,7 @@ export interface CodexJobRecord {
 /** Minimal optional ctx.jobs contract; never consume output or control a job. */
 export interface SessionJobRegistry {
   list(sessionId: string): readonly {
-    id: string; owner?: string; label: string; startedAt: number;
+    id: string; owner?: string; label: string; startedAt: number; finishedAt?: number;
     status: JobState; detail?: string;
   }[];
 }
@@ -37,13 +38,14 @@ function isCodexExec(command: string) {
   return false;
 }
 
-function updateState(job: CodexJobRecord, text: string) {
+function updateState(job: CodexJobRecord, text: string, time: number) {
   const matches = [...text.matchAll(/\[status: (running|stopping|completed|killed|failed)(?:, ([^\]\r\n]*))?\]/g)];
   const match = matches.at(-1);
   if (!match) return;
   // A replayed running observation cannot undo a terminal notice.
   if (["completed", "killed", "failed"].includes(job.state ?? "")) return;
   job.state = match[1] as JobState;
+  if (["completed", "killed", "failed"].includes(job.state) && Number.isFinite(time)) job.returnedAt = time;
   const code = match[2]?.match(/\bexit code: (-?\d+)\b/);
   if (code) job.exitCode = Number(code[1]);
 }
@@ -52,11 +54,11 @@ function updateState(job: CodexJobRecord, text: string) {
 export function sessionCodexJobs(events: readonly SessionEvent[]): CodexJobRecord[] {
   const calls = new Map<string, { event: Extract<SessionEvent, { type: "tool/call" }>; args: Record<string, unknown> }>();
   const jobs: CodexJobRecord[] = [], current = new Map<string, CodexJobRecord>();
-  const notice = (message: { source?: { kind: string }; content: readonly { type: string; text?: string }[] }) => {
+  const notice = (message: { source?: { kind: string }; content: readonly { type: string; text?: string }[] }, time: number) => {
     if (message.source?.kind !== "tool-jobs") return;
     const text = textOf(message.content), id = text.match(/^background job ([\w-]+)\b/)?.[1];
     const job = id && current.get(id);
-    if (job) updateState(job, text);
+    if (job) updateState(job, text, time);
   };
   for (const event of events) {
     if (event.type === "tool/call" && ["pwsh", "bash", "job_output", "job_kill"].includes(event.data.name)) {
@@ -84,10 +86,10 @@ export function sessionCodexJobs(events: readonly SessionEvent[]): CodexJobRecor
         const job = typeof call.args.job_id === "string" && current.get(call.args.job_id);
         if (!job) continue;
         if (call.event.data.name === "job_kill" && text === `requested cancellation of job ${job.jobId}`) job.state = "stopping";
-        else updateState(job, text);
+        else updateState(job, text, event.time);
       }
-    } else if (event.type === "user/message") notice(event.data);
-    else if (event.type === "agent/inbox/spliced") for (const message of event.data.inserted) notice(message);
+    } else if (event.type === "user/message") notice(event.data, event.time);
+    else if (event.type === "agent/inbox/spliced") for (const message of event.data.inserted) notice(message, event.time);
   }
   return jobs;
 }
@@ -105,10 +107,12 @@ export function codexJobRows(records: readonly CodexJobRecord[], sessionId: stri
       : state === "failed" ? "error" : state === "killed" ? "cancelled"
         : state === "stopping" ? "cancelling" : state === "running" ? "running" : "unknown";
     const stateLabel = ({ handled: "进程已结束（未验收）", error: "进程异常", cancelled: "进程已取消", cancelling: "取消中", running: "执行中", unknown: "状态待核实" })[status];
+    const returnedAt = current?.finishedAt ?? record.returnedAt;
     return {
       id: record.id, title: record.title, status, stateLabel, direct: true,
       source: "codex-cli", node: "本机 · Codex CLI", model: record.model,
       time: new Date(record.startedAt).toISOString(),
+      returnedAt: returnedAt !== undefined ? new Date(returnedAt).toISOString() : undefined,
       description: `由会话通过 shell 直接启动，后台任务 ${record.jobId}，轨迹事件 #${record.seq}。`,
       report: `未进入 task-system 任务账本。${stateLabel}${exitCode !== undefined ? `；shell 退出码 ${exitCode}` : ""}。进程状态不代表 Codex 的结果或任务验收。${status === "unknown" ? "当前进程已无法从后台任务注册表核实；不会将历史运行状态当作仍在执行。" : ""}`,
     };

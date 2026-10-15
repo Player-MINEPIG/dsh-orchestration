@@ -1844,6 +1844,7 @@ export class ProjectRuntime {
         reportId: report?.reportId || null,
         artifact: report?.title || "等待执行报告",
         time: t.updatedAt,
+        returnedAt: run && !["queued", "running"].includes(run.state) ? data.events.findLast(event => event.runId === run.runId && event.type === "run.settled")?.at ?? null : null,
         run: run?.runId || "待创建",
         nativeState: t.state,
         dispatchState: dispatch?.state ?? null,

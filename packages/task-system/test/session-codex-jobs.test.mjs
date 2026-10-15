@@ -42,6 +42,14 @@ test('help, log inspection, mere mentions, foreground shell jobs, errors and unm
   assert.deepEqual(sessionCodexJobs(events), []);
 });
 
+test('legacy results retain their first terminal observation time across rereads and reopening', () => {
+  const events = [...launch(), ...call(40,'job_output',{job_id:'pwsh-9'},'[status: completed, exit code: 0]'),
+    ...call(60,'job_output',{job_id:'pwsh-9'},'[status: completed, exit code: 0]')];
+  assert.equal(codexJobRows(sessionCodexJobs(events),'s')[0].returnedAt,new Date(40050).toISOString());
+  const hostNotice = {...notice('pwsh-9','completed, exit code: 0'),time:30000};
+  assert.equal(codexJobRows(sessionCodexJobs([...launch(),hostNotice,...events.slice(2)]),'s')[0].returnedAt,new Date(30000).toISOString());
+});
+
 test('direct executable, resume and timeout promotion are tracked as distinct invocations', () => {
   const jobs = sessionCodexJobs([
     ...launch(10, 'pwsh-1', 'codex exec -m gpt-6-astra test'),
@@ -59,8 +67,9 @@ test('live registry is session-fenced and must match command and start window; c
   let job = { id: 'pwsh-9', owner: 's', label: command, startedAt: 10001, status: 'running' };
   const registry = { list: id => { assert.equal(id, 's'); return [job]; } };
   assert.equal(codexJobRows(jobs, 's', registry)[0].status, 'running');
-  job = { ...job, status: 'completed', detail: 'exit code: 0' };
+  job = { ...job, status: 'completed', detail: 'exit code: 0', finishedAt: 20000 };
   assert.equal(codexJobRows(jobs, 's', registry)[0].status, 'handled');
+  assert.equal(codexJobRows(jobs, 's', registry)[0].returnedAt,new Date(20000).toISOString());
   for (const patch of [{ owner: 'other' }, { owner: undefined }, { startedAt: 90000 }, { label: 'different' }]) {
     assert.equal(codexJobRows(jobs, 's', { list: () => [{ ...job, ...patch }] })[0].status, 'unknown');
   }

@@ -8,6 +8,12 @@ import { sessionCodexJobs, type CodexJobRecord, codexJobRows, type SessionJobReg
 const record = (value: unknown): Record<string, unknown> | undefined =>
   value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 
+/** Returned results first; acceptance and refreshes must not move a result. */
+export function sortSessionTasks<T extends { returnedAt?: string | null; time?: string | null }>(tasks: readonly T[]): T[] {
+  const timestamp = (value?: string | null) => value ? Date.parse(value) || 0 : 0;
+  return [...tasks].sort((a, b) => timestamp(b.returnedAt) - timestamp(a.returnedAt) || timestamp(b.time) - timestamp(a.time));
+}
+
 /** Only successful dispatch receipts count; queries and inherited fork history do not. */
 export function dispatchedTaskIds(events: readonly SessionEvent[]): string[] {
   const calls = new Map<string, string>();
@@ -95,7 +101,9 @@ export function sessionTaskSnapshot(snapshot: unknown, roots: readonly string[],
   const ledgerTasks = view.tasks.filter(task => ids.has(task.id)).map(task => ({
     id: task.id, title: task.title, description: task.description, status: task.status,
     stateLabel: task.stateLabel, parentTaskId: task.parentTaskId, direct: direct.has(task.id),
-    node: task.node, model: task.model, time: task.time, report: task.report,
+    node: task.node, model: task.model, time: task.time,
+    returnedAt: task.returnedAt ?? (["review", "done", "error", "cancelled"].includes(task.status) ? task.time : undefined),
+    report: task.report,
     runId: task.runId, runState: task.runState, reviewStatus: task.reviewStatus,
   }));
   const tasks = [...ledgerTasks, ...codexJobRows(codexJobs, sessionId, registry)];

@@ -2,7 +2,20 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { TaskLedger } from '../dist/ledger.js';
 import { SessionCollaboration } from '../dist/project-collaboration/session.js';
-import { dispatchedTaskIds, SessionDispatchIndex, sessionDispatchOperations, sessionTaskSnapshot } from '../dist/session-task-monitor.js';
+import { dispatchedTaskIds, SessionDispatchIndex, sessionDispatchOperations, sessionTaskSnapshot, sortSessionTasks } from '../dist/session-task-monitor.js';
+
+test('results sort by return time across sources, ahead of unfinished tasks; ties are stable', () => {
+  const tasks = [
+    {id:'running-old',time:'2026-10-15T01:00:00Z'},
+    {id:'local',time:'2026-10-15T02:00:00Z',returnedAt:'2026-10-15T03:00:00Z'},
+    {id:'shell',time:'2026-10-15T01:00:00Z',returnedAt:'2026-10-15T04:00:00Z'},
+    {id:'ledger',time:'2026-10-15T05:00:00Z',returnedAt:'2026-10-15T02:00:00Z'},
+    {id:'running-new',time:'2026-10-15T06:00:00Z'},
+    {id:'missing'}, {id:'invalid',returnedAt:'invalid'},
+  ];
+  assert.deepEqual(sortSessionTasks(tasks).map(t=>t.id),['shell','local','ledger','running-new','running-old','missing','invalid']);
+  assert.equal(tasks[0].id,'running-old');
+});
 
 function receipt(name, value, args = {}, isError = false, id = name) {
   return [

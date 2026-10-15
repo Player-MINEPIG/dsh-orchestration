@@ -108,12 +108,16 @@ test('only the original parent can accept a returned result with evidence; accep
     store.save({...task,status:'error'});
     assert.throws(()=>store.accept('parent','one','checked'), /awaiting review/);
     store.save({...task,status:'review',report:'child says done'});
+    const returnedAt = store.rows('parent')[0].returnedAt;
+    assert.ok(Number.isFinite(Date.parse(returnedAt)));
     assert.throws(()=>store.accept('parent','one','  '), /evidence/);
     const accepted = store.accept('parent','one','Read file and verified expected bytes');
     assert.equal(accepted.status,'done');
+    assert.equal(accepted.returnedAt,returnedAt);
     assert.deepEqual(store.accept('parent','one',accepted.acceptance.evidence), accepted);
     store.db.close(); store = new LocalCodexStore(path);
     assert.equal(store.rows('parent')[0].status,'done');
+    assert.equal(store.rows('parent')[0].returnedAt,returnedAt);
     assert.deepEqual(store.rows('parent')[0].acceptance,accepted.acceptance);
     assert.equal(store.rows('other').length,0);
   } finally {store.db.close();rmSync(root,{recursive:true,force:true});}
