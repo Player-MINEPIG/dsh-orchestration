@@ -1,0 +1,22 @@
+# Session task monitor
+
+Task agreement: add a session-scoped task monitor beside Conversation and Trajectory, using the task center's categories. Develop on a new branch from the published 0.2.6 source (`ed0e8fb`), commit and push without merging; update only the local default environment. Workflow: project-collaboration and code-review-and-quality.
+
+## Behavior
+
+The **任务** conversation tab shows confirmed task-system dispatches originating in the selected session, their descendants, status counts, search, execution node/model, latest report and the five latest executions. Counts describe Tasks, so retries do not inflate them. Status categories come directly from the task center's public snapshot, including pending review versus accepted completion.
+
+The read-only `taskPluginSettings/sessionTasks` endpoint derives origin IDs from successful `project_dispatch`, applied `task_plan`, `task_run` and `task_delegate` receipts in the persisted session. Durable project dispatch operations also cover acknowledged results before the conversation log is flushed. Fork-inherited events and unrelated same-project sessions are excluded. Pending dispatch ACKs and task IDs missing from the current authorized central view are reported separately.
+
+The browser receives only filtered public task/run fields. The original node-scoped central snapshot remains the authorization boundary. No new central protocol, task mutations or background agent execution is introduced. A bounded revision cache stores identifiers, not conversation text. Polling runs every five seconds while mounted and the document is visible; overlapping requests and late responses after unmount are ignored. Existing task-center classifications and business state transitions are unchanged.
+
+## Validation — 2026-10-15
+
+- TypeScript and package build passed.
+- 49 focused tests passed across session origin extraction/cache, durable operations, scope/descendant filtering, conversation-tab registration, refresh failure/race behavior, and existing settings and collaboration UI tests.
+- Three pre-existing `project-executor-view` native Loader tests could not initialize task service on Windows. The unchanged result-journal constructor reproduces `EPERM: operation not permitted, fsync` during first-time journal creation. No unrelated journal change was made.
+- Installed `0.2.7-session-monitor.0` only in PC_AU's default Web profile. Actual authenticated RPC returned the current session's empty count, the new tab rendered beside Conversation/Trajectory, all six existing plugins stayed active, and the remote heartbeat was acknowledged.
+- Synthetic browser fixture verified six tasks across five statuses, search/status filtering, details retained across refresh, escaped report text, offline notice with retained data, session switching and a 390px layout without horizontal overflow. These fixtures did not create production tasks or invoke a model.
+- Production configuration was backed up before install and byte-compared afterwards. VPS and MBP were not updated. The local Web process was restarted after confirming no running sessions, queued tasks or restart blockers.
+
+Local deployment backups and screenshots are kept outside the repository in `codex/session-task-monitor-20261015`. The source remains on the feature branch; no merge or remote deployment is part of this change.

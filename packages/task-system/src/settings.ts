@@ -1,4 +1,5 @@
 import { scheduledPlanInput, scheduledPlanControl } from "./scheduled-plans.js";
+import { SessionDispatchIndex, sessionDispatchOperations, sessionTaskSnapshot } from "./session-task-monitor.js";
 import { readDecisionPreferences, saveDecisionPreference } from "./decision-preferences.js";
 import {
   DecisionSettings,
@@ -334,6 +335,7 @@ export function hasTaskConfigOverride(patches: readonly unknown[]): boolean {
 }
 
 const projectInputs = {
+  sessionTasks: z.object({ sessionId: z.string().min(1).max(200) }).strict(),
   scheduleOptions:null,
   createScheduledPlan:scheduledPlanInput,
   controlScheduledPlan:scheduledPlanControl,
@@ -524,6 +526,18 @@ export class TaskPluginSettings extends TypertRemoteService {
       });
     }
     return this.projectOperation(() => this.projects().snapshot());
+  }
+  private sessionDispatchIndex = new SessionDispatchIndex();
+  async sessionTasks(input: unknown) {
+    const { sessionId } = projectInputs.sessionTasks.parse(input);
+    const task = this.ctx.get("taskSystem") as TaskSystemService | undefined;
+    const persistence = this.ctx.get("sessionPersistence");
+    if (!task || !persistence) throw new RemoteError("task/project", "Session task monitor unavailable", { reason: "PROJECT_UNAVAILABLE" });
+    const operations = sessionDispatchOperations(task.ledger, sessionId);
+    const roots = [...new Set([...operations.taskIds, ...await this.sessionDispatchIndex.read(persistence, sessionId)])];
+    // No remote request for a new session with no confirmed dispatches.
+    const snapshot = roots.length ? await this.projectSnapshot() : { tasks: [], runs: [] };
+    return sessionTaskSnapshot(snapshot, roots, sessionId, operations.pending);
   }
   async projectPage() {
     return readFileSync(

@@ -209,8 +209,8 @@ test("browser companion exposes the same served form in Settings and its install
     remote: {
       $host: { isLoopback: true },
       $mount: async (contribution) => {
-        assert.equal(contribution.descriptors.length, 31);
-        for (const method of ["scheduleOptions", "createScheduledPlan", "controlScheduledPlan"])
+        assert.equal(contribution.descriptors.length, 32);
+        for (const method of ["sessionTasks", "scheduleOptions", "createScheduledPlan", "controlScheduledPlan"])
           assert.ok(contribution.descriptors.some(descriptor => descriptor.method === method));
         return () => {};
       },
@@ -241,7 +241,8 @@ test("browser companion exposes the same served form in Settings and its install
     },
   };
   await ui.apply(ctx);
-  assert.equal(registrations.length, 5);
+  assert.equal(registrations.length, 6);
+  assert.ok(registrations.some(r => r.options.name === "conversation.view" && r.options.id === "dsh-session-tasks"));
   assert.ok(listeners.has("command/executed"));
   assert.ok(registrations.some(r => r.options.name === "shell.overlay" && r.options.id === "task-project-command-result"));
   const section = registrations.find(
@@ -260,14 +261,14 @@ test("browser companion exposes the same served form in Settings and its install
     row.options.inject().hooks.taskSettings,
   );
   for (const cleanup of effects.splice(0).reverse()) cleanup?.();
-  assert.equal(disposed.length, 5);
+  assert.equal(disposed.length, 6);
   assert.equal(listeners.size, 0);
   registrations.length = 0;
   ctx.configForms.whileServed = () => () => {};
   await ui.apply(ctx);
   assert.equal(
     registrations.length,
-    3,
+    4,
     "hide both entries while the Host does not serve task-system settings",
   );
   for (const cleanup of effects.splice(0).reverse()) cleanup?.();

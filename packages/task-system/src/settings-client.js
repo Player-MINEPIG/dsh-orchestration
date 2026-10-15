@@ -3290,6 +3290,7 @@ window.__ModuleLoader__.load({
     const openPlugins = (ctx) => openSettingsSection(ctx, "plugins");
     const openModels = (ctx) => openSettingsSection(ctx, "models");
     const projectMethods = [
+      "sessionTasks",
       "projectSettings",
       "createTemporaryTask",
       "scheduleOptions",
@@ -3532,6 +3533,69 @@ window.__ModuleLoader__.load({
       return feedback;
     }
 
+    const sessionTaskLabels = { all: "全部", running: "执行中", queued: "等待开始", review: "待确认", error: "需处理", done: "已完成", handled: "已处理", cancelled: "已取消", cancelling: "取消中", archived: "已归档" };
+    class SessionTaskMonitor {
+      constructor(invoke, sessionId) {
+        this.invoke = invoke; this.sessionId = sessionId; this.listeners = new Set();
+        this.state = { value: null, loading: false, error: null }; this.disposed = false;
+      }
+      subscribe = (listener) => { this.listeners.add(listener); return () => this.listeners.delete(listener); };
+      snapshot = () => this.state;
+      update(patch) { this.state = { ...this.state, ...patch }; for (const listener of this.listeners) listener(); }
+      async load() {
+        if (this.disposed || this.state.loading) return;
+        this.update({ loading: true });
+        try {
+          const value = await this.invoke("sessionTasks", { sessionId: this.sessionId });
+          if (!value || value.sessionId !== this.sessionId || !Array.isArray(value.tasks) || !Array.isArray(value.runs) || !value.counts) throw Error("Invalid session snapshot");
+          if (!this.disposed) this.update({ value, loading: false, error: null });
+        } catch {
+          if (!this.disposed) this.update({ loading: false, error: "暂时无法读取任务状态。请检查调度端连接后重试。" });
+        }
+      }
+      dispose() { this.disposed = true; this.listeners.clear(); }
+    }
+    function SessionTaskPanel({ invoke, sessionId }) {
+      const monitor = React.useMemo(() => new SessionTaskMonitor(invoke, sessionId), [invoke, sessionId]);
+      const { value, loading, error } = React.useSyncExternalStore(monitor.subscribe, monitor.snapshot);
+      const [filter, setFilter] = React.useState("all"), [search, setSearch] = React.useState("");
+      React.useEffect(() => {
+        monitor.disposed = false;
+        void monitor.load();
+        const timer = setInterval(() => { if (document.visibilityState !== "hidden") void monitor.load(); }, 5000);
+        return () => { clearInterval(timer); monitor.dispose(); };
+      }, [monitor]);
+      React.useEffect(() => { setFilter("all"); setSearch(""); }, [sessionId]);
+      const tasks = value?.tasks ?? [], counts = value?.counts ?? {};
+      const visible = tasks.filter(task => (filter === "all" || task.status === filter) && `${task.title} ${task.node ?? ""}`.toLowerCase().includes(search.toLowerCase()));
+      const stamp = value?.sampledAt && new Date(value.sampledAt).toLocaleTimeString();
+      const runLabel = run => run.reviewStatus === "pending_user" ? "待确认" : run.reviewStatus === "accepted" ? "已验收" : run.reviewStatus === "rejected" ? "审核未通过" : ({ queued: "等待开始", running: "执行中", succeeded: "执行成功", partial: "部分完成", failed: "执行失败", blocked: "执行受阻", uncertain: "结果待核实", cancelled: "已取消" }[run.state] ?? run.state);
+      return h("section", { className: "session-task-monitor", "aria-label": "当前会话派发的任务" },
+        h("style", null, `.session-task-monitor{height:100%;min-height:0;overflow:auto;box-sizing:border-box;padding:24px;line-height:1.6;color:inherit}.session-task-monitor *{box-sizing:border-box}.session-task-monitor header{display:flex;gap:16px;justify-content:space-between;align-items:flex-start;flex-wrap:wrap}.session-task-monitor h2{font-size:20px;margin:0 0 4px}.session-task-monitor p{margin:5px 0 14px}.session-task-monitor .stm-muted{opacity:.65;font-size:12px}.session-task-monitor button,.session-task-monitor input{font:inherit;color:inherit;background:transparent;border:1px solid color-mix(in srgb,currentColor 20%,transparent);border-radius:8px;padding:8px 12px}.session-task-monitor button{cursor:pointer}.session-task-monitor button:disabled{opacity:.5;cursor:default}.session-task-monitor .stm-filters{display:flex;flex-wrap:wrap;gap:8px;margin:20px 0 16px}.session-task-monitor .stm-filters button[aria-pressed=true]{border-color:currentColor;background:color-mix(in srgb,currentColor 9%,transparent)}.session-task-monitor .stm-filters b{margin-left:10px}.session-task-monitor input{width:100%;margin-bottom:16px}.session-task-monitor .stm-list{display:grid;gap:10px}.session-task-monitor details{border:1px solid color-mix(in srgb,currentColor 16%,transparent);border-radius:10px;overflow:hidden}.session-task-monitor summary{padding:16px;cursor:pointer;list-style:none}.session-task-monitor summary::-webkit-details-marker{display:none}.session-task-monitor .stm-row{display:flex;justify-content:space-between;gap:16px;align-items:center}.session-task-monitor .stm-title{font-weight:600;overflow-wrap:anywhere}.session-task-monitor .stm-status{white-space:nowrap;font-size:12px}.session-task-monitor [data-status=running]{color:#638ed4}.session-task-monitor [data-status=review]{color:#b18c45}.session-task-monitor [data-status=error]{color:#cf6770}.session-task-monitor [data-status=done]{color:#549b78}.session-task-monitor .stm-body{padding:0 16px 16px}.session-task-monitor .stm-body h3{font-size:13px;margin:16px 0 8px}.session-task-monitor .stm-text{white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px}.session-task-monitor .stm-empty{text-align:center;padding:48px 16px;opacity:.65}.session-task-monitor .stm-notice{border-left:3px solid #b18c45;padding:8px 12px;background:color-mix(in srgb,currentColor 5%,transparent)}.session-task-monitor ul{padding-left:20px;font-size:12px}@media(max-width:600px){.session-task-monitor{padding:16px}.session-task-monitor .stm-filters{gap:6px}.session-task-monitor .stm-filters button{padding:7px 9px;font-size:12px}.session-task-monitor summary{padding:12px}.session-task-monitor .stm-row{gap:8px}}`),
+        h("header", null, h("div", null, h("h2", null, "会话任务"), h("p", { className: "stm-muted" }, value ? `共 ${counts.all} 项 · 直接派发 ${value.directCount} 项 · 后续委派 ${counts.all - value.directCount} 项` : "查看当前会话派发的任务与后续委派")),
+          h("button", { type: "button", disabled: loading, onClick: () => monitor.load() }, loading ? "正在刷新…" : "刷新")),
+        error && h("p", { role: "alert", className: "stm-notice" }, error, value ? " 下方保留上次成功读取的数据。" : ""),
+        value?.pendingDispatches > 0 && h("p", { className: "stm-notice" }, `${value.pendingDispatches} 项派发请求等待中央确认，尚未计入任务总数。`),
+        value?.unavailableTasks > 0 && h("p", { className: "stm-notice" }, `${value.unavailableTasks} 项已派发任务暂未出现在中央快照中，尚未计入下方分类。`),
+        h("div", { className: "stm-filters", role: "group", "aria-label": "按任务状态筛选" }, Object.entries(sessionTaskLabels).filter(([key]) => ["all", "running", "queued", "review", "error", "done"].includes(key) || counts[key] || filter === key).map(([key, label]) => h("button", { key, type: "button", "aria-pressed": filter === key, "data-status": key, onClick: () => setFilter(key) }, label, h("b", null, counts[key] ?? 0)))),
+        h("input", { type: "search", "aria-label": "搜索会话任务", placeholder: "搜索任务或执行端", value: search, onChange: event => setSearch(event.target.value) }),
+        h("div", { className: "stm-list", "aria-busy": loading }, visible.map(task => {
+          const runs = (value?.runs ?? []).filter(run => run.taskId === task.id).reverse();
+          return h("details", { key: task.id }, h("summary", null, h("div", { className: "stm-row" }, h("span", { className: "stm-title" }, task.title), h("span", { className: "stm-status", "data-status": task.status }, task.stateLabel || sessionTaskLabels[task.status] || task.status)), h("div", { className: "stm-muted" }, `${task.direct ? "直接派发" : "后续委派"} · ${task.node || "等待分配执行端"}${task.model ? " · " + task.model : ""} · 展开详情`)),
+            h("div", { className: "stm-body" }, h("h3", null, "任务要求"), h("div", { className: "stm-text" }, task.description || "未提供任务要求"), h("h3", null, "最新结果"), h("div", { className: "stm-text" }, task.report || "尚无结果报告"),
+              h("h3", null, `执行记录 · ${runs.length} 次`), h("ul", null, runs.slice(0, 5).map(run => h("li", { key: run.id }, `${runLabel(run)} · ${run.node || "待分配"} · ${new Date(run.createdAt).toLocaleString()}`))),
+              runs.length > 5 && h("p", { className: "stm-muted" }, "此处显示最近 5 次执行；完整历史可在总任务面板查看。")));
+        })),
+        !visible.length && h("div", { className: "stm-empty" }, !value ? (loading ? "正在读取任务…" : "读取失败，请重试") : tasks.length ? "当前筛选没有任务" : "当前会话尚未派发任务"),
+        stamp && h("p", { className: "stm-muted" }, `更新于 ${stamp} · 每 5 秒自动刷新 · 点击任务可查看详情`));
+    }
+    function mountSessionTaskPanel(ctx, invoke) {
+      return ctx.slots.inject("conversation.view", () => ctx.slots.register({
+        name: "conversation.view", id: "dsh-session-tasks", order: 20,
+        label: () => "任务", inject: sessionId => ({ sessionId, invoke }),
+      }, SessionTaskPanel));
+    }
+
     async function apply(ctx) {
       mountProjectCommandFeedback(ctx);
       const t = ctx.locale.bind(NS);
@@ -3587,6 +3651,7 @@ window.__ModuleLoader__.load({
           ...(input === undefined ? [] : [input]),
         );
       };
+      ctx.effect(() => mountSessionTaskPanel(ctx, invoke), "session task monitor");
       ctx.effect(() => {
         const offMain = ctx.slots.inject("main", () =>
           ctx.slots.register(
@@ -3729,6 +3794,9 @@ window.__ModuleLoader__.load({
       inject: ["slots", "locale", "configForms", "remote", "remote.settings"],
       apply,
       Controller,
+      SessionTaskMonitor,
+      SessionTaskPanel,
+      mountSessionTaskPanel,
       SettingsSaveCoordinator,
       ProjectCommandFeedback,
       ProjectCommandResult,
