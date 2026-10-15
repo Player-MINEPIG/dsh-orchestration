@@ -1,0 +1,21 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {DatabaseSync} from 'node:sqlite';
+import {mkdtempSync,realpathSync,rmSync,writeFileSync} from 'node:fs';
+import {join} from 'node:path';
+import {tmpdir} from 'node:os';
+import {ExecutionDirectories} from '../dist/execution-directories.js';
+test('picked executor directory is validated, persisted and saved with a revision check',t=>{
+ const tmp=realpathSync(mkdtempSync(join(tmpdir(),'dsh-executor-directory-'))),file=join(tmp,'state.sqlite');
+ let db=new DatabaseSync(file);t.after(()=>{db.close();rmSync(tmp,{recursive:true,force:true})});
+ let dirs=new ExecutionDirectories(db);
+ assert.deepEqual({...dirs.settings()},{root:null,revision:0});
+ assert.throws(()=>dirs.save({root:'relative',expectedRevision:0}),/absolute/);
+ writeFileSync(join(tmp,'file'),'data');assert.throws(()=>dirs.save({root:join(tmp,'file'),expectedRevision:0}),/directory/);
+ assert.equal(dirs.save({root:tmp,expectedRevision:0}).revision,1);
+ assert.throws(()=>dirs.save({root:tmp,expectedRevision:0}),/changed/);
+ dirs.rememberSessionWorkspace('session',{path:tmp,root:tmp,projectId:'project'});
+ db.close();db=new DatabaseSync(file);dirs=new ExecutionDirectories(db);
+ assert.equal(dirs.settings().root,tmp);assert.equal(dirs.sessionWorkspace('session').projectId,'project');
+ assert.throws(()=>dirs.rememberSessionWorkspace('session',{path:tmp+'/other',projectId:'project'}),/changed/);
+});

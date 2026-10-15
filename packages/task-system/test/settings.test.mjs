@@ -209,7 +209,7 @@ test("browser companion exposes the same served form in Settings and its install
     remote: {
       $host: { isLoopback: true },
       $mount: async (contribution) => {
-        assert.equal(contribution.descriptors.length, 32);
+        assert.equal(contribution.descriptors.length, 34);
         for (const method of ["sessionTasks", "scheduleOptions", "createScheduledPlan", "controlScheduledPlan"])
           assert.ok(contribution.descriptors.some(descriptor => descriptor.method === method));
         return () => {};
@@ -1195,13 +1195,9 @@ test("decision controls distinguish scheduler executor selection from executor w
       assert.equal(sessionSwitch.props.label, "sessionDecisionEnabled");
       assert.equal(sessionSwitch.props.checked, true);
       assert.equal(sessionSwitch.props.disabled, role === "planner");
-      assert.equal(
-        find(
-          executor,
-          (node) => node.props?.id === "task-startup-task-defaultWorkspaceId",
-        ).props.disabled,
-        role === "planner",
-      );
+      const routeSelector=find(executor,node=>node.props?.id === "task-startup-task-defaultWorkspaceId");
+      if (advanced) assert.equal(routeSelector.props.disabled, role === "planner");
+      else assert.equal(routeSelector,undefined,"simple mode uses directory picker rather than route IDs");
       assert.equal(
         !!find(executor, (node) => node.props?.["data-task-decision-entry"]),
         role !== "planner",
@@ -1225,6 +1221,7 @@ test("scheduler and executor switches stage independent fields; role and mode ed
   };
   const fixture = startupRoleFixture(values),
     { find, props, writes, navigation } = fixture;
+  props.advanced = true;
   let tree = fixture.render();
   const button = (node, label) =>
     find(
@@ -1285,13 +1282,9 @@ test("scheduler and executor switches stage independent fields; role and mode ed
   for (const advanced of [true, false, true]) {
     props.advanced = advanced;
     tree = fixture.render();
-    assert.equal(
-      find(
-        tree,
-        (node) => node.props?.id === "task-startup-task-defaultWorkspaceId",
-      ).props.value,
-      "draft-workspace",
-    );
+    const selector=find(tree,node=>node.props?.id === "task-startup-task-defaultWorkspaceId");
+    if (advanced) assert.equal(selector.props.value,"draft-workspace");
+    else assert.equal(selector,undefined);
     assert.equal(
       find(
         tree,
@@ -1404,6 +1397,7 @@ test("workspace selector retains missing values, distinguishes names by path and
     sessionDecisionEnabled: false,
   });
   const { find, props, writes } = f;
+  props.advanced = true;
   const select = (tree) =>
     find(
       tree,
@@ -1556,4 +1550,26 @@ test('scheduler node capacity draft stays clean and validates each registered no
  assert.equal(await c.saveAll(),false);assert.deepEqual(saves,[]);
  c.update('live',{dirty:true,restart:false});assert.equal(await c.saveAll(),false);assert.deepEqual(saves,['live','restart']);assert.match(c.snapshot().message,/部分/);assert.equal(c.snapshot().busy,false);
  c.discardAll();assert.deepEqual(saves,['live','restart','discard','discard-live']);
+ });
+
+ test("directory picker stages only confirmed paths and supports the official native capability", async()=>{
+  const values=[],refs=[],changes=[];let cursor=0,refCursor=0;
+  const ui=client({Button:"FixtureButton",Modal:"FixtureModal"},{
+    useState:initial=>{const i=cursor++;if(!(i in values))values[i]=initial;return [values[i],value=>{values[i]=typeof value==='function'?value(values[i]):value;}];},
+    useRef:initial=>{const i=refCursor++;return refs[i]??=( {current:initial} );},useEffect:()=>{},
+  });
+  const api={list:async()=>({path:'/fixture',crumbs:[{name:'fixture',path:'/fixture'}],entries:[],truncated:false})};
+  const props={value:'/fixture',onChange:path=>changes.push(path),directoryApi:api};
+  const render=()=>{cursor=0;refCursor=0;return ui.DirectoryField(props);};
+  function find(node,label){if(!node||typeof node!=='object')return; if(node.type==='FixtureButton'&&node.children?.includes(label))return node;for(const child of node.children??[]){const found=find(child,label);if(found)return found;}}
+  find(render(),'选择目录').props.onClick();await new Promise(resolve=>setImmediate(resolve));
+  assert.deepEqual(changes,[]);find(render(),'取消').props.onClick();assert.deepEqual(changes,[]);
+  find(render(),'选择目录').props.onClick();await new Promise(resolve=>setImmediate(resolve));
+  find(render(),'选择此目录').props.onClick();assert.deepEqual(changes,['/fixture']);
+  api.list=async()=>{throw Object.assign(new Error('native required'),{rpcError:{code:'directory-picker/unavailable',details:{capability:'native'}}})};
+  let nativeCalls=0;api.pick=async()=>{nativeCalls++;return '/native-picked';};
+  find(render(),'选择目录').props.onClick();await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(nativeCalls,1);assert.deepEqual(changes,['/fixture','/native-picked']);
+  api.pick=async()=>null;find(render(),'选择目录').props.onClick();await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(changes.length,2,'native cancellation must retain the previous draft');
  });

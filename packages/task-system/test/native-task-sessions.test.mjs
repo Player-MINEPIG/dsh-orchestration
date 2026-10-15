@@ -98,3 +98,28 @@ for (const recover of [false, true]) test(`report rejection resumes one session 
   }
  } finally {await h.dispose();}
 });
+
+ test('local executor creates registered project workspaces under the selected parent and retains them after changes',async()=>{
+  const {mkdirSync}=await import('node:fs'),{join}=await import('node:path');
+  const {Workbench}=await import('../dist/workbench.js');
+  const h=await createNativeHarness({config:{projectAgentOptions:{provider:'test-offline',model:'script'}},script:[{name:'task_settle',args:{outcome:'success',summary:'first'}},{name:'task_settle',args:{outcome:'success',summary:'second'}}]});
+  try {
+    const l=h.ledger,runtime=h.ctx.taskSystem.projects,dirs=h.ctx.taskSystem.executionDirectories,wb=new Workbench(l);
+    const root=join(h.dir,'executor'),later=join(h.dir,'later');mkdirSync(root);mkdirSync(later);dirs.save({root,expectedRevision:0});
+    runtime.saveSettings({root:join(h.dir,'planner'),expectedRevision:0});
+    const {projectId}=await runtime.create({commandId:'project',title:'Project fixture',goal:'Two tasks'});
+    const registered=new Map();h.ctx.provide('workspaceRegistry',{async create(path,title){if(!registered.has(path))registered.set(path,{title,sessions:new Set(),async attachSession(id){assert.ok(await h.ctx.sessionPersistence.stat(id));this.sessions.add(id);}});return registered.get(path);}});
+    l.registerWorkspace('w',{workspaceId:'default',nodeId:'local',path:h.dir,label:'fixture',state:'ready',createdAt:new Date().toISOString()});
+    l.registerNode('n',{nodeId:'local',roles:['both'],models:[{provider:'test-offline',model:'script',reasoningEfforts:[]}],capabilities:[],workspaceIds:['default'],defaultWorkspaceId:'default',enabled:true,lastSeenAt:new Date().toISOString()});
+    for(const i of [1,2]){
+      const task=l.createTask('task'+i,{title:'Task '+i}).value;
+      wb.manage('link'+i,'link_backlog_task',{backlogId:'pr:'+projectId,taskId:task.taskId});
+      const run=l.createRun('run'+i,{taskId:task.taskId,route:{nodeId:'local',provider:'test-offline',model:'script',requiredCapabilities:[]}}).value;
+      const claim=l.claim('claim'+i,{runId:run.runId,nodeId:'local',ttlMs:10000}).value;
+      assert.equal((await h.ctx.taskSystem.native.execute(claim)).run.state,'succeeded');
+      if(i===1) dirs.save({root:later,expectedRevision:1});
+    }
+    const executorWorkspaces=[...registered].filter(([path])=>path.startsWith(root+'/'));assert.equal(executorWorkspaces.length,1);const [path,workspace]=executorWorkspaces[0];
+    assert.ok(path.startsWith(root+'/'));assert.equal(workspace.title,'Project fixture');assert.equal(workspace.sessions.size,2);
+  }finally{await h.dispose();}
+ });

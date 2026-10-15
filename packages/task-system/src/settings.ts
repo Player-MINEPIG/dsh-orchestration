@@ -342,6 +342,8 @@ const projectInputs = {
   createScheduledPlan:scheduledPlanInput,
   controlScheduledPlan:scheduledPlanControl,
   projectSettings: null,
+  executionDirectorySettings: null,
+  saveExecutionDirectorySettings: z.object({root: z.string().min(1).max(4096), expectedRevision: z.number().int().nonnegative()}).strict(),
   setReportRetryLimit:z.object({commandId:z.string().min(1).max(200),taskId:z.string().min(1),expectedRevision:z.number().int().positive(),maxRetries:z.number().int().min(0).max(5)}).strict(),
   projectSnapshot: null,
   projectPage: null,
@@ -553,6 +555,18 @@ export class TaskPluginSettings extends TypertRemoteService {
       new URL("./project-page.html", import.meta.url),
       "utf8",
     );
+  }
+  async executionDirectorySettings() {
+    const task = this.ctx.get("taskSystem") as TaskSystemService | undefined;
+    if (!task) throw new Error("Task service unavailable");
+    const fallback = task.config.defaultWorkspaceId
+      ? task.ledger.registeredWorkspaces(task.config.nodeId).find(item => item.workspaceId === task.config.defaultWorkspaceId)?.path ?? null : null;
+    return {enabled: task.config.role !== "planner", nodeId: task.config.nodeId, fallback, ...task.executionDirectories.settings()};
+  }
+  async saveExecutionDirectorySettings(input: unknown) {
+    const task = this.ctx.get("taskSystem") as TaskSystemService | undefined;
+    if (!task || task.config.role === "planner") throw new Error("Executor required");
+    return this.projectOperation(() => task.executionDirectories.save(projectInputs.saveExecutionDirectorySettings.parse(input)));
   }
   async saveProjectSettings(input: unknown) {
     return this.projectOperation(() =>

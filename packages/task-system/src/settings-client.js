@@ -527,7 +527,7 @@ window.__ModuleLoader__.load({
       workspaceRefresh: "刷新工作区",
       sessionDecisionEnabled: "启用执行端工作区／会话决策",
       workspaceHint:
-        "默认工作区须已在本机登记；保存后立即用于后续任务。没有有效决策时，执行采用默认的 Task 会话和工作区策略。",
+        "父目录保存后用于新建项目工作区；已有项目和任务会话保留原位置。没有有效决策时，按默认规则创建或复用任务会话。",
       decisionHint:
         "在“决策”设置中管理 Rules、DSH LLM、Typesafe Jev 和已注册适配器的预设；本插件只选择使用哪一个。凭据在官方“模型”或原有环境引用中管理。",
       settingsPending: "当前宿主尚未加载会话／工作区设置接口。",
@@ -1730,7 +1730,7 @@ window.__ModuleLoader__.load({
           h(
             "span",
             { style: { display: "block", marginBottom: 6 } },
-            t("defaultWorkspace"),
+            "路由默认工作区（高级）",
           ),
           h(
             "select",
@@ -1763,7 +1763,7 @@ window.__ModuleLoader__.load({
             ),
           ),
         ),
-        h("p", { style: hintStyle }, t("workspaceLayoutHint")),
+        h("p", { style: hintStyle }, "仅用于任务路由与明确指定工作区的约束；项目目录使用上方选择的父目录。"),
         directory?.loading
           ? h("p", { role: "status", style: hintStyle }, t("workspaceLoading"))
           : null,
@@ -1817,6 +1817,7 @@ window.__ModuleLoader__.load({
       advanced = true,
       visible = true,
       onRoleChange,
+      renderExecutionDirectory,
       workspaceDirectory = { loading: true },
       refreshWorkspaces,
       openAdvanced,
@@ -2107,7 +2108,8 @@ window.__ModuleLoader__.load({
                 !executor
                   ? h("p", { style: hintStyle }, t("executorDecisionInactive"))
                   : null,
-                WorkspaceSelect({
+                renderExecutionDirectory?.(),
+                advanced ? WorkspaceSelect({
                   t,
                   row,
                   directory: workspaceDirectory,
@@ -2117,7 +2119,7 @@ window.__ModuleLoader__.load({
                   disabled: disabled || !executor,
                   advanced,
                   controlStyle,
-                }),
+                }) : null,
                 h(
                   "label",
                   {
@@ -2425,6 +2427,7 @@ window.__ModuleLoader__.load({
       startup,
       saveStartup,
       readWorkspaces,
+      renderExecutionDirectory,
       onSaved,
       advanced = true,
       openAdvanced,
@@ -2509,6 +2512,7 @@ window.__ModuleLoader__.load({
                     openDecisionModels,
                     renderDecisionModels,
                     onRoleChange: setTaskRole,
+                    renderExecutionDirectory,
                     workspaceDirectory: workspaceCatalog.state,
                     refreshWorkspaces: workspaceCatalog.refresh,
                     row: state.value.task,
@@ -3022,18 +3026,68 @@ window.__ModuleLoader__.load({
       );
     }
 
-    function ProjectWorkspaceSettings({ readProjectSettings, saveProjectSettings, saveCoordinator }) {
+    function DirectoryField({ value, onChange, disabled, directoryApi, label = "项目父目录" }) {
+      const [open, setOpen] = React.useState(false);
+      const [listing, setListing] = React.useState(null);
+      const [loading, setLoading] = React.useState(false);
+      const [error, setError] = React.useState("");
+      const [hidden, setHidden] = React.useState(false);
+      const [folder, setFolder] = React.useState(null);
+      const request = React.useRef(0);
+      React.useEffect(() => () => { request.current++; }, []);
+      const browse = async path => {
+        const id = ++request.current;
+        setLoading(true); setError("");
+        try { const next = await directoryApi.list(path || undefined); if (id === request.current) setListing(next); }
+        catch (reason) {
+          if (id !== request.current) return;
+          if (reason.rpcError?.code === "directory-picker/unavailable" && reason.rpcError?.details?.capability === "native" && directoryApi.pick) {
+            setError("请在当前 DSH 服务设备弹出的系统窗口中选择目录。");
+            try { const chosen=await directoryApi.pick(); if(id === request.current){if(chosen) onChange(chosen);setOpen(false);setError("");} }
+            catch (failure) { if(id === request.current) setError(failure.message || "目录选择失败"); }
+          } else setError(reason.message || "目录读取失败");
+        }
+        finally { if (id === request.current) setLoading(false); }
+      };
+      const close = () => { request.current++; setOpen(false); setLoading(false); setFolder(null); };
+      return h("div", {"data-task-directory-picker":true},
+        h("p", {style:hintStyle}, label),
+        h("div", {style:{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}},
+          h("span", {style:{overflowWrap:"anywhere",flex:"1 1 220px"}}, value || "尚未选择目录"),
+          h(Button, {variant:"outline",disabled:disabled || !directoryApi,onClick:()=>{setListing(null);setFolder(null);setOpen(true);void browse(value);}}, "选择目录")),
+        open ? h(Modal, {open:true,onClose:close,closeLabel:"取消目录选择",title:"选择当前服务所在设备的目录"},
+          h("div", {style:{maxHeight:"65vh",overflowY:"auto",padding:12,minWidth:0}},
+            h("p", {style:hintStyle}, "浏览的是当前连接的 DSH 服务设备；选择后会在这里自动创建项目文件夹。"),
+            h("nav", {"aria-label":"目录位置",style:{display:"flex",gap:6,flexWrap:"wrap"}},
+              h(Button,{variant:"outline",disabled:loading,onClick:()=>browse()},"主目录"),
+              ...(listing?.crumbs ?? []).map(crumb=>h(Button,{key:crumb.path,variant:"outline",disabled:loading,onClick:()=>browse(crumb.path)},crumb.name))),
+            h("p",{style:{overflowWrap:"anywhere"}},listing?.path || ""),
+            h("label",null,h("input",{type:"checkbox",checked:hidden,onChange:event=>setHidden(event.target.checked)})," 显示隐藏目录"),
+            loading ? h("p",{role:"status"},"正在读取目录…") : null,
+            error ? h("p",{role:"alert"},error) : null,
+            h("div",{style:{display:"grid",gap:4,margin:"12px 0"}},...(listing?.entries ?? []).filter(entry=>hidden || !entry.hidden).map(entry=>
+              h(Button,{key:entry.path,variant:"outline",disabled:loading,onClick:()=>{setFolder(null);void browse(entry.path);},style:{textAlign:"left"}},`📁 ${entry.name}`))),
+            listing?.truncated ? h("p",{role:"status"},"目录较多，当前列表仅显示一部分。") : null,
+            folder !== null ? h("div",null,
+              h("input",{"aria-label":"新文件夹名称",value:folder,onChange:event=>setFolder(event.target.value),disabled:loading}),
+              h(Button,{disabled:loading || !folder.trim(),onClick:async()=>{setLoading(true);setError("");try{const path=await directoryApi.create(listing.path,folder.trim());setFolder(null);await browse(path);}catch(reason){setError(reason.message);setLoading(false);}}},"创建")) :
+              h(Button,{variant:"outline",disabled:loading || !listing || !!error,onClick:()=>setFolder("")},"新建文件夹"),
+            h("div",{style:{display:"flex",justifyContent:"flex-end",gap:8,marginTop:16}},
+              h(Button,{variant:"outline",onClick:close},"取消"),
+              h(Button,{variant:"primary",disabled:loading || !listing || !!error,onClick:()=>{onChange(listing.path);close();}},"选择此目录")))) : null);
+    }
+    function ProjectWorkspaceSettings({ readProjectSettings, saveProjectSettings, saveCoordinator, directoryApi, executor = false }) {
       const {state, replace, refresh} = useReadSnapshot(readProjectSettings);
       const [root, setRoot] = React.useState(null), [saving, setSaving] = React.useState(false), [notice, setNotice] = React.useState("");
-      const saveRoot=async()=>{setSaving(true);setNotice("");try {const value=await saveProjectSettings({root:(root ?? state.value.root).trim(),expectedRevision:state.value.revision});replace({enabled:true,...value});setRoot(null);setNotice("项目父目录已保存");return true;} catch {setNotice("保存失败，请核对路径或刷新后重试；草稿已保留。");return false;} finally {setSaving(false);}};
-      useSaveParticipant(saveCoordinator,"project-root",{meta:{dirty:root!==null && root!==state.value?.root,invalid:!state.value?.enabled || !(root ?? state.value?.root ?? "").trim(),busy:saving,restart:false},save:saveRoot,discard:()=>{setRoot(null);setNotice("");}});
+      const saveRoot=async()=>{setSaving(true);setNotice("");try {const value=await saveProjectSettings({root:(root ?? state.value.root ?? state.value.fallback ?? "").trim(),expectedRevision:state.value.revision});replace({enabled:true,...value});setRoot(null);setNotice("项目父目录已保存");return true;} catch {setNotice("保存失败，请核对路径或刷新后重试；草稿已保留。");return false;} finally {setSaving(false);}};
+      useSaveParticipant(saveCoordinator,executor ? "execution-root" : "project-root",{meta:{dirty:root!==null && root!==state.value?.root,invalid:!state.value?.enabled || !(root ?? state.value?.root ?? state.value?.fallback ?? "").trim(),busy:saving,restart:false},save:saveRoot,discard:()=>{setRoot(null);setNotice("");}});
       if (state.value && !state.value.enabled) return null;
       return h("section", {"data-project-workspace-settings": true},
-        h("h3", {style: headingStyle}, "调度端 · 项目工作区"),
-        h("p", {style: hintStyle}, "项目和临时任务的规划工作区父目录。只影响新建工作区；执行端使用自己已授权的目录。"),
+        executor ? null : h("h3", {style: headingStyle}, "调度端 · 项目工作区"),
+        h("p", {style: hintStyle}, executor ? "选择这台执行设备上的父目录。新项目自动创建文件夹和 DSH 工作区，再在工作区内创建任务会话；同一项目复用工作区，独立任务分别建目录。已有工作区与会话保留原位置。" : "项目和临时任务的规划工作区父目录。只影响新建工作区；执行端在各自设备上选择父目录。"),
         state.failed ? h("p", {role:"alert"}, "读取项目父目录失败，请刷新重试。") : null,
-        h("label", {htmlFor:"task-project-root"}, "项目父目录"),
-        h("input", {id:"task-project-root", value:root ?? state.value?.root ?? "", placeholder:"/absolute/path/projects", style:{display:"block",width:"100%",boxSizing:"border-box",margin:"8px 0 12px"}, disabled:!state.value?.enabled || saving, onChange:event=>{setRoot(event.target.value);setNotice("");}}),
+        h(DirectoryField, {value:root ?? state.value?.root ?? state.value?.fallback ?? "", directoryApi, disabled:!state.value?.enabled || saving,
+          onChange:value=>{setRoot(value);setNotice("");}}),
         !saveCoordinator ? h(Button,{variant:"outline",disabled:!state.value?.enabled || saving,onClick:saveRoot},saving ? "正在保存…" : "保存项目父目录") : null,
         h(Button, {variant:"outline",style:{marginLeft:8},disabled:saving,onClick:()=>{setRoot(null);setNotice("");refresh();}}, "刷新"),
         notice ? h("p", {role:"status",style:hintStyle}, notice) : null);
@@ -3130,6 +3184,7 @@ window.__ModuleLoader__.load({
               t,
               startup: props.startup,
               readWorkspaces: props.readWorkspaces,
+              renderExecutionDirectory:()=>h(ProjectWorkspaceSettings,{executor:true,readProjectSettings:props.readExecutionDirectorySettings,saveProjectSettings:props.saveExecutionDirectorySettings,saveCoordinator,directoryApi:props.directoryApi}),
               saveStartup: props.saveStartup,
               onSaved: () => setRefreshKey((value) => value + 1),
               advanced,
@@ -3151,7 +3206,7 @@ window.__ModuleLoader__.load({
                   : null,
             })
           : null,
-        h(ProjectWorkspaceSettings, {readProjectSettings:props.readProjectSettings,saveProjectSettings:props.saveProjectSettings,saveCoordinator}),
+        h(ProjectWorkspaceSettings, {readProjectSettings:props.readProjectSettings,saveProjectSettings:props.saveProjectSettings,saveCoordinator,directoryApi:props.directoryApi}),
         h(LocalQueue, {
           key: refreshKey,
           t,
@@ -3292,6 +3347,8 @@ window.__ModuleLoader__.load({
     const projectMethods = [
       "sessionTasks",
       "projectSettings",
+      "executionDirectorySettings",
+      "saveExecutionDirectorySettings",
       "createTemporaryTask",
       "scheduleOptions",
       "createScheduledPlan",
@@ -3318,7 +3375,7 @@ window.__ModuleLoader__.load({
       namespace: "taskPluginSettings",
       method,
       invocation: { kind: "direct" },
-      parameters: ["projectSettings", "projectSnapshot", "projectPage", "conversationModels", "scheduleOptions"].includes(method)
+      parameters: ["executionDirectorySettings", "projectSettings", "projectSnapshot", "projectPage", "conversationModels", "scheduleOptions"].includes(method)
         ? []
         : [
             {
@@ -3747,6 +3804,13 @@ window.__ModuleLoader__.load({
               read,
               readQueue,
               readProjectSettings: () => invoke("projectSettings"),
+              readExecutionDirectorySettings: () => invoke("executionDirectorySettings"),
+              saveExecutionDirectorySettings: input => invoke("saveExecutionDirectorySettings",input),
+              directoryApi: {
+                pick: () => {const service=ctx.get("uiWorkspace"); if(!service) throw new Error("DSH 目录选择服务尚未加载"); return service.pickDirectory();},
+                list: path => {const service=ctx.get("uiWorkspace"); if(!service) throw new Error("DSH 目录浏览服务尚未加载，请稍后重试"); return service.listDirectory(path);},
+                create: (path,name) => {const service=ctx.get("uiWorkspace"); if(!service) throw new Error("DSH 目录浏览服务尚未加载"); return service.createDirectory(path,name);},
+              },
               saveProjectSettings: input => invoke("saveProjectSettings",input),
               readWorkspaces,
               readDecisionSettings,
@@ -3833,6 +3897,8 @@ window.__ModuleLoader__.load({
       simpleEndpointInput,
       StartupRow,
       WorkspaceSelect,
+      DirectoryField,
+      ProjectWorkspaceSettings,
       workspaceDirectoryState,
       StartupSettings,
       QueueContents,

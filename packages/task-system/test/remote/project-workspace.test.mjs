@@ -13,10 +13,10 @@ function fixture(t) {
  const workspace=(claim,sessionId='session',resume=false)=>executionWorkspace({parent,store,claim,sessionId,resume});
  return {parent,store,claim,workspace};
 }
-test('projects and schedulers are isolated; temporary tasks share one workspace with separate session mappings',async t=>{
+test('projects and schedulers are isolated; temporary tasks have independent workspaces',async t=>{
  const f=fixture(t),a=await f.workspace(f.claim(),'a'),b=await f.workspace(f.claim('p','task-b'),'b');assert.equal(a,b);
  assert.notEqual(await f.workspace(f.claim('q'),'c'),a);assert.notEqual(await f.workspace(f.claim('p','task','scheduler-other'),'d'),a);
- const temp=await f.workspace(f.claim(null,'temp'),'e');assert.notEqual(temp,a);assert.equal(await f.workspace(f.claim(null,'temp-other'),'f'),temp);assert.notEqual(await f.workspace(f.claim(null,'temp','scheduler-other'),'g'),temp);
+ const temp=await f.workspace(f.claim(null,'temp'),'e');assert.notEqual(temp,a);assert.notEqual(await f.workspace(f.claim(null,'temp-other'),'f'),temp);assert.notEqual(await f.workspace(f.claim(null,'temp','scheduler-other'),'g'),temp);
  assert.equal(await f.workspace(f.claim(),'a',true),a);
  assert.equal(JSON.parse(readFileSync(join(a,'.dsh-project-context/revision-1.json'),'utf8')).project.projectId,'p');
  await assert.rejects(f.workspace(f.claim('q'),'a',true),/TASK_PROJECT_CHANGED/);
@@ -48,3 +48,20 @@ test('plain recursive task sessions get independent directories and cannot resum
  const old=f.claim('p','old-child');await f.workspace(old,'old-session');old.run.parentRunId='parent-run';
  await assert.rejects(f.workspace(old,'old-session',true),/RECURSIVE_WORKSPACE_REQUIRES_NEW_SESSION/);
 });
+
+ test('operator-selected parent persists for projects and sessions; new projects follow later selections', async t=>{
+  const f=fixture(t), root=realpathSync(mkdtempSync(join(tmpdir(),'dsh-picked-root-')));
+  t.after(()=>rmSync(root,{recursive:true,force:true}));
+  const selected=(claim,sessionId,resume=false,projectRoot=root)=>executionWorkspace({parent:f.parent,store:f.store,claim,sessionId,resume,projectRoot});
+  const first=await selected(f.claim(),'first'); assert.ok(first.startsWith(root+'/'));
+  assert.equal(await selected(f.claim(),'first',true,f.parent),first);
+  assert.equal(await selected(f.claim('p','second'),'second',false,f.parent),first);
+  const next=await selected(f.claim('new','third'),'third',false,f.parent); assert.ok(next.startsWith(f.parent+'/'));
+  const restricted=f.claim('restricted','explicit');restricted.run.workspaceConstraint='allowed-workspace';
+  assert.ok((await selected(restricted,'explicit')).startsWith(f.parent+'/'));
+ });
+ test('existing project directories survive selecting a different parent before their next task',async t=>{
+  const f=fixture(t), first=await f.workspace(f.claim(),'first');
+  const selected=realpathSync(mkdtempSync(join(tmpdir(),'dsh-new-parent-')));t.after(()=>rmSync(selected,{recursive:true,force:true}));
+  assert.equal(await executionWorkspace({parent:f.parent,projectRoot:selected,store:f.store,claim:f.claim('p','new-task'),sessionId:'new-session',resume:false}),first);
+ });

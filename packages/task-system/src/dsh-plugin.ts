@@ -1,3 +1,5 @@
+import { ExecutionDirectories } from "./execution-directories.js";
+import { executionWorkspace, workspaceSessionKey } from "./remote/project-workspace.js";
 import { ProjectCollaborationAuthority } from "./project-collaboration/authority.js";
 import {
   executeOfficialSubagent,
@@ -1211,7 +1213,7 @@ export class NativeExecutionProvider {
           const project = claim.run.projectContext.project;
           const workspace = await registry.create(
             workspacePath,
-            project ? project.title : "临时任务",
+            project ? project.title : claim.task.title,
           );
           await workspace.attachSession(SessionId(sessionId));
         }
@@ -1341,6 +1343,7 @@ export class NativeExecutionProvider {
           setup,
         });
     await this.ctx.sessions.flush(owned.handle.agent.session);
+    await this.attachExecutionWorkspace(claim, workspacePath, sessionId);
     const outcome = await executeOfficialSubagent({
       subagents,
       parent: owned.handle.agent,
@@ -1581,6 +1584,15 @@ export class NativeExecutionProvider {
     };
   }
 
+  private async attachExecutionWorkspace(claim: NativeClaim, path: string, sessionId: string) {
+    if (!claim.run.projectContext) return;
+    const registry = this.ctx.get("workspaceRegistry") as unknown as
+      {create(path: string,title?: string): Promise<{attachSession(id: SessionId): Promise<void>}>} | undefined;
+    if (registry) {
+      const workspace = await registry.create(path, claim.run.projectContext.project?.title ?? claim.task.title);
+      await workspace.attachSession(SessionId(sessionId));
+    }
+  }
   private async drive(
     owned: OwnedAttempt,
     resume: boolean,
@@ -1755,6 +1767,16 @@ export class NativeExecutionProvider {
           sessionId,
         },
       );
+      if (workspace && claim.run.projectContext) {
+        const directories = this.owner.executionDirectories;
+        // A pre-existing local session has no directory binding: keep its stored cwd.
+        if (!resume || directories.sessionWorkspace(workspaceSessionKey(claim, sessionId))) {
+          workspace = { ...workspace, path: await executionWorkspace({
+            parent: workspace.path, projectRoot: directories.settings().root,
+            claim, sessionId, resume, store: directories,
+          }) };
+        }
+      }
       if (route.backend) {
         if (!workspace)
           throw new Error("official backend requires an assigned workspace");
@@ -1796,6 +1818,8 @@ export class NativeExecutionProvider {
         this.bySession.set(sessionId, owned);
         if (!this.accepting || owned.aborted)
           throw new Error("native execution stopped during agent creation");
+        await this.ctx.sessions.flush(owned.handle.agent.session);
+        if (workspace) await this.attachExecutionWorkspace(claim, workspace.path, sessionId);
         // Resumed inbox items retain their DSH message identities. The new
         // instruction explicitly requests reconciliation before further effects.
         owned.handle.agent.followup(
@@ -2023,6 +2047,7 @@ export class NativeExecutionProvider {
 
 /** Trusted in-process entry point. The underlying ledger enforces roles too. */
 export class TaskSystemService extends Service {
+  readonly executionDirectories: ExecutionDirectories;
   projects?: ProjectRuntime;
   native?: NativeExecutionProvider;
   workspaces?: WorkspaceManager;
@@ -2046,6 +2071,7 @@ export class TaskSystemService extends Service {
     readonly results: NativeResultJournal,
   ) {
     super(ctx, "taskSystem");
+    this.executionDirectories = new ExecutionDirectories(ledger.managementDatabase());
   }
   applyLiveNodeCapacities(): void {
     for (const node of this.config.remoteNodes) {

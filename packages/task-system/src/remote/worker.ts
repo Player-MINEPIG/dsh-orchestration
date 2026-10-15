@@ -37,6 +37,7 @@ export interface WorkerOptions {
   now?: () => number;
   taskSessions?: boolean;
   prepare?: () => Promise<void>;
+  projectRoot?: () => string | null | undefined;
   chooseSession?: (
     claim: Claim,
     context: TaskSessionContext,
@@ -509,6 +510,7 @@ export class ExecutorWorker {
       });
       workspacePath = await executionWorkspace({
         parent: workspacePath,
+        projectRoot: this.options.projectRoot?.(),
         claim,
         sessionId,
         resume: resumeSession,

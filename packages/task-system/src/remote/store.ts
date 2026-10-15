@@ -162,7 +162,7 @@ export class RecoveryStore {
   }
   sessionWorkspace(
     key: string,
-  ): { path: string; projectId: string | null } | undefined {
+  ): { path: string; projectId: string | null; root?: string } | undefined {
     const row = this.db
       .prepare("SELECT value FROM metadata WHERE key=?")
       .get(`workspace:${key}`);
@@ -170,7 +170,7 @@ export class RecoveryStore {
   }
   rememberSessionWorkspace(
     key: string,
-    value: { path: string; projectId: string | null },
+    value: { path: string; projectId: string | null; root?: string },
   ): void {
     this.transaction(() => {
       const prior = this.sessionWorkspace(key);

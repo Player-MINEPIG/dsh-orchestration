@@ -265,7 +265,7 @@ export class RemoteExecutionService extends Service {
     insist(this.active,'DRAINING',503)
     insist(!this.configurationPaused,'CONFIGURATION_BUSY',409)
     insist(this.workers.size === 0,'ONE_WORKER_OWNER_PER_STORE',409)
-    const worker = new ExecutorWorker({ ledger: this.workerLedger,provider,store: this.store!,policy: { role: this.config.role,nodeId: this.config.nodeId,capabilities: this.config.capabilities,workspaces: this.config.workspaces },ttlMs: this.config.leaseTtlMs,maxResultBytes: Math.max(1024,this.config.maxBodyBytes - 4096),taskSessions: this.config.taskSessionsEnabled === true,
+    const worker = new ExecutorWorker({ projectRoot: () => this.ctx.get("taskSystem")?.executionDirectories?.settings().root, ledger: this.workerLedger,provider,store: this.store!,policy: { role: this.config.role,nodeId: this.config.nodeId,capabilities: this.config.capabilities,workspaces: this.config.workspaces },ttlMs: this.config.leaseTtlMs,maxResultBytes: Math.max(1024,this.config.maxBodyBytes - 4096),taskSessions: this.config.taskSessionsEnabled === true,
       ...(this.config.taskSessionsEnabled && this.client ? { prepare: async () => { await this.client!.executorIdentity() } } : {}),
       chooseSession: async (claim,context,signal,refresh) => {
         const task = this.ctx.get('taskSystem') as TaskSystemPort | undefined
