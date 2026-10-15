@@ -557,6 +557,28 @@ test('malformed structured native result records retryable failure and bounded d
   } finally { await h.dispose(); }
 });
 
+test('missing required report is rejected before ending the attempt and can be corrected in place', async () => {
+  const h = await harness({ script: [{ name: 'task_settle', args: { outcome: 'partial', summary: 'Still processing evidence' } }, options => { const error = options.messages.findLast(m => m.role === 'tool'); assert.equal(error.isError, true); assert.match(JSON.stringify(error.content), /This attempt remains active/); return { name: 'task_settle', args: { outcome: 'success', summary: 'Full report prepared', reportData: { itemsVerified: 44 }, reportSchemaId: 'strict-v1' } }; }] });
+  try {
+    h.ledger.registerNode('strict-node', { nodeId: 'local', roles: ['both'], capabilities: [], models: [{ provider: 'test-offline', model: 'script', reasoningEfforts: [] }], workspaceIds: [], enabled: true, lastSeenAt: new Date().toISOString() });
+    const template = { templateId: 'strict', version: 1, name: 'Strict structured result', description: '', inputSchema: { type: 'object' }, defaults: {}, resultContract: { type: 'object', required: ['report'], properties: { report: { type: 'object', required: ['data'], properties: { data: { type: 'object', required: ['itemsVerified'], properties: { itemsVerified: { type: 'integer' } } } } } } } };
+    h.ledger.updateTemplate('strict-template', template);
+    const task = h.ledger.createTask('strict-task', { title: 'Validate structured result' }).value;
+    const run = h.ledger.createRun('strict-run', { taskId: task.taskId, configuration: { template, input: {} }, route: { nodeId: 'local', provider: 'test-offline', model: 'script', requiredCapabilities: [] } }).value;
+    const claim = h.ledger.claim('strict-claim', { runId: run.runId, nodeId: 'local', ttlMs: 10000 }).value;
+    await h.ctx.taskSystem.native.execute(claim);
+    const settled = h.ledger.getRun(run.runId);
+    assert.equal(settled.state, 'succeeded');
+    assert.equal(settled.resultValidationFailure, undefined);
+    assert.equal(h.adapter.requests.length, 2);
+    const history = h.ledger.history(task.taskId);
+    assert.equal(history.runs.length, 1);
+    assert.equal(history.reports.filter(r => r.kind === 'result').length, 1);
+    assert.equal(history.reports.find(r => r.kind === 'result').data.itemsVerified, 44);
+    assert.equal(h.ctx.taskSystem.native.activeCount, 0);
+  } finally { await h.dispose(); }
+});
+
 test('trusted semantic validation rejects shape-valid native success with retry feedback', async () => {
   const h = await harness({ script: [{ name: 'task_settle', args: { outcome: 'success', summary: 'Claimed all items verified', reportData: { items: ['one'], count: 2 } } }] });
   let checked = 0;
