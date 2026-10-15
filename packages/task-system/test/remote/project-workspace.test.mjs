@@ -65,3 +65,10 @@ test('plain recursive task sessions get independent directories and cannot resum
   const selected=realpathSync(mkdtempSync(join(tmpdir(),'dsh-new-parent-')));t.after(()=>rmSync(selected,{recursive:true,force:true}));
   assert.equal(await executionWorkspace({parent:f.parent,projectRoot:selected,store:f.store,claim:f.claim('p','new-task'),sessionId:'new-session',resume:false}),first);
  });
+
+test('an explicit workspace constraint cannot resume outside a replaced route binding',async t=>{
+ const f=fixture(t),claim=f.claim();claim.run.workspaceConstraint='explicit';await f.workspace(claim,'existing');
+ const replacement=realpathSync(mkdtempSync(join(tmpdir(),'dsh-restricted-root-')));t.after(()=>rmSync(replacement,{recursive:true,force:true}));
+ await assert.rejects(executionWorkspace({parent:replacement,projectRoot:f.parent,store:f.store,claim,sessionId:'existing',resume:true}),/WORKSPACE_ESCAPE/);
+ await assert.rejects(executionWorkspace({parent:replacement,store:f.store,claim,sessionId:'new-session',resume:false}),/WORKSPACE_ESCAPE/);
+});

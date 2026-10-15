@@ -134,6 +134,7 @@ async function provisionExecutionWorkspace(
   const key = workspaceSessionKey(claim, sessionId);
   const prior = store.sessionWorkspace(key);
   if (prior) {
+    if (claim.run.workspaceConstraint) await inside(input.parent, prior.path);
     parent = prior.root ?? parent;
     insist(prior.projectId === projectId, "TASK_PROJECT_CHANGED", 409);
     if (claim.run.parentRunId) {
@@ -179,7 +180,10 @@ async function provisionExecutionWorkspace(
   if (input.projectRoot && !claim.run.workspaceConstraint) parent = await realpath(input.projectRoot);
   const projectKey = `project:${digest([context.schedulerId, claim.attempt.nodeId, projectId, claim.run.workspaceConstraint ?? null])}`;
   const existingProject = projectId ? store.sessionWorkspace(projectKey) : undefined;
-  if (existingProject?.root) parent = existingProject.root;
+  if (existingProject?.root) {
+    if (claim.run.workspaceConstraint) await inside(input.parent, existingProject.path);
+    parent = existingProject.root;
+  }
   else if (projectId && parent !== input.parent) {
     const legacyProject = join(input.parent, component(context.schedulerId, "scheduler"), component(projectId, "project"));
     try {
