@@ -6,6 +6,7 @@ import {
 } from "./official-execution.js";
 import { installOfficialPermissionGuard } from "./official-permission-guard.js";
 import type {} from "@deepseek-ai/dsh-subagent";
+import type {} from "./local-codex.js";
 import type {} from "dsh-jev-plugin";
 import { ProjectRuntime, type ProjectAgentOptions } from "./project-runtime.js";
 import { chooseExecutionSession } from "./execution-session.js";
@@ -3043,11 +3044,12 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
       defineTool({
         name: "task_delegate",
         description:
-          "Delegate a child of this exact owned task through its authoritative ledger. This cannot create unrelated task intent.",
+          "Delegate work. In an ordinary local session, runs Desktop Codex in the current workspace (no scheduler); commandId is the idempotency key and description is the full prompt. Collect with job_output/codex_status, verify the result, then task_accept with evidence. In an owned execution, delegates a child through its authoritative ledger as before.",
         parameters: {
           commandId: { type: "string", required: true },
           title: { type: "string", required: true },
           description: { type: "string" },
+          backend: { type: "string", enum: ["codex"], description: "Optional explicit local backend for ordinary sessions; unavailable to scheduler-owned agents." },
           route: { type: "object", additionalProperties: true },
           policy: { type: "object", additionalProperties: true },
           configuration: { type: "json" },
@@ -3056,8 +3058,14 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
         output,
         execute: async (args, exec) => {
           const bound = service.native?.scopeFor(exec.agent);
-          if (!bound)
-            throw new Error("task_delegate requires an owned execution agent");
+          if (!bound) {
+            const local = ctx.get("localCodex");
+            if (!exec.agent || !local) throw new Error("task_delegate requires an owned execution agent or the enabled local Codex backend");
+            if (args.route !== undefined || args.policy !== undefined || args.configuration !== undefined || args.display !== undefined)
+              throw new Error("Local Codex uses the parent workspace and permission mode; route/policy/configuration/display are only supported for owned task delegation");
+            return json(local.delegate(exec.agent, { requestId: args.commandId, title: args.title, prompt: args.description ?? "" }, exec.signal));
+          }
+          if (args.backend) throw new Error("Owned execution agents must delegate through their authoritative ledger");
           const input = {
             title: args.title,
             ...(args.display !== undefined

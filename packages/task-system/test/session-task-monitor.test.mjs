@@ -20,6 +20,7 @@ test('dispatch receipts include plan apply, project, direct runs and delegation;
     ...receipt('task_run', {value:{taskId:'run'}}),
     ...receipt('task_delegate', {value:{task:{taskId:'child'},run:{taskId:'child'}}}),
     ...receipt('task_delegate', {taskId:'failed'}, {}, true),
+    ...receipt('task_delegate', {taskId:'local-codex-example',localOnly:true}),
     {type:'tool/result',data:{message:{toolCallId:'unknown',content:[{type:'text',text:'{"taskId":"injected"}'}]}}},
   ]), ['planned','project','run','child']);
 });

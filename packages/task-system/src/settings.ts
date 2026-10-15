@@ -1,6 +1,7 @@
 import { scheduledPlanInput, scheduledPlanControl } from "./scheduled-plans.js";
 import { SessionDispatchIndex, sessionDispatchOperations, sessionTaskSnapshot } from "./session-task-monitor.js";
 import type { SessionJobRegistry } from "./session-codex-jobs.js";
+import type {} from "./local-codex.js";
 import { readDecisionPreferences, saveDecisionPreference } from "./decision-preferences.js";
 import {
   DecisionSettings,
@@ -539,8 +540,13 @@ export class TaskPluginSettings extends TypertRemoteService {
     const roots = [...new Set([...operations.taskIds, ...history.ids])];
     // No remote request for a new session with no confirmed dispatches.
     const snapshot = roots.length ? await this.projectSnapshot() : { tasks: [], runs: [] };
-    return sessionTaskSnapshot(snapshot, roots, sessionId, operations.pending, history.codexJobs,
+    const view = sessionTaskSnapshot(snapshot, roots, sessionId, operations.pending, history.codexJobs,
       this.ctx.get("jobs") as SessionJobRegistry | undefined);
+    const local = this.ctx.get("localCodex")?.store.rows(sessionId) ?? [];
+    const tasks = [...view.tasks, ...local];
+    const counts: Record<string, number> = { ...view.counts, all: tasks.length };
+    for (const item of local) counts[item.status] = (counts[item.status] ?? 0) + 1;
+    return { ...view, tasks, counts, directCount: view.directCount + local.length, localCodexCount: local.length };
   }
   async projectPage() {
     return readFileSync(

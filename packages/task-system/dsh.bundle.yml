@@ -14,6 +14,11 @@
         executionTools: null
     - id: task-system-settings
       name: '@dsh-task/task-system'
+    - id: task-local-codex
+      name: '@dsh-task/task-system/local-codex'
+      config:
+        enabled: false
+        databasePath: !!js "dshHomePath('task-system', 'session-codex.sqlite')"
     - id: project-registration
       name: '@dsh-task/task-system/project-registration/plugin'
       config:

@@ -29,6 +29,7 @@ export function dispatchedTaskIds(events: readonly SessionEvent[]): string[] {
         try {
           const receipt = JSON.parse(part.text);
           const value = record(receipt?.value) ?? record(receipt);
+          if (value?.localOnly === true) continue; // Local records are read from their separate session store.
           const taskId = value?.taskId ?? record(value?.task)?.taskId ?? record(value?.run)?.taskId;
           if (typeof taskId === "string" && taskId) ids.add(taskId);
         } catch { /* Tool errors or non-JSON output are not dispatch receipts. */ }

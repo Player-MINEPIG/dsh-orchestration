@@ -34,6 +34,8 @@ Use the official Web profile (`dsh web`). In the same profile, open **Plugins â†
 
 ## Configuration and roles
 
+For local Desktop Codex delegation through `task_delegate`, session monitoring and parent acceptance, see [Local Codex delegation](docs/local-codex.md).
+
 `databasePath`, `nodeId`, `role` (`planner`, `executor`, `both`), lifecycle timing and tool limits are explicit native Config fields. `autoExecute` is off by default. Enable it only with registered model/node/workspace capabilities and the intended DSH Agent preset permissions. `maxConcurrent` limits local execution. Scheduler admission uses an explicitly configured route or leaves a run queued for later routing. The plugin owns its timers, native handles, observer and cleanup; an external supervisor may keep the DSH host alive.
 
 Planner-only cannot execute local workloads. Executor-only cannot create or route task intent. Every remote operation also checks its authenticated node, operation and workspace scope; model-facing checks are not the only authorization boundary. Native `task_settle` derives identity from the exact owned agent. Text or idle alone never means success. Final commitment waits for the agent to drain and the session to flush.
