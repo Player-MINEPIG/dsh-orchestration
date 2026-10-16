@@ -5104,8 +5104,16 @@ export class TaskLedger {
   }
   pendingRuns(nodeId: string) {
     id(nodeId);
+    const runs = this.db
+      .prepare(`
+        SELECT data FROM entities WHERE kind='run' AND state='queued'
+          AND json_extract(data,'$.route.nodeId')=? ORDER BY rowid
+      `)
+      .all(nodeId)
+      .map((row) => this.projectEntity<Run>("run", JSON.parse(String(row.data))));
+    if (!runs.length) return [];
     const tasks = new Map(this.list<Task>("task").map((t) => [t.taskId, t]));
-    return this.list<Run>("run")
+    return runs
       .filter(
         (r) =>
           r.state === "queued" &&
@@ -5251,6 +5259,21 @@ export class TaskLedger {
           .all(taskId) as { data: string }[]
       ).map((x) => JSON.parse(x.data) as Event),
     };
+  }
+  resultRetryCandidates(): Run[] {
+    return this.db
+      .prepare(`
+        SELECT candidate.data FROM entities AS candidate
+        WHERE candidate.kind='run' AND candidate.state='failed'
+          AND json_type(candidate.data,'$.resultValidationFailure')='object'
+          AND NOT EXISTS (
+            SELECT 1 FROM entities AS newer
+            WHERE newer.kind='run' AND newer.parent=candidate.parent
+              AND newer.rowid>candidate.rowid
+          ) ORDER BY candidate.rowid
+      `)
+      .all()
+      .map((row) => this.projectEntity<Run>("run", JSON.parse(String(row.data))));
   }
   resultRetryInfo(runId: string) {
     const run=this.getRun(runId),task=this.getTask(run.taskId),config=run.configuration;

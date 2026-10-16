@@ -825,10 +825,12 @@ export class ProjectRuntime {
   /** Persisted inbox admission; only pre-claim unavailability may move to the next candidate. */
   tick() {
     if (!this.accepting) return;
-    if(this.planner)for(const run of this.ledger.snapshot().runs){
+    if(this.planner)for(const run of this.ledger.resultRetryCandidates()){
       if(!run.resultValidationFailure||this.resultRetries.has(run.runId))continue;
-      const info=this.ledger.resultRetryInfo(run.runId),view=this.ledger.taskActionState(run.taskId);
-      if(!info.eligible||!view.canRetry)continue;
+      const info=this.ledger.resultRetryInfo(run.runId);
+      if(!info.eligible)continue;
+      const view=this.ledger.taskActionState(run.taskId);
+      if(!view.canRetry)continue;
       const feedback=`报告校验失败，自动重试 ${info.count+1}/${info.limit}。沿用原任务会话和已有成果，结合原上下文判断需要修正报告还是补做任务。无需重复提供已有成果。\n校验错误：${run.resultValidationFailure.code}\n${run.resultValidationFailure.issues.map(x=>'- '+x).join('\n')}`;
       const job=this.retryTask({commandId:`auto-result:${run.runId}`,taskId:run.taskId,expectedVersion:view.version,retryPrompt:feedback,automaticResultRetry:true}).catch(()=>undefined).finally(()=>this.resultRetries.delete(run.runId));
       this.resultRetries.set(run.runId,job);
