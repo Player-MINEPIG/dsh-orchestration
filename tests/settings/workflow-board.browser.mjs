@@ -225,6 +225,11 @@ try {
   assert.equal(await app.locator(".route").count(), 1);
   await app.locator('[data-node="VPS"]').click();
   await app.locator('[data-step="digest"]').click();
+  assert.equal(
+    await app.locator("#step-input-exposure").inputValue(),
+    "inline",
+  );
+  await app.locator("#step-input-exposure").selectOption("tools");
   await app.locator("#step-instructions").fill("按项目归纳。保留成果和缺口。");
   const editorBefore = await app.locator("#step-instructions").elementHandle();
   await app
@@ -258,6 +263,11 @@ try {
     window.calls.findLast((row) => row.method === "saveWorkflow"),
   );
   assert.equal(saved.input.expectedRevision, 1);
+  assert.equal(
+    saved.input.definition.steps[1].execution.inputExposure,
+    "tools",
+  );
+  assert.equal(await app.locator("#step-input-exposure").inputValue(), "tools");
   assert.equal(
     saved.input.definition.steps[1].execution.instructions,
     "按项目归纳。保留成果和缺口。",
