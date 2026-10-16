@@ -1324,7 +1324,7 @@ export class ProjectRuntime {
       const tasks = this.snapshot().tasks.filter((t) =>
         p.taskId ? t.id === p.taskId : t.project === p.id,
       );
-      const summary = `项目目标：${p.goal}\n原统筹会话：${p.session}\n未完成任务（沿用原任务，不要重复创建）：${JSON.stringify(tasks.filter((t) => t.status !== "done"))}\n完成任务的报告引用：${JSON.stringify(tasks.filter((t) => t.status === "done").map((t) => ({ taskId: t.id, run: t.run, reportId: t.reportId })))}\n近期对话（用于审查约束与下一步）：${JSON.stringify(history.messages.slice(-16)).slice(-24000)}`;
+      const summary = `项目目标：${p.goal}\n原统筹会话：${p.session}\n未完成任务（沿用原任务，不要重复创建）：${JSON.stringify(tasks.filter((t) => !["done", "accepted"].includes(t.status)))}\n已完成或已验收任务的报告引用：${JSON.stringify(tasks.filter((t) => ["done", "accepted"].includes(t.status)).map((t) => ({ taskId: t.id, run: t.run, reportId: t.reportId })))}\n近期对话（用于审查约束与下一步）：${JSON.stringify(history.messages.slice(-16)).slice(-24000)}`;
       const session = `project-${randomUUID()}`,
         generation = p.generation + 1;
       const handle = await this.agents().create({
@@ -1682,7 +1682,9 @@ export class ProjectRuntime {
               : attention.confirmationPending ||
                   run?.reviewStatus === "pending_user"
                 ? "review"
-                : attention.handled
+                : run?.reviewStatus === "accepted"
+                  ? "accepted"
+                  : attention.handled
                   ? "handled"
                   : run?.reviewStatus === "rejected"
                     ? "error"
@@ -1776,7 +1778,7 @@ export class ProjectRuntime {
                     ? "已在等待派发，无需重复提交"
                     : "仅已结束的失败、受阻或审核未通过的任务可重新派发",
         conversationKind: taskProjects.get(t.taskId) ? "project" : "temporary",
-        canRestore: attention.handled,
+        canRestore: attention.handled && run?.reviewStatus !== "accepted",
         canReconcile: attention.canReconcile,
         confirmationPending: attention.confirmationPending,
         stateLabel: manual
@@ -1789,7 +1791,9 @@ export class ProjectRuntime {
               ? "待批准执行"
               : run?.reviewStatus === "pending_user" && !cancelled
                 ? "待审核结果"
-                : t.state === "inbox" && dispatch?.state === "inbox"
+                : run?.reviewStatus === "accepted" && !cancelled && t.state !== "archived"
+                  ? "已验收"
+                  : t.state === "inbox" && dispatch?.state === "inbox"
                   ? "待派发"
                   : run?.state === "queued"
                     ? "待领取"
@@ -1817,9 +1821,11 @@ export class ProjectRuntime {
               : "done"
             : run?.reviewStatus === "pending_user" && !cancelled
               ? "review"
-              : run?.state === "succeeded"
-                ? "done"
-                : "error"
+              : run?.reviewStatus === "accepted"
+                ? "accepted"
+                : run?.state === "succeeded"
+                  ? "done"
+                  : "error"
           : "queued",
         runState: run?.state ?? null,
         node: run?.route?.nodeId || (run?.observationOnly ? "来源执行（仅观察）" : "待选择执行端"),

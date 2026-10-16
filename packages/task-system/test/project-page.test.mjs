@@ -440,3 +440,14 @@ test('history is bounded, keeps selected page through polling, and never renders
  await p.action('history-older',t.id);assert.equal((history().match(/data-action="schedule-run"/g)||[]).length,2);assert.match(history(),/data-action="history-older"[^>]*disabled/);
  await p.action('history-newer',t.id);assert.match(history(),/第 7 次执行/);
 });
+
+test('accepted partial results have their own section and filter while retaining delivery gaps',async()=>{
+ const p=page(),task={id:'accepted-daily',project:'unassigned',title:'Accepted daily',status:'accepted',stateLabel:'已验收',reviewStatus:'accepted',runState:'partial',runId:'accepted-run',report:'Partial delivery; PC_AU source unavailable'};
+ await p.answer({value:{...snapshot,tasks:[task],runs:[{id:'accepted-run',taskId:task.id,state:'partial',reviewStatus:'accepted'}],reports:[{id:'accepted-report',taskId:task.id,runId:'accepted-run',kind:'result',body:task.report}]}});
+ assert.match(p.content(),/data-status="accepted"><span>已验收<\/span><span>1<\/span>/);
+ assert.match(p.content(),/data-status="error"><span>需处理<\/span><span>0<\/span>/);
+ await p.action('filter','accepted');assert.match(p.content(),/Accepted daily/);assert.doesNotMatch(p.content(),/data-status="error"><span>需处理/);
+ await p.action('task',task.id);assert.match(p.overlay(),/部分交付 · 已验收/);assert.match(p.overlay(),/PC_AU source unavailable/);
+ assert.doesNotMatch(p.overlay(),/>审核通过<|>审核不通过<|>标记已处理</);
+ assert.equal(vm.runInContext("runResultLabel({state:'partial',reviewStatus:'rejected'})",p.context),'部分交付 · 审核未通过');
+});

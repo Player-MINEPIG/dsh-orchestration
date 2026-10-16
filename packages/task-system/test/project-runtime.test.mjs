@@ -513,3 +513,30 @@ test('child report rejection keeps parent waiting while its bounded retry is pen
   assert.equal(l.snapshot().runs.length,3);assert.equal(l.snapshot().runs.at(-1).parentRunId,root.runId);assert.equal(l.allSettled(parent.taskId,0,root.runId).settled,false);
  }finally{await h.dispose();}
 });
+
+test('accepted partial results project as accepted without rewriting delivery facts; a later run has its own review',async()=>{
+ const h=await createNativeHarness({config:{role:'planner'}});
+ try{
+  h.ledger.registerNode('node',worker);const runtime=h.ctx.taskSystem.projects;
+  const {task,run,lease}=fixtureRun(h,'accepted-partial');
+  h.ledger.submit('partial-result',{...lease,outcome:'partial',summary:'Missing PC_AU source',report:{title:'Daily',body:'Partial delivery; PC_AU source unavailable'}});
+  const reportBefore=JSON.stringify(h.ledger.snapshot().reports);
+  // An existing persisted acceptance is enough; no migration or synthetic success.
+  h.ledger.reviewRun('existing-acceptance',{runId:run.runId,decision:'accepted',reason:'User accepts known coverage gap'});
+  let row=runtime.snapshot().tasks.find(t=>t.id===task.taskId);
+  assert.equal(row.status,'accepted');assert.equal(row.stateLabel,'已验收');assert.equal(row.resultStatus,'accepted');
+  assert.equal(row.runState,'partial');assert.match(row.report,/PC_AU source unavailable/);
+  assert.equal(row.canHandle,false);assert.equal(row.canRetry,false);assert.equal(row.canComplete,false);
+  assert.equal(JSON.stringify(h.ledger.snapshot().reports),reportBefore);
+  const {TaskLedger}=await import('../dist/ledger.js');const read=TaskLedger.open(join(h.dir,'tasks.sqlite'),{readOnly:true});
+  try{assert.equal(read.getRun(run.runId).reviewStatus,'accepted');assert.equal(read.getRun(run.runId).state,'partial');assert.equal(read.taskActionState(task.taskId).canHandle,false);}finally{read.close();}
+  const next=h.ledger.createRun('next-occurrence',{taskId:task.taskId,route:run.route}).value;
+  assert.equal(runtime.snapshot().tasks.find(t=>t.id===task.taskId).status,'queued');
+  const a=h.ledger.claim('next-claim',{runId:next.runId,nodeId:'worker',ttlMs:10000}).value.attempt;
+  h.ledger.submit('next-result',{runId:next.runId,attemptId:a.attemptId,nodeId:a.nodeId,fence:a.fence,outcome:'partial',summary:'New gap',report:{title:'Next daily',body:'New gap'}});
+  assert.equal(runtime.snapshot().tasks.find(t=>t.id===task.taskId).status,'review');
+  runtime.actOnTask(operator(runtime,task.taskId,'reject','reject-next'));
+  row=runtime.snapshot().tasks.find(t=>t.id===task.taskId);assert.equal(row.status,'error');assert.equal(row.canRetry,true);
+  assert.equal(h.ledger.getRun(run.runId).reviewStatus,'accepted');
+ }finally{await h.dispose();}
+});

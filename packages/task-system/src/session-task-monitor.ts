@@ -102,7 +102,7 @@ export function sessionTaskSnapshot(snapshot: unknown, roots: readonly string[],
     id: task.id, title: task.title, description: task.description, status: task.status,
     stateLabel: task.stateLabel, parentTaskId: task.parentTaskId, direct: direct.has(task.id),
     node: task.node, model: task.model, time: task.time,
-    returnedAt: task.returnedAt ?? (["review", "done", "error", "cancelled"].includes(task.status) ? task.time : undefined),
+    returnedAt: task.returnedAt ?? (["review", "done", "accepted", "error", "cancelled"].includes(task.status) ? task.time : undefined),
     report: task.report,
     runId: task.runId, runState: task.runState, reviewStatus: task.reviewStatus,
   }));

@@ -3779,7 +3779,7 @@ export class TaskLedger {
         !active &&
         !uncertain &&
         !confirmationPending &&
-        run?.reviewStatus !== "pending_user" &&
+        !["pending_user", "accepted"].includes(run?.reviewStatus ?? "") &&
         !["cancelled", "archived", "completed", "inbox"].includes(task.state) &&
         (task.state === "failed" ||
           ["failed", "blocked", "partial"].includes(run?.state ?? "") ||
@@ -3789,7 +3789,7 @@ export class TaskLedger {
         !active &&
         !uncertain &&
         !confirmationPending &&
-        run?.reviewStatus !== "pending_user" &&
+        !["pending_user", "accepted"].includes(run?.reviewStatus ?? "") &&
         !["cancelled", "archived", "inbox"].includes(task.state) &&
         (task.state !== "completed" || (!task.manualCompletion && run?.reviewStatus === "rejected")) &&
         (["failed", "blocked"].includes(run?.state ?? "") || run?.reviewStatus === "rejected") &&
