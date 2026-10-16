@@ -12,7 +12,15 @@ export const scheduledPlanInput = z
     title: z.string().trim().min(1).max(500),
     description: z.string().trim().min(1).max(20000),
     projectId: z.string().trim().min(1),
-    routeId: z.string().min(1).max(128),
+    routeId: z.string().min(1).max(128).optional(),
+    execution: z
+      .object({
+        kind: z.literal("workflow"),
+        workflowId: z.string().min(1).max(120),
+        input: z.json(),
+      })
+      .strict()
+      .optional(),
     cadence: z.discriminatedUnion("mode", [
       z
         .object({
@@ -117,6 +125,7 @@ export class ScheduledPlans {
     }
     return {
       routes: [...routes.values()],
+      workflows: this.ledger.workflowOptions?.() ?? [],
       projects: this.workbench
         .snapshot()
         .projects.filter((p) => p.state !== "archived")
@@ -141,7 +150,27 @@ export class ScheduledPlans {
     )
       throw new TaskError("NOT_FOUND", "Project unavailable");
     const selected = this.options().routes.find((r) => r.id === input.routeId);
-    if (!prior && !selected)
+    if (
+      (!input.execution && !input.routeId) ||
+      (input.execution && input.routeId)
+    )
+      throw new TaskError(
+        "INVALID",
+        "Choose Agent route or workflow execution",
+      );
+    if (
+      input.execution &&
+      !(this.ledger.workflowOptions?.() ?? []).some(
+        (item) =>
+          item.id === input.execution!.workflowId &&
+          item.projectId === input.projectId,
+      )
+    )
+      throw new TaskError(
+        "WORKFLOW_PROJECT",
+        "Workflow unavailable in this Project",
+      );
+    if (!prior && !selected && !input.execution)
       throw new TaskError(
         "CONFLICT",
         "Execution route changed; refresh before creating a plan",
@@ -166,7 +195,15 @@ export class ScheduledPlans {
         scheduleId: `scheduled-plan-${id}`,
         title: input.title,
         description: input.description,
-        route: selected!.route,
+        ...(input.execution
+          ? {
+              execution: {
+                kind: "workflow" as const,
+                workflowId: input.execution.workflowId,
+              },
+              workflowInput: input.execution.input,
+            }
+          : { route: selected!.route }),
         ...(input.cadence.mode === "interval"
           ? { intervalMs: input.cadence.minutes * 60000 }
           : {
@@ -191,6 +228,20 @@ export class ScheduledPlans {
       this.workbench.manage(`${command}:link`, "link_backlog_task", {
         backlogId,
         taskId: value.taskId,
+      });
+    }
+    if (input.execution) {
+      const configure =
+        this.ledger.workflowTaskConfiguration ??
+        (() => {
+          throw new TaskError("UNAVAILABLE", "Workflow runtime unavailable");
+        });
+      configure({
+        commandId: `${command}:workflow-binding`,
+        projectId: input.projectId,
+        taskId: value.taskId,
+        workflowId: input.execution.workflowId,
+        input: input.execution.input,
       });
     }
     this.ledger.controlScheduledPlan(`${command}:enable`, {

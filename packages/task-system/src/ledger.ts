@@ -238,6 +238,75 @@ export interface ReportInput {
 
 /** One authority owns this transactional ledger. Never execute an external effect inside a transaction. */
 export class TaskLedger {
+  workflowRunAdmission?: (run: Run, invocation: {workflowId: string; input: Json}) => void;
+  workflowTaskConfiguration?: (input: unknown) => import('./workflow-contracts.js').WorkflowTaskBinding;
+  workflowOptions?: () => {id: string; title: string; projectId: string}[];
+  workflowTaskBound?: (taskId: string) => boolean;
+  private hasWorkflowBinding(taskId: string): boolean {
+    if (this.workflowTaskBound) return this.workflowTaskBound(taskId);
+    const exists=this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='workflow_task_bindings'").get();
+    return !!exists && !!this.db.prepare('SELECT 1 FROM workflow_task_bindings WHERE task_id=?').get(taskId);
+  }
+  isWorkflowInvocation(run: Run): boolean {
+    const config = run.configuration;
+    return !!config && typeof config === 'object' && !Array.isArray(config) && !!config.workflowInvocation;
+  }
+  updateWorkflowRoot(runId: string, state: Run['state']) {
+    this.assertManagementWritable();
+    const run = this.getRun(runId);
+    if (!this.isWorkflowInvocation(run) || run.currentAttemptId || run.route) fail('FORBIDDEN', 'Not a workflow root');
+    run.state = state;
+    run.updatedAt = this.now();
+    this.saveRun(run);
+    this.projectTaskState(this.getTask(run.taskId), run);
+  }
+  prepareWorkflowRun(input: RunInput): Run {
+    this.assertManagementWritable();
+    if (!this.db.isTransaction) fail('FORBIDDEN', 'Workflow admission requires a transaction');
+    return this.newRun(input);
+  }
+  configureWorkflowSchedules(taskId: string, workflowId: string, input: Json) {
+    this.assertManagementWritable();
+    if (!this.db.isTransaction) fail('FORBIDDEN', 'Workflow configuration requires a transaction');
+    for (const schedule of this.list<Schedule>('schedule',taskId)) {
+      if (!schedule.execution || schedule.retiredAt) continue;
+      if (schedule.execution.workflowId === workflowId && canonical(schedule.input) === canonical(input)) continue;
+      schedule.execution={kind:'workflow',workflowId}; schedule.input=structuredClone(input);
+      schedule.revision=(schedule.revision ?? 1)+1;
+      this.validateSchedule(schedule);
+      this.put('schedule',schedule.scheduleId,schedule,taskId);
+    }
+  }
+  prepareWorkflowTask(input: TaskInput): Task {
+    this.assertManagementWritable();
+    if (!this.db.isTransaction) fail('FORBIDDEN', 'Workflow Task preparation requires a transaction');
+    return this.newTask(input);
+  }
+  adoptWorkflowSchedule(taskId: string, input: {scheduleId: string; workflowId: string; input: Json; cron: string; timeZone: string; nextDueAt: string; enabled: boolean; dayOffset: -1 | 0}): Schedule {
+    this.assertManagementWritable();
+    if (!this.db.isTransaction) fail('FORBIDDEN', 'Workflow adoption requires a transaction');
+    const prior = this.list<Schedule>('schedule', taskId).filter(schedule => !schedule.retiredAt);
+    if (prior.length > 1) fail('CONFLICT', 'Task has several active schedules; select one before adoption');
+    const templateId = 'panel-workflow-task';
+    if (!this.get('template', `${templateId}@1`)) this.put('template', `${templateId}@1`, {templateId,version:1,name:'Workflow invocation',description:'Project workflow',inputSchema:{},defaults:{},resultContract:{}});
+    const schedule: Schedule = {...(prior[0] ?? {scheduleId:input.scheduleId,taskId,overlap:'skip',misfire:'once'}),
+      templateId,templateVersion:1,execution:{kind:'workflow',workflowId:input.workflowId},input:input.input,
+      enabled:input.enabled,cron:input.cron,timeZone:input.timeZone,nextDueAt:input.nextDueAt,
+      calendarWindow:{timeZone:input.timeZone,dayOffset:input.dayOffset},revision:(prior[0]?.revision ?? 0)+1};
+    delete schedule.route;
+    delete schedule.intervalMs;
+    this.validateSchedule(schedule);
+    this.put('schedule',schedule.scheduleId,schedule,taskId);
+    this.event('schedule.workflow_adopted',{scheduleId:schedule.scheduleId,workflowId:input.workflowId},taskId);
+    return schedule;
+  }
+  workflowAtomic<T>(fn: () => T): T {
+    this.assertManagementWritable();
+    if (this.db.isTransaction) return fn();
+    this.db.exec('BEGIN IMMEDIATE');
+    try { const result = fn(); this.db.exec('COMMIT'); return result; }
+    catch (error) { this.db.exec('ROLLBACK'); throw error; }
+  }
   projectSnapshot?: (nodeId: string) => Json;
   projectCollaborate?: (nodeId: string, commandId: string, input: import("./project-collaboration/types.js").ProjectCollaborationInput) => Json | Promise<Json>;
   readonly role: Role;
@@ -1805,6 +1874,7 @@ export class TaskLedger {
       "continuationOf",
       "taskRetry",
       "workflow",
+      "workflowInvocation",
     ]);
     if (Object.keys(config).some((k) => !allowed.has(k)))
       fail("INVALID", "Unsupported Run configuration field");
@@ -1855,6 +1925,12 @@ export class TaskLedger {
       const workflow = config.workflow;
       if (!workflow || typeof workflow !== "object" || Array.isArray(workflow) || typeof workflow.workflowRunId !== "string" || typeof workflow.workflowId !== "string" || typeof workflow.stepId !== "string" || !Number.isInteger(workflow.definitionRevision)) fail("INVALID", "Invalid workflow provenance");
       result.workflow = structuredClone(workflow);
+    }
+    if (config.workflowInvocation !== undefined) {
+      const invocation = config.workflowInvocation;
+      if (!invocation || typeof invocation !== 'object' || Array.isArray(invocation) || Object.keys(invocation).some(key => key !== 'workflowId') || typeof invocation.workflowId !== 'string') throw new TaskError('INVALID', 'Invalid workflow invocation');
+      id(invocation.workflowId, 'workflow ID');
+      result.workflowInvocation = structuredClone(invocation);
     }
     // Old command provenance stays in events, not in the execution configuration.
     return result;
@@ -2026,6 +2102,8 @@ export class TaskLedger {
         fail("FORBIDDEN", "Task policy excludes workspace");
     }
     const configuration = this.pinConfiguration(input.configuration);
+    const invocation = configuration && typeof configuration === 'object' && !Array.isArray(configuration) && configuration.workflowInvocation;
+    if (this.hasWorkflowBinding(task.taskId) && !invocation) fail('WORKFLOW_TASK','Start this Task through its configured workflow');
     const project =
       inherited?.projectContext ?? this.projectContextSnapshot(task, parentRunId);
     const key = id(input.runId ?? randomUUID());
@@ -2112,7 +2190,13 @@ export class TaskLedger {
       ...(workspaceConstraint ? { workspaceConstraint } : {}),
       ...(input.occurrenceId ? { occurrenceId: input.occurrenceId } : {}),
     };
+    if (this.isWorkflowInvocation(run) && run.route) fail('FORBIDDEN', 'Workflow roots cannot have an execution route');
     this.saveRun(run);
+    if (this.isWorkflowInvocation(run)) {
+      const admit = this.workflowRunAdmission ?? fail('UNAVAILABLE', 'Workflow runtime is unavailable');
+      const config = run.configuration as {workflowInvocation: {workflowId: string}; input?: Json};
+      admit(run, {workflowId: config.workflowInvocation.workflowId, input: config.input ?? null});
+    }
     for (const sessionId of contextSessionIds)
       this.db
         .prepare("INSERT INTO run_context_sessions VALUES(?,?)")
@@ -2326,6 +2410,7 @@ export class TaskLedger {
       )
         fail("FORBIDDEN", "Role cannot execute on this node");
       const run = this.getRun(input.runId);
+      if (this.isWorkflowInvocation(run)) fail("FORBIDDEN", "Workflow roots cannot be claimed");
       if (run.state !== "queued") fail("CONFLICT", "Run is not queued");
       if (run.retry && Date.parse(run.retry.notBefore) > this.clock())
         fail("NOT_DUE", "Safe retry delay has not elapsed");
@@ -3821,6 +3906,7 @@ export class TaskLedger {
           ["failed", "blocked", "partial"].includes(run?.state ?? "") ||
           run?.reviewStatus === "rejected"),
       canRetry:
+        !this.hasWorkflowBinding(taskId) &&
         task.kind !== "observed" &&
         !active &&
         !uncertain &&
@@ -3837,6 +3923,7 @@ export class TaskLedger {
           task.state !== "completed" ||
           ["pending_user", "rejected"].includes(run?.reviewStatus ?? "")),
       canReconcile:
+        !(run && this.isWorkflowInvocation(run)) &&
         task.kind !== "observed" &&
         task.state !== "archived" &&
         run?.state === "uncertain" &&
@@ -3883,6 +3970,7 @@ export class TaskLedger {
       const task = this.getTask(input.taskId),
         view = this.taskActionState(input.taskId);
       if (
+        this.hasWorkflowBinding(task.taskId) ||
         task.kind === "observed" ||
         view.active ||
         view.uncertain ||
@@ -4011,10 +4099,10 @@ export class TaskLedger {
           fail("OBSERVE_ONLY", "Cannot cancel historical observed execution");
         if (run.taskId !== task.taskId)
           fail("FORBIDDEN", "Run belongs to different task");
-        if (TERMINAL.has(run.state)) continue;
+        if (TERMINAL.has(run.state) && !(this.isWorkflowInvocation(run) && run.state === "uncertain")) continue;
         changed = true;
         run.cancellationRequested = true;
-        if (!run.currentAttemptId) run.state = "cancelled";
+        if (!run.currentAttemptId && !this.isWorkflowInvocation(run)) run.state = "cancelled";
         run.updatedAt = this.now();
         this.saveRun(run);
         if (!run.currentAttemptId) this.lifecycleDelivery(task, run);
@@ -4107,6 +4195,7 @@ export class TaskLedger {
     this.planner();
     return this.command(commandId, "resolveUncertain", input, () => {
       const run = this.getRun(input.runId);
+      if (this.isWorkflowInvocation(run)) fail("WORKFLOW_TASK", "Reconcile the underlying workflow step first");
       this.assertTaskActionVersion(run.taskId, input.expectedActionVersion);
       if (run.historyOnly || run.observationOnly)
         fail(
@@ -4712,6 +4801,7 @@ export class TaskLedger {
     });
   }
   private validateSchedule(schedule: Schedule) {
+    if (schedule.execution && (schedule.execution.kind !== 'workflow' || schedule.route)) fail('INVALID', 'Workflow schedules cannot use executor routes');
     id(schedule.scheduleId);
     if (typeof schedule.enabled !== "boolean")
       fail("INVALID", "Schedule enabled must be boolean");
@@ -4756,25 +4846,28 @@ export class TaskLedger {
   /** Atomic preparation; the UI links the project before enabling the plan. */
   prepareScheduledPlan(commandId: string, input: {
     requestHash: string; taskId: string; scheduleId: string;
-    title: string; description: string; route: ExecutionRoute;
+    title: string; description: string; route?: ExecutionRoute;
+    execution?: {kind: "workflow"; workflowId: string}; workflowInput?: Json; existingTaskId?: string; nextDueAt?: string; calendarWindow?: Schedule["calendarWindow"];
     intervalMs?: number; cron?: string; timeZone?: string;
   }) {
     this.planner();
     return this.command(commandId, "prepareScheduledPlan", input, () => {
-      const task = this.newTask({taskId:input.taskId,title:input.title,description:input.description,kind:"scheduled",
-        ...(input.route.backend ? {policy:{allowedBackends:[input.route.backend]}} : {})});
-      const templateId = "panel-scheduled-task", version = 1;
+      const task = input.existingTaskId ? this.getTask(input.existingTaskId) : this.newTask({taskId:input.taskId,title:input.title,description:input.description,kind:"scheduled",
+        ...(input.execution ? {policy:{maxChildren:1000,maxDescendants:10000}} : {}),
+        ...(input.route?.backend ? {policy:{allowedBackends:[input.route.backend]}} : {})});
+      const templateId = input.execution ? "panel-workflow-task" : "panel-scheduled-task", version = 1;
       if (!this.get("template", `${templateId}@${version}`)) {
-        const template: Template = {templateId,version,name:"Scheduled task",description:"Execute the Task intent for this scheduled occurrence",inputSchema:{type:"object",additionalProperties:false},defaults:{},resultContract:{}};
+        const template: Template = {templateId,version,name:"Scheduled task",description:"Execute the Task intent for this scheduled occurrence",inputSchema:input.execution ? {} : {type:"object",additionalProperties:false},defaults:{},resultContract:{}};
         this.validateTemplate(template);
         this.put("template", `${templateId}@${version}`, template);
       }
-      const nextDueAt = input.cron
+      const nextDueAt = input.nextDueAt ?? (input.cron
         ? CronExpressionParser.parse(input.cron,{tz:input.timeZone??"UTC",currentDate:this.now()}).next().toISOString()!
-        : new Date(this.clock()+(input.intervalMs??0)).toISOString();
+        : new Date(this.clock()+(input.intervalMs??0)).toISOString());
       const schedule: Schedule = {scheduleId:input.scheduleId,taskId:task.taskId,templateId,templateVersion:version,
         enabled:false,revision:1,intervalMs:input.intervalMs,cron:input.cron,timeZone:input.timeZone,
-        nextDueAt,overlap:"skip",misfire:"once",input:{},route:input.route};
+        nextDueAt,overlap:"skip",misfire:"once",input:input.workflowInput ?? {},route:input.route,
+        ...(input.execution ? {execution:input.execution} : {}), ...(input.calendarWindow ? {calendarWindow:input.calendarWindow} : {})};
       this.validateSchedule(schedule);
       this.put("schedule",schedule.scheduleId,schedule,task.taskId);
       this.event("schedule.created",{scheduleId:schedule.scheduleId},task.taskId);
@@ -4948,6 +5041,7 @@ export class TaskLedger {
           route: input.route ?? s.route,
           occurrenceId: key,
           configuration: {
+            ...(s.execution ? {workflowInvocation:{workflowId:s.execution.workflowId}} : {}),
             templateRef: {
               templateId: template.templateId,
               version: template.version,
@@ -5004,6 +5098,7 @@ export class TaskLedger {
       .filter(
         (r) =>
           r.state === "queued" &&
+          !this.isWorkflowInvocation(r) &&
           (!r.retry || Date.parse(r.retry.notBefore) <= this.clock()) &&
           r.route?.nodeId === nodeId &&
           !(r.historyOnly || r.observationOnly) &&

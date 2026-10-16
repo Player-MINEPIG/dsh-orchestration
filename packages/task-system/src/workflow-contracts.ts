@@ -6,6 +6,9 @@ import type {
   Workspace,
 } from "./contracts.js";
 import type { ProgramCatalogEntry } from "./workflow-programs.js";
+export const WorkflowPosition = z
+  .object({ x: z.number().finite(), y: z.number().finite() })
+  .strict();
 const Id = z
   .string()
   .min(1)
@@ -32,6 +35,8 @@ export const WorkflowStep = z
     stepId: Id,
     title: z.string().min(1).max(500),
     nodeId: Id,
+    stageId: Id.optional(),
+    position: WorkflowPosition.optional(),
     workspaceId: Id,
     dependsOn: z.array(Id).max(100),
     inputs: z.record(z.string().min(1).max(100), InputBinding),
@@ -62,6 +67,24 @@ export type WorkflowStep = z.infer<typeof WorkflowStep>;
 export const WorkflowDefinition = z
   .object({
     workflowId: Id,
+    projectId: Id.optional(),
+    stages: z
+      .array(
+        z
+          .object({
+            stageId: Id,
+            title: z.string().min(1).max(500),
+            nodeId: Id,
+            position: WorkflowPosition,
+          })
+          .strict(),
+      )
+      .max(100)
+      .optional(),
+    calls: z
+      .array(z.object({ fromStepId: Id, toStepId: Id }).strict())
+      .max(10000)
+      .optional(),
     revision: z.number().int().nonnegative(),
     title: z.string().min(1).max(500),
     description: z.string().max(20000),
@@ -88,10 +111,38 @@ export const SaveWorkflow = z
 export const StartWorkflow = z
   .object({
     commandId: z.string().min(1).max(200),
-    workflowId: Id,
-    input: z.json(),
+    taskId: Id.optional(),
+    workflowId: Id.optional(),
+    input: z.json().optional(),
   })
   .strict();
+export const ConfigureWorkflowTask = z
+  .object({
+    commandId: z.string().min(1).max(200),
+    projectId: Id,
+    taskId: Id.optional(),
+    title: z.string().min(1).max(500).optional(),
+    description: z.string().max(20000).optional(),
+    workflowId: Id,
+    input: z.json(),
+    expectedRevision: z.number().int().nonnegative().optional(),
+  })
+  .strict();
+export const AdoptWorkflow = z
+  .object({
+    commandId: z.string().min(1).max(200),
+    workflowId: Id,
+    projectId: Id,
+    taskId: Id.optional(),
+  })
+  .strict();
+export interface WorkflowTaskBinding {
+  taskId: string;
+  projectId: string;
+  workflowId: string;
+  input: Json;
+  revision: number;
+}
 export const RetryWorkflowStep = z
   .object({
     commandId: z.string().min(1).max(200),
@@ -131,6 +182,16 @@ export interface WorkflowStepView {
 }
 export interface WorkflowRunView {
   workflowRunId: string;
+  projectId?: string;
+  taskId?: string;
+  runId?: string;
+  dispatches: {
+    stepId: string;
+    ordinal: number;
+    taskId: string;
+    runId: string;
+    admittedAt: string;
+  }[];
   workflowId: string;
   definitionRevision: number;
   title: string;
@@ -149,6 +210,7 @@ export interface WorkflowRunView {
 }
 export interface WorkflowSnapshot {
   definitions: WorkflowDefinition[];
+  taskBindings: WorkflowTaskBinding[];
   runs: WorkflowRunView[];
   nodes: NodeStatus[];
   workspaces: Workspace[];

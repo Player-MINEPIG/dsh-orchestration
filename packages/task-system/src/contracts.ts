@@ -291,6 +291,7 @@ export interface Template {
   resultValidator?: string;
 }
 export interface Schedule {
+  execution?: {kind: "workflow"; workflowId: string};
   scheduleId: string;
   taskId: string;
   templateId: string;

@@ -1,7 +1,9 @@
+import { Workbench } from "./workbench.js";
+import { compileWorkflow } from "./workflow-graph.js";
 import { randomUUID } from "node:crypto";
 import { CronExpressionParser } from "cron-parser";
 import { TaskError, canonical, type TaskLedger } from "./ledger.js";
-import type { ExecutionRoute, Json } from "./contracts.js";
+import type { ExecutionRoute, Json, Run } from "./contracts.js";
 import { scheduleInput } from "./schedule-window.js";
 import {
   ProgramCatalog,
@@ -9,6 +11,9 @@ import {
   type ProgramRegistry,
 } from "./workflow-programs.js";
 import {
+  ConfigureWorkflowTask,
+  AdoptWorkflow,
+  type WorkflowTaskBinding,
   CancelWorkflow,
   RetryWorkflowStep,
   SaveWorkflow,
@@ -49,8 +54,264 @@ export class WorkflowRuntime {
   ) {
     this.db = ledger.managementDatabase();
     this.db.exec(
-      "CREATE TABLE IF NOT EXISTS workflow_definitions(id TEXT PRIMARY KEY, data TEXT NOT NULL, next_due TEXT); CREATE TABLE IF NOT EXISTS workflow_runs(id TEXT PRIMARY KEY, data TEXT NOT NULL)",
+      "CREATE TABLE IF NOT EXISTS workflow_definitions(id TEXT PRIMARY KEY, data TEXT NOT NULL, next_due TEXT); CREATE TABLE IF NOT EXISTS workflow_runs(id TEXT PRIMARY KEY, data TEXT NOT NULL); CREATE TABLE IF NOT EXISTS workflow_task_bindings(task_id TEXT PRIMARY KEY,data TEXT NOT NULL); CREATE TABLE IF NOT EXISTS workflow_adoptions(workflow_id TEXT PRIMARY KEY,data TEXT NOT NULL)",
     );
+    new Workbench(ledger);
+    ledger.workflowRunAdmission = (run, invocation) =>
+      this.admitRoot(run, invocation);
+    ledger.workflowTaskConfiguration = (input) => this.configureTask(input);
+    ledger.workflowOptions = () =>
+      this.definitions().flatMap((definition) =>
+        definition.projectId
+          ? [
+              {
+                id: definition.workflowId,
+                title: definition.title,
+                projectId: definition.projectId,
+              },
+            ]
+          : [],
+      );
+    ledger.workflowTaskBound = (taskId) => !!this.binding(taskId);
+  }
+  private binding(taskId: string): WorkflowTaskBinding | undefined {
+    const row = this.db
+      .prepare("SELECT data FROM workflow_task_bindings WHERE task_id=?")
+      .get(taskId);
+    return row
+      ? (JSON.parse(String(row.data)) as WorkflowTaskBinding)
+      : undefined;
+  }
+  private project(projectId: string) {
+    const project = new Workbench(this.ledger).getProject(projectId);
+    if (project.state === "archived") fail("NOT_FOUND", "Project unavailable");
+    return project;
+  }
+  private taskProject(
+    taskId: string,
+    projectId: string,
+    allowUnlinked = false,
+  ) {
+    this.project(projectId);
+    const projects = this.db
+      .prepare(
+        "SELECT DISTINCT b.project_id FROM wb_backlogs b JOIN wb_backlog_tasks t ON t.backlog_id=b.backlog_id WHERE t.task_id=?",
+      )
+      .all(taskId);
+    if (
+      (!allowUnlinked && projects.length !== 1) ||
+      projects.some((project) => project.project_id !== projectId)
+    )
+      fail("WORKFLOW_PROJECT", "Task must belong to the workflow Project only");
+  }
+  configureTask(input: unknown): WorkflowTaskBinding {
+    const command = ConfigureWorkflowTask.parse(input);
+    return this.ledger.managementCommand(
+      command.commandId,
+      "configure-task",
+      command,
+      () => this.configure(command),
+    );
+  }
+  private configure(
+    command: ReturnType<typeof ConfigureWorkflowTask.parse>,
+    adopting = false,
+  ): WorkflowTaskBinding {
+    this.project(command.projectId);
+    const definition =
+      this.definitions().find(
+        (item) => item.workflowId === command.workflowId,
+      ) ?? fail("NOT_FOUND", "Workflow not found");
+    if (definition.projectId !== command.projectId)
+      fail("WORKFLOW_PROJECT", "Workflow belongs to another Project");
+    const old = command.taskId ? this.binding(command.taskId) : undefined;
+    if (old && old.projectId !== command.projectId)
+      fail("WORKFLOW_PROJECT", "Task is bound to another Project");
+    if (
+      command.expectedRevision !== undefined &&
+      command.expectedRevision !== (old?.revision ?? 0)
+    )
+      fail("CONFLICT", "Task workflow configuration changed");
+    const task = command.taskId
+      ? this.ledger.getTask(command.taskId)
+      : this.ledger.prepareWorkflowTask({
+          title: command.title ?? definition.title,
+          description: command.description ?? definition.description,
+          policy: { maxChildren: 1000, maxDescendants: 10000 },
+          requiresConfirmation: false,
+        });
+    this.taskProject(
+      task.taskId,
+      command.projectId,
+      !command.taskId || adopting,
+    );
+    const backlogId = `workflow-backlog:${command.projectId}`;
+    this.db
+      .prepare(
+        "INSERT OR IGNORE INTO wb_backlogs(backlog_id,revision,project_id,title,goal,state,priority,criteria) VALUES(?,1,?,'工作流任务','项目调用工作流','open','normal','[]')",
+      )
+      .run(backlogId, command.projectId);
+    this.db
+      .prepare(
+        "INSERT OR IGNORE INTO wb_backlog_tasks(backlog_id,task_id) VALUES(?,?)",
+      )
+      .run(backlogId, task.taskId);
+    const binding = {
+      taskId: task.taskId,
+      projectId: command.projectId,
+      workflowId: command.workflowId,
+      input: structuredClone(command.input),
+      revision: (old?.revision ?? 0) + 1,
+    };
+    this.db
+      .prepare(
+        "INSERT INTO workflow_task_bindings(task_id,data) VALUES(?,?) ON CONFLICT(task_id) DO UPDATE SET data=excluded.data",
+      )
+      .run(task.taskId, canonical(binding));
+    this.ledger.configureWorkflowSchedules(
+      task.taskId,
+      binding.workflowId,
+      binding.input,
+    );
+    return binding;
+  }
+  adopt(input: unknown) {
+    const command = AdoptWorkflow.parse(input);
+    return this.ledger.managementCommand(
+      command.commandId,
+      "adopt",
+      command,
+      () => {
+        const previous = this.db
+          .prepare("SELECT data FROM workflow_adoptions WHERE workflow_id=?")
+          .get(command.workflowId);
+        if (previous) {
+          const mapping = JSON.parse(String(previous.data)) as {
+            projectId: string;
+            taskId: string;
+            scheduleId?: string;
+            workflowId: string;
+            workflowRunIds: string[];
+          };
+          if (
+            mapping.projectId !== command.projectId ||
+            (command.taskId && mapping.taskId !== command.taskId)
+          )
+            fail("CONFLICT", "Workflow already adopted");
+          return mapping;
+        }
+        this.project(command.projectId);
+        const row =
+          this.db
+            .prepare(
+              "SELECT data,next_due FROM workflow_definitions WHERE id=?",
+            )
+            .get(command.workflowId) ?? fail("NOT_FOUND", "Workflow not found");
+        const definition = JSON.parse(String(row.data)) as WorkflowDefinition;
+        if (definition.projectId && definition.projectId !== command.projectId)
+          fail("WORKFLOW_PROJECT", "Workflow belongs to another Project");
+        definition.projectId = command.projectId;
+        definition.revision++;
+        this.db
+          .prepare("UPDATE workflow_definitions SET data=? WHERE id=?")
+          .run(canonical(definition), definition.workflowId);
+        const binding = this.configure(
+          {
+            commandId: command.commandId,
+            projectId: command.projectId,
+            taskId: command.taskId,
+            workflowId: command.workflowId,
+            input: {},
+          },
+          true,
+        );
+        const schedule = definition.schedule;
+        const adopted = schedule
+          ? this.ledger.adoptWorkflowSchedule(binding.taskId, {
+              scheduleId: `workflow-schedule:${definition.workflowId}`,
+              workflowId: definition.workflowId,
+              input: binding.input,
+              cron: schedule.cron,
+              timeZone: schedule.timeZone,
+              dayOffset: schedule.dayOffset,
+              nextDueAt: row.next_due
+                ? String(row.next_due)
+                : CronExpressionParser.parse(schedule.cron, {
+                    tz: schedule.timeZone,
+                    currentDate: this.ledger.managementNow(),
+                  })
+                    .next()
+                    .toISOString()!,
+              enabled: schedule.enabled,
+            })
+          : undefined;
+        if (schedule) schedule.enabled = false;
+        this.db
+          .prepare(
+            "UPDATE workflow_definitions SET data=?,next_due=NULL WHERE id=?",
+          )
+          .run(canonical(definition), definition.workflowId);
+        const workflowRunIds = this.rows<WorkflowRunView>("workflow_runs")
+          .filter((run) => run.workflowId === definition.workflowId)
+          .map((run) => run.workflowRunId);
+        const mapping = {
+          workflowId: definition.workflowId,
+          projectId: command.projectId,
+          taskId: binding.taskId,
+          ...(adopted ? { scheduleId: adopted.scheduleId } : {}),
+          workflowRunIds,
+        };
+        this.db
+          .prepare(
+            "INSERT INTO workflow_adoptions(workflow_id,data) VALUES(?,?)",
+          )
+          .run(definition.workflowId, canonical(mapping));
+        return mapping;
+      },
+    );
+  }
+  private admitRoot(
+    root: Run,
+    invocation: { workflowId: string; input: Json },
+  ) {
+    const binding =
+      this.binding(root.taskId) ??
+      fail("WORKFLOW_PROJECT", "Workflow Task is not configured");
+    const definition =
+      this.definitions().find(
+        (item) => item.workflowId === invocation.workflowId,
+      ) ?? fail("NOT_FOUND", "Workflow not found");
+    if (
+      binding.workflowId !== definition.workflowId ||
+      definition.projectId !== binding.projectId
+    )
+      fail("WORKFLOW_PROJECT", "Task workflow binding changed");
+    this.taskProject(root.taskId, binding.projectId);
+    this.validate(definition);
+    const now = this.ledger.managementNow();
+    this.writeRun({
+      workflowRunId: root.runId,
+      runId: root.runId,
+      taskId: root.taskId,
+      projectId: binding.projectId,
+      workflowId: definition.workflowId,
+      definitionRevision: definition.revision,
+      title: definition.title,
+      definition: structuredClone(definition),
+      input: structuredClone(invocation.input),
+      createdAt: now,
+      updatedAt: now,
+      state: "running",
+      dispatches: [],
+      steps: definition.steps.map((step) => ({
+        stepId: step.stepId,
+        nodeId: step.nodeId,
+        title: step.title,
+        kind: step.execution.kind,
+        state: "pending",
+        attemptCount: 0,
+      })),
+    });
   }
   private definitions(): WorkflowDefinition[] {
     return this.rows<WorkflowDefinition>("workflow_definitions");
@@ -66,12 +327,25 @@ export class WorkflowRuntime {
       .prepare("SELECT data FROM workflow_runs WHERE id=?")
       .get(id);
     if (!row) fail("NOT_FOUND", "Workflow execution not found");
-    return JSON.parse(String(row.data)) as WorkflowRunView;
+    const run = JSON.parse(String(row.data)) as WorkflowRunView;
+    run.dispatches ??= [];
+    return run;
   }
   private writeRun(run: WorkflowRunView) {
+    return this.ledger.workflowAtomic(() => this.persistRun(run));
+  }
+  private persistRun(run: WorkflowRunView) {
     const previous = this.db
       .prepare("SELECT data FROM workflow_runs WHERE id=?")
       .get(run.workflowRunId);
+    if (previous) {
+      const frozen = JSON.parse(String(previous.data)) as WorkflowRunView;
+      if (
+        canonical(frozen.definition) !== canonical(run.definition) ||
+        canonical(frozen.input) !== canonical(run.input)
+      )
+        fail("CONFLICT", "Workflow execution snapshot is immutable");
+    }
     if (previous?.data === canonical(run)) return;
     run.updatedAt = this.ledger.managementNow();
     this.db
@@ -79,6 +353,20 @@ export class WorkflowRuntime {
         "INSERT INTO workflow_runs(id,data) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data",
       )
       .run(run.workflowRunId, canonical(run));
+    if (run.runId) {
+      const state = run.steps.some((step) => step.state === "uncertain")
+        ? "uncertain"
+        : run.state === "needs_attention"
+          ? "running"
+          : run.state === "cancelled"
+            ? run.steps.some((step) =>
+                ["queued", "running"].includes(step.state),
+              )
+              ? "running"
+              : "cancelled"
+            : run.state;
+      this.ledger.updateWorkflowRoot(run.runId, state);
+    }
   }
   private catalog(): ProgramCatalogEntry[] {
     const entries = this.ledger.nodeStatuses().flatMap((node) => {
@@ -105,11 +393,30 @@ export class WorkflowRuntime {
   }
   snapshot(): WorkflowSnapshot {
     return {
-      definitions: this.definitions(),
+      definitions: this.definitions().map(compileWorkflow),
+      taskBindings: this.db
+        .prepare("SELECT data FROM workflow_task_bindings")
+        .all()
+        .map((row) => JSON.parse(String(row.data)) as WorkflowTaskBinding),
       runs: this.db
         .prepare("SELECT data FROM workflow_runs ORDER BY rowid DESC LIMIT 20")
         .all()
-        .map((row) => JSON.parse(String(row.data)) as WorkflowRunView),
+        .map((row) => {
+          const run = JSON.parse(String(row.data)) as WorkflowRunView;
+          run.dispatches ??= [];
+          const adopted = this.db
+            .prepare("SELECT data FROM workflow_adoptions WHERE workflow_id=?")
+            .get(run.workflowId);
+          if (!run.taskId && adopted) {
+            const mapping = JSON.parse(String(adopted.data)) as {
+              taskId: string;
+              projectId: string;
+            };
+            run.taskId = mapping.taskId;
+            run.projectId = mapping.projectId;
+          }
+          return run;
+        }),
       nodes: this.ledger.nodeStatuses(),
       workspaces: this.ledger
         .registeredNodes()
@@ -217,9 +524,20 @@ export class WorkflowRuntime {
         );
         if ((old?.revision ?? 0) !== command.expectedRevision)
           fail("CONFLICT", "Workflow definition changed");
-        this.validate(command.definition);
+        if (!command.definition.projectId)
+          fail(
+            "WORKFLOW_PROJECT",
+            "New workflow definitions require a Project",
+          );
+        this.project(command.definition.projectId);
+        if (old?.projectId && old.projectId !== command.definition.projectId)
+          fail("WORKFLOW_PROJECT", "Workflow cannot change Project");
+        if (command.definition.schedule?.enabled)
+          fail("WORKFLOW_SCHEDULE", "Configure triggers on the Task schedule");
+        const compiled = compileWorkflow(command.definition);
+        this.validate(compiled);
         const definition = {
-          ...command.definition,
+          ...compiled,
           revision: (old?.revision ?? 0) + 1,
         };
         const schedule = definition.schedule;
@@ -247,32 +565,43 @@ export class WorkflowRuntime {
       "start",
       command,
       () => {
-        const definition =
-          this.definitions().find(
-            (item) => item.workflowId === command.workflowId,
-          ) ?? fail("NOT_FOUND", "Workflow not found");
-        const now = this.ledger.managementNow();
-        const run: WorkflowRunView = {
-          workflowRunId: randomUUID(),
-          workflowId: definition.workflowId,
-          definitionRevision: definition.revision,
-          title: definition.title,
-          definition: structuredClone(definition),
-          input: structuredClone(command.input),
-          createdAt: now,
-          updatedAt: now,
-          state: "running",
-          steps: definition.steps.map((step) => ({
-            stepId: step.stepId,
-            nodeId: step.nodeId,
-            title: step.title,
-            kind: step.execution.kind,
-            state: "pending",
-            attemptCount: 0,
-          })),
-        };
-        this.writeRun(run);
-        return run;
+        let binding = command.taskId ? this.binding(command.taskId) : undefined;
+        if (command.taskId && !binding)
+          fail("NOT_FOUND", "Task has no workflow configuration");
+        if (!binding) {
+          const definition =
+            this.definitions().find(
+              (item) => item.workflowId === command.workflowId,
+            ) ?? fail("NOT_FOUND", "Workflow not found");
+          if (!definition.projectId)
+            fail(
+              "WORKFLOW_PROJECT",
+              "Adopt the legacy workflow into a Project first",
+            );
+          const existing = this.db
+            .prepare("SELECT data FROM workflow_task_bindings")
+            .all()
+            .map((row) => JSON.parse(String(row.data)) as WorkflowTaskBinding)
+            .find((item) => item.workflowId === definition.workflowId);
+          binding =
+            existing ??
+            this.configure({
+              commandId: `workflow-default:${definition.workflowId}`,
+              projectId: definition.projectId,
+              workflowId: definition.workflowId,
+              input: {},
+            });
+        }
+        if (command.workflowId && command.workflowId !== binding.workflowId)
+          fail("WORKFLOW_PROJECT", "Task is configured for another workflow");
+        const admitted = this.ledger.prepareWorkflowRun({
+          taskId: binding.taskId,
+          configuration: {
+            workflowInvocation: { workflowId: binding.workflowId },
+            input: command.input === undefined ? binding.input : command.input,
+          },
+        });
+        return this.getRun(admitted.runId);
       },
     );
   }
@@ -505,6 +834,11 @@ export class WorkflowRuntime {
     if (scheduleEnabled) this.schedule();
     for (const run of this.rows<WorkflowRunView>("workflow_runs")) {
       if (["succeeded", "partial", "failed"].includes(run.state)) continue;
+      if (run.runId && this.ledger.getRun(run.runId).cancellationRequested) {
+        run.state = "cancelled";
+        for (const step of run.steps) if (!step.runId) step.state = "cancelled";
+      }
+      run.dispatches ??= [];
       if (run.state === "cancelled") {
         this.cancelTasks(run);
         for (const step of run.steps) this.refresh(step);
@@ -580,6 +914,9 @@ export class WorkflowRuntime {
                 ? definition.execution.instructions
                 : `Registered program ${definition.execution.programId}@${definition.execution.version}`,
             workspaceId: definition.workspaceId,
+            ...(run.taskId && run.runId
+              ? { parentTaskId: run.taskId, parentRunId: run.runId }
+              : {}),
             policy: {
               maxSafeRetries: 0,
               maxResultRetries: 0,
@@ -626,13 +963,26 @@ export class WorkflowRuntime {
             `workflow-admit:${run.workflowRunId}:${step.stepId}:${step.attemptCount}`,
             {
               ...(!step.taskId ? { task } : {}),
-              run: { taskId, route: this.route(definition), configuration },
+              run: {
+                taskId,
+                ...(run.runId ? { parentRunId: run.runId } : {}),
+                route: this.route(definition),
+                configuration,
+              },
             },
             (created, admitted) => {
               step.taskId = created.taskId;
               step.runId = admitted.runId;
               step.state = "queued";
               step.attemptCount++;
+              run.dispatches ??= [];
+              run.dispatches.push({
+                stepId: step.stepId,
+                ordinal: step.attemptCount,
+                taskId: created.taskId,
+                runId: admitted.runId,
+                admittedAt: admitted.createdAt,
+              });
               delete step.reason;
               this.writeRun(run);
             },

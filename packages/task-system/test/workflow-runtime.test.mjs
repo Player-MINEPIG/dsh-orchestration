@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { ScheduledPlans } from "../dist/scheduled-plans.js";
+import { Workbench } from "../dist/workbench.js";
 import { TaskLedger } from "../dist/ledger.js";
 import { ProgramRegistry } from "../dist/workflow-programs.js";
 import { WorkflowRuntime } from "../dist/workflows.js";
@@ -25,6 +27,7 @@ function fixture() {
   const stores = [],
     workers = [];
   let runtime = new WorkflowRuntime(ledger, registries.vps);
+  new Workbench(ledger).manage(id(),'create_project',{projectId:'project',title:'Project',goal:'Test',description:''});
   for (const nodeId of ["vps", "mbp"]) {
     ledger.registerNode(id(), {
       nodeId,
@@ -143,6 +146,7 @@ const programStep = (
 });
 const definition = (steps) => ({
   workflowId: "daily",
+  projectId: "project",
   revision: 0,
   title: "Daily workflow",
   description: "Test",
@@ -201,8 +205,8 @@ test("durable admission and pinned inputs survive restart and repeated ticks", a
     });
     f.runtime.tick();
     f.runtime.tick();
-    assert.equal(f.ledger.snapshot().tasks.length, 1);
-    assert.equal(f.ledger.snapshot().runs.length, 1);
+    assert.equal(f.ledger.snapshot().tasks.length, 2);
+    assert.equal(f.ledger.snapshot().runs.length, 2);
     assert.deepEqual(f.ledger.getRun(admitted.runId).configuration.input, {
       window: "original",
     });
@@ -271,12 +275,12 @@ test("offline devices block admission and recover without duplicate tasks", asyn
     const run = start(f);
     f.runtime.tick();
     assert.equal(view(f, run).steps[0].state, "waiting_device");
-    assert.equal(f.ledger.snapshot().tasks.length, 0);
+    assert.equal(f.ledger.snapshot().tasks.length, 1);
     f.heartbeat("mbp");
     f.runtime.tick();
     f.runtime.tick();
     assert.equal(view(f, run).steps[0].state, "queued");
-    assert.equal(f.ledger.snapshot().tasks.length, 1);
+    assert.equal(f.ledger.snapshot().tasks.length, 2);
   } finally {
     await f.close();
   }
@@ -425,6 +429,9 @@ test("manual retry of failed program resumes dependencies without rerunning succ
     assert.equal(view(f, run).state, "succeeded");
     assert.equal(collect, 1);
     assert.equal(render, 2);
+    assert.equal(view(f,run).dispatches.length,3);
+    assert.equal(new Set(view(f,run).dispatches.map(receipt=>receipt.runId)).size,3);
+    assert.equal(f.ledger.getRun(view(f,run).dispatches[1].runId).state,'failed');
   } finally {
     await f.close();
   }
@@ -592,6 +599,7 @@ test("workflow Agent route keeps native execution and structured input", async (
       activeExecutions: 0,
       source: "host-local",
     });
+    new Workbench(h.ledger).manage(id(),'create_project',{projectId:'project',title:'Project',goal:'Test',description:''});
     const service = h.ctx.taskSystem;
     service.workflows.save({
       commandId: id(),
@@ -660,12 +668,15 @@ test("workflow schedule uses durable slots and pins calendar input", async () =>
         }),
       ]),
       schedule: {
-        enabled: true,
+        enabled: false,
         cron: "0 7 * * *",
         timeZone: "Asia/Shanghai",
         dayOffset: -1,
       },
     });
+    const legacy = f.runtime.snapshot().definitions[0];
+    legacy.schedule.enabled = true;
+    f.ledger.managementDatabase().prepare('UPDATE workflow_definitions SET data=?').run(JSON.stringify(legacy));
     const due = "2026-01-02T23:00:00.000Z";
     f.ledger
       .managementDatabase()
@@ -712,6 +723,7 @@ test("TaskSystemService tick executes local programs without entering native Age
     },
   });
   try {
+    new Workbench(h.ledger).manage(id(),'create_project',{projectId:'project',title:'Project',goal:'Test',description:''});
     const service = h.ctx.taskSystem;
     service.programs.register({
       programId: "local-render",
@@ -807,7 +819,7 @@ test("cancel prevents downstream admission and manual retry cannot restart cance
     f.runtime.tick();
     assert.equal(view(f, run).state, "cancelled");
     assert.ok(view(f, run).steps.every((step) => step.state === "cancelled"));
-    assert.equal(f.ledger.snapshot().runs.length, 1);
+    assert.equal(f.ledger.snapshot().runs.length, 2);
     assert.throws(
       () =>
         f.runtime.retry({
@@ -866,7 +878,7 @@ test("Agent failure retries are bounded while unknown outcomes never retry", asy
     assert.equal(final.steps[0].attemptCount, 3);
     assert.equal(final.steps[0].state, "failed");
     assert.equal(final.state, "needs_attention");
-    assert.equal(f.ledger.snapshot().runs.length, 3);
+    assert.equal(f.ledger.snapshot().runs.length, 4);
   } finally {
     await f.close();
   }
@@ -921,6 +933,7 @@ test("native Agent retry reuses its task session and receives only the failure d
       activeExecutions: 0,
       source: "host-local",
     });
+    new Workbench(h.ledger).manage(id(),'create_project',{projectId:'project',title:'Project',goal:'Test',description:''});
     const service = h.ctx.taskSystem;
     service.workflows.save({
       commandId: id(),
@@ -1120,4 +1133,165 @@ test("heartbeat budgets the complete status and preserves registered program cat
     await service.dispose();
     await ctx.fiber.dispose();
   }
+});
+
+test('project stages call concrete steps across VPS to MBP to VPS without input bindings', async () => {
+  const f=fixture();
+  try {
+    const executed=[];
+    for (const [node,program] of [['vps','first'],['mbp','second'],['vps','third']])
+      f.register(node,program,() => {executed.push(program);return {summary:program,data:{ok:true}}});
+    const stages=[['a','vps'],['b','mbp'],['c','vps']].map(([stageId,nodeId],i)=>({stageId,nodeId,title:stageId,position:{x:i*340,y:90}}));
+    const steps=[programStep('first','vps','first'),programStep('second','mbp','second'),programStep('third','vps','third')].map((step,i)=>({...step,stageId:stages[i].stageId,position:{x:90,y:80}}));
+    const saved=save(f,{...definition(steps),stages,calls:[{fromStepId:'first',toStepId:'second'},{fromStepId:'second',toStepId:'third'}]});
+    assert.deepEqual(saved.steps.map(step=>step.dependsOn),[[],['first'],['second']]);
+    const binding=f.runtime.configureTask({commandId:id(),projectId:'project',workflowId:'daily',input:{window:'one'}});
+    const request={commandId:id(),taskId:binding.taskId};
+    const run=f.runtime.start(request);
+    assert.equal(f.ledger.getRun(run.runId).route,undefined);
+    assert.equal(f.ledger.isWorkflowInvocation(f.ledger.getRun(run.runId)),true);
+    assert.throws(()=>f.ledger.claim(id(),{runId:run.runId,nodeId:'vps',ttlMs:1000}),/cannot be claimed/);
+    assert.throws(()=>f.ledger.createRun(id(),{taskId:binding.taskId}),/configured workflow/);
+    assert.equal(f.ledger.taskActionState(binding.taskId).canRetry,false);
+    const cold=TaskLedger.open(join(f.dir,'ledger.sqlite'));
+    try {assert.throws(()=>cold.createRun(id(),{taskId:binding.taskId}),/configured workflow/)} finally {cold.close()}
+    const vps=f.worker('vps'),mbp=f.worker('mbp');
+    f.runtime.tick();await vps.pollOnce();f.runtime.tick();
+    assert.deepEqual(executed,['first']);
+    await mbp.pollOnce();f.runtime.tick();await vps.pollOnce();f.runtime.tick();
+    assert.deepEqual(executed,['first','second','third']);
+    const done=view(f,run);assert.equal(done.state,'succeeded');assert.equal(done.dispatches.length,3);
+    for(const receipt of done.dispatches){
+      assert.equal(f.ledger.getTask(receipt.taskId).parentTaskId,binding.taskId);
+      assert.equal(f.ledger.getRun(receipt.runId).parentRunId,run.runId);
+    }
+    const updated={...saved,title:'Changed',stages:saved.stages.map(stage=>({...stage,position:{x:stage.position.x+80,y:400}}))};
+    f.runtime.save({commandId:id(),expectedRevision:saved.revision,definition:updated});
+    f.runtime.configureTask({commandId:id(),projectId:'project',taskId:binding.taskId,workflowId:'daily',input:{window:'two'},expectedRevision:1});
+    assert.deepEqual(f.runtime.start(request),run);
+    const second=f.runtime.start({commandId:id(),taskId:binding.taskId});
+    assert.equal(second.taskId,run.taskId);assert.notEqual(second.runId,run.runId);
+    assert.equal(second.input.window,'two');assert.equal(view(f,run).input.window,'one');
+    assert.deepEqual(view(f,run).definition.stages,saved.stages);
+    assert.equal(f.ledger.history(binding.taskId).runs.length,2);
+    f.ledger.recoverExpired(id());assert.equal(f.ledger.getRun(second.runId).state,'running');
+    assert.ok(!f.ledger.pendingRuns('vps').some(item=>item.runId===second.runId));
+    f.reopen();assert.deepEqual(f.runtime.snapshot().definitions[0].stages,updated.stages);
+    assert.equal(f.runtime.snapshot().taskBindings[0].revision,2);
+  } finally {await f.close()}
+});
+
+test('calls are authoritative including empty and invalid binding removal is rejected', async()=>{
+  const f=fixture();try{
+    f.register('mbp','work',()=>({summary:'ok',data:{}}));
+    const steps=[programStep('a','mbp','work'),programStep('b','mbp','work',['a'])];
+    const first=save(f,{...definition(steps),calls:[]});
+    assert.deepEqual(first.steps[1].dependsOn,[]);
+    assert.throws(()=>f.runtime.save({commandId:id(),expectedRevision:1,definition:{...first,calls:[{fromStepId:'a',toStepId:'missing'}]}}),/Invalid/);
+    assert.throws(()=>f.runtime.save({commandId:id(),expectedRevision:1,definition:{...first,calls:[{fromStepId:'a',toStepId:'b'},{fromStepId:'b',toStepId:'a'}]}}),/cycle/);
+    const connected=f.runtime.save({commandId:id(),expectedRevision:1,definition:{...first,calls:[{fromStepId:'a',toStepId:'b'}],steps:first.steps.map(step=>step.stepId==='b'?{...step,inputs:{source:{kind:'step-output',stepId:'a',path:[]}}}:step)}});
+    assert.throws(()=>f.runtime.save({commandId:id(),expectedRevision:2,definition:{...connected,calls:[]}}),/explicit dependency/);
+    assert.throws(()=>save(f,{...definition(steps),workflowId:'unowned',projectId:undefined}),/require a Project/);
+    new Workbench(f.ledger).manage(id(),'create_project',{projectId:'other',title:'Other',goal:'Test',description:''});
+    assert.throws(()=>f.runtime.configureTask({commandId:id(),projectId:'other',workflowId:'daily',input:{}}),/another Project/);
+  }finally{await f.close()}
+});
+
+test('ordinary root cancellation reaches children and uncertain roots cannot be bypassed',async()=>{
+  const f=fixture();try{
+    f.register('mbp','work',()=>({summary:'ok',data:{}}));
+    save(f,definition([programStep('a','mbp','work'),programStep('b','mbp','work',['a'])]));
+    const root=start(f);f.runtime.tick();
+    const leaf=view(f,root).steps[0];
+    f.ledger.cancel(id(),{taskId:root.taskId,runId:root.runId,reason:'Cancel root'});
+    f.runtime.tick();
+    assert.equal(f.ledger.getRun(leaf.runId).state,'cancelled');
+    assert.equal(view(f,root).steps[1].state,'cancelled');
+    assert.equal(f.ledger.getRun(root.runId).state,'cancelled');
+    assert.equal((await f.worker('mbp').pollOnce()).length,0);
+    const uncertain=f.runtime.start({commandId:id(),taskId:root.taskId});f.runtime.tick();
+    const step=view(f,uncertain).steps[0];
+    const claim=f.ledger.claim(id(),{runId:step.runId,nodeId:'mbp',ttlMs:100}).value;
+    f.ledger.markRunning(id(),{runId:step.runId,attemptId:claim.attempt.attemptId,nodeId:'mbp',fence:claim.attempt.fence,executionId:'unknown-effect'});
+    await new Promise(resolve=>setTimeout(resolve,120));f.ledger.recoverExpired(id());f.runtime.tick();
+    assert.equal(f.ledger.getRun(uncertain.runId).state,'uncertain');
+    assert.throws(()=>f.runtime.start({commandId:id(),taskId:root.taskId}),/uncertain prior/);
+    assert.throws(()=>f.ledger.resolveUncertain(id(),{runId:uncertain.runId,outcome:'failed',reason:'bypass'}),/underlying workflow step/);
+    assert.throws(()=>f.runtime.retry({commandId:id(),workflowRunId:uncertain.workflowRunId,stepId:'a'}),/proven terminal/);
+  }finally{await f.close()}
+});
+
+test('fork and join wait for both real worker branches',async()=>{
+  const f=fixture();try{
+    const calls=[];
+    for(const name of ['fork','left','right','join']) f.register('mbp',name,()=>{calls.push(name);return {summary:name,data:{name}}});
+    save(f,definition([programStep('fork','mbp','fork'),programStep('left','mbp','left',['fork']),programStep('right','mbp','right',['fork']),programStep('join','mbp','join',['left','right'])]));
+    const root=start(f),worker=f.worker('mbp');f.runtime.tick();await worker.pollOnce();f.runtime.tick();
+    assert.deepEqual(view(f,root).steps.map(step=>step.state),['succeeded','queued','queued','pending']);
+    await worker.pollOnce();f.runtime.tick();
+    if(view(f,root).steps[2].state==='queued'){assert.equal(view(f,root).steps[3].state,'pending');await worker.pollOnce();f.runtime.tick()}
+    await worker.pollOnce();f.runtime.tick();
+    assert.equal(calls[0],'fork');assert.equal(calls.at(-1),'join');assert.equal(view(f,root).state,'succeeded');
+  }finally{await f.close()}
+});
+
+test('Task workflow schedules create atomic occurrences and several Runs on one Task',async()=>{
+  const f=fixture();try{
+    f.register('mbp','work',()=>({summary:'done',data:{ok:true}}));save(f,definition([programStep('a','mbp','work')]));
+    const plans=new ScheduledPlans(f.ledger);
+    const request={commandId:id(),title:'Recurring',description:'Workflow schedule',projectId:'project',execution:{kind:'workflow',workflowId:'daily',input:{seed:'initial'}},cadence:{mode:'interval',minutes:1}};
+    const created=plans.create(request);
+    assert.deepEqual(plans.create(request),created);
+    assert.equal(plans.options().workflows[0].projectId,'project');
+    let schedule=f.ledger.getSchedule(created.scheduleId);assert.equal(schedule.execution.kind,'workflow');assert.equal(schedule.route,undefined);
+    const forceDue=()=>{schedule=f.ledger.getSchedule(created.scheduleId);schedule.nextDueAt=new Date(Date.now()-1).toISOString();f.ledger.managementDatabase().prepare("UPDATE entities SET data=? WHERE kind='schedule' AND id=?").run(JSON.stringify(schedule),schedule.scheduleId);return schedule.nextDueAt};
+    const slot=forceDue();
+    const admit=f.ledger.workflowRunAdmission;
+    f.ledger.workflowRunAdmission=()=>{throw new Error('Injected admission interruption')};
+    assert.throws(()=>f.ledger.fireSchedule(id(),{scheduleId:created.scheduleId,occurrenceAt:slot}),/Injected/);
+    assert.equal(f.ledger.history(created.taskId).runs.length,0);assert.equal(f.ledger.scheduleHistory(created.scheduleId).length,0);
+    assert.equal(f.ledger.getSchedule(created.scheduleId).nextDueAt,slot);assert.equal(f.runtime.snapshot().runs.length,0);
+    f.ledger.workflowRunAdmission=admit;
+    const occurrence=f.ledger.fireSchedule(id(),{scheduleId:created.scheduleId,occurrenceAt:slot}).value;
+    assert.deepEqual(f.ledger.fireSchedule(id(),{scheduleId:created.scheduleId,occurrenceAt:slot}).value,occurrence);
+    assert.equal(f.runtime.snapshot().runs.length,1);assert.equal(f.runtime.snapshot().runs[0].runId,occurrence.runId);
+    assert.equal(f.ledger.getRun(occurrence.runId).configuration.trigger.scheduledFor,slot);
+    const worker=f.worker('mbp');f.runtime.tick();await worker.pollOnce();f.runtime.tick();
+    f.runtime.configureTask({commandId:id(),projectId:'project',taskId:created.taskId,workflowId:'daily',input:{seed:'changed'},expectedRevision:1});
+    const next=forceDue();const second=f.ledger.fireSchedule(id(),{scheduleId:created.scheduleId,occurrenceAt:next}).value;
+    assert.notEqual(second.runId,occurrence.runId);assert.equal(f.ledger.history(created.taskId).runs.length,2);
+    assert.equal(f.runtime.snapshot().runs.find(run=>run.runId===second.runId).input.seed,'changed');
+    assert.equal(f.runtime.snapshot().runs.find(run=>run.runId===occurrence.runId).input.seed,'initial');
+  }finally{await f.close()}
+});
+
+test('adoption reuses the original Schedule and Task history and preserves exact legacy next_due',async()=>{
+  const f=fixture();try{
+    f.register('mbp','work',()=>({summary:'done',data:{ok:true}}));const saved=save(f,definition([programStep('a','mbp','work')]));
+    const historic=start(f);f.runtime.tick();await f.worker('mbp').pollOnce();f.runtime.tick();
+    const frozen=structuredClone(view(f,historic).definition);
+    const task=f.ledger.createTask(id(),{taskId:'prod-daily-agent-dsh-codex',title:'Original Agent daily',kind:'scheduled',requiresConfirmation:false}).value;
+    const oldRuns=[];
+    for(let i=0;i<4;i++){
+      const run=f.ledger.createRun(id(),{taskId:task.taskId,route:{nodeId:'mbp',workspaceId:'mbp-ws',provider:'test',model:'model',requiredCapabilities:[]}}).value;
+      const claim=f.ledger.claim(id(),{runId:run.runId,nodeId:'mbp',ttlMs:1000}).value;
+      f.ledger.submit(id(),{runId:run.runId,attemptId:claim.attempt.attemptId,nodeId:'mbp',fence:claim.attempt.fence,outcome:'success',summary:'Original'});oldRuns.push(run.runId);
+    }
+    f.ledger.updateTemplate(id(),{templateId:'old-daily',version:1,name:'Original',description:'',inputSchema:{},defaults:{},resultContract:{}});
+    f.ledger.createSchedule(id(),{scheduleId:task.taskId,taskId:task.taskId,templateId:'old-daily',templateVersion:1,enabled:false,revision:4,cron:'0 7 * * *',timeZone:'Asia/Shanghai',nextDueAt:'2026-10-16T23:00:00.000Z',overlap:'queue',misfire:'once',input:{},route:{nodeId:'mbp',workspaceId:'mbp-ws',provider:'test',model:'model',requiredCapabilities:[]}});
+    const legacy={...saved};delete legacy.projectId;legacy.schedule={enabled:true,cron:'0 7 * * *',timeZone:'Asia/Shanghai',dayOffset:-1};
+    const due='2026-01-02T23:00:00.000Z';f.ledger.managementDatabase().prepare('UPDATE workflow_definitions SET data=?,next_due=?').run(JSON.stringify(legacy),due);
+    const request={commandId:id(),workflowId:'daily',projectId:'project',taskId:task.taskId};const mapping=f.runtime.adopt(request);
+    assert.deepEqual(f.runtime.adopt(request),mapping);assert.equal(mapping.scheduleId,task.taskId);assert.ok(mapping.workflowRunIds.includes(historic.workflowRunId));
+    const adopted=f.ledger.getSchedule(task.taskId);assert.equal(adopted.enabled,true);assert.equal(adopted.overlap,'queue');assert.equal(adopted.misfire,'once');assert.equal(adopted.nextDueAt,due);assert.equal(adopted.route,undefined);assert.deepEqual(adopted.calendarWindow,{timeZone:'Asia/Shanghai',dayOffset:-1});
+    assert.equal(f.ledger.snapshot().schedules.length,1);assert.deepEqual(f.ledger.history(task.taskId).runs.map(run=>run.runId),oldRuns);
+    assert.deepEqual(view(f,historic).definition,frozen);
+    assert.equal(f.runtime.snapshot().definitions[0].schedule.enabled,false);
+    const occurrence=f.ledger.fireSchedule(id(),{scheduleId:task.taskId,occurrenceAt:due}).value;
+    assert.equal(f.ledger.getRun(occurrence.runId).route,undefined);
+    const newest=f.runtime.snapshot().runs.find(run=>run.runId===occurrence.runId);assert.equal(newest.taskId,task.taskId);
+    assert.deepEqual(newest.input,{windowStart:'2026-01-01T16:00:00.000Z',windowEnd:'2026-01-02T16:00:00.000Z',timeZone:'Asia/Shanghai'});
+    assert.equal(f.ledger.history(task.taskId).runs.length,5);
+    assert.equal(f.ledger.managementDatabase().prepare('SELECT next_due FROM workflow_definitions').get().next_due,null);
+  }finally{await f.close()}
 });
