@@ -1295,3 +1295,36 @@ test('adoption reuses the original Schedule and Task history and preserves exact
     assert.equal(f.ledger.managementDatabase().prepare('SELECT next_due FROM workflow_definitions').get().next_due,null);
   }finally{await f.close()}
 });
+
+test('workflow maintenance preserves whole-Task cancellation while single-Run cancellation allows continuation',async()=>{
+  const {createNativeHarness}=await import('../../../tests/dsh/native-harness.mjs');
+  const h=await createNativeHarness();
+  try{
+    const ledger=h.ledger,service=h.ctx.taskSystem,runtime=service.workflows;
+    new Workbench(ledger).manage('cancel-project','create_project',{projectId:'p',title:'Cancellation',goal:'Test'});
+    service.programs.register({programId:'work',version:'1',title:'Work',execute:()=>({summary:'Done',data:{}})});
+    ledger.registerWorkspace('cancel-workspace',{workspaceId:'ws',nodeId:'local',path:h.dir,label:'Local',state:'ready',createdAt:new Date().toISOString()});
+    ledger.registerNode('cancel-node',{nodeId:'local',roles:['both'],enabled:true,models:[],capabilities:[],workspaceIds:['ws'],lastSeenAt:new Date().toISOString()});
+    ledger.recordNodeHeartbeat('cancel-heartbeat',{nodeId:'local',runtimeReady:true,activeExecutions:0,source:'host-local',sampledAt:Date.now(),providerStatus:{programs:service.programs.catalog()}});
+    runtime.save({commandId:'cancel-flow',expectedRevision:0,definition:{workflowId:'flow',projectId:'p',revision:0,title:'Flow',description:'',steps:[{stepId:'work',title:'Work',nodeId:'local',workspaceId:'ws',dependsOn:[],inputs:{},execution:{kind:'program',programId:'work',version:'1'},maxRetries:0}]}});
+    const binding=runtime.configureTask({commandId:'cancel-bind',projectId:'p',workflowId:'flow',input:{}});
+    const first=runtime.start({commandId:'cancel-first',taskId:binding.taskId});runtime.tick();
+    ledger.cancel('cancel-single-run',{taskId:binding.taskId,runId:first.runId,reason:'Stop one invocation'});
+    runtime.tick();
+    assert.equal(ledger.getRun(first.runId).state,'cancelled');assert.notEqual(ledger.getTask(binding.taskId).state,'cancelled');
+    const second=runtime.start({commandId:'cancel-second',taskId:binding.taskId});runtime.tick();
+    const child=runtime.snapshot().runs.find(run=>run.runId===second.runId).steps[0];
+    assert.ok(child.runId,JSON.stringify(child));
+    ledger.cancel('cancel-whole-task',{taskId:binding.taskId,reason:'Stop continuing work'});
+    assert.equal(ledger.getTask(binding.taskId).state,'cancelled');
+    runtime.tick();runtime.tick();
+    assert.equal(ledger.getRun(child.runId).state,'cancelled');assert.equal(ledger.getRun(second.runId).state,'cancelled');
+    assert.equal(ledger.getTask(binding.taskId).state,'cancelled');
+    assert.throws(()=>runtime.start({commandId:'cancel-no-reopen',taskId:binding.taskId}),/Explicitly reopen/);
+    const archived=runtime.configureTask({commandId:'archive-bind',projectId:'p',workflowId:'flow',input:{}});
+    runtime.start({commandId:'archive-start',taskId:archived.taskId});runtime.tick();
+    ledger.updateTask('archive-task',{taskId:archived.taskId,expectedRevision:ledger.getTask(archived.taskId).revision??1,state:'archived'});
+    runtime.tick();assert.equal(ledger.getTask(archived.taskId).state,'archived');
+    assert.throws(()=>runtime.start({commandId:'archive-no-reopen',taskId:archived.taskId}),/Explicitly reopen/);
+  }finally{await h.dispose()}
+});

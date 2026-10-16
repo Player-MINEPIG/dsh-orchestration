@@ -258,7 +258,8 @@ export class TaskLedger {
     run.state = state;
     run.updatedAt = this.now();
     this.saveRun(run);
-    this.projectTaskState(this.getTask(run.taskId), run);
+    const task = this.getTask(run.taskId);
+    if (!["cancelled", "archived"].includes(task.state)) this.projectTaskState(task, run);
   }
   prepareWorkflowRun(input: RunInput): Run {
     this.assertManagementWritable();
