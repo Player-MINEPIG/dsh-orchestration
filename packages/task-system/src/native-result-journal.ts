@@ -288,21 +288,33 @@ export class NativeResultJournal {
         .all() as { version: number }[];
       if (schema.length !== 1 || schema[0]?.version !== 1)
         fail("SCHEMA", "Unsupported native result journal schema");
-      // Persist newly created directory entries as well as SQLite's FULL commit.
+      // SQLite FULL flushes its WAL. Windows cannot fsync a directory through
+      // Node; flush the database with a writable file handle instead. This does
+      // not claim POSIX directory-entry durability on Windows. All I/O failures
+      // still propagate; other platforms retain the directory sync below.
       if (created || firstDirectory) {
-        const stop = firstDirectory
-          ? dirname(resolve(firstDirectory))
-          : dirname(file);
-        let directory = dirname(file);
-        for (;;) {
-          const fd = openSync(directory, "r");
+        if (process.platform === "win32") {
+          const fd = openSync(file, "r+");
           try {
             fsyncSync(fd);
           } finally {
             closeSync(fd);
           }
-          if (directory === stop) break;
-          directory = dirname(directory);
+        } else {
+          const stop = firstDirectory
+            ? dirname(resolve(firstDirectory))
+            : dirname(file);
+          let directory = dirname(file);
+          for (;;) {
+            const fd = openSync(directory, "r");
+            try {
+              fsyncSync(fd);
+            } finally {
+              closeSync(fd);
+            }
+            if (directory === stop) break;
+            directory = dirname(directory);
+          }
         }
       }
     } catch (error) {
