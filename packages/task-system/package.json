@@ -32,7 +32,9 @@
     "./project-registration": "./dist/project-registration/protocol.js",
     "./project-registration/plugin": "./dist/project-registration/plugin.js",
     "./project-registration/client": "./dist/project-registration/client.js",
-    "./project-registration/http": "./dist/project-registration/http.js"
+    "./project-registration/http": "./dist/project-registration/http.js",
+    "./workflows": "./dist/workflows.js",
+    "./workflow-programs": "./dist/workflow-programs.js"
   },
   "types": "./dist/index.d.ts",
   "files": [

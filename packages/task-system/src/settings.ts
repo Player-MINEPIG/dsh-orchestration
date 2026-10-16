@@ -1,3 +1,4 @@
+import { SaveWorkflow, StartWorkflow, RetryWorkflowStep, CancelWorkflow } from "./workflow-contracts.js";
 import { scheduledPlanInput, scheduledPlanControl } from "./scheduled-plans.js";
 import { SessionDispatchIndex, sessionDispatchOperations, sessionTaskSnapshot, sortSessionTasks } from "./session-task-monitor.js";
 import type { SessionJobRegistry } from "./session-codex-jobs.js";
@@ -337,6 +338,12 @@ export function hasTaskConfigOverride(patches: readonly unknown[]): boolean {
 }
 
 const projectInputs = {
+  workflowSnapshot: null,
+  workflowPage: null,
+  saveWorkflow: SaveWorkflow,
+  startWorkflow: StartWorkflow,
+  retryWorkflowStep: RetryWorkflowStep,
+  cancelWorkflow: CancelWorkflow,
   sessionTasks: z.object({ sessionId: z.string().min(1).max(200) }).strict(),
   scheduleOptions:null,
   createScheduledPlan:scheduledPlanInput,
@@ -465,7 +472,7 @@ export const projectDescriptors: InvocationDescriptor[] = Object.entries(
   result: {
     mode: "strict",
     typeSymbol: `@dsh-task/task-system#${method}Result`,
-    create: () => (method === "projectPage" ? z.string() : z.json()),
+    create: () => (["projectPage", "workflowPage"].includes(method) ? z.string() : z.json()),
   },
 }));
 
@@ -473,6 +480,17 @@ export class TaskPluginSettings extends TypertRemoteService {
   constructor(ctx: Context) {
     super(ctx, "taskPluginSettings");
   }
+  private workflowService() {
+    const service = this.ctx.get("taskSystem");
+    if (!service || service.config.role === "executor") throw new RemoteError("task/project", "Workflow center requires a planner", {reason:"PLANNER_REQUIRED"});
+    return service.workflows;
+  }
+  async workflowSnapshot() { return this.projectOperation(() => this.workflowService().snapshot()); }
+  async saveWorkflow(input: unknown) { return this.projectOperation(() => this.workflowService().save(input)); }
+  async startWorkflow(input: unknown) { return this.projectOperation(() => this.workflowService().start(input)); }
+  async retryWorkflowStep(input: unknown) { return this.projectOperation(() => this.workflowService().retry(input)); }
+  async cancelWorkflow(input: unknown) { return this.projectOperation(() => this.workflowService().cancel(input)); }
+  async workflowPage() { return readFileSync(new URL("./workflow-page.html", import.meta.url), "utf8"); }
   private projects() {
     const task = this.ctx.get("taskSystem") as TaskSystemService | undefined;
     if (task?.config.role === "executor")

@@ -449,7 +449,7 @@ export class ExecutorWorker {
           403,
         );
       }
-      if ((this.options.taskSessions || project) && !claim.run.retry) {
+      if (!claim.run.route?.execution && (this.options.taskSessions || project) && !claim.run.retry) {
         selectingSession = true;
         insist(
           ledger.sessionContext && ledger.selectTaskSession,
@@ -504,11 +504,11 @@ export class ExecutorWorker {
         selectingSession = false;
       }
       store.saveDispatch(record);
-      await ledger.bindSession(`session-${executionId}`, {
+      if (!claim.run.route?.execution) await ledger.bindSession(`session-${executionId}`, {
         ...lease,
         sessionId,
       });
-      workspacePath = await executionWorkspace({
+      if (!claim.run.route?.execution) workspacePath = await executionWorkspace({
         parent: workspacePath,
         projectRoot: this.options.projectRoot?.(),
         claim,
@@ -796,7 +796,7 @@ function validateResult(result: ExecutionResult, maxBytes: number): void {
         Buffer.byteLength(result.report.title) <= 500 &&
         typeof result.report.body === "string" &&
         result.report.body.length > 0 &&
-        Buffer.byteLength(result.report.body) <= 32768,
+        Buffer.byteLength(result.report.body) <= 1_000_000,
       "INVALID_EXECUTION_REPORT",
     );
   if (result.report?.data !== undefined) canonicalData(result.report.data);

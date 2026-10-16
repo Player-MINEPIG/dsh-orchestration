@@ -1,3 +1,4 @@
+import { ProgramCatalog, ProgramRoute } from "./workflow-programs.js";
 import type {
   TaskSession,
   TaskSessionContext,
@@ -422,6 +423,20 @@ export class TaskLedger {
     this.planner();
     if (this.options.readOnly) fail("READ_ONLY", "Read-only ledger");
   }
+  managementCommand<T>(commandId: string, operation: string, input: unknown, fn: () => T): T {
+    this.assertManagementWritable();
+    return this.command(commandId, `workflow.${operation}`, input, fn).value;
+  }
+  workflowAdmission(commandId: string, input: {task?: TaskInput; run: RunInput}, link: (task: Task, run: Run) => void) {
+    this.assertManagementWritable();
+    return this.command(commandId, "workflow.admit", input, () => {
+      const task = input.task ? this.newTask(input.task) : this.getTask(input.run.taskId);
+      const run = this.newRun({...input.run, taskId:task.taskId});
+      link(task, run);
+      return {taskId:task.taskId,runId:run.runId};
+    }).value;
+  }
+  registeredNodes(): NodeCapability[] { return this.list<NodeCapability>("node"); }
   managementNow() {
     return this.now();
   }
@@ -1789,6 +1804,7 @@ export class TaskLedger {
       "decisionId",
       "continuationOf",
       "taskRetry",
+      "workflow",
     ]);
     if (Object.keys(config).some((k) => !allowed.has(k)))
       fail("INVALID", "Unsupported Run configuration field");
@@ -1834,6 +1850,11 @@ export class TaskLedger {
       if (!retry || typeof retry !== "object" || Array.isArray(retry) || Object.keys(retry).sort().join(",") !== "automatic,count,sourceRunId" || typeof retry.sourceRunId !== "string" || typeof retry.automatic !== "boolean" || !Number.isInteger(retry.count) || (retry.count as number) < 0 || (retry.count as number) > 5)
         fail("INVALID", "Invalid report retry configuration");
       result.taskRetry = config.taskRetry;
+    }
+    if (config.workflow !== undefined) {
+      const workflow = config.workflow;
+      if (!workflow || typeof workflow !== "object" || Array.isArray(workflow) || typeof workflow.workflowRunId !== "string" || typeof workflow.workflowId !== "string" || typeof workflow.stepId !== "string" || !Number.isInteger(workflow.definitionRevision)) fail("INVALID", "Invalid workflow provenance");
+      result.workflow = structuredClone(workflow);
     }
     // Old command provenance stays in events, not in the execution configuration.
     return result;
@@ -2254,6 +2275,16 @@ export class TaskLedger {
     for (const cap of route.requiredCapabilities)
       if (!node.capabilities.includes(cap))
         fail("UNSUPPORTED", "Node lacks required capability");
+    if (route.execution) {
+      const program = ProgramRoute.parse(route.execution);
+      if (route.backend || route.reasoningEffort || route.provider !== "registered-program" || route.model !== program.programId) fail("INVALID", "Program route cannot select an Agent backend or model");
+      const status = this.nodeStatuses().find(entry => entry.nodeId === node.nodeId)?.providerStatus;
+      const programs = status && typeof status === "object" && !Array.isArray(status) ? status.programs : undefined;
+      if (!Array.isArray(programs) || !programs.some(entry => {
+        const parsed = ProgramCatalog.safeParse(entry);
+        return parsed.success && parsed.data.nodeId === node.nodeId && parsed.data.programId === program.programId && parsed.data.version === program.version;
+      })) fail("UNSUPPORTED", "Program version not advertised by executor");
+    } else {
     const m =
       node.models.find(
         (x) => x.provider === route.provider && x.model === route.model,
@@ -2263,6 +2294,7 @@ export class TaskLedger {
       !m.reasoningEfforts.includes(route.reasoningEffort)
     )
       fail("UNSUPPORTED", "Reasoning effort not supported");
+    }
     if (route.workspaceId) {
       const w = this.getWorkspace(route.workspaceId);
       if (
@@ -3457,7 +3489,11 @@ export class TaskLedger {
     const config = run.configuration as {
       template?: Template;
       templateRef?: { templateId: string; version: number };
+      workflow?: unknown;
     } | null;
+    if (config?.workflow && ["success", "partial"].includes(input.outcome) &&
+      (!input.report || input.report.data === undefined))
+      fail("RESULT_VALIDATION", "Workflow step requires structured report.data for success or partial; submit reportData through task_settle.");
     let template: Template | undefined;
     if (config?.templateRef) {
       template =

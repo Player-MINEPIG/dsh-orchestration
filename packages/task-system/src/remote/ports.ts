@@ -58,6 +58,7 @@ export interface Receipt<T = unknown> {
   value: T;
 }
 export interface Route {
+  execution?: { kind: "program"; programId: string; version: string };
   backend?: string;
   nodeId: string;
   provider: string;

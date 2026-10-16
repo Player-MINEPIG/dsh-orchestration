@@ -1,3 +1,8 @@
+import { workflowInputPage, workflowPromptConfiguration } from "./workflow-input.js";
+import { ProgramRegistry } from "./workflow-programs.js";
+import { WorkflowRuntime } from "./workflows.js";
+import { ExecutorWorker } from "./remote/worker.js";
+import { RecoveryStore } from "./remote/store.js";
 import { ExecutionDirectories } from "./execution-directories.js";
 import { executionWorkspace, workspaceSessionKey } from "./remote/project-workspace.js";
 import { ProjectCollaborationAuthority } from "./project-collaboration/authority.js";
@@ -791,12 +796,14 @@ export class NativeExecutionProvider {
         .filter(
           (tool) =>
             !tool.startsWith("task_") &&
+            tool !== "workflow_input_read" &&
             tool !== "run_code" &&
             (policyTools === undefined || policyTools.includes(tool)),
         );
     }
     return configured.filter(
       (tool) =>
+        tool !== "workflow_input_read" &&
         (policyTools === undefined || policyTools.includes(tool)) &&
         (this.owner.config.trustedUnconfinedTools ||
           [
@@ -810,6 +817,10 @@ export class NativeExecutionProvider {
             "task_note",
           ].includes(tool)),
     );
+  }
+  private workflowReadTools(claim: NativeClaim): string[] {
+    const configuration = claim.run.configuration;
+    return configuration && typeof configuration === "object" && !Array.isArray(configuration) && configuration.workflow && claim.task.policy?.allowedTools?.includes("workflow_input_read") ? ["workflow_input_read"] : [];
   }
   private restrictWorkloadTools(ctx: Context, agent: Agent, allow: string[]) {
     // DSH restrict() masks inherited capabilities, never tools registered on
@@ -972,6 +983,7 @@ export class NativeExecutionProvider {
       throw new Error("native execution provider is draining");
     const attempt = this.owner.ledger.getAttempt(claim.attempt.attemptId);
     const run = this.owner.ledger.getRun(attempt.runId);
+    if (run.route?.execution) throw new Error("Program execution requires the program worker");
     if (
       attempt.fence !== claim.attempt.fence ||
       run.runId !== claim.run.runId ||
@@ -1034,6 +1046,7 @@ export class NativeExecutionProvider {
       throw new Error("native execution provider is draining");
     request.signal.throwIfAborted();
     const { claim, sessionId, workspacePath } = request;
+    if (claim.run.route?.execution) throw new Error("Program execution requires the program worker");
     if (claim.run.historyOnly || claim.run.observationOnly)
       throw new Error("historical work cannot be executed");
     resolvedClaimContext(claim);
@@ -1132,6 +1145,7 @@ export class NativeExecutionProvider {
             await composition.mount(agentCtx, agent);
             allow = [
               "task_settle",
+              ...this.workflowReadTools(claim),
               ...(request.collaboration ? [...READ_TOOLS, "task_report"] : []),
               ...this.workloadTools(claim, agentCtx, agent).filter(
                 (tool) =>
@@ -1305,7 +1319,7 @@ export class NativeExecutionProvider {
       ...(claim.run.projectContext
         ? { projectContext: claim.run.projectContext }
         : {}),
-      configuration: claim.run.configuration,
+      configuration: workflowPromptConfiguration(claim.run.configuration),
       ...(context.template ? { template: context.template } : {}),
       contextNotes: context.reports,
     };
@@ -1617,6 +1631,7 @@ export class NativeExecutionProvider {
         });
       const allow = [
         ...OWNED_TOOLS,
+        ...this.workflowReadTools(claim),
         ...this.workloadTools(claim, agentCtx, agent),
       ];
       this.restrictWorkloadTools(agentCtx, agent, allow);
@@ -1996,7 +2011,8 @@ export class NativeExecutionProvider {
     // A missing required report is a tool-input error, not a completed attempt.
     // Keep its source receipts alive so the agent can finish the task-specific
     // report workflow. Complete reports still undergo post-drain validation.
-    if (!input.report && input.outcome !== "unknown") {
+    const workflow = owned.claim.run.configuration && typeof owned.claim.run.configuration === "object" && !Array.isArray(owned.claim.run.configuration) && owned.claim.run.configuration.workflow;
+    if (!workflow && !input.report && input.outcome !== "unknown") {
       try { this.validateOutcome(owned, input); }
       catch (error) {
         if (!(error instanceof TaskError) || !["SCHEMA_VALIDATION", "RESULT_VALIDATION"].includes(error.code)) throw error;
@@ -2059,6 +2075,11 @@ export class NativeExecutionProvider {
 /** Trusted in-process entry point. The underlying ledger enforces roles too. */
 export class TaskSystemService extends Service {
   readonly executionDirectories: ExecutionDirectories;
+  readonly programs: ProgramRegistry;
+  readonly workflows: WorkflowRuntime;
+  private programWorker?: ExecutorWorker;
+  private programStore?: RecoveryStore;
+
   projects?: ProjectRuntime;
   native?: NativeExecutionProvider;
   workspaces?: WorkspaceManager;
@@ -2083,6 +2104,8 @@ export class TaskSystemService extends Service {
   ) {
     super(ctx, "taskSystem");
     this.executionDirectories = new ExecutionDirectories(ledger.managementDatabase());
+    this.programs = new ProgramRegistry(config.nodeId);
+    this.workflows = new WorkflowRuntime(ledger, this.programs);
   }
   applyLiveNodeCapacities(): void {
     for (const node of this.config.remoteNodes) {
@@ -2144,6 +2167,8 @@ export class TaskSystemService extends Service {
       ...[...this.providers].map((provider) => provider.dispose()),
       Promise.allSettled([...this.observationJobs]),
     ]);
+    await this.programWorker?.dispose();
+    this.programStore?.close();
     this.results.close();
     this.ledger.close();
     this.ledgerClosed = true;
@@ -2292,7 +2317,7 @@ export class TaskSystemService extends Service {
   private localHeartbeat(force = false): void {
     if (!this.config.localNode || this.ledgerClosed) return;
     const now = Date.now();
-    const runtimeReady = this.accepting && this.native !== undefined;
+    const runtimeReady = this.accepting && (this.native !== undefined || this.programs.catalog().length > 0);
     if (
       !force &&
       runtimeReady === this.lastRuntimeReady &&
@@ -2306,11 +2331,12 @@ export class TaskSystemService extends Service {
         {
           nodeId: this.config.nodeId,
           runtimeReady,
-          activeExecutions: [...this.providers].reduce(
+          activeExecutions: (this.programWorker?.activeExecutions ?? 0) + [...this.providers].reduce(
             (total, provider) => total + provider.activeCount,
             0,
           ),
           providerStatus: {
+            ...(this.programs.catalog().length ? {programs:this.programs.catalog()} : {}),
             executionRoutes: this.config.officialBackends.map(backend => ({
               nodeId: this.config.nodeId, provider: backend.provider, model: backend.model,
               reasoningEffort: backend.reasoningEffort, backend: backend.backend,
@@ -2362,12 +2388,35 @@ export class TaskSystemService extends Service {
         }
       }
     }
+    if (this.config.role !== "executor") {
+      try { this.workflows.tick({ scheduleEnabled: this.config.schedulerEnabled }); } catch (error) { this.ctx.logger.warn("workflow maintenance failed: %s", error); }
+    }
+    if (this.config.role === "both" && this.programs.catalog().length && !this.programWorker) {
+      this.programStore = new RecoveryStore(this.config.databasePath === ":memory:" ? ":memory:" : `${this.config.databasePath}.program-executions`);
+      const workspaces = () => this.ledger.registeredWorkspaces(this.config.nodeId).flatMap(workspace => {
+        if (workspace.state !== "ready" || !this.ledger.getNode(this.config.nodeId).workspaceIds.includes(workspace.workspaceId)) return [];
+        try {
+          const workspacePath = realpathSync(workspace.path);
+          const root = this.config.workspaceRoots.find(root => {
+            try {
+              const path = relative(realpathSync(root.path), workspacePath);
+              return path === "" || (!path.startsWith(".." + sep) && path !== ".." && !isAbsolute(path));
+            } catch { return false; }
+          });
+          return root ? [{workspaceId:workspace.workspaceId,nodeId:workspace.nodeId,path:workspace.path,allowedRoot:root.path}] : [];
+        } catch { return []; }
+      });
+      this.programWorker = new ExecutorWorker({ledger:this.ledger,provider:this.programs.provider(),store:this.programStore,policy:{role:this.config.role,nodeId:this.config.nodeId,capabilities:[],get workspaces() { return workspaces(); }},ttlMs:this.config.leaseTtlMs,maxResultBytes:2_000_000});
+      this.programWorker.startPolling(() => this.config.maintenanceIntervalMs, () => this.config.maxConcurrent);
+    }
     this.projects?.tick();
     const native = this.native;
     if (this.config.role === "planner" || !native) return;
     for (const run of this.ledger.pendingRuns(this.config.nodeId)) {
+      if (run.route?.execution) continue;
       if (
         !this.config.autoExecute &&
+        !(run.configuration && typeof run.configuration === "object" && !Array.isArray(run.configuration) && run.configuration.workflow) &&
         !(this.config.safeRetry.maxRetries > 0 && run.retry)
       )
         continue;
@@ -2473,6 +2522,18 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
     throw error;
   }
   const service = new TaskSystemService(ctx, config, ledger, results);
+  ctx.tools.register(defineTool({
+    name: "workflow_input_read",
+    description: "Read a bounded page of this workflow step's immutable input. Follow returned paths and nextOffset; large child values are explicit references, not omitted evidence.",
+    parameters: {path:{type:"array",items:{type:"string"}},offset:{type:"integer"},limit:{type:"integer"}},
+    output,
+    execute: async (args,exec) => {
+      const bound=service.native?.scopeFor(exec.agent);
+      const configuration=bound?.claim.run.configuration;
+      if(!configuration||typeof configuration!=="object"||Array.isArray(configuration)||!configuration.workflow)throw new Error("Owned workflow execution required");
+      return workflowInputPage(configuration.input??null,args);
+    },
+  }));
   if (config.role !== "executor") {
     service.projects = new ProjectRuntime(
       ctx,
@@ -3411,7 +3472,7 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
           summary: { type: "string", required: true },
           reportTitle: { type: "string" },
           reportBody: { type: "string" },
-          reportData: { type: "object", additionalProperties: true },
+          reportData: { type: "json", description: "Structured JSON output; required for successful or partial workflow steps. JSON null is a valid value." },
           reportSchemaId: { type: "string" },
           reportArtifactIds: {
             type: "array",

@@ -1,3 +1,4 @@
+import { ProgramCatalog, ProgramRoute } from "../workflow-programs.js";
 import { validateCollaborationInput } from "../project-collaboration/authority.js";
 import { TaskError } from "../ledger.js";
 import {
@@ -112,7 +113,7 @@ function stringArray(value: unknown, label: string, max = 64): void {
 }
 function reportFields(report: Record<string, Json>): void {
   text(report, "title", 500);
-  text(report, "body", 32768);
+  text(report, "body", 1_000_000);
   if (report.artifactIds !== undefined)
     insist(
       Array.isArray(report.artifactIds) &&
@@ -165,8 +166,9 @@ function delegation(input: Record<string, Json>): void {
     fields(
       route,
       ["nodeId", "provider", "model", "requiredCapabilities"],
-      ["workspaceId", "reasoningEffort", "backend"],
+      ["workspaceId", "reasoningEffort", "backend", "execution"],
     );
+    if (route.execution !== undefined) insist(ProgramRoute.safeParse(route.execution).success, "INVALID_PROGRAM_ROUTE");
     if (route.backend !== undefined) text(route, "backend", 100);
     id(route, "nodeId");
     text(route, "provider", 100);
@@ -307,7 +309,14 @@ export function validatePayload(envelope: CommandEnvelope): void {
       if (p.providerStatus !== undefined) {
         insist(isRecord(p.providerStatus), "INVALID_PROVIDER_STATUS");
         const status = p.providerStatus as Record<string, Json>;
-        fields(status, ["state", "providers"], ["executionRoutes"]);
+        fields(status, ["state", "providers"], ["executionRoutes", "programs"]);
+        if (status.programs !== undefined) {
+          insist(Array.isArray(status.programs) && status.programs.length <= 32, "INVALID_PROGRAM_CATALOG");
+          for (const program of status.programs) {
+            const parsed = ProgramCatalog.safeParse(program);
+            insist(parsed.success && parsed.data.nodeId === envelope.nodeId, "INVALID_PROGRAM_CATALOG");
+          }
+        }
         const states = ["not-probed", "ready", "unavailable"];
         insist(states.includes(String(status.state)), "INVALID_PROVIDER_STATE");
         insist(

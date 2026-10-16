@@ -110,6 +110,7 @@ export interface Task {
   };
 }
 export interface ExecutionRoute {
+  execution?: { kind: "program"; programId: string; version: string };
   /** Official ctx.subagents provider name. Absent means native DSH AgentLoop. */
   backend?: string;
   nodeId: string;

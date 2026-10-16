@@ -1,3 +1,4 @@
+import type { ProgramRegistry } from "../workflow-programs.js";
 import { chooseExecutionSession } from '../execution-session.js'
 import { Context, Service } from '@deepseek-ai/cordis'
 import { isVolatile } from '@deepseek-ai/cosmokit'
@@ -65,6 +66,7 @@ export const Config = z.object({...PlainConfig.dict, executionLimits:PlainConfig
 interface HostWebServer { register(route: { kind: 'exact'; path: string; handler: (req: IncomingMessage,res: ServerResponse) => Promise<void> }): () => void }
 /** An independently replaceable taskSystem service supplies only this structural ledger seam. */
 export interface TaskSystemPort {
+  programs?: ProgramRegistry;
   ledger: LedgerPort; native?: NativeExecutionPort; config?: { officialBackends?: Array<{ backend: string; provider: string; model: string; reasoningEffort: string }>; decisionBindings?: Record<string,string>; autoAdmitObservations?: boolean; defaultWorkspaceId?: string | null; sessionDecisionEnabled?: boolean; decisionTtlMs?: number };
   subscribeObservations?(sink: (candidate: ObservationCandidate, options: { signal: AbortSignal }) => Promise<unknown> | unknown): () => void;
 }
@@ -209,7 +211,7 @@ export class RemoteExecutionService extends Service {
     this.client = new RemoteClient({ endpoint: coordinator.endpoint,authMode: coordinator.authMode,trustedNetwork: coordinator.trustedNetwork ?? undefined,audience: coordinator.audience,keyId: coordinator.keyId,nodeId: this.config.nodeId,privateKey,store: this.store!,allowLoopbackHttp: this.config.allowLoopbackHttp,maxBodyBytes: this.config.maxBodyBytes,maxResponseBytes: coordinator.maxResponseBytes })
     const remote = this.coordinatorLedger = new RemoteLedgerClient(this.client,this.config.nodeId)
     this.workerLedger = remote
-    if (this.config.role !== 'planner' && coordinator.nativeRoutes.length > 0) {
+    if (this.config.role !== 'planner') {
       const currentNative = (): NativeExecutionPort | undefined => (this.ctx.get('taskSystem') as TaskSystemPort | undefined)?.native
       const routes = coordinator.nativeRoutes.map(route => ({ provider: route.provider,models: route.models.map(model => ({ model: model.model,reasoningEfforts: [...model.reasoningEfforts] })) }))
       const provider: ExecutionProvider = {
@@ -254,9 +256,15 @@ export class RemoteExecutionService extends Service {
       ...this.config.coordinator.nativeRoutes.flatMap(p => p.models.flatMap(m => (m.reasoningEfforts.length ? m.reasoningEfforts : [undefined]).map(reasoningEffort => ({ nodeId: this.config.nodeId, provider: p.provider, model: m.model, ...(reasoningEffort ? { reasoningEffort } : {}), requiredCapabilities: [] as string[] })))),
       ...(taskSystem?.config?.officialBackends ?? []).map(b => ({ nodeId: this.config.nodeId, provider: b.provider, model: b.model, reasoningEffort: b.reasoningEffort, backend: b.backend, requiredCapabilities: ['official-codex'] }))
     ]
-    while (executionRoutes.length && Buffer.byteLength(JSON.stringify({ state: 'not-probed', providers, executionRoutes })) > 8192) executionRoutes.pop()
+    const programs = taskSystem?.programs?.catalog() ?? []
+    const providerStatus = { state: 'not-probed',providers,executionRoutes,...(programs.length ? { programs } : {}) }
+    while (executionRoutes.length > 128) executionRoutes.pop()
+    while (providers.length > 32) providers.pop()
+    while (executionRoutes.length && Buffer.byteLength(JSON.stringify(providerStatus)) > 8192) executionRoutes.pop()
+    while (providers.length && Buffer.byteLength(JSON.stringify(providerStatus)) > 8192) providers.pop()
+    insist(Buffer.byteLength(JSON.stringify(providerStatus)) <= 8192,'PROVIDER_STATUS_LIMIT')
     this.lastHeartbeatSample = Math.max(Date.now(),this.lastHeartbeatSample + 1)
-    const receipt = await this.coordinatorLedger.recordNodeHeartbeat(`heartbeat-${randomUUID()}`,{ nodeId: this.config.nodeId,sampledAt: this.lastHeartbeatSample,runtimeReady: typeof native?.executeExternal === 'function',activeExecutions,providerStatus: { state: 'not-probed',providers,executionRoutes } })
+    const receipt = await this.coordinatorLedger.recordNodeHeartbeat(`heartbeat-${randomUUID()}`,{ nodeId: this.config.nodeId,sampledAt: this.lastHeartbeatSample,runtimeReady: typeof native?.executeExternal === 'function' || !!taskSystem?.programs?.catalog().length,activeExecutions,providerStatus })
     this.lastHeartbeatAcknowledgedAt = new Date().toISOString()
     return receipt
   }
@@ -265,6 +273,8 @@ export class RemoteExecutionService extends Service {
     insist(this.active,'DRAINING',503)
     insist(!this.configurationPaused,'CONFIGURATION_BUSY',409)
     insist(this.workers.size === 0,'ONE_WORKER_OWNER_PER_STORE',409)
+    const programs = (this.ctx.get('taskSystem') as TaskSystemPort | undefined)?.programs
+    if (programs) provider = programs.provider(provider)
     const worker = new ExecutorWorker({ projectRoot: () => this.ctx.get("taskSystem")?.executionDirectories?.settings().root, ledger: this.workerLedger,provider,store: this.store!,policy: { role: this.config.role,nodeId: this.config.nodeId,capabilities: this.config.capabilities,workspaces: this.config.workspaces },ttlMs: this.config.leaseTtlMs,maxResultBytes: Math.max(1024,this.config.maxBodyBytes - 4096),taskSessions: this.config.taskSessionsEnabled === true,
       ...(this.config.taskSessionsEnabled && this.client ? { prepare: async () => { await this.client!.executorIdentity() } } : {}),
       chooseSession: async (claim,context,signal,refresh) => {

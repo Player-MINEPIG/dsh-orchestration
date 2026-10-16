@@ -2,7 +2,7 @@ import { CronExpressionParser } from "cron-parser";
 import type { Json, Schedule } from "./contracts.js";
 
 /** Resolve a calendar window from the scheduled slot, never the recovery time. */
-export function scheduleInput(schedule: Schedule, occurrenceAt: string): Json {
+export function scheduleInput(schedule: Pick<Schedule, "input" | "calendarWindow">, occurrenceAt: string): Json {
   if (schedule.calendarWindow === undefined) return schedule.input;
   const rule = schedule.calendarWindow;
   if (

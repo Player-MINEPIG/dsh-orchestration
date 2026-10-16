@@ -1,0 +1,157 @@
+import { z } from "zod";
+import type {
+  Json,
+  NodeCapability,
+  NodeStatus,
+  Workspace,
+} from "./contracts.js";
+import type { ProgramCatalogEntry } from "./workflow-programs.js";
+const Id = z
+  .string()
+  .min(1)
+  .max(120)
+  .regex(/^[a-zA-Z0-9_.:-]+$/);
+export const InputBinding = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("literal"), value: z.json() }).strict(),
+  z
+    .object({
+      kind: z.literal("workflow-input"),
+      path: z.array(z.string().max(200)).max(32),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("step-output"),
+      stepId: Id,
+      path: z.array(z.string().max(200)).max(32),
+    })
+    .strict(),
+]);
+export const WorkflowStep = z
+  .object({
+    stepId: Id,
+    title: z.string().min(1).max(500),
+    nodeId: Id,
+    workspaceId: Id,
+    dependsOn: z.array(Id).max(100),
+    inputs: z.record(z.string().min(1).max(100), InputBinding),
+    execution: z.discriminatedUnion("kind", [
+      z
+        .object({
+          kind: z.literal("program"),
+          programId: z.string().min(1).max(100),
+          version: z.string().min(1).max(80),
+        })
+        .strict(),
+      z
+        .object({
+          kind: z.literal("agent"),
+          provider: z.string().min(1).max(100),
+          model: z.string().min(1).max(200),
+          reasoningEffort: z.string().max(100).optional(),
+          instructions: z.string().min(1).max(40000),
+          inputExposure: z.enum(["inline", "tools"]).optional(),
+          allowedTools: z.array(z.string().min(1).max(200)).max(100),
+        })
+        .strict(),
+    ]),
+    maxRetries: z.number().int().min(0).max(5),
+  })
+  .strict();
+export type WorkflowStep = z.infer<typeof WorkflowStep>;
+export const WorkflowDefinition = z
+  .object({
+    workflowId: Id,
+    revision: z.number().int().nonnegative(),
+    title: z.string().min(1).max(500),
+    description: z.string().max(20000),
+    steps: z.array(WorkflowStep).min(1).max(100),
+    schedule: z
+      .object({
+        enabled: z.boolean(),
+        cron: z.string().min(1).max(100),
+        timeZone: z.string().min(1).max(100),
+        dayOffset: z.union([z.literal(-1), z.literal(0)]),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict();
+export type WorkflowDefinition = z.infer<typeof WorkflowDefinition>;
+export const SaveWorkflow = z
+  .object({
+    commandId: z.string().min(1).max(200),
+    expectedRevision: z.number().int().nonnegative(),
+    definition: WorkflowDefinition,
+  })
+  .strict();
+export const StartWorkflow = z
+  .object({
+    commandId: z.string().min(1).max(200),
+    workflowId: Id,
+    input: z.json(),
+  })
+  .strict();
+export const RetryWorkflowStep = z
+  .object({
+    commandId: z.string().min(1).max(200),
+    workflowRunId: Id,
+    stepId: Id,
+  })
+  .strict();
+export const CancelWorkflow = z
+  .object({ commandId: z.string().min(1).max(200), workflowRunId: Id })
+  .strict();
+export type StepState =
+  | "pending"
+  | "waiting_device"
+  | "queued"
+  | "running"
+  | "succeeded"
+  | "partial"
+  | "failed"
+  | "uncertain"
+  | "cancelled"
+  | "blocked";
+export interface WorkflowStepView {
+  stepId: string;
+  nodeId: string;
+  title: string;
+  kind: "program" | "agent";
+  state: StepState;
+  reason?: string;
+  taskId?: string;
+  runId?: string;
+  reportId?: string;
+  output?: Json;
+  summary?: string;
+  sessionId?: string;
+  attemptCount: number;
+  retryFromRunId?: string;
+}
+export interface WorkflowRunView {
+  workflowRunId: string;
+  workflowId: string;
+  definitionRevision: number;
+  title: string;
+  definition: WorkflowDefinition;
+  input: Json;
+  createdAt: string;
+  updatedAt: string;
+  state:
+    | "running"
+    | "succeeded"
+    | "partial"
+    | "failed"
+    | "needs_attention"
+    | "cancelled";
+  steps: WorkflowStepView[];
+}
+export interface WorkflowSnapshot {
+  definitions: WorkflowDefinition[];
+  runs: WorkflowRunView[];
+  nodes: NodeStatus[];
+  workspaces: Workspace[];
+  programs: ProgramCatalogEntry[];
+  models: NodeCapability[];
+}
