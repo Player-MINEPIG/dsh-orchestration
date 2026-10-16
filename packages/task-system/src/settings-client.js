@@ -3453,7 +3453,7 @@ window.__ModuleLoader__.load({
       update();
       return () => { observer.disconnect(); system.removeEventListener("change", update); };
     }
-    function ProjectPanel({ invoke, pageMethod = "projectPage" }) {
+    function ProjectPanel({ invoke, directoryApi, pageMethod = "projectPage" }) {
       const frame = React.useRef(null),
         [html, setHtml] = React.useState(null),
         [error, setError] = React.useState(null),
@@ -3481,20 +3481,25 @@ window.__ModuleLoader__.load({
           if (
             event.source !== frame.current?.contentWindow ||
             event.data?.channel !== "dsh-project-runtime" ||
-            !projectMethods.includes(event.data.method) ||
+            !projectMethods.includes(event.data.method) && !["projectDirectoryList", "projectDirectoryPick", "projectOpenSettings", "projectOpenModels"].includes(event.data.method) ||
             ["projectPage", "workflowPage"].includes(event.data.method)
           )
             return;
           const source = event.source,
             { id, method, input } = event.data;
           try {
-            const value = await invoke(method, input);
+            const value = method === "projectDirectoryList" ? await directoryApi.list(input?.path)
+              : method === "projectDirectoryPick" ? await directoryApi.pick()
+              : method === "projectOpenSettings" ? directoryApi.openSettings()
+              : method === "projectOpenModels" ? directoryApi.openModels()
+              : await invoke(method, input);
             source.postMessage(
               { channel: "dsh-project-runtime", id, value },
               "*",
             );
           } catch (error) {
-            const code = error?.code === "task/project" ? error.details?.reason : error?.code;
+            const failure = error?.rpcError ?? error;
+            const code = failure?.code === "task/project" ? failure.details?.reason : failure?.code;
             const messages = {
               COORDINATOR_UNAVAILABLE: "中央进度暂时无法连接，请检查执行端与调度端的 Tailscale 连接。",
               PLANNER_REQUIRED: "当前节点为执行端，项目任务中心需要调度端身份。",
@@ -3504,7 +3509,10 @@ window.__ModuleLoader__.load({
               CONFLICT: "记录已变化或请求 ID 重复，请刷新后核对",
               BUSY: "统筹会话正在响应，请稍后再试",
               INVALID: "请输入有效的名称、目标和绝对目录",
-              CONFIGURATION: "请先设置项目目录或配置统筹模型",
+              CONFIGURATION: "项目会话服务尚未配置完整，请打开任务系统设置检查。",
+              PROJECT_ROOT_REQUIRED: "请先选择项目父目录，再创建项目。",
+              PROJECT_MODEL_REQUIRED: "请先选择本项目的统筹模型。",
+              PROJECT_MODEL_UNAVAILABLE: "所选统筹模型或思考强度已不可用，请刷新模型目录后重新选择。",
               FORBIDDEN: "此节点或会话没有操作权限",
               NOT_FOUND: "找不到对应记录",
               WORKSPACE_POLICY: "目录不符合工作区规则",
@@ -3513,8 +3521,9 @@ window.__ModuleLoader__.load({
               {
                 channel: "dsh-project-runtime",
                 id,
-                error: messages[code] || (/workflow/i.test(method) && error?.message) || "无法读取或操作项目服务，请检查连接后重试。",
+                error: messages[code] || (/^projectDirectory/.test(method) && error?.message) || (/workflow/i.test(method) && error?.message) || "无法读取或操作项目服务，请检查连接后重试。",
                 errorCode: code,
+                errorDetails: /^projectDirectory/.test(method) ? failure?.details : undefined,
               },
               "*",
             );
@@ -3522,7 +3531,7 @@ window.__ModuleLoader__.load({
         };
         window.addEventListener("message", listener);
         return () => window.removeEventListener("message", listener);
-      }, [invoke]);
+      }, [invoke, directoryApi]);
       React.useEffect(() => html ? watchTheme(frame, "dsh-project-runtime") : undefined, [html]);
       if (error)
         return h("div", { role: "alert", style: { padding: 24 } }, error);
@@ -3719,6 +3728,12 @@ window.__ModuleLoader__.load({
           ...(input === undefined ? [] : [input]),
         );
       };
+      const projectDirectoryApi = {
+        list: path => {const service=ctx.get("uiWorkspace");if(!service)throw Error("DSH 目录浏览服务尚未加载，请稍后重试");return service.listDirectory(path);},
+        pick: () => {const service=ctx.get("uiWorkspace");if(!service)throw Error("DSH 目录选择服务尚未加载");return service.pickDirectory();},
+        openSettings: () => openSettingsSection(ctx,"task-system"),
+        openModels: () => openModels(ctx),
+      };
       ctx.effect(() => mountSessionTaskPanel(ctx, invoke), "session task monitor");
       ctx.effect(() => {
         const offMain = ctx.slots.inject("main", () =>
@@ -3726,7 +3741,7 @@ window.__ModuleLoader__.load({
             {
               name: "main",
               key: "dsh-task-projects",
-              inject: () => ({ invoke }),
+              inject: () => ({ invoke, directoryApi: projectDirectoryApi }),
             },
             ProjectPanel,
           ),

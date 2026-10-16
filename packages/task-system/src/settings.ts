@@ -365,6 +365,7 @@ const projectInputs = {
       commandId: z.string().min(1).max(200),
       title: z.string().min(1).max(500),
       goal: z.string().min(1).max(20000),
+      selection: z.object({provider:z.string().min(1),model:z.string().min(1),reasoningEffort:z.string().min(1).optional()}).strict().optional(),
     })
     .strict(),
   createTemporaryTask: z

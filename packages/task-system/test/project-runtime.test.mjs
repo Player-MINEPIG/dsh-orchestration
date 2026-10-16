@@ -540,3 +540,26 @@ test('accepted partial results project as accepted without rewriting delivery fa
   assert.equal(h.ledger.getRun(run.runId).reviewStatus,'accepted');
  }finally{await h.dispose();}
 });
+
+test('project creation accepts an available per-project model with no global default and rejects missing or stale choices before creating records',async()=>{
+ const h=await createNativeHarness({config:{role:'planner'}});
+ try {
+  h.adapter.listModels=async()=>[{provider:'test-offline',id:'script',name:'Script'}];
+  const runtime=h.ctx.taskSystem.projects;
+  runtime.saveSettings({root:join(h.dir,'projects'),expectedRevision:0});
+  const input={commandId:'model-project',title:'Model project',goal:'Use a selected model'};
+  assert.equal((await runtime.modelCatalog()).defaultSelection,null);
+  await assert.rejects(runtime.create(input),error=>error.code==='PROJECT_MODEL_REQUIRED');
+  await assert.rejects(runtime.create({...input,selection:{provider:'test-offline',model:'missing'}}),error=>error.code==='PROJECT_MODEL_UNAVAILABLE');
+  await assert.rejects(runtime.create({...input,selection:{provider:'test-offline',model:'script',reasoningEffort:'not-an-effort'}}),error=>error.code==='PROJECT_MODEL_UNAVAILABLE');
+  assert.equal(runtime.snapshot().projects.length,0);
+  const selected={...input,selection:{provider:'test-offline',model:'script'}};
+  const created=await runtime.create(selected);
+  assert.deepEqual(await runtime.create(selected),created);
+  const conversation=await runtime.conversation(created.projectId);
+  assert.equal(conversation.conversationModel.effective.model,'script');
+  assert.equal((await runtime.modelCatalog()).defaultSelection,null);
+  assert.equal(h.adapter.requests.length,0);
+  await assert.rejects(runtime.create({...selected,selection:{provider:'test-offline',model:'other'}}),error=>error.code==='CONFLICT');
+ }finally{await h.dispose();}
+});

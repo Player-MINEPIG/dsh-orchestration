@@ -326,7 +326,7 @@ export class ProjectRuntime {
     else if (readFileSync(path, "utf8") !== contents)
       throw new TaskError("CONFLICT", "Project context file already differs");
   }
-  create(input: { commandId: string; title: string; goal: string }) {
+  create(input: { commandId: string; title: string; goal: string; selection?: ProjectAgentOptions }) {
     this.authorize();
     const key = text(input.commandId, 200),
       hash = digest(input),
@@ -346,31 +346,49 @@ export class ProjectRuntime {
     commandId: string;
     title: string;
     goal: string;
+    selection?: ProjectAgentOptions;
   }) {
     this.authorize();
     this.agents();
-    this.options();
     const command = text(input.commandId, 200),
       title = text(input.title, 500),
       goal = text(input.goal, 20000);
-    const hash = digest({ title, goal });
+    const hash = digest({ title, goal, ...(input.selection ? {selection: input.selection} : {}) });
     let p = this.db
       .prepare("SELECT * FROM pr_projects WHERE command=?")
       .get(command) as unknown as ProjectRow | undefined;
     if (p && p.digest !== hash)
       throw new TaskError("CONFLICT", "Project command reused");
     if (!p) {
+      const selected = input.selection ?? this.agentOptions;
+      if (!selected?.provider || !selected.model)
+        throw new TaskError("PROJECT_MODEL_REQUIRED", "Select a project conversation model");
+      if (input.selection) {
+        const catalog = await this.modelCatalog();
+        const model = catalog.providers.find(row => row.id === selected.provider)?.models.find(row => row.id === selected.model);
+        if (!model || (selected.reasoningEffort && !model.reasoningEfforts.includes(ReasoningEffortId(selected.reasoningEffort))))
+          throw new TaskError("PROJECT_MODEL_UNAVAILABLE", "Selected project model or effort is unavailable");
+      }
+      this.authorize();
       const root = this.settings().root;
       if (!root)
-        throw new TaskError("CONFIGURATION", "Set the project root first");
+        throw new TaskError("PROJECT_ROOT_REQUIRED", "Set the project root first");
       const id = randomUUID(),
         session = `project-${randomUUID()}`,
         cwd = join(root, `project-${id}`);
-      this.db
-        .prepare("INSERT INTO pr_projects VALUES(?,?,?,?,?,?,?,?,1,?)")
-        .run(id, command, hash, root, cwd, title, goal, session, "creating");
+      this.db.exec("BEGIN IMMEDIATE");
+      try {
+        this.db.prepare("INSERT INTO pr_projects VALUES(?,?,?,?,?,?,?,?,1,?)")
+          .run(id, command, hash, root, cwd, title, goal, session, "creating");
+        if (input.selection) this.db.prepare("INSERT INTO pr_models VALUES(?,?,?)").run(id, canonical(input.selection), 1);
+        this.db.exec("COMMIT");
+      } catch (error) {
+        this.db.exec("ROLLBACK");
+        throw error;
+      }
       p = this.project(id);
     }
+    this.options(p.id);
     if (p.state === "ready") {
       await this.syncWorkspaces();
       return { projectId: p.id };
@@ -420,7 +438,7 @@ export class ProjectRuntime {
       const handle = await this.agents().create({
         sessionId: SessionId(p.session),
         meta: { cwd: p.cwd },
-        agentOptions: this.options(),
+        agentOptions: this.options(p.id),
       });
       try {
         await (this.ctx.get("sessions") as Context["sessions"]).flush(

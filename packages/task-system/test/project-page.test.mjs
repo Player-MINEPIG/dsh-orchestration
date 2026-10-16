@@ -467,3 +467,27 @@ test('schedule choices cascade by executor, model and effort; refresh keeps draf
  pending=p.action('schedule-options-refresh');await p.answer({value:{...options,routes:[route('d','PC_AU','new-model','low')]}});await pending;
  assert.equal(vm.runInContext('state.overlay.draft.routeId',p.context),'d');assert.equal(vm.runInContext('state.overlay.draft.title',p.context),'Keep me');
 });
+
+test('new project exposes real model choices without a default, preserves draft through directory browsing and failure, and submits selection once',async()=>{
+ const p=page();await p.answer({value:{...snapshot,settings:{root:'/projects',revision:1}}});
+ const catalog={defaultSelection:null,providers:[{id:'live',name:'Live',models:[{id:'real',name:'Real model',reasoningEfforts:['low','high']}]}]};
+ let pending=p.action('create');assert.equal(p.requests[0].method,'conversationModels');await p.answer({value:catalog});await pending;
+ assert.match(p.overlay(),/尚未配置默认统筹模型/);assert.match(p.overlay(),/选择目录/);assert.match(p.overlay(),/创建项目<\/button>/);
+ vm.runInContext("document.getElementById('new-title');document.getElementById('new-goal');",p.context);p.elements.get('new-title').value='Saved name';p.elements.get('new-goal').value='Saved goal';
+ p.documentEvents.change({target:{id:'project-provider',value:'live'}});p.documentEvents.change({target:{id:'project-model',value:'real'}});p.documentEvents.change({target:{id:'project-effort',value:'high'}});
+ assert.match(p.overlay(),/value="Saved name"/);assert.match(p.overlay(),/>Saved goal<\/textarea>/);
+ pending=p.action('project-directory-open');assert.equal(p.requests[0].method,'projectDirectoryList');assert.equal(p.requests[0].input.path,'/projects');
+ await p.answer({value:{path:'/projects',crumbs:[{path:'/',name:'/'}],entries:[{path:'/projects/sub',name:'sub',hidden:false}]}});await pending;
+ assert.match(p.overlay(),/选择此目录/);assert.match(p.overlay(),/data-id="\/projects\/sub"/);
+ await p.action('project-directory-cancel');assert.match(p.overlay(),/value="Saved name"/);
+ pending=p.action('create-confirm');assert.equal(p.requests[0].method,'createProject');assert.deepEqual(JSON.parse(JSON.stringify(p.requests[0].input.selection)),{provider:'live',model:'real',reasoningEffort:'high'});assert.equal(p.requests.length,1);
+ const command=p.requests[0].input.commandId;await p.action('create-confirm');assert.equal(p.requests.length,1);
+ await p.answer({error:'模型授权已失效',errorCode:'PROJECT_MODEL_UNAVAILABLE'});await pending;
+ assert.match(p.overlay(),/value="Saved name"/);assert.match(p.overlay(),/high/);
+ pending=p.action('create-confirm');assert.equal(p.requests[0].input.commandId,command);await p.answer({error:'test stopped'});await pending;
+});
+
+test('new project opens with no directory and remains actionable after a model catalog read error',async()=>{
+ const p=page();await p.answer({value:snapshot});const pending=p.action('create');await p.answer({error:'目录暂不可用'});await pending;
+ assert.match(p.overlay(),/选择目录/);assert.match(p.overlay(),/刷新模型目录/);assert.match(p.overlay(),/目录暂不可用/);assert.match(p.overlay(),/模型设置/);
+});
