@@ -51,7 +51,7 @@ for (const valid of [true, false]) {
       const { task, run, note } = configure(ledger, 'worker', h.dir);
       // Ephemeral test identity only; no runtime credentials or configuration are changed.
       const keys = generateKeyPairSync('ed25519');
-      const peer = { keyId: 'context-fixture', nodeId: 'worker', publicKey: keys.publicKey, audience: 'planner', operations: ['claim', 'renew', 'submit', 'receipt', 'bindSession', 'markRunning', 'getRun', 'getAttempt', 'listWork', 'taskWait'], workspaces: ['workspace'], capabilities: [] };
+      const peer = { keyId: 'context-fixture', nodeId: 'worker', publicKey: keys.publicKey, audience: 'planner', operations: ['claim', 'renew', 'submit', 'receipt', 'bindSession', 'markRunning', 'getRun', 'getAttempt', 'listWork', 'taskWait', 'taskReport'], workspaces: ['workspace'], capabilities: [] };
       gateway = new RemoteGateway({ role: 'planner', nodeId: 'planner', ledger, store: stores[0], verifier: new IdentityVerifier({ audience: 'planner', peers: [peer] }) });
       const client = new RemoteClient({ endpoint: 'https://isolated-context-fixture.invalid/commands', nodeId: 'worker', keyId: peer.keyId, audience: 'planner', privateKey: keys.privateKey, store: stores[1], fetch: async (_url, options) => new Response(JSON.stringify(await gateway.handle(options.body))) });
       const remote = new RemoteLedgerClient(client, 'worker');
@@ -64,8 +64,13 @@ for (const valid of [true, false]) {
       assert.equal(dispatch.claim.run.configuration.template, undefined);
       assert.equal(dispatch.claim.executionContext.template.version, 1);
       assert.deepEqual(dispatch.claim.executionContext.reports, [{ reportId: note.reportId, body: note.body, actor: 'operator-fixture' }]);
-      assert.equal(ledger.getRun(run.runId).state, valid ? 'succeeded' : 'uncertain');
+      assert.equal(ledger.getRun(run.runId).state, valid ? 'succeeded' : 'failed');
       assert.equal(ledger.history(task.taskId).reports.filter(report => report.kind === 'result').length, valid ? 1 : 0);
+      if (!valid) {
+        const history = ledger.history(task.taskId);
+        assert.ok(history.reports.some(report => report.schemaId === 'execution-diagnostic.v1'), 'rejected content is retained as diagnostics, never an accepted result');
+        assert.ok(history.events.some(event => event.type === 'run.result_validation_failed'), 'coordinator records the trusted post-drain validation failure');
+      }
       assert.equal(h.adapter.requests.length, 1);
       assert.equal(h.ledger.snapshot().tasks.length, 0, 'executor must not import authority task identities');
       assert.equal(h.ledger.snapshot().templates.length, 0, 'executor validation must use the claim rather than its local template registry');

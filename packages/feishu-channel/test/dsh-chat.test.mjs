@@ -220,9 +220,12 @@ test('thread and authenticated sender boundaries create separate native historie
 });
 
 test('native request timeout cancels owned work and holds following input without prompt replay', async () => {
-  const h = await host({ script: ['hang'], config: { timeoutMs: 100 } });
+  const h = await host({ script: ['hang'], config: { timeoutMs: 1000 } });
   try {
-    h.transport.receive(message('slow operation')); await h.channel.tick();
+    h.transport.receive(message('slow operation'));
+    const ticking = h.channel.tick();
+    await until(() => h.model.requests.length === 1); // Observe dispatch, rather than assuming cold startup fits in 100 ms.
+    await ticking;
     assert.equal(h.chat.inspect().requests[0].state, 'uncertain');
     assert.equal(h.ctx.agents.get(h.chat.inspect().bindings[0].sessionId), undefined);
     h.transport.receive(message('continue without checking effects')); await h.channel.tick();
