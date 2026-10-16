@@ -17,7 +17,7 @@ function temp(t) { const path = realpathSync(mkdtempSync(join(tmpdir(),'dsh-remo
 function store(t,path = ':memory:') { const value = new RecoveryStore(path); t.after(() => value.close()); return value }
 function fixtureLedger(time = () => now) {
   const task = { taskId: 'task1',title: 'Fixture',description: 'No model or external effects',workspaceId: 'workspace' }
-  const run = { runId: 'run1',taskId: 'task1',state: 'running',configuration: {},route: { nodeId: 'worker',provider: 'fixture',model: 'fixture-model',workspaceId: 'workspace',requiredCapabilities: ['read'] } }
+  const run = { runId: 'run1',taskId: 'task1',currentAttemptId: 'attempt1',state: 'running',configuration: {},route: { nodeId: 'worker',provider: 'fixture',model: 'fixture-model',workspaceId: 'workspace',requiredCapabilities: ['read'] } }
   const attempt = { attemptId: 'attempt1',taskId: 'task1',runId: 'run1',nodeId: 'worker',fence: 1,state: 'leased',leaseExpiresAt: new Date(time() + 60000).toISOString() }
   const receipts = new Map(); const calls = []
   const receipt = (commandId,value) => { const saved = receipts.get(commandId); if (saved) return saved; const r = { commandId,acceptedAt: new Date(time()).toISOString(),value: structuredClone(value) }; receipts.set(commandId,r); return r }

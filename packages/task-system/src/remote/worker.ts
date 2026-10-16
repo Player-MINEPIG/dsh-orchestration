@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { SessionMessages } from "./session-messages.js";
 import { chooseExecutionSession } from "../execution-session.js";
 import {
@@ -426,191 +427,201 @@ export class ExecutorWorker {
       );
     };
     try {
-      // Bind one execution owner before session creation or provider effects.
-      // Another recovery store cannot reuse this owner's idempotency identity.
-      claim.attempt = (
-        await ledger.markRunning(`running-${executionId}`, lease)
-      ).value;
-      armExpiry();
-      scheduleRenewal();
-      let resumeSession = Boolean(claim.run.retry);
-      let availableOperations: readonly string[] | undefined;
-      if (project && claim.run.retry) {
-        insist(
-          ledger.sessionContext,
-          "TASK_SESSION_CONNECTION_UPGRADE_REQUIRED",
-          503,
-        );
-        const context = await ledger.sessionContext(lease);
-        availableOperations = context.availableOperations;
-        insist(
-          context.schedulerId === project.schedulerId,
-          "PROJECT_SCHEDULER_IDENTITY_MISMATCH",
-          403,
-        );
-      }
-      if (!claim.run.route?.execution && (this.options.taskSessions || project) && !claim.run.retry) {
-        selectingSession = true;
-        insist(
-          ledger.sessionContext && ledger.selectTaskSession,
-          "TASK_SESSION_CONNECTION_UPGRADE_REQUIRED",
-          503,
-        );
-        const refresh = async () => await ledger.sessionContext!(lease);
-        const context = await refresh();
-        availableOperations = context.availableOperations;
-        insist(
-          !project || project.schedulerId === context.schedulerId,
-          "PROJECT_SCHEDULER_IDENTITY_MISMATCH",
-          403,
-        );
-        const choice = this.options.chooseSession
-          ? await this.options.chooseSession(
-              claim,
-              context,
-              abort.signal,
-              refresh,
-            )
-          : await chooseExecutionSession({
-              claim,
-              context,
-              workspaces: policy.workspaces.map((workspace) => ({
-                ...workspace,
-                description: workspace.workspaceId,
-                eligible: true,
-              })),
-              signal: abort.signal,
-              refresh,
-            });
-        const selected = (
-          await ledger.selectTaskSession(`select-${executionId}`, {
-            ...lease,
-            ...choice,
-          })
-        ).value;
-        insist(
-          selected.schedulerId === context.schedulerId &&
-            selected.nodeId === policy.nodeId &&
-            selected.taskId === claim.task.taskId,
-          "TASK_SESSION_IDENTITY_MISMATCH",
-          403,
-        );
-        sessionId = selected.sessionId;
-        resumeSession = selected.resume;
-        claim.run = (await ledger.getRun(runId))!;
-        claim.attempt = (await ledger.getAttempt(lease.attemptId))!;
-        workspacePath = await authorizedWorkspace(claim, policy, provider);
-        record.sessionId = sessionId;
-        selectingSession = false;
-      }
-      store.saveDispatch(record);
-      if (!claim.run.route?.execution) await ledger.bindSession(`session-${executionId}`, {
-        ...lease,
-        sessionId,
-      });
-      if (!claim.run.route?.execution) workspacePath = await executionWorkspace({
-        parent: workspacePath,
-        projectRoot: this.options.projectRoot?.(),
-        claim,
-        sessionId,
-        resume: resumeSession,
-        store,
-      });
-      record.workspacePath = workspacePath;
-      store.saveDispatch(record);
-      insist(
-        this.active && !abort.signal.aborted && expiresAt > this.now(),
-        "DISPATCH_CANCELLED",
-        409,
-      );
-      const collaboration = bindCollaboration(
-        ledger,
-        lease,
-        claim.task.taskId,
-        abort.signal,
-        availableOperations,
-      );
-      const delegate = collaboration.delegate;
-      const boundedCollaboration = {
-        ...collaboration,
-        delegate: (id: string, input: Parameters<typeof delegate>[1]) => {
-          const target = input.route?.nodeId ?? claim.run.route?.nodeId;
-          if (
-            target === policy.nodeId &&
-            this.concurrencyBudget !== undefined &&
-            this.runs.size + this.messages.activeCount >= this.concurrencyBudget
-          )
-            throw new Error(
-              `RECURSIVE_CAPACITY_EXHAUSTED: executor concurrency ${this.concurrencyBudget} is occupied; no child was created. Increase the executor budget or delegate to another eligible node; waiting here cannot create capacity.`,
-            );
-          return delegate(id, input);
-        },
-      };
-      this.executing++;
-      let result: ExecutionResult;
       try {
-        result = await provider.execute({
-          claim,
-          sessionId,
-          resumeSession,
-          workspacePath,
-          signal: abort.signal,
-          collaboration: boundedCollaboration,
-        });
-      } finally {
-        this.executing--;
-      }
-      validateResult(result, this.options.maxResultBytes!);
-      if (renewalError || abort.signal.aborted || expiresAt <= this.now()) {
+        // Bind one execution owner before session creation or provider effects.
+        // Another recovery store cannot reuse this owner's idempotency identity.
+        claim.attempt = (
+          await ledger.markRunning(`running-${executionId}`, lease)
+        ).value;
+        armExpiry();
+        scheduleRenewal();
+        let resumeSession = Boolean(claim.run.retry);
+        let availableOperations: readonly string[] | undefined;
+        if (project && claim.run.retry) {
+          insist(
+            ledger.sessionContext,
+            "TASK_SESSION_CONNECTION_UPGRADE_REQUIRED",
+            503,
+          );
+          const context = await ledger.sessionContext(lease);
+          availableOperations = context.availableOperations;
+          insist(
+            context.schedulerId === project.schedulerId,
+            "PROJECT_SCHEDULER_IDENTITY_MISMATCH",
+            403,
+          );
+        }
+        if (
+          !claim.run.route?.execution &&
+          (this.options.taskSessions || project) &&
+          !claim.run.retry
+        ) {
+          selectingSession = true;
+          insist(
+            ledger.sessionContext && ledger.selectTaskSession,
+            "TASK_SESSION_CONNECTION_UPGRADE_REQUIRED",
+            503,
+          );
+          const refresh = async () => await ledger.sessionContext!(lease);
+          const context = await refresh();
+          availableOperations = context.availableOperations;
+          insist(
+            !project || project.schedulerId === context.schedulerId,
+            "PROJECT_SCHEDULER_IDENTITY_MISMATCH",
+            403,
+          );
+          const choice = this.options.chooseSession
+            ? await this.options.chooseSession(
+                claim,
+                context,
+                abort.signal,
+                refresh,
+              )
+            : await chooseExecutionSession({
+                claim,
+                context,
+                workspaces: policy.workspaces.map((workspace) => ({
+                  ...workspace,
+                  description: workspace.workspaceId,
+                  eligible: true,
+                })),
+                signal: abort.signal,
+                refresh,
+              });
+          const selected = (
+            await ledger.selectTaskSession(`select-${executionId}`, {
+              ...lease,
+              ...choice,
+            })
+          ).value;
+          insist(
+            selected.schedulerId === context.schedulerId &&
+              selected.nodeId === policy.nodeId &&
+              selected.taskId === claim.task.taskId,
+            "TASK_SESSION_IDENTITY_MISMATCH",
+            403,
+          );
+          sessionId = selected.sessionId;
+          resumeSession = selected.resume;
+          claim.run = (await ledger.getRun(runId))!;
+          claim.attempt = (await ledger.getAttempt(lease.attemptId))!;
+          workspacePath = await authorizedWorkspace(claim, policy, provider);
+          record.sessionId = sessionId;
+          selectingSession = false;
+        }
+        store.saveDispatch(record);
+        if (!claim.run.route?.execution)
+          await ledger.bindSession(`session-${executionId}`, {
+            ...lease,
+            sessionId,
+          });
+        if (!claim.run.route?.execution)
+          workspacePath = await executionWorkspace({
+            parent: workspacePath,
+            projectRoot: this.options.projectRoot?.(),
+            claim,
+            sessionId,
+            resume: resumeSession,
+            store,
+          });
+        record.workspacePath = workspacePath;
+        store.saveDispatch(record);
+        insist(
+          this.active && !abort.signal.aborted && expiresAt > this.now(),
+          "DISPATCH_CANCELLED",
+          409,
+        );
+        const collaboration = bindCollaboration(
+          ledger,
+          lease,
+          claim.task.taskId,
+          abort.signal,
+          availableOperations,
+        );
+        const delegate = collaboration.delegate;
+        const boundedCollaboration = {
+          ...collaboration,
+          delegate: (id: string, input: Parameters<typeof delegate>[1]) => {
+            const target = input.route?.nodeId ?? claim.run.route?.nodeId;
+            if (
+              target === policy.nodeId &&
+              this.concurrencyBudget !== undefined &&
+              this.runs.size + this.messages.activeCount >=
+                this.concurrencyBudget
+            )
+              throw new Error(
+                `RECURSIVE_CAPACITY_EXHAUSTED: executor concurrency ${this.concurrencyBudget} is occupied; no child was created. Increase the executor budget or delegate to another eligible node; waiting here cannot create capacity.`,
+              );
+            return delegate(id, input);
+          },
+        };
+        this.executing++;
+        let result: ExecutionResult;
+        try {
+          result = await provider.execute({
+            claim,
+            sessionId,
+            resumeSession,
+            workspacePath,
+            signal: abort.signal,
+            collaboration: boundedCollaboration,
+          });
+        } finally {
+          this.executing--;
+        }
+        validateResult(result, this.options.maxResultBytes!);
+        if (renewalError || abort.signal.aborted || expiresAt <= this.now()) {
+          record.state = "uncertain";
+          record.detail =
+            "Provider returned after cancellation or lease loss; finalization authority not assumed";
+          record.result = result;
+        } else {
+          record.result = result;
+          if (result.retryWitness && ledger.retryBeforeEffects) {
+            validateRetryWitness(result.retryWitness, sessionId);
+            record.state = "retry_pending";
+          } else record.state = "result";
+        }
+      } catch {
         record.state = "uncertain";
-        record.detail =
-          "Provider returned after cancellation or lease loss; finalization authority not assumed";
-        record.result = result;
-      } else {
-        record.result = result;
-        if (result.retryWitness && ledger.retryBeforeEffects) {
-          validateRetryWitness(result.retryWitness, sessionId);
-          record.state = "retry_pending";
-        } else record.state = "result";
+        record.detail = selectingSession
+          ? "Task session negotiation was not accepted. Verify scheduler connection and explicit executorIdentity, sessionContext, selectTaskSession grants; no default-session fallback was executed."
+          : "Execution or receipt failed after durable dispatch intent; no automatic replay";
       }
-    } catch {
-      record.state = "uncertain";
-      record.detail = selectingSession
-        ? "Task session negotiation was not accepted. Verify scheduler connection and explicit executorIdentity, sessionContext, selectTaskSession grants; no default-session fallback was executed."
-        : "Execution or receipt failed after durable dispatch intent; no automatic replay";
+      store.saveDispatch(record);
+      if (record.state === "uncertain" && ledger.acknowledgeCancellation) {
+        try {
+          if ((await ledger.getRun(runId))?.cancellationRequested) {
+            record.state = "cancellation";
+            record.detail =
+              "Provider quiesced after coordinator cancellation; prior side effects may remain";
+            store.saveDispatch(record);
+            return await this.confirmCancellation(record);
+          }
+        } catch {
+          /* Retain uncertainty when authoritative cancellation cannot be read. */
+        }
+      }
+      return record.state === "result"
+        ? await this.deliver(record, (renewedExpiry) => {
+            expiresAt = renewedExpiry;
+            if (!abort.signal.aborted) armExpiry();
+          })
+        : record.state === "retry_pending"
+          ? await this.requestRetry(record)
+          : record;
     } finally {
       if (timer) clearTimeout(timer);
       if (expiryTimer) clearTimeout(expiryTimer);
       abort.abort();
       this.projectRuns.delete(runId);
       if (renewal) await renewal;
-      if (
-        renewalError &&
-        (record.state === "result" || record.state === "retry_pending")
-      ) {
+      if (renewalError && record.state === "retry_pending") {
         record.state = "uncertain";
         record.detail = "Lease authority lost while result completed";
+        store.saveDispatch(record);
       }
     }
-    store.saveDispatch(record);
-    if (record.state === "uncertain" && ledger.acknowledgeCancellation) {
-      try {
-        if ((await ledger.getRun(runId))?.cancellationRequested) {
-          record.state = "cancellation";
-          record.detail =
-            "Provider quiesced after coordinator cancellation; prior side effects may remain";
-          store.saveDispatch(record);
-          return await this.confirmCancellation(record);
-        }
-      } catch {
-        /* Retain uncertainty when authoritative cancellation cannot be read. */
-      }
-    }
-    return record.state === "result"
-      ? await this.deliver(record)
-      : record.state === "retry_pending"
-        ? await this.requestRetry(record)
-        : record;
   }
   /** Retry only the durable coordinator transition; never directly replay a provider. */
   async requestRetry(record: DispatchRecord): Promise<DispatchRecord> {
@@ -649,21 +660,68 @@ export class ExecutorWorker {
     return record;
   }
   /** Retry only a durably recorded result using its stable settlement identity. */
-  async deliver(record: DispatchRecord): Promise<DispatchRecord> {
+  async deliver(
+    record: DispatchRecord,
+    renewed?: (expiresAt: number) => void,
+  ): Promise<DispatchRecord> {
     insist(
       record.state === "result" && record.result,
       "NO_DURABLE_RESULT",
       409,
     );
+    const { ledger, store } = this.options;
     try {
-      record.receipt = await this.options.ledger.submit(
+      const receipt = await ledger.renew(`result-renew-${randomUUID()}`, {
+        ...record.lease,
+        ttlMs: this.options.ttlMs ?? 60000,
+      });
+      record.claim.attempt = receipt.value;
+      renewed?.(Date.parse(receipt.value.leaseExpiresAt));
+      store.saveDispatch(record);
+    } catch {
+      // The exact result may already have committed before its acknowledgment was lost.
+    }
+    try {
+      record.receipt = await ledger.submit(
         `result-${record.lease.executionId ?? record.attemptId}`,
         { ...record.lease, ...record.result },
       );
       record.state = "acknowledged";
-      this.options.store.saveDispatch(record);
+      store.saveDispatch(record);
     } catch {
-      /* Keep the exact result for reconciliation; do not rerun the provider. */
+      try {
+        const run = await ledger.getRun(record.lease.runId);
+        const attempt = await ledger.getAttempt(record.attemptId);
+        const sameOwner =
+          run &&
+          attempt &&
+          run.currentAttemptId === record.attemptId &&
+          attempt.runId === record.lease.runId &&
+          attempt.nodeId === record.lease.nodeId &&
+          attempt.fence === record.lease.fence &&
+          attempt.executionId === record.lease.executionId;
+        const settled =
+          sameOwner &&
+          attempt.state === "settled" &&
+          ["succeeded", "partial", "failed"].includes(run.state);
+        if (
+          run &&
+          attempt &&
+          !settled &&
+          (!sameOwner ||
+            !["leased", "running"].includes(attempt.state) ||
+            !["queued", "running"].includes(run.state) ||
+            run.cancellationRequested ||
+            Date.parse(attempt.leaseExpiresAt) <= this.now())
+        ) {
+          record.state = "uncertain";
+          record.detail =
+            "Result retained for reconciliation; coordinator no longer confirms this execution's live lease";
+          store.saveDispatch(record);
+        }
+      } catch {
+        // An unreadable coordinator cannot prove whether the result committed.
+      }
     }
     return record;
   }

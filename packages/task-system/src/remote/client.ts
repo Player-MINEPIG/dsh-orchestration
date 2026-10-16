@@ -184,6 +184,10 @@ export class RemoteClient {
     options?: { signal?: AbortSignal; diagnostic?: boolean },
   ): Promise<CommandReceipt> {
     insist(!this.configurationPaused, "CONFIGURATION_BUSY", 409);
+    const signal = AbortSignal.any([
+      AbortSignal.timeout(this.options.timeoutMs ?? 35000),
+      ...(options?.signal ? [options.signal] : []),
+    ]);
     this.queued++;
     const request = this.tail
       .then(() =>
@@ -191,7 +195,7 @@ export class RemoteClient {
           operation,
           commandId,
           payload,
-          options?.signal,
+          signal,
           options?.diagnostic,
         ),
       )
@@ -292,7 +296,7 @@ export class RemoteClient {
           credentials: "omit",
           signal: AbortSignal.any([
             this.lifetime.signal,
-            AbortSignal.timeout(this.options.timeoutMs ?? 15000),
+            AbortSignal.timeout(this.options.timeoutMs ?? 35000),
             ...(signal ? [signal] : []),
           ]),
         });

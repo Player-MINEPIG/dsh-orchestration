@@ -41,7 +41,7 @@ export function httpHandler(gateway: RemoteGateway, options: { maxBodyBytes?: nu
       if (length !== undefined) insist(/^\d+$/.test(length) && Number(length) <= max, 'BODY_LIMIT', 413)
       let bytes = 0
       const chunks: Buffer[] = []
-      timer = setTimeout(() => { req.destroy(new Error('Request body timeout')) }, options.bodyTimeoutMs ?? 10000)
+      timer = setTimeout(() => { req.destroy(new Error('Request body timeout')) }, options.bodyTimeoutMs ?? 30000)
       for await (const chunk of req) {
         const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as string)
         bytes += buffer.length; insist(bytes <= max, 'BODY_LIMIT', 413); chunks.push(buffer)
@@ -70,7 +70,7 @@ export async function startTrustedNetworkCarrier(gateway: RemoteGateway, options
     if (req.url !== options.routePath) { res.writeHead(404,{ 'content-type': 'application/json','cache-control': 'no-store' }); res.end('{"error":"NOT_FOUND"}'); return }
     void handler(req,res)
   })
-  server.requestTimeout = options.bodyTimeoutMs ?? 10000
+  server.requestTimeout = options.bodyTimeoutMs ?? 30000
   server.headersTimeout = Math.min(10000,server.requestTimeout)
   server.keepAliveTimeout = 1000
   let closed: Promise<void> | undefined
