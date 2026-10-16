@@ -389,8 +389,12 @@
     const step = selectedStep(),
       view = run()?.steps.find((row) => row.stepId === step?.stepId);
     if (!step || !view) return;
+    const canRetry =
+      run().state !== "cancelled" &&
+      (["failed", "cancelled"].includes(view.state) ||
+        (view.state === "blocked" && !!view.runId));
     $("step-detail").innerHTML =
-      `<h3>${esc(step.title)}</h3><div class="row">${badge(view.state)}<span class="muted">尝试 ${view.attemptCount} 次</span></div>${view.reason ? `<p class="hint">${esc(view.reason)}</p>` : ""}<p style="margin-top:12px">${esc(view.summary || "尚无结果摘要")}</p><div class="row">${run().state !== "cancelled" && ["failed", "cancelled"].includes(view.state) ? '<button id="retry-step">重试此步骤</button>' : ""}${view.taskId ? '<button id="show-task">查看任务记录</button>' : ""}</div>${htmlPreview(view.output)}<details${view.output?.presentation?.mediaType === "text/html" ? "" : " open"}><summary>输出数据</summary><pre>${esc(view.output === undefined ? "尚未产生输出" : JSON.stringify(view.output, null, 2))}</pre></details><details><summary>执行记录</summary><pre>${esc(JSON.stringify({ nodeId: view.nodeId, taskId: view.taskId, runId: view.runId, reportId: view.reportId, sessionId: view.sessionId }, null, 2))}</pre></details><div id="task-record"></div>`;
+      `<h3>${esc(step.title)}</h3><div class="row">${badge(view.state)}<span class="muted">尝试 ${view.attemptCount} 次</span></div>${view.reason ? `<p class="hint">${esc(view.reason)}</p>` : ""}<p style="margin-top:12px">${esc(view.summary || "尚无结果摘要")}</p><div class="row">${canRetry ? '<button id="retry-step">重试此步骤</button>' : ""}${view.taskId ? '<button id="show-task">查看任务记录</button>' : ""}</div>${htmlPreview(view.output)}<details${view.output?.presentation?.mediaType === "text/html" ? "" : " open"}><summary>输出数据</summary><pre>${esc(view.output === undefined ? "尚未产生输出" : JSON.stringify(view.output, null, 2))}</pre></details><details><summary>执行记录</summary><pre>${esc(JSON.stringify({ nodeId: view.nodeId, taskId: view.taskId, runId: view.runId, reportId: view.reportId, sessionId: view.sessionId }, null, 2))}</pre></details><div id="task-record"></div>`;
   }
   function fullRender() {
     const visible = !!definition();

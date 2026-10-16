@@ -370,6 +370,24 @@ try {
     .waitFor();
   await app.locator("#retry-step").click();
   await app.locator("#step-detail .badge.queued").waitFor();
+  await page.evaluate(() => {
+    const step = window.fixture.runs[0].steps[2];
+    step.state = "blocked";
+    delete step.runId;
+  });
+  await app.locator("#refresh").click();
+  await app.locator("#step-detail .badge.blocked").waitFor();
+  assert.equal(
+    await app.locator("#retry-step").count(),
+    0,
+    "dependency-blocked steps without an execution cannot be retried",
+  );
+  await page.evaluate(() => {
+    window.fixture.runs[0].steps[2].runId = "render-run";
+  });
+  await app.locator("#refresh").click();
+  await app.locator("#retry-step").click();
+  await app.locator("#step-detail .badge.queued").waitFor();
   await app.locator("#cancel-workflow").click();
   await app.locator("#run-state .badge.cancelled").waitFor();
   await page.setViewportSize({ width: 390, height: 844 });
