@@ -31,3 +31,7 @@ copyFileSync(
   new URL("../packages/task-system/src/project-collaboration/SKILL.md", import.meta.url),
   new URL("../packages/task-system/dist/project-collaboration/SKILL.md", import.meta.url),
 );
+
+const workflowPage = readFileSync(new URL("../packages/task-system/src/workflow-page.html", import.meta.url), "utf8");
+const workflowClient = readFileSync(new URL("../packages/task-system/src/workflow-ui.js", import.meta.url), "utf8").replace(/<\/script/gi, "<\\/script");
+writeFileSync(new URL("../packages/task-system/dist/workflow-page.html", import.meta.url), workflowPage.replace("/*__WORKFLOW_UI__*/", () => workflowClient));

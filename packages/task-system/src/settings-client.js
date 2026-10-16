@@ -3345,6 +3345,7 @@ window.__ModuleLoader__.load({
     const openPlugins = (ctx) => openSettingsSection(ctx, "plugins");
     const openModels = (ctx) => openSettingsSection(ctx, "models");
     const projectMethods = [
+      "workflowPage", "workflowSnapshot", "saveWorkflow", "startWorkflow", "retryWorkflowStep", "cancelWorkflow",
       "sessionTasks",
       "projectSettings",
       "executionDirectorySettings",
@@ -3375,7 +3376,7 @@ window.__ModuleLoader__.load({
       namespace: "taskPluginSettings",
       method,
       invocation: { kind: "direct" },
-      parameters: ["executionDirectorySettings", "projectSettings", "projectSnapshot", "projectPage", "conversationModels", "scheduleOptions"].includes(method)
+      parameters: ["workflowPage", "workflowSnapshot", "executionDirectorySettings", "projectSettings", "projectSnapshot", "projectPage", "conversationModels", "scheduleOptions"].includes(method)
         ? []
         : [
             {
@@ -3401,7 +3402,7 @@ window.__ModuleLoader__.load({
         create: () => ({
           parse(value) {
             if (
-              method === "projectPage"
+              ["projectPage", "workflowPage"].includes(method)
                 ? typeof value !== "string"
                 : !value || typeof value !== "object"
             )
@@ -3428,6 +3429,13 @@ window.__ModuleLoader__.load({
         }),
       );
     }
+    function WorkflowIcon() {
+      return h("svg", { width: 24, height: 24, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.6, "aria-hidden": true },
+        h("rect", { x: 2, y: 8, width: 6, height: 8, rx: 1 }),
+        h("rect", { x: 16, y: 2, width: 6, height: 6, rx: 1 }),
+        h("rect", { x: 16, y: 16, width: 6, height: 6, rx: 1 }),
+        h("path", { d: "M8 12h4V5h4 M12 12v7h4" }));
+    }
     function hostTheme() {
       const scheme = getComputedStyle(document.documentElement).colorScheme;
       return scheme === "dark" || (scheme !== "light" && matchMedia("(prefers-color-scheme: dark)").matches) ? "dark" : "light";
@@ -3445,14 +3453,14 @@ window.__ModuleLoader__.load({
       update();
       return () => { observer.disconnect(); system.removeEventListener("change", update); };
     }
-    function ProjectPanel({ invoke }) {
+    function ProjectPanel({ invoke, pageMethod = "projectPage" }) {
       const frame = React.useRef(null),
         [html, setHtml] = React.useState(null),
         [error, setError] = React.useState(null),
         [detailFullscreen, setDetailFullscreen] = React.useState(false);
       React.useEffect(() => {
         let active = true;
-        invoke("projectPage").then(
+        invoke(pageMethod).then(
           (value) => {
             if (active) setHtml(value.replace("<html ", `<html data-theme="${hostTheme()}" `));
           },
@@ -3463,7 +3471,7 @@ window.__ModuleLoader__.load({
         return () => {
           active = false;
         };
-      }, [invoke]);
+      }, [invoke, pageMethod]);
       React.useEffect(() => {
         const listener = async (event) => {
           if (event.source === frame.current?.contentWindow && event.data?.channel === "dsh-project-runtime" && event.data.method === "detailFullscreen") {
@@ -3474,7 +3482,7 @@ window.__ModuleLoader__.load({
             event.source !== frame.current?.contentWindow ||
             event.data?.channel !== "dsh-project-runtime" ||
             !projectMethods.includes(event.data.method) ||
-            event.data.method === "projectPage"
+            ["projectPage", "workflowPage"].includes(event.data.method)
           )
             return;
           const source = event.source,
@@ -3505,7 +3513,7 @@ window.__ModuleLoader__.load({
               {
                 channel: "dsh-project-runtime",
                 id,
-                error: messages[code] || "无法读取或操作项目服务，请检查连接后重试。",
+                error: messages[code] || (/workflow/i.test(method) && error?.message) || "无法读取或操作项目服务，请检查连接后重试。",
                 errorCode: code,
               },
               "*",
@@ -3522,7 +3530,7 @@ window.__ModuleLoader__.load({
         return h("div", { style: { padding: 24 } }, "正在加载项目与任务…");
       return h("iframe", {
         ref: frame,
-        title: "项目与任务",
+        title: pageMethod === "workflowPage" ? "工作流" : "项目与任务",
         srcDoc: html,
         onLoad: () => sendTheme(frame, "dsh-project-runtime"),
         sandbox: "allow-scripts allow-same-origin allow-forms allow-popups",
@@ -3739,12 +3747,27 @@ window.__ModuleLoader__.load({
           offMain();
         };
       }, "project task center");
-      if (
-        new URL(window.location?.href ?? "https://localhost/").hash === "#tasks"
-      ) {
-        const layout = ctx.get("layout");
-        layout?.selectPanel("dsh-task-projects");
-      }
+      ctx.effect(() => {
+        const offMain = ctx.slots.inject("main", () => ctx.slots.register({
+          name: "main", key: "dsh-task-workflows",
+          inject: () => ({ invoke, pageMethod: "workflowPage" }),
+        }, ProjectPanel));
+        const offNav = ctx.slots.inject("sidebar.panellist", () => ctx.slots.register({
+          name: "sidebar.panellist", id: "dsh-task-workflows", order: 21,
+          label: () => "工作流",
+        }, WorkflowIcon));
+        return () => { offNav(); offMain(); };
+      }, "workflow board");
+      const selectLinkedPanel = () => {
+        const hash = new URL(window.location?.href ?? "https://localhost/").hash;
+        if (hash === "#tasks" || hash === "#workflows")
+          ctx.get("layout")?.selectPanel(hash === "#workflows" ? "dsh-task-workflows" : "dsh-task-projects");
+      };
+      selectLinkedPanel();
+      ctx.effect(() => {
+        window.addEventListener("hashchange", selectLinkedPanel);
+        return () => window.removeEventListener("hashchange", selectLinkedPanel);
+      }, "task panel deep links");
 
       const read = () =>
         readRemote(ctx, "describe", descriptor.result.create());

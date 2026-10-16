@@ -1,0 +1,563 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>工作流</title>
+    <style>
+      :root {
+        font-family:
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
+        color-scheme: light;
+        --bg: #f6f7fa;
+        --panel: #fff;
+        --text: #182132;
+        --muted: #657187;
+        --border: #dce1ea;
+        --accent: #365fd3;
+        --soft: #edf2ff;
+        --danger: #b44141;
+        --success: #20764b;
+        --shadow: 0 8px 24px #15264908;
+      }
+      html[data-theme="dark"] {
+        color-scheme: dark;
+        --bg: #15171c;
+        --panel: #20232b;
+        --text: #e8ecf4;
+        --muted: #a0aabb;
+        --border: #373e4b;
+        --accent: #96b4ff;
+        --soft: #29354f;
+        --danger: #f29696;
+        --success: #8cd4ac;
+        --shadow: none;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+      }
+      button,
+      input,
+      select,
+      textarea {
+        font: inherit;
+      }
+      button,
+      a,
+      input,
+      select,
+      textarea {
+        outline-offset: 3px;
+      }
+      button {
+        cursor: pointer;
+        min-height: 40px;
+        border: 1px solid var(--border);
+        border-radius: 9px;
+        background: var(--panel);
+        color: var(--text);
+        padding: 8px 13px;
+      }
+      button:hover {
+        border-color: var(--accent);
+      }
+      button:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+      }
+      .primary {
+        background: var(--accent);
+        color: var(--bg);
+        border-color: var(--accent);
+      }
+      .danger {
+        color: var(--danger);
+      }
+      input,
+      select,
+      textarea {
+        width: 100%;
+        background: var(--bg);
+        color: var(--text);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 9px;
+        min-height: 42px;
+      }
+      textarea {
+        resize: vertical;
+        min-height: 90px;
+      }
+      label {
+        display: block;
+        font-size: 13px;
+        color: var(--muted);
+        margin: 12px 0 6px;
+      }
+      label input[type="checkbox"] {
+        width: auto;
+        min-height: auto;
+        margin-right: 8px;
+      }
+      h1,
+      h2,
+      h3,
+      p {
+        margin-top: 0;
+      }
+      h1 {
+        font-size: 24px;
+        margin-bottom: 5px;
+      }
+      h2 {
+        font-size: 18px;
+      }
+      h3 {
+        font-size: 15px;
+      }
+      .muted {
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.6;
+      }
+      .row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+      .between {
+        justify-content: space-between;
+      }
+      .grow {
+        flex: 1;
+        min-width: 0;
+      }
+      .toolbar {
+        position: sticky;
+        top: 0;
+        z-index: 5;
+        background: var(--panel);
+        border-bottom: 1px solid var(--border);
+        padding: 20px 24px;
+      }
+      .toolbar p {
+        margin: 0;
+      }
+      .layout {
+        display: grid;
+        grid-template-columns: 250px minmax(0, 1fr);
+        min-height: calc(100dvh - 100px);
+      }
+      aside {
+        border-right: 1px solid var(--border);
+        padding: 20px 14px;
+      }
+      main {
+        padding: 24px;
+        min-width: 0;
+      }
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        padding: 20px;
+        margin-bottom: 18px;
+        box-shadow: var(--shadow);
+      }
+      .list {
+        display: grid;
+        gap: 9px;
+        margin-top: 15px;
+      }
+      .workflow-item {
+        text-align: left;
+        padding: 13px;
+        display: block;
+        width: 100%;
+        overflow-wrap: anywhere;
+      }
+      .workflow-item.active {
+        border-color: var(--accent);
+        background: var(--soft);
+      }
+      .workflow-item small {
+        display: block;
+        color: var(--muted);
+        margin-top: 7px;
+      }
+      .badge {
+        font-size: 12px;
+        display: inline-block;
+        padding: 4px 8px;
+        border-radius: 6px;
+        background: var(--bg);
+        color: var(--muted);
+      }
+      .badge.running,
+      .badge.queued {
+        color: var(--accent);
+      }
+      .badge.succeeded {
+        color: var(--success);
+      }
+      .badge.failed,
+      .badge.uncertain,
+      .badge.needs_attention {
+        color: var(--danger);
+      }
+      .badge.waiting_device,
+      .badge.blocked {
+        color: var(--muted);
+      }
+      .graph-scroll {
+        overflow: auto;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        background: var(--bg);
+      }
+      .device-graph {
+        position: relative;
+        width: 620px;
+        min-width: 620px;
+        min-height: 240px;
+      }
+      .device-graph svg {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        pointer-events: none;
+      }
+      .device {
+        position: absolute;
+        width: 230px;
+        min-height: 112px;
+        text-align: left;
+        padding: 16px;
+        border-radius: 13px;
+        box-shadow: var(--shadow);
+      }
+      .device strong {
+        display: block;
+        font-size: 16px;
+        margin-bottom: 10px;
+        overflow-wrap: anywhere;
+      }
+      .device.active {
+        border: 2px solid var(--accent);
+      }
+      .device.offline {
+        background: var(--bg);
+        color: var(--muted);
+        border-style: dashed;
+      }
+      .device small {
+        display: block;
+        margin-top: 8px;
+        color: var(--muted);
+      }
+      .route {
+        stroke: var(--accent);
+        stroke-width: 2;
+        fill: none;
+      }
+      .route.waiting {
+        stroke: var(--muted);
+        stroke-dasharray: 6 5;
+      }
+      .legend {
+        margin: 12px 0 0;
+      }
+      .split {
+        display: grid;
+        grid-template-columns: minmax(220px, 0.85fr) minmax(280px, 1.4fr);
+        gap: 20px;
+      }
+      .steps {
+        display: grid;
+        gap: 10px;
+      }
+      .step {
+        text-align: left;
+        width: 100%;
+        padding: 14px;
+        overflow-wrap: anywhere;
+      }
+      .step.active {
+        background: var(--soft);
+        border-color: var(--accent);
+      }
+      .step .muted {
+        display: block;
+        margin-top: 7px;
+      }
+      .step-title {
+        display: flex;
+        justify-content: space-between;
+        gap: 10px;
+      }
+      .empty {
+        color: var(--muted);
+        padding: 30px 12px;
+        text-align: center;
+      }
+      .fields {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0 14px;
+      }
+      .span-all {
+        grid-column: 1/-1;
+      }
+      .dependency {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        color: var(--text);
+        margin: 6px 0;
+      }
+      .dependency input {
+        width: auto;
+        min-height: 0;
+      }
+      .binding {
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 12px;
+        margin-top: 12px;
+      }
+      .binding-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+      }
+      details {
+        margin-top: 14px;
+      }
+      summary {
+        cursor: pointer;
+        color: var(--muted);
+        padding: 8px 0;
+      }
+      .html-preview {
+        width: 100%;
+        height: 640px;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: white;
+        margin-top: 12px;
+      }
+      pre {
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        max-height: 420px;
+        overflow: auto;
+        font:
+          12px/1.6 ui-monospace,
+          SFMono-Regular,
+          monospace;
+        background: var(--bg);
+        padding: 14px;
+        border-radius: 8px;
+      }
+      #notice {
+        position: fixed;
+        bottom: 18px;
+        left: 50%;
+        transform: translateX(-50%);
+        max-width: min(90vw, 700px);
+        padding: 13px 18px;
+        background: var(--text);
+        color: var(--bg);
+        border-radius: 10px;
+        z-index: 20;
+        box-shadow: var(--shadow);
+      }
+      #notice:empty {
+        display: none;
+      }
+      #error {
+        color: var(--danger);
+        margin: 0 0 14px;
+        white-space: pre-wrap;
+      }
+      .hint {
+        border-left: 3px solid var(--accent);
+        padding: 8px 12px;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.7;
+        margin: 12px 0;
+      }
+      .hidden {
+        display: none !important;
+      }
+      .history-select {
+        max-width: 380px;
+      }
+      .node-add {
+        max-width: 210px;
+      }
+      .statusline {
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .invalid {
+        color: var(--danger);
+      }
+      @media (max-width: 900px) {
+        .layout {
+          grid-template-columns: 1fr;
+        }
+        aside {
+          border-right: 0;
+          border-bottom: 1px solid var(--border);
+          padding: 14px;
+        }
+        .list {
+          display: flex;
+          overflow: auto;
+        }
+        .workflow-item {
+          min-width: 210px;
+          max-width: 300px;
+        }
+        .split {
+          grid-template-columns: 1fr;
+        }
+        .toolbar,
+        main {
+          padding: 16px;
+        }
+        .panel {
+          padding: 16px;
+        }
+        .fields {
+          grid-template-columns: 1fr;
+        }
+        .span-all {
+          grid-column: auto;
+        }
+        .toolbar {
+          position: static;
+        }
+        .graph-scroll {
+          margin: 0 -4px;
+        }
+        .binding-grid {
+          grid-template-columns: 1fr;
+        }
+        .history-select {
+          max-width: 100%;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="toolbar row between">
+      <div>
+        <h1>工作流</h1>
+        <p class="muted">
+          先看设备之间的连接，再查看每台设备上的程序与 Agent 步骤。
+        </p>
+      </div>
+      <div class="row">
+        <span id="connection" class="statusline" role="status">正在连接…</span
+        ><button id="refresh">刷新</button
+        ><button id="new-workflow">新建工作流</button>
+      </div>
+    </header>
+    <div class="layout">
+      <aside>
+        <label for="scope">执行范围</label
+        ><select id="scope">
+          <option value="all">全部工作流</option>
+          <option value="single">单设备</option>
+          <option value="multi">多设备协作</option>
+        </select>
+        <div id="workflow-list" class="list"></div>
+      </aside>
+      <main>
+        <p id="error" role="alert"></p>
+        <div id="welcome" class="empty">加载工作流…</div>
+        <div id="content" class="hidden">
+          <section class="panel">
+            <div class="row between">
+              <div class="grow">
+                <h2 id="workflow-heading"></h2>
+                <span id="revision" class="muted"></span>
+              </div>
+              <div class="row">
+                <button id="edit-definition">编辑定义</button
+                ><button id="save-workflow" class="primary">保存</button
+                ><button id="start-workflow">运行</button
+                ><button id="cancel-workflow" class="danger hidden">
+                  取消本次执行
+                </button>
+              </div>
+            </div>
+            <div class="row" style="margin-top: 16px">
+              <label for="history">执行历史</label
+              ><select id="history" class="history-select">
+                <option value="">当前定义</option></select
+              ><span id="run-state"></span>
+            </div>
+            <div id="definition-editor"></div>
+            <details id="start-input">
+              <summary>本次运行输入</summary>
+              <p class="muted">
+                手动运行时传入的 JSON 数据。定时运行的日期窗口由调度端生成。
+              </p>
+              <textarea id="workflow-input" aria-label="本次运行输入">
+{}</textarea
+              >
+            </details>
+          </section>
+          <section class="panel">
+            <div class="row between">
+              <h2>设备连接</h2>
+              <div id="device-controls" class="row">
+                <select
+                  id="add-device-select"
+                  class="node-add"
+                  aria-label="选择设备"
+                ></select
+                ><button id="add-device">添加设备</button>
+              </div>
+            </div>
+            <div id="graph-container" class="graph-scroll">
+              <div id="device-graph" class="device-graph"></div>
+            </div>
+            <p class="muted legend">
+              箭头由步骤依赖生成。灰色虚线表示设备离线或状态未知，相关步骤需等待设备恢复。
+            </p>
+          </section>
+          <section class="panel">
+            <div class="row between">
+              <h2 id="device-heading">设备内工作流</h2>
+              <button id="add-step">添加步骤</button>
+            </div>
+            <div class="split">
+              <div id="step-list" class="steps"></div>
+              <div id="step-detail"></div>
+            </div>
+          </section>
+        </div>
+      </main>
+    </div>
+    <div id="notice" role="status"></div>
+    <script>
+      /*__WORKFLOW_UI__*/
+    </script>
+  </body>
+</html>
