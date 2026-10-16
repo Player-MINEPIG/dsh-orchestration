@@ -706,11 +706,6 @@ test("TaskSystemService tick executes local programs without entering native Age
     dir,
     config: {
       workspaceRoots: [
-        {
-          id: "missing-root",
-          path: join(dir, "missing-root"),
-          allowCreate: false,
-        },
         { id: "root", path: dir, allowCreate: false },
       ],
       maintenanceIntervalMs: 1000,

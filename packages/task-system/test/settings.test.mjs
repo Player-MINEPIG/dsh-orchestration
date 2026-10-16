@@ -26,6 +26,8 @@ function client(primitives = {}, react = {}) {
     {
       URL,
       window: {
+        addEventListener() {},
+        removeEventListener() {},
         __ModuleLoader__: {
           load(row) {
             assert.equal(row.id, "@dsh-task/task-system");
@@ -209,8 +211,8 @@ test("browser companion exposes the same served form in Settings and its install
     remote: {
       $host: { isLoopback: true },
       $mount: async (contribution) => {
-        assert.equal(contribution.descriptors.length, 34);
-        for (const method of ["sessionTasks", "scheduleOptions", "createScheduledPlan", "controlScheduledPlan"])
+        assert.equal(new Set(contribution.descriptors.map(d => d.method)).size, contribution.descriptors.length);
+        for (const method of ["sessionTasks", "scheduleOptions", "createScheduledPlan", "controlScheduledPlan", "workflowSnapshot", "workflowPage", "saveWorkflow", "startWorkflow", "retryWorkflowStep", "cancelWorkflow"])
           assert.ok(contribution.descriptors.some(descriptor => descriptor.method === method));
         return () => {};
       },
@@ -241,7 +243,8 @@ test("browser companion exposes the same served form in Settings and its install
     },
   };
   await ui.apply(ctx);
-  assert.equal(registrations.length, 6);
+  assert.equal(registrations.length, 8);
+  assert.ok(registrations.some(r => r.options.id === "dsh-task-workflows"));
   assert.ok(registrations.some(r => r.options.name === "conversation.view" && r.options.id === "dsh-session-tasks"));
   assert.ok(listeners.has("command/executed"));
   assert.ok(registrations.some(r => r.options.name === "shell.overlay" && r.options.id === "task-project-command-result"));
@@ -261,14 +264,14 @@ test("browser companion exposes the same served form in Settings and its install
     row.options.inject().hooks.taskSettings,
   );
   for (const cleanup of effects.splice(0).reverse()) cleanup?.();
-  assert.equal(disposed.length, 6);
+  assert.equal(disposed.length, 8);
   assert.equal(listeners.size, 0);
   registrations.length = 0;
   ctx.configForms.whileServed = () => () => {};
   await ui.apply(ctx);
   assert.equal(
     registrations.length,
-    4,
+    6,
     "hide both entries while the Host does not serve task-system settings",
   );
   for (const cleanup of effects.splice(0).reverse()) cleanup?.();

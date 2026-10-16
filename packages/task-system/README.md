@@ -1,6 +1,6 @@
 # DSH Task and Remote Execution Suite
 
-`@dsh-task/task-system` 0.2.0 is one installable package containing the durable
+`@dsh-task/task-system` 0.2.12 is one installable package containing the durable
 task ledger, native execution and authenticated multi-device coordination.
 The core works without decision or channel plugins. Remote coordination is
 mounted only when explicitly configured through `@dsh-task/task-system/remote`;
@@ -31,6 +31,10 @@ Set `DSH_TASK_DATABASE` to the intended database path and use that **same path**
 ## Native DSH plugin settings GUI
 
 Use the official Web profile (`dsh web`). In the same profile, open **Plugins → Installed → @dsh-task/task-system → task-system → Configure**. The package now includes an optional browser companion with six explicitly live settings plus read-only deployment and remote-polling details. The separate VPS task dashboard remains separate. New bundle installations explicitly start with schedule admission and local auto-execution disabled. See [settings scope, profile overrides and verification limits](docs/settings-ui.zh-CN.md).
+
+## Device workflows
+
+The Workflow panel shows device connections and the program/Agent steps inside each device. Definitions are versioned, runs retain their inputs and outputs, and offline routes wait for recovery. Programs use the existing execution protocol without creating an Agent session. See the [workflow guide](docs/workflows.zh-CN.md).
 
 ## Configuration and roles
 
