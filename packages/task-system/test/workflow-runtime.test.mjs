@@ -1383,3 +1383,97 @@ test('root admission rechecks scopes introduced by later workflow edits without 
     assert.deepEqual(f.ledger.getTask(task.taskId).policy.allowedNodeIds,['mbp']);
   }finally{await f.close()}
 });
+
+test("terminal workflow maintenance does not reread historical step reports and snapshots sample availability once", async () => {
+  const f = fixture();
+  try {
+    f.register("mbp", "collect", () => ({
+      data: { evidence: "x".repeat(32000) },
+      summary: "Collected",
+    }));
+    save(f, definition([programStep("collect", "mbp", "collect")]));
+    const completed = start(f);
+    f.runtime.tick({ scheduleEnabled: false });
+    await f.worker("mbp").pollOnce();
+    f.runtime.tick({ scheduleEnabled: false });
+    assert.equal(view(f, completed).state, "succeeded");
+    const cancelled = start(f);
+    f.runtime.cancel({
+      commandId: id(),
+      workflowRunId: cancelled.workflowRunId,
+    });
+    assert.equal(view(f, cancelled).state, "cancelled");
+    const originalHistory = f.ledger.history.bind(f.ledger);
+    f.ledger.history = () => {
+      throw Error("terminal workflow reread historical reports");
+    };
+    f.runtime.tick({ scheduleEnabled: false });
+    f.ledger.history = originalHistory;
+    const statuses = f.ledger.nodeStatuses.bind(f.ledger);
+    let samples = 0;
+    f.ledger.nodeStatuses = (...args) => {
+      samples++;
+      return statuses(...args);
+    };
+    const snapshot = f.runtime.snapshot();
+    assert.equal(samples, 1);
+    assert.equal(
+      snapshot.runs.find((row) => row.workflowRunId === completed.workflowRunId)
+        .steps[0].output.evidence.length,
+      32000,
+    );
+    assert.equal(
+      snapshot.runs.find((row) => row.workflowRunId === cancelled.workflowRunId)
+        .state,
+      "cancelled",
+    );
+  } finally {
+    await f.close();
+  }
+});
+
+test("cancelled workflow keeps observing an uncertain step until authoritative reconciliation", async () => {
+  const f = fixture();
+  try {
+    f.register("mbp", "collect", () => ({ data: {}, summary: "unused" }));
+    save(f, definition([programStep("collect", "mbp", "collect")]));
+    const execution = start(f);
+    f.runtime.tick({ scheduleEnabled: false });
+    const step = view(f, execution).steps[0],
+      claim = f.ledger.claim(id(), {
+        runId: step.runId,
+        nodeId: "mbp",
+        ttlMs: 60000,
+      }).value;
+    const lease = {
+      runId: step.runId,
+      attemptId: claim.attempt.attemptId,
+      nodeId: "mbp",
+      fence: claim.attempt.fence,
+      executionId: "uncertain-cancel-fixture",
+    };
+    f.ledger.markRunning(id(), lease);
+    f.ledger.submit(id(), {
+      ...lease,
+      outcome: "unknown",
+      summary: "Provider outcome requires reconciliation",
+    });
+    f.runtime.tick({ scheduleEnabled: false });
+    f.runtime.cancel({
+      commandId: id(),
+      workflowRunId: execution.workflowRunId,
+    });
+    f.runtime.tick({ scheduleEnabled: false });
+    assert.equal(view(f, execution).steps[0].state, "uncertain");
+    f.ledger.resolveUncertain(id(), {
+      runId: step.runId,
+      outcome: "failed",
+      reason: "Verified provider stopped",
+    });
+    f.runtime.tick({ scheduleEnabled: false });
+    assert.equal(view(f, execution).steps[0].state, "failed");
+    assert.equal(f.ledger.getRun(execution.runId).state, "cancelled");
+  } finally {
+    await f.close();
+  }
+});

@@ -420,8 +420,8 @@ export class WorkflowRuntime {
       this.ledger.updateWorkflowRoot(run.runId, state);
     }
   }
-  private catalog(): ProgramCatalogEntry[] {
-    const entries = this.ledger.nodeStatuses().flatMap((node) => {
+  private catalog(nodes = this.ledger.nodeStatuses()): ProgramCatalogEntry[] {
+    const entries = nodes.flatMap((node) => {
       const status = node.providerStatus;
       if (
         !status ||
@@ -444,6 +444,7 @@ export class WorkflowRuntime {
     ];
   }
   snapshot(): WorkflowSnapshot {
+    const nodes = this.ledger.nodeStatuses();
     return {
       definitions: this.definitions().map(compileWorkflow),
       taskBindings: this.db
@@ -469,11 +470,11 @@ export class WorkflowRuntime {
           }
           return run;
         }),
-      nodes: this.ledger.nodeStatuses(),
+      nodes,
       workspaces: this.ledger
         .registeredNodes()
         .flatMap((node) => this.ledger.registeredWorkspaces(node.nodeId)),
-      programs: this.catalog(),
+      programs: this.catalog(nodes),
       models: this.ledger.registeredNodes(),
     };
   }
@@ -884,8 +885,20 @@ export class WorkflowRuntime {
   tick({ scheduleEnabled = true } = {}) {
     this.ledger.assertManagementWritable();
     if (scheduleEnabled) this.schedule();
-    for (const run of this.rows<WorkflowRunView>("workflow_runs")) {
-      if (["succeeded", "partial", "failed"].includes(run.state)) continue;
+    const runnable = this.db
+      .prepare(
+        `
+      SELECT data FROM workflow_runs
+      WHERE json_extract(data,'$.state') NOT IN ('succeeded','partial','failed','cancelled')
+        OR (json_extract(data,'$.state')='cancelled' AND EXISTS (
+          SELECT 1 FROM json_each(workflow_runs.data,'$.steps') AS step
+          WHERE json_extract(step.value,'$.state') IN ('queued','running','uncertain')
+        )) ORDER BY rowid DESC
+    `,
+      )
+      .all();
+    for (const row of runnable) {
+      const run = JSON.parse(String(row.data)) as WorkflowRunView;
       if (run.runId && this.ledger.getRun(run.runId).cancellationRequested) {
         run.state = "cancelled";
         for (const step of run.steps) if (!step.runId) step.state = "cancelled";

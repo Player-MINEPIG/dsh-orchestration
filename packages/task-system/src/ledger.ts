@@ -1329,6 +1329,21 @@ export class TaskLedger {
       3600000,
       "heartbeat TTL",
     );
+    const claims = new Map(
+      this.db
+        .prepare(
+          `
+      SELECT json_extract(data,'$.route.nodeId') AS node_id,COUNT(*) AS count
+      FROM entities WHERE kind='run' AND state IN ('running','uncertain')
+        AND json_extract(data,'$.route.nodeId') IS NOT NULL
+        AND COALESCE(json_extract(data,'$.historyOnly'),0)=0
+        AND COALESCE(json_extract(data,'$.observationOnly'),0)=0
+      GROUP BY json_extract(data,'$.route.nodeId')
+    `,
+        )
+        .all()
+        .map((row) => [String(row.node_id), Number(row.count)]),
+    );
     return this.list<NodeCapability>("node").map((node) => {
       const h = this.get<{
         observedAt: string;
@@ -1337,12 +1352,7 @@ export class TaskLedger {
         providerStatus?: Json;
         source: "authenticated-peer" | "host-local";
       }>("heartbeat", node.nodeId);
-      const activeClaims = this.list<Run>("run").filter(
-        (r) =>
-          !(r.historyOnly || r.observationOnly) &&
-          r.route?.nodeId === node.nodeId &&
-          ["running", "uncertain"].includes(r.state),
-      ).length;
+      const activeClaims = claims.get(node.nodeId) ?? 0;
       return {
         nodeId: node.nodeId,
         enabled: node.enabled,
