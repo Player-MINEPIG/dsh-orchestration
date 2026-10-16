@@ -461,27 +461,297 @@
           max-width: 100%;
         }
       }
+      body {
+        height: 100dvh;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+      }
+      .toolbar {
+        position: relative;
+        flex-shrink: 0;
+        padding: 16px 22px;
+      }
+      .toolbar h1 {
+        font-size: 20px;
+        margin: 0;
+      }
+      .toolbar p {
+        margin-top: 8px;
+      }
+      .layout {
+        flex: 1;
+        min-height: 0;
+        overflow: hidden;
+        grid-template-columns: 220px minmax(0, 1fr);
+      }
+      aside {
+        overflow: auto;
+        min-height: 0;
+      }
+      main {
+        overflow: auto;
+        min-height: 0;
+        padding: 20px;
+      }
+      .graph-scroll {
+        height: clamp(340px, 50dvh, 620px);
+        overflow: hidden;
+        position: relative;
+        touch-action: none;
+        cursor: grab;
+        background-color: var(--bg);
+        background-image: radial-gradient(var(--border) 1px, transparent 1px);
+        background-size: 20px 20px;
+        isolation: isolate;
+      }
+      .device-graph {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 1px;
+        min-width: 0;
+        height: 1px;
+        min-height: 0;
+        transform-origin: 0 0;
+        will-change: transform;
+      }
+      .graph-lines {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 1px !important;
+        height: 1px !important;
+        overflow: visible;
+        pointer-events: none;
+      }
+      .graph-card {
+        position: absolute;
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        box-shadow: 0 6px 20px #1526490d;
+        cursor: move;
+      }
+      .graph-card.active {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 2px var(--soft);
+      }
+      .card-main {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 7px;
+        padding: 15px 19px;
+        width: 100%;
+        height: 100%;
+        border: 0;
+        background: transparent;
+        text-align: left;
+        overflow: hidden;
+        cursor: inherit;
+      }
+      .card-main strong {
+        font-size: 15px;
+        line-height: 1.4;
+        max-width: 100%;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .card-kind {
+        font-size: 10px;
+        letter-spacing: 0.08em;
+        color: var(--muted);
+      }
+      .card-main .muted {
+        font-size: 11px;
+      }
+      .graph-card:has(.availability) .card-main {
+        padding-bottom: 35px;
+      }
+      .availability {
+        position: absolute;
+        bottom: 9px;
+        left: 19px;
+        color: var(--muted);
+        font-size: 10px;
+        pointer-events: none;
+      }
+      .availability .badge {
+        font-size: 10px;
+        padding: 2px 5px;
+        margin-left: 5px;
+      }
+      .port {
+        position: absolute;
+        top: 50%;
+        margin-top: -13px;
+        width: 26px;
+        height: 26px;
+        min-height: 26px;
+        border: 2px solid var(--panel);
+        border-radius: 50%;
+        padding: 0;
+        background: var(--accent);
+        color: var(--panel);
+        font-size: 9px;
+        cursor: crosshair;
+      }
+      .port.in {
+        left: -13px;
+      }
+      .port.out {
+        right: -13px;
+      }
+      .route {
+        stroke-width: 2;
+        vector-effect: non-scaling-stroke;
+      }
+      .graph-toolbar {
+        margin-bottom: 14px;
+        gap: 8px;
+      }
+      .graph-toolbar h2 {
+        margin: 0;
+        font-size: 15px;
+      }
+      .canvas-tools {
+        margin-left: auto;
+        gap: 5px;
+      }
+      .canvas-tools button {
+        font-size: 12px;
+        min-height: 34px;
+        padding: 6px 10px;
+      }
+      #zoom-label {
+        font-size: 11px;
+        min-width: 38px;
+        text-align: center;
+        color: var(--muted);
+      }
+      .stage-controls {
+        display: flex;
+        align-items: end;
+        gap: 12px;
+        flex-wrap: wrap;
+        margin-top: 14px;
+      }
+      .stage-controls label {
+        flex: 1;
+        min-width: 140px;
+        margin: 0;
+      }
+      .stage-controls input,
+      .stage-controls select {
+        display: block;
+        margin-top: 7px;
+      }
+      .call-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 14px;
+        font-size: 13px;
+        padding: 8px 0;
+        border-bottom: 1px solid var(--border);
+      }
+      .call-row button {
+        font-size: 12px;
+        min-height: 30px;
+        padding: 4px 9px;
+      }
+      #graph-panel.canvas-fullscreen {
+        position: fixed;
+        inset: 0;
+        z-index: 30;
+        margin: 0;
+        border-radius: 0;
+        display: flex;
+        flex-direction: column;
+        overflow: auto;
+        padding: 18px;
+      }
+      .canvas-fullscreen .graph-scroll {
+        flex: 1;
+        min-height: 250px;
+        height: auto;
+        max-height: none;
+      }
+      .canvas-fullscreen .stage-controls,
+      .canvas-fullscreen #device-controls,
+      .canvas-fullscreen #connection-form {
+        display: none;
+      }
+      @media (max-width: 900px) {
+        .layout {
+          display: block;
+        }
+        .layout > aside {
+          display: none;
+        }
+        .layout > main {
+          height: 100%;
+          padding: 12px;
+        }
+        .toolbar {
+          padding: 12px;
+        }
+        .toolbar p {
+          font-size: 11px;
+        }
+        .toolbar h1 {
+          font-size: 17px;
+        }
+        .toolbar button {
+          font-size: 12px;
+          padding: 6px 9px;
+          min-height: 34px;
+        }
+        .panel {
+          padding: 14px;
+        }
+        .graph-scroll {
+          height: 400px;
+        }
+        .canvas-tools {
+          width: 100%;
+          justify-content: flex-end;
+        }
+        .stage-controls {
+          gap: 8px;
+        }
+        .stage-controls button {
+          font-size: 12px;
+        }
+      }
     </style>
   </head>
   <body>
     <header class="toolbar row between">
       <div>
-        <h1>工作流</h1>
+        <div class="row">
+          <button type="button" id="back-project" type="button">
+            ← 返回项目
+          </button>
+          <h1>项目工作流</h1>
+        </div>
         <p class="muted">
-          先看设备之间的连接，再查看每台设备上的程序与 Agent 步骤。
+          编排执行阶段与具体调用。设备可以在不同阶段重复使用。
         </p>
       </div>
       <div class="row">
         <span id="connection" class="statusline" role="status">正在连接…</span
-        ><button id="refresh">刷新</button
-        ><button id="new-workflow">新建工作流</button>
+        ><button type="button" id="refresh">刷新</button
+        ><button type="button" id="new-workflow">新建工作流</button>
       </div>
     </header>
     <div class="layout">
       <aside>
         <label for="scope">执行范围</label
         ><select id="scope">
-          <option value="all">全部工作流</option>
+          <option value="all">本项目流程</option>
           <option value="single">单设备</option>
           <option value="multi">多设备协作</option>
         </select>
@@ -498,10 +768,15 @@
                 <span id="revision" class="muted"></span>
               </div>
               <div class="row">
-                <button id="edit-definition">编辑定义</button
-                ><button id="save-workflow" class="primary">保存</button
-                ><button id="start-workflow">运行</button
-                ><button id="cancel-workflow" class="danger hidden">
+                <button type="button" id="edit-definition">编辑定义</button
+                ><button type="button" id="save-workflow" class="primary">
+                  保存</button
+                ><button type="button" id="start-workflow">运行</button
+                ><button
+                  type="button"
+                  id="cancel-workflow"
+                  class="danger hidden"
+                >
                   取消本次执行
                 </button>
               </div>
@@ -514,38 +789,81 @@
             </div>
             <div id="definition-editor"></div>
             <details id="start-input">
-              <summary>本次运行输入</summary>
+              <summary>任务参数</summary>
               <p class="muted">
-                手动运行时传入的 JSON 数据。定时运行的日期窗口由调度端生成。
+                保存为任务参数后执行。定时触发在项目任务中配置，日期窗口由调度端生成。
               </p>
-              <textarea id="workflow-input" aria-label="本次运行输入">
-{}</textarea
-              >
+              <textarea id="workflow-input" aria-label="任务参数">{}</textarea>
+            </details>
+          </section>
+          <section class="panel" id="graph-panel">
+            <div class="row between graph-toolbar">
+              <div class="row">
+                <button type="button" id="leave-stage" class="hidden">
+                  ← 返回阶段
+                </button>
+                <h2 id="canvas-breadcrumb">流程 · 执行阶段</h2>
+              </div>
+              <div class="row canvas-tools">
+                <button type="button" id="zoom-out" aria-label="缩小画布">
+                  −</button
+                ><span id="zoom-label">100%</span
+                ><button type="button" id="zoom-in" aria-label="放大画布">
+                  +</button
+                ><button type="button" id="fit-graph">适应画布</button
+                ><button
+                  type="button"
+                  id="fullscreen-graph"
+                  aria-pressed="false"
+                >
+                  全屏
+                </button>
+              </div>
+            </div>
+            <div
+              id="graph-container"
+              class="graph-scroll"
+              role="region"
+              aria-label="流程画布。拖动卡片移动，拖动空白平移，滚轮缩放。"
+            >
+              <div id="device-graph" class="device-graph"></div>
+              <p id="canvas-empty" class="empty">
+                添加执行阶段，再添加内部步骤。
+              </p>
+            </div>
+            <p class="muted legend">
+              拖动卡片移动 · 拖动空白平移 · 滚轮缩放 ·
+              右侧圆点拖到入口连线。箭头决定调用顺序；设备在线状态单独显示。
+            </p>
+            <div id="device-controls" class="row">
+              <select
+                id="add-device-select"
+                class="node-add"
+                aria-label="阶段执行设备"
+              ></select
+              ><button type="button" id="add-device">添加阶段</button>
+            </div>
+            <div id="stage-controls" class="stage-controls"></div>
+            <details id="connection-form">
+              <summary>调用连接与具体端点</summary>
+              <div id="call-controls" class="row">
+                <label class="grow"
+                  >调用出口<select id="call-from"></select></label
+                ><span>→</span
+                ><label class="grow"
+                  >调用入口<select id="call-to"></select></label
+                ><button type="button" id="add-call">添加调用</button>
+              </div>
+              <p class="muted">
+                连线只表示控制顺序。传递数据请在步骤中单独配置输入映射。无前置调用的步骤会并行开始。
+              </p>
+              <div id="call-list"></div>
             </details>
           </section>
           <section class="panel">
             <div class="row between">
-              <h2>设备连接</h2>
-              <div id="device-controls" class="row">
-                <select
-                  id="add-device-select"
-                  class="node-add"
-                  aria-label="选择设备"
-                ></select
-                ><button id="add-device">添加设备</button>
-              </div>
-            </div>
-            <div id="graph-container" class="graph-scroll">
-              <div id="device-graph" class="device-graph"></div>
-            </div>
-            <p class="muted legend">
-              箭头由步骤依赖生成。灰色虚线表示设备离线或状态未知，相关步骤需等待设备恢复。
-            </p>
-          </section>
-          <section class="panel">
-            <div class="row between">
-              <h2 id="device-heading">设备内工作流</h2>
-              <button id="add-step">添加步骤</button>
+              <h2 id="device-heading">阶段内部步骤</h2>
+              <button type="button" id="add-step">添加步骤</button>
             </div>
             <div class="split">
               <div id="step-list" class="steps"></div>
