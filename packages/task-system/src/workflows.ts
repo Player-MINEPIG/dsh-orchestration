@@ -3,7 +3,7 @@ import { compileWorkflow } from "./workflow-graph.js";
 import { randomUUID } from "node:crypto";
 import { CronExpressionParser } from "cron-parser";
 import { TaskError, canonical, type TaskLedger } from "./ledger.js";
-import type { ExecutionRoute, Json, Run } from "./contracts.js";
+import type { ExecutionRoute, Json, Run, Task } from "./contracts.js";
 import { scheduleInput } from "./schedule-window.js";
 import {
   ProgramCatalog,
@@ -104,6 +104,48 @@ export class WorkflowRuntime {
     )
       fail("WORKFLOW_PROJECT", "Task must belong to the workflow Project only");
   }
+  private stepTools(step: WorkflowStep): string[] {
+    return step.execution.kind === "agent"
+      ? [
+          ...new Set([
+            ...step.execution.allowedTools,
+            ...(step.execution.inputExposure === "tools"
+              ? ["workflow_input_read"]
+              : []),
+          ]),
+        ]
+      : [];
+  }
+  private validateTaskScope(task: Task, definition: WorkflowDefinition) {
+    const required = {
+      allowedNodeIds: definition.steps.map((step) => step.nodeId),
+      allowedWorkspaceIds: definition.steps.map((step) => step.workspaceId),
+      allowedTools: definition.steps.flatMap((step) => this.stepTools(step)),
+      allowedBackends: definition.steps.flatMap((step) => {
+        const backend = this.route(step).backend;
+        return backend ? [backend] : [];
+      }),
+    };
+    const missing: string[] = [];
+    for (const field of [
+      "allowedNodeIds",
+      "allowedWorkspaceIds",
+      "allowedTools",
+      "allowedBackends",
+    ] as const) {
+      const granted = task.policy?.[field];
+      if (granted === undefined) continue;
+      const values = [...new Set(required[field])]
+        .filter((value) => !granted.includes(value))
+        .sort();
+      if (values.length) missing.push(`${field}: ${values.join(", ")}`);
+    }
+    if (missing.length)
+      fail(
+        "WORKFLOW_SCOPE",
+        `Task ${task.taskId} lacks workflow scope (${missing.join("; ")})`,
+      );
+  }
   configureTask(input: unknown): WorkflowTaskBinding {
     const command = ConfigureWorkflowTask.parse(input);
     return this.ledger.managementCommand(
@@ -132,14 +174,18 @@ export class WorkflowRuntime {
       command.expectedRevision !== (old?.revision ?? 0)
     )
       fail("CONFLICT", "Task workflow configuration changed");
-    const task = command.taskId
+    const existingTask = command.taskId
       ? this.ledger.getTask(command.taskId)
-      : this.ledger.prepareWorkflowTask({
-          title: command.title ?? definition.title,
-          description: command.description ?? definition.description,
-          policy: { maxChildren: 1000, maxDescendants: 10000 },
-          requiresConfirmation: false,
-        });
+      : undefined;
+    if (existingTask) this.validateTaskScope(existingTask, definition);
+    const task =
+      existingTask ??
+      this.ledger.prepareWorkflowTask({
+        title: command.title ?? definition.title,
+        description: command.description ?? definition.description,
+        policy: { maxChildren: 1000, maxDescendants: 10000 },
+        requiresConfirmation: false,
+      });
     this.taskProject(
       task.taskId,
       command.projectId,
@@ -210,6 +256,11 @@ export class WorkflowRuntime {
         const definition = JSON.parse(String(row.data)) as WorkflowDefinition;
         if (definition.projectId && definition.projectId !== command.projectId)
           fail("WORKFLOW_PROJECT", "Workflow belongs to another Project");
+        if (command.taskId)
+          this.validateTaskScope(
+            this.ledger.getTask(command.taskId),
+            definition,
+          );
         definition.projectId = command.projectId;
         definition.revision++;
         this.db
@@ -287,6 +338,7 @@ export class WorkflowRuntime {
     )
       fail("WORKFLOW_PROJECT", "Task workflow binding changed");
     this.taskProject(root.taskId, binding.projectId);
+    this.validateTaskScope(this.ledger.getTask(root.taskId), definition);
     this.validate(definition);
     const now = this.ledger.managementNow();
     this.writeRun({
@@ -923,17 +975,7 @@ export class WorkflowRuntime {
               settlementQuietMs: 0,
               allowedNodeIds: [definition.nodeId],
               allowedWorkspaceIds: [definition.workspaceId],
-              allowedTools:
-                definition.execution.kind === "agent"
-                  ? [
-                      ...new Set([
-                        ...definition.execution.allowedTools,
-                        ...(definition.execution.inputExposure === "tools"
-                          ? ["workflow_input_read"]
-                          : []),
-                      ]),
-                    ]
-                  : [],
+              allowedTools: this.stepTools(definition),
             },
             tags: ["workflow", run.workflowId],
             requiresConfirmation: false,

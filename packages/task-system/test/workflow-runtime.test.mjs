@@ -1328,3 +1328,58 @@ test('workflow maintenance preserves whole-Task cancellation while single-Run ca
     assert.throws(()=>runtime.start({commandId:'archive-no-reopen',taskId:archived.taskId}),/Explicitly reopen/);
   }finally{await h.dispose()}
 });
+
+test('restricted existing Task scope rejects configuration and adoption before changing schedules or history',async()=>{
+  const f=fixture();try{
+    f.register('mbp','collect',()=>({summary:'Collected',data:{}}));
+    const digest={...programStep('digest','vps','unused',['collect']),execution:{kind:'agent',provider:'test',model:'model',instructions:'Digest',allowedTools:['task_settle','digest_read'],inputExposure:'tools'}};
+    const saved=save(f,definition([programStep('collect','mbp','collect'),digest]));
+    const task=f.ledger.createTask(id(),{taskId:'restricted-daily',title:'Existing daily',kind:'scheduled',requiresConfirmation:false,policy:{allowedNodeIds:['mbp'],allowedWorkspaceIds:['mbp-ws'],allowedTools:['old-source-read'],allowedBackends:[]}}).value;
+    const wb=new Workbench(f.ledger);wb.manage(id(),'create_backlog',{backlogId:'restricted-backlog',projectId:'project',title:'Existing work',goal:'Daily'});wb.manage(id(),'link_backlog_task',{backlogId:'restricted-backlog',taskId:task.taskId});
+    const oldRun=f.ledger.createRun(id(),{taskId:task.taskId,route:{nodeId:'mbp',workspaceId:'mbp-ws',provider:'test',model:'model',requiredCapabilities:[]}}).value;
+    const claimed=f.ledger.claim(id(),{runId:oldRun.runId,nodeId:'mbp',ttlMs:1000}).value.attempt;
+    f.ledger.submit(id(),{runId:oldRun.runId,attemptId:claimed.attemptId,nodeId:'mbp',fence:claimed.fence,outcome:'success',summary:'Original evidence'});
+    f.ledger.updateTemplate(id(),{templateId:'restricted-old',version:1,name:'Original',description:'',inputSchema:{},defaults:{},resultContract:{}});
+    f.ledger.createSchedule(id(),{scheduleId:task.taskId,taskId:task.taskId,templateId:'restricted-old',templateVersion:1,enabled:false,revision:4,cron:'0 7 * * *',timeZone:'Asia/Shanghai',nextDueAt:'2026-10-16T23:00:00.000Z',overlap:'queue',misfire:'once',input:{},route:oldRun.route});
+    const db=f.ledger.managementDatabase(),history=structuredClone(f.ledger.history(task.taskId)),schedule=structuredClone(f.ledger.getSchedule(task.taskId));
+    const definitionRow=()=>db.prepare('SELECT data,next_due FROM workflow_definitions WHERE id=?').get('daily');
+    const initial=definitionRow();
+    const checkScope=error=>error.code==='WORKFLOW_SCOPE'&&/allowedNodeIds: vps/.test(error.message)&&/allowedWorkspaceIds: vps-ws/.test(error.message)&&/allowedTools: digest_read, task_settle, workflow_input_read/.test(error.message);
+    assert.throws(()=>f.runtime.configureTask({commandId:'restricted-configure',projectId:'project',taskId:task.taskId,workflowId:'daily',input:{}}),checkScope);
+    assert.deepEqual(definitionRow(),initial);assert.deepEqual(f.ledger.getSchedule(task.taskId),schedule);assert.deepEqual(f.ledger.history(task.taskId),history);assert.equal(f.runtime.snapshot().taskBindings.length,0);
+    const legacy={...saved,schedule:{enabled:true,cron:'0 7 * * *',timeZone:'Asia/Shanghai',dayOffset:-1}};delete legacy.projectId;
+    db.prepare('UPDATE workflow_definitions SET data=?,next_due=? WHERE id=?').run(JSON.stringify(legacy),'2026-10-16T23:00:00.000Z','daily');
+    const beforeAdoption=definitionRow(),adoption={commandId:'restricted-adopt',workflowId:'daily',projectId:'project',taskId:task.taskId};
+    assert.throws(()=>f.runtime.adopt(adoption),checkScope);
+    assert.deepEqual(definitionRow(),beforeAdoption);assert.deepEqual(f.ledger.getSchedule(task.taskId),schedule);assert.deepEqual(f.ledger.history(task.taskId),history);assert.equal(f.runtime.snapshot().taskBindings.length,0);
+    assert.equal(f.ledger.commandReceipt('restricted-adopt'),undefined);assert.equal(db.prepare('SELECT count(*) AS count FROM workflow_adoptions').get().count,0);
+    const priorPolicy=f.ledger.getTask(task.taskId).policy,nextPolicy={...priorPolicy,allowedNodeIds:['mbp','vps'],allowedWorkspaceIds:['mbp-ws','vps-ws'],allowedTools:['digest_read','task_settle','workflow_input_read'],allowedBackends:[]};
+    f.ledger.managementCommand('explicit-minimal-workflow-grant','authorized-scope',{taskId:task.taskId,priorPolicy,nextPolicy},()=>{
+      const stored=JSON.parse(db.prepare("SELECT data FROM entities WHERE kind='task' AND id=?").get(task.taskId).data);
+      stored.policy=nextPolicy;db.prepare("UPDATE entities SET data=? WHERE kind='task' AND id=?").run(JSON.stringify(stored),task.taskId);
+    });
+    const adopted=f.runtime.adopt(adoption);assert.equal(adopted.taskId,task.taskId);assert.equal(adopted.scheduleId,task.taskId);
+    assert.deepEqual(f.ledger.getTask(task.taskId).policy,nextPolicy);assert.deepEqual(f.ledger.history(task.taskId).runs,history.runs);assert.equal(f.ledger.getSchedule(task.taskId).enabled,true);
+    const run=f.runtime.start({commandId:id(),taskId:task.taskId});f.runtime.tick();
+    assert.equal(view(f,run).steps[0].state,'queued');assert.equal(view(f,run).steps[1].state,'pending');
+    await f.worker('mbp').pollOnce();f.heartbeat('vps');f.runtime.tick();
+    assert.equal(view(f,run).steps[1].state,'queued');assert.equal(view(f,run).steps[1].reason,undefined);
+  }finally{await f.close()}
+});
+
+test('root admission rechecks scopes introduced by later workflow edits without creating a partial Run',async()=>{
+  const f=fixture();try{
+    f.register('mbp','collect',()=>({summary:'Collected',data:{}}));
+    const saved=save(f,definition([programStep('collect','mbp','collect')]));
+    const task=f.ledger.createTask(id(),{title:'Restricted task',requiresConfirmation:false,policy:{allowedNodeIds:['mbp'],allowedWorkspaceIds:['mbp-ws'],allowedTools:[],allowedBackends:[]}}).value;
+    const wb=new Workbench(f.ledger);wb.manage(id(),'create_backlog',{backlogId:'scope-backlog',projectId:'project',title:'Scope',goal:'Test'});wb.manage(id(),'link_backlog_task',{backlogId:'scope-backlog',taskId:task.taskId});
+    f.runtime.configureTask({commandId:id(),projectId:'project',taskId:task.taskId,workflowId:'daily',input:{}});
+    const first=f.runtime.start({commandId:id(),taskId:task.taskId});f.runtime.tick();await f.worker('mbp').pollOnce();f.runtime.tick();
+    const digest={...programStep('digest','vps','unused',['collect']),stageId:'vps-digest',position:{x:0,y:0},execution:{kind:'agent',provider:'test',model:'model',instructions:'Digest',allowedTools:['task_settle'],inputExposure:'tools'}};
+    f.runtime.save({commandId:id(),expectedRevision:1,definition:{...saved,stages:[...saved.stages,{stageId:'vps-digest',title:'VPS',nodeId:'vps',position:{x:400,y:0}}],calls:[{fromStepId:'collect',toStepId:'digest'}],steps:[...saved.steps,digest]}});
+    assert.throws(()=>f.runtime.start({commandId:'scope-edited-start',taskId:task.taskId}),error=>error.code==='WORKFLOW_SCOPE'&&/workflow_input_read/.test(error.message)&&/allowedNodeIds: vps/.test(error.message));
+    assert.equal(f.ledger.history(task.taskId).runs.length,1);assert.equal(f.runtime.snapshot().runs.length,1);assert.equal(f.ledger.commandReceipt('scope-edited-start'),undefined);
+    assert.deepEqual(view(f,first).definition,saved);assert.equal(view(f,first).state,'succeeded');
+    assert.deepEqual(f.ledger.getTask(task.taskId).policy.allowedNodeIds,['mbp']);
+  }finally{await f.close()}
+});
