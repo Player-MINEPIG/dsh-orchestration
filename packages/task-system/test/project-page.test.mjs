@@ -314,8 +314,8 @@ test('schedule entry is separate from temporary tasks; history opens the selecte
  await p.action('projects');assert.match(p.content(),/定时计划/);await p.action('temporary-tasks');assert.match(p.content(),/One off/);assert.doesNotMatch(p.content(),/Recurring/);await p.action('schedules');assert.match(p.content(),/Recurring/);await p.action('schedule-detail','s');assert.match(p.content(),/触发历史/);await p.action('schedule-run','one');assert.match(p.overlay(),/First result/);assert.doesNotMatch(p.overlay(),/Second result/);
 });
 test('schedule create preserves draft and command on failure; pause submits expected revision',async()=>{
- const p=page();await p.answer({value:snapshot});let pending=p.action('create-schedule');assert.equal(p.requests[0].method,'scheduleOptions');await p.answer({value:{projects:[],routes:[{id:'route',label:'MBP Luna'}]}});await pending;
- vm.runInContext("Object.assign(state.overlay.draft,{title:'Check',description:'Report',routeId:'route',minutes:'1'})",p.context);
+ const p=page();await p.answer({value:snapshot});let pending=p.action('create-schedule');assert.equal(p.requests[0].method,'scheduleOptions');await p.answer({value:{projects:[{id:'p',title:'Project'}],routes:[{id:'route',label:'MBP Luna',workspaceLabel:'Work',route:{nodeId:'MBP',provider:'codex',model:'luna',reasoningEffort:'high',workspaceId:'ws'}}]}});await pending;
+ vm.runInContext("Object.assign(state.overlay.draft,{title:'Check',description:'Report',projectId:'p',routeId:'route',minutes:'1'})",p.context);
  pending=p.action('create-schedule-confirm');const request=p.requests[0].input;assert.equal(p.requests[0].method,'createScheduledPlan');assert.equal(request.cadence.minutes,1);await p.answer({error:'Connection failed'});await pending;assert.match(p.overlay(),/Check/);assert.equal(vm.runInContext('state.overlay.commandId',p.context),request.commandId);
  vm.runInContext("state.records.schedules=[{scheduleId:'s',enabled:true,revision:7,title:'Check'}]",p.context);await p.action('schedule-control','s');pending=p.action('schedule-control-confirm');assert.equal(p.requests[0].input.expectedRevision,7);assert.equal(p.requests[0].input.enabled,false);await p.answer({error:'Changed'});await pending;
 });
@@ -450,4 +450,20 @@ test('accepted partial results have their own section and filter while retaining
  await p.action('task',task.id);assert.match(p.overlay(),/部分交付 · 已验收/);assert.match(p.overlay(),/PC_AU source unavailable/);
  assert.doesNotMatch(p.overlay(),/>审核通过<|>审核不通过<|>标记已处理</);
  assert.equal(vm.runInContext("runResultLabel({state:'partial',reviewStatus:'rejected'})",p.context),'部分交付 · 审核未通过');
+});
+
+test('schedule choices cascade by executor, model and effort; refresh keeps draft and requires a project',async()=>{
+ const p=page();await p.answer({value:snapshot});
+ const route=(id,nodeId,model,reasoningEffort)=>({id,workspaceLabel:nodeId+' workspace',route:{nodeId,provider:'live-provider',model,reasoningEffort,workspaceId:nodeId+'-ws'}});
+ const options={projects:[{id:'p',title:'Daily project'}],routes:[route('a','MBP','live-a','low'),route('b','MBP','live-a','high'),route('c','PC_AU','live-b','high')]};
+ let pending=p.action('create-schedule');await p.answer({value:options});await pending;
+ assert.match(p.overlay(),/data-plan="nodeId"/);assert.match(p.overlay(),/data-plan="modelKey"/);assert.doesNotMatch(p.overlay(),/form-field">执行端与模型|独立计划（不关联项目）/);
+ const change=(key,value)=>vm.runInContext(`updatePlanDraft({target:{dataset:{plan:${JSON.stringify(key)}},value:${JSON.stringify(value)}}})`,p.context);
+ change('title','Keep me');change('description','Evidence');
+ await p.action('create-schedule-confirm');assert.equal(p.requests.length,0);
+ change('projectId','p');change('reasoningEffort','high');assert.equal(vm.runInContext('state.overlay.draft.routeId',p.context),'b');
+ change('nodeId','PC_AU');assert.equal(vm.runInContext('state.overlay.draft.routeId',p.context),'c');
+ assert.doesNotMatch(p.overlay().match(/data-plan="modelKey"[\s\S]*?<\/select>/)[0],/live-a/);
+ pending=p.action('schedule-options-refresh');await p.answer({value:{...options,routes:[route('d','PC_AU','new-model','low')]}});await pending;
+ assert.equal(vm.runInContext('state.overlay.draft.routeId',p.context),'d');assert.equal(vm.runInContext('state.overlay.draft.title',p.context),'Keep me');
 });

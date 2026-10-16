@@ -11,7 +11,7 @@ export const scheduledPlanInput = z
     commandId: z.string().min(1).max(200),
     title: z.string().trim().min(1).max(500),
     description: z.string().trim().min(1).max(20000),
-    projectId: z.string().min(1).nullable(),
+    projectId: z.string().trim().min(1),
     routeId: z.string().min(1).max(128),
     cadence: z.discriminatedUnion("mode", [
       z
@@ -49,11 +49,20 @@ export class ScheduledPlans {
     const data = this.ledger.snapshot(),
       routes = new Map<
         string,
-        { id: string; label: string; route: ExecutionRoute }
+        {
+          id: string;
+          label: string;
+          workspaceLabel: string;
+          route: ExecutionRoute;
+        }
       >();
     for (const status of this.ledger.nodeStatuses()) {
       const node = this.ledger.getNode(status.nodeId);
-      if (!node.enabled || !node.roles.includes("executor")) continue;
+      if (
+        !node.enabled ||
+        !node.roles.some((role) => role === "executor" || role === "both")
+      )
+        continue;
       const advertised = (
         status.providerStatus as
           | { executionRoutes?: ExecutionRoute[] }
@@ -61,17 +70,7 @@ export class ScheduledPlans {
       )?.executionRoutes;
       const candidates = Array.isArray(advertised)
         ? advertised.slice(0, 128)
-        : node.models.flatMap((m) =>
-            (m.reasoningEfforts.length ? m.reasoningEfforts : [undefined]).map(
-              (reasoningEffort) => ({
-                nodeId: node.nodeId,
-                provider: m.provider,
-                model: m.model,
-                ...(reasoningEffort ? { reasoningEffort } : {}),
-                requiredCapabilities: [],
-              }),
-            ),
-          );
+        : [];
       for (const candidate of candidates) {
         if (!candidate || candidate.nodeId !== node.nodeId) continue;
         const route = Object.fromEntries(
@@ -109,6 +108,7 @@ export class ScheduledPlans {
           const id = hash(executable);
           routes.set(id, {
             id,
+            workspaceLabel: workspace.label,
             route: executable,
             label: `${node.nodeId} · ${route.model} · ${route.reasoningEffort ?? "默认"} · ${workspace.label}${status.state === "online" ? "" : " · 离线排队"}`,
           });
@@ -135,7 +135,6 @@ export class ScheduledPlans {
       throw new TaskError("CONFLICT", "Schedule command reused");
     const wb = this.workbench.snapshot();
     if (
-      input.projectId &&
       !wb.projects.some(
         (p) => p.projectId === input.projectId && p.state !== "archived",
       )
@@ -177,7 +176,7 @@ export class ScheduledPlans {
       }).value;
     // A interrupted creation is safe to resume: no trigger can run until the
     // project association is durable, and replay cannot undo a later pause.
-    if (input.projectId) {
+    {
       const backlogId = `scheduled-backlog:${input.projectId}`;
       this.workbench.manage(
         `scheduled-backlog:${input.projectId}`,

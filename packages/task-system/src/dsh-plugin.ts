@@ -1,3 +1,4 @@
+import { executorModelRoutes } from "./executor-models.js";
 import { workflowInputPage, workflowPromptConfiguration } from "./workflow-input.js";
 import { ProgramRegistry } from "./workflow-programs.js";
 import { WorkflowRuntime } from "./workflows.js";
@@ -2091,6 +2092,9 @@ export class TaskSystemService extends Service {
   private observationGeneration = 0;
   private observationSubscription?: ObservationSubscription;
   private readonly observationJobs = new Set<Promise<void>>();
+  private localCatalogPending = false;
+  private localCatalogAt = 0;
+  private localModelRoutes: Awaited<ReturnType<typeof executorModelRoutes>> = [];
   private lastHeartbeatAt = 0;
   private lastHeartbeatSample = 0;
   private lastRuntimeReady?: boolean;
@@ -2314,41 +2318,106 @@ export class TaskSystemService extends Service {
     subscription.tail = job;
     this.observationJobs.add(job);
   }
+  private refreshLocalModelRoutes(now: number): void {
+    if (
+      !this.config.localNode ||
+      this.localCatalogPending ||
+      now - this.localCatalogAt < this.config.localHeartbeatIntervalMs
+    )
+      return;
+    this.localCatalogPending = true;
+    this.localCatalogAt = now;
+    const grants = this.config.localNode.models.flatMap((model) =>
+      (model.reasoningEfforts.length
+        ? model.reasoningEfforts
+        : [undefined]
+      ).map((reasoningEffort) => ({
+        nodeId: this.config.nodeId,
+        provider: model.provider,
+        model: model.model,
+        ...(reasoningEffort ? { reasoningEffort } : {}),
+        requiredCapabilities: [],
+      })),
+    );
+    void executorModelRoutes(this.ctx.get("llm"), grants)
+      .then((routes) => {
+        if (
+          this.ledgerClosed ||
+          !this.accepting ||
+          canonical(routes) === canonical(this.localModelRoutes)
+        )
+          return;
+        this.localModelRoutes = routes;
+        this.localHeartbeat(true);
+      })
+      .catch((error) =>
+        this.ctx.logger.warn("model catalog unavailable: %s", error),
+      )
+      .finally(() => {
+        this.localCatalogPending = false;
+      });
+  }
   private localHeartbeat(force = false): void {
     if (!this.config.localNode || this.ledgerClosed) return;
     const now = Date.now();
-    const runtimeReady = this.accepting && (this.native !== undefined || this.programs.catalog().length > 0);
+    const runtimeReady =
+      this.accepting &&
+      (this.native !== undefined || this.programs.catalog().length > 0);
     if (
       !force &&
       runtimeReady === this.lastRuntimeReady &&
       now - this.lastHeartbeatAt < this.config.localHeartbeatIntervalMs
     )
       return;
+    this.refreshLocalModelRoutes(now);
     this.lastHeartbeatSample = Math.max(now, this.lastHeartbeatSample + 1);
     try {
+      const providerStatus = {
+        ...(this.programs.catalog().length
+          ? { programs: this.programs.catalog() }
+          : {}),
+        executionRoutes: [
+          ...this.localModelRoutes,
+          ...this.config.officialBackends.map((backend) => ({
+            nodeId: this.config.nodeId,
+            provider: backend.provider,
+            model: backend.model,
+            reasoningEffort: backend.reasoningEffort,
+            backend: backend.backend,
+            requiredCapabilities: ["official-codex"],
+          })),
+        ].slice(0, 128),
+        state: "not-probed",
+        providers: [
+          ...new Set(
+            this.config.localNode.models.map((model) => model.provider),
+          ),
+        ].map((provider) => ({ provider, state: "not-probed" })),
+      };
+      while (providerStatus.providers.length > 32)
+        providerStatus.providers.pop();
+      while (
+        providerStatus.executionRoutes.length &&
+        Buffer.byteLength(JSON.stringify(providerStatus)) > 8192
+      )
+        providerStatus.executionRoutes.pop();
+      while (
+        providerStatus.providers.length &&
+        Buffer.byteLength(JSON.stringify(providerStatus)) > 8192
+      )
+        providerStatus.providers.pop();
       this.ledger.recordNodeHeartbeat(
         `native-heartbeat:${this.config.nodeId}:${this.lastHeartbeatSample}`,
         {
           nodeId: this.config.nodeId,
           runtimeReady,
-          activeExecutions: (this.programWorker?.activeExecutions ?? 0) + [...this.providers].reduce(
-            (total, provider) => total + provider.activeCount,
-            0,
-          ),
-          providerStatus: {
-            ...(this.programs.catalog().length ? {programs:this.programs.catalog()} : {}),
-            executionRoutes: this.config.officialBackends.map(backend => ({
-              nodeId: this.config.nodeId, provider: backend.provider, model: backend.model,
-              reasoningEffort: backend.reasoningEffort, backend: backend.backend,
-              requiredCapabilities: ["official-codex"],
-            })),
-            state: "not-probed",
-            providers: [
-              ...new Set(
-                this.config.localNode.models.map((model) => model.provider),
-              ),
-            ].map((provider) => ({ provider, state: "not-probed" })),
-          },
+          activeExecutions:
+            (this.programWorker?.activeExecutions ?? 0) +
+            [...this.providers].reduce(
+              (total, provider) => total + provider.activeCount,
+              0,
+            ),
+          providerStatus,
           sampledAt: this.lastHeartbeatSample,
           source: "host-local",
         },

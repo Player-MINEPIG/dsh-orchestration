@@ -1,0 +1,46 @@
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import {createServer} from 'node:http';
+import {createRequire} from 'node:module';
+const {chromium}=createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE_PATH||'playwright');
+const html=readFileSync(new URL('../../packages/task-system/dist/project-page.html',import.meta.url),'utf8');
+const routes=[['a','MBP','example-luna','low'],['b','MBP','example-luna','high'],['c','PC_AU','example-other','high']].map(([id,nodeId,model,reasoningEffort])=>({id,workspaceLabel:nodeId+' 项目工作区',route:{nodeId,provider:'executor-provider',model,reasoningEffort,workspaceId:nodeId+'-ws'}}));
+const options={projects:[{id:'daily',title:'个人自动化'}],routes};
+const server=createServer((req,res)=>res.end('<iframe id="app" style="width:100%;height:100vh;border:0"></iframe>'));
+await new Promise(r=>server.listen(0,'127.0.0.1',r));
+const browser=await chromium.launch({headless:true,...(process.env.CHROME_EXECUTABLE?{executablePath:process.env.CHROME_EXECUTABLE}:{})});
+try{
+ const page=await browser.newPage({viewport:{width:1100,height:1200}}),errors=[];page.on('pageerror',e=>errors.push(e.message));
+ await page.goto('http://127.0.0.1:'+server.address().port);
+ await page.evaluate(({html,options})=>{
+  window.calls=[];window.options=options;
+  window.addEventListener('message',e=>{const {channel,id,method,input}=e.data||{};if(channel!=='dsh-project-runtime'||!id)return;window.calls.push({method,input});let value;
+   if(method==='projectSnapshot')value={projects:[],tasks:[],settings:{root:'/fixture'},schedules:[]};
+   else if(method==='scheduleOptions')value=window.options;
+   else throw Error('Unexpected RPC '+method);
+   e.source.postMessage({channel,id,value},'*');
+  });document.querySelector('#app').srcdoc=html;
+ },{html,options});
+ const frame=page.frameLocator('#app');
+ await frame.locator('[data-action="projects"]').first().click();
+ await frame.locator('[data-action="schedules"]').first().click();
+ await frame.locator('[data-action="create-schedule"]').click();
+ await frame.locator('[data-plan="title"]').fill('Agent 日报');
+ await frame.locator('[data-plan="description"]').fill('按工作内容归纳成果与未解决问题。');
+ assert.equal(await frame.locator('[data-action="create-schedule-confirm"]').isDisabled(),true);
+ await frame.locator('[data-plan="projectId"]').selectOption('daily');
+ assert.equal(await frame.locator('[data-plan="projectId"] option:checked').textContent(),'个人自动化');
+ await frame.locator('[data-plan="reasoningEffort"]').selectOption('high');
+ await frame.locator('[data-plan="nodeId"]').selectOption('PC_AU');
+ assert.match(await frame.locator('[data-plan="modelKey"]').textContent(),/example-other/);
+ assert.doesNotMatch(await frame.locator('[data-plan="modelKey"]').textContent(),/example-luna/);
+ await page.evaluate(()=>{window.options.routes=window.options.routes.slice(0,1)});
+ await frame.locator('[data-action="schedule-options-refresh"]').click();
+ await frame.locator('[data-plan="nodeId"] option[value="MBP"]').waitFor({state:'attached'});
+ assert.equal(await frame.locator('[data-plan="title"]').inputValue(),'Agent 日报');
+ await page.setViewportSize({width:390,height:844});
+ assert.equal(await frame.locator('[data-plan="projectId"]').inputValue(),'daily');
+ assert.equal(await frame.locator('[data-action="create-schedule-confirm"]').isEnabled(),true);
+ if(process.env.SCHEDULE_SCREENSHOT)await page.screenshot({path:process.env.SCHEDULE_SCREENSHOT,fullPage:true});
+ assert.deepEqual(errors,[]);console.log('schedule form desktop/mobile and dynamic selectors passed');
+}finally{await browser.close();await new Promise(r=>server.close(r));}

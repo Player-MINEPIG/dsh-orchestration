@@ -123,13 +123,13 @@ test('actual Cordis opt-in heartbeat reports native presence and actual executio
   t.after(()=>{globalThis.fetch=originalFetch;if(previous===undefined)delete process.env[env];else process.env[env]=previous})
   let sends=0;globalThis.fetch=async(_url,options)=>{sends++;return new Response(JSON.stringify(await f.gateway.handle(options.body)))}
   t.mock.timers.enable({apis:['setInterval']})
-  const local={ledger:{}};await ctx.plugin({apply(ctx){ctx.provide('taskSystem',local)}})
+  const local={ledger:{}};await ctx.plugin({apply(ctx){ctx.provide('taskSystem',local);ctx.provide('llm',{listProviders:()=>[{id:'fixture'}],listModels:async()=>[{id:'fixture'}],resolveModelInfo:async()=>({})})}})
   const fiber=ctx.plugin(plugin,{role:'executor',nodeId:'worker',statePath:join(f.root,'native.sqlite'),capabilities:['read'],workspaces:[{workspaceId:'workspace',nodeId:'worker',path:f.root,allowedRoot:f.root}],coordinator:{endpoint:'https://fixture.invalid/commands',audience:'planner',keyId:'fixture',privateKeyEnv:env,heartbeatIntervalMs:1000,nativeRoutes:[{provider:'fixture',models:[{model:'fixture',reasoningEfforts:[]}]}]}});await fiber
   const service=ctx.get('remoteExecution')
   for(let i=0;i<100&&!f.ledger.nodeStatuses().find(n=>n.nodeId==='worker').observedAt;i++)await immediate()
   assert.equal(f.ledger.nodeStatuses().find(n=>n.nodeId==='worker').runtimeReady,false)
   let entered,release;const started=new Promise(resolve=>entered=resolve), gate=new Promise(resolve=>release=resolve)
-  local.native={executeExternal:async()=>{entered();await gate;return {outcome:'success',summary:'fixture'}}}
+  t.after(()=>release());local.native={executeExternal:async()=>{entered();await gate;return {outcome:'success',summary:'fixture'}}}
   const task=f.ledger.createTask('task',{title:'Active heartbeat',workspaceId:'workspace',policy:{settlementQuietMs:0}}).value
   const run=f.ledger.createRun('run',{taskId:task.taskId,route:{nodeId:'worker',provider:'fixture',model:'fixture',workspaceId:'workspace',requiredCapabilities:['read']}}).value
   const running=service.nativeWorker.execute(run.runId,'claim');await started;await service.heartbeatNow()

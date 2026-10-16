@@ -1,3 +1,4 @@
+import { executorModelRoutes } from "../executor-models.js";
 import type { ProgramRegistry } from "../workflow-programs.js";
 import { chooseExecutionSession } from '../execution-session.js'
 import { Context, Service } from '@deepseek-ai/cordis'
@@ -252,10 +253,10 @@ export class RemoteExecutionService extends Service {
     insist(Number.isSafeInteger(nativeActive) && nativeActive >= 0 && nativeActive <= 128,'INVALID_NATIVE_ACTIVE_COUNT')
     const activeExecutions = Math.max(nativeActive,[...this.workers].reduce((count,worker) => count + worker.activeExecutions,0))
     const providers = [...new Set(this.config.coordinator.nativeRoutes.map(route => route.provider))].map(provider => ({ provider,state: 'not-probed' }))
-    const executionRoutes = [
+    const executionRoutes = await executorModelRoutes(this.ctx.get("llm"), [
       ...this.config.coordinator.nativeRoutes.flatMap(p => p.models.flatMap(m => (m.reasoningEfforts.length ? m.reasoningEfforts : [undefined]).map(reasoningEffort => ({ nodeId: this.config.nodeId, provider: p.provider, model: m.model, ...(reasoningEffort ? { reasoningEffort } : {}), requiredCapabilities: [] as string[] })))),
       ...(taskSystem?.config?.officialBackends ?? []).map(b => ({ nodeId: this.config.nodeId, provider: b.provider, model: b.model, reasoningEffort: b.reasoningEffort, backend: b.backend, requiredCapabilities: ['official-codex'] }))
-    ]
+    ])
     const programs = taskSystem?.programs?.catalog() ?? []
     const providerStatus = { state: 'not-probed',providers,executionRoutes,...(programs.length ? { programs } : {}) }
     while (executionRoutes.length > 128) executionRoutes.pop()
