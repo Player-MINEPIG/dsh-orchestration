@@ -1692,6 +1692,7 @@ export class ProjectRuntime {
         closed: "已完成人工确认",
       }[materialsStatus ?? "closed"];
 
+      const workflowRun=workflowSnapshot?.runs.find(flow=>flow.runId===run?.runId);
       const status = manual
         ? "done"
         : cancelled
@@ -1702,6 +1703,8 @@ export class ProjectRuntime {
               : "cancelled"
           : t.state === "archived"
             ? "archived"
+            : workflowRun?.state === "needs_attention"
+              ? "error"
             : t.state === "inbox" && dispatch?.state === "inbox"
               ? "queued"
               : attention.confirmationPending ||

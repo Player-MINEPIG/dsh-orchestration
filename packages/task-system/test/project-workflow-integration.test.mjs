@@ -63,3 +63,19 @@ test('adopted legacy workflow evidence is reachable from its continuing Task wit
  const legacy={workflowRunId:'legacy',workflowId:'report',taskId:'continuing',projectId:'p',createdAt:'2026-10-16T00:00:00Z',state:'succeeded',definition:flow,definitionRevision:1,steps:[]};
  await p.answer({...base,tasks:[task],workflowRuns:[legacy]});await p.action('task','continuing');assert.match(p.overlay(),/迁移前流程记录/);assert.match(p.overlay(),/尚未创建流程根 Run/);assert.match(p.overlay(),/legacy/);
 });
+
+test('workflow admission attention is visible on the Task while its root remains active for schedule overlap',async()=>{
+ const h=await createNativeHarness({config:{role:'both',nodeId:'local'}});
+ try{
+  new Workbench(h.ledger).manage('attention-project','create_project',{projectId:'p',title:'Flow',goal:'Test'});
+  h.ledger.registerWorkspace('attention-ws',{workspaceId:'ws',nodeId:'local',path:h.dir,label:'Local',state:'ready',createdAt:new Date().toISOString()});
+  h.ledger.registerNode('attention-node',{nodeId:'local',roles:['both'],enabled:true,capabilities:[],models:[],workspaceIds:['ws'],lastSeenAt:new Date().toISOString()});
+  h.ctx.taskSystem.programs.register({programId:'work',version:'1',title:'Work',execute:()=>({data:{},summary:'Done'})});
+  h.ledger.recordNodeHeartbeat('attention-heartbeat',{nodeId:'local',runtimeReady:true,activeExecutions:0,providerStatus:{programs:h.ctx.taskSystem.programs.catalog()}});
+  const runtime=h.ctx.taskSystem.workflows;
+  runtime.save({commandId:'attention-flow',expectedRevision:0,definition:{workflowId:'flow',projectId:'p',revision:0,title:'Flow',description:'Test',steps:[{stepId:'a',title:'Step',nodeId:'local',workspaceId:'ws',dependsOn:[],inputs:{},execution:{kind:'program',programId:'work',version:'1'},maxRetries:0}]}});
+  const binding=runtime.configureTask({commandId:'attention-task',projectId:'p',workflowId:'flow',input:{}}),run=runtime.start({commandId:'attention-run',taskId:binding.taskId});
+  const persisted={...run,state:'needs_attention',steps:run.steps.map(s=>({...s,state:'blocked',reason:'Source needs attention'}))};h.ledger.managementDatabase().prepare('UPDATE workflow_runs SET data=? WHERE id=?').run(JSON.stringify(persisted),run.workflowRunId);
+  assert.equal(h.ledger.getRun(run.runId).state,'running');assert.equal(h.ctx.taskSystem.projects.snapshot().tasks.find(t=>t.id===binding.taskId).status,'error');
+ }finally{await h.dispose();}
+});

@@ -525,6 +525,7 @@ export class TaskPluginSettings extends TypertRemoteService {
       if (error instanceof TaskError)
         throw new RemoteError("task/project", "Project operation rejected", {
           reason: error.code,
+          ...(error.code === "WORKFLOW_SCOPE" ? {detail:error.message} : {}),
         });
       throw error;
     }

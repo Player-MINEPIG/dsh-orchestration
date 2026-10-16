@@ -3531,7 +3531,7 @@ window.__ModuleLoader__.load({
               {
                 channel: "dsh-project-runtime",
                 id,
-                error: messages[code] || (/^projectDirectory/.test(method) && error?.message) || (/workflow/i.test(method) && error?.message) || "无法读取或操作项目服务，请检查连接后重试。",
+                error: code === "WORKFLOW_SCOPE" ? "任务权限未覆盖工作流所需范围，请由项目所有者核对授权："+(failure.details?.detail||"缺少设备、工作区或工具授权") : messages[code] || (/^projectDirectory/.test(method) && error?.message) || (/workflow/i.test(method) && error?.message) || "无法读取或操作项目服务，请检查连接后重试。",
                 errorCode: code,
                 errorDetails: /^projectDirectory/.test(method) ? failure?.details : undefined,
               },
