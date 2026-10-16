@@ -1,4 +1,4 @@
-import { SaveWorkflow, StartWorkflow, RetryWorkflowStep, CancelWorkflow } from "./workflow-contracts.js";
+import { SaveWorkflow, StartWorkflow, RetryWorkflowStep, CancelWorkflow, ConfigureWorkflowTask, AdoptWorkflow } from "./workflow-contracts.js";
 import { scheduledPlanInput, scheduledPlanControl } from "./scheduled-plans.js";
 import { SessionDispatchIndex, sessionDispatchOperations, sessionTaskSnapshot, sortSessionTasks } from "./session-task-monitor.js";
 import type { SessionJobRegistry } from "./session-codex-jobs.js";
@@ -338,6 +338,10 @@ export function hasTaskConfigOverride(patches: readonly unknown[]): boolean {
 }
 
 const projectInputs = {
+  configureWorkflowTask: ConfigureWorkflowTask,
+  adoptWorkflow: AdoptWorkflow,
+  createProjectTask: z.object({commandId:z.string().min(1).max(200),projectId:z.string().min(1),title:z.string().trim().min(1).max(500),description:z.string().trim().min(1).max(20000),routeId:z.string().min(1),start:z.boolean()}).strict(),
+  runProjectTask: z.object({commandId:z.string().min(1).max(200),taskId:z.string().min(1)}).strict(),
   workflowSnapshot: null,
   workflowPage: null,
   saveWorkflow: SaveWorkflow,
@@ -486,6 +490,10 @@ export class TaskPluginSettings extends TypertRemoteService {
     if (!service || service.config.role === "executor") throw new RemoteError("task/project", "Workflow center requires a planner", {reason:"PLANNER_REQUIRED"});
     return service.workflows;
   }
+  async configureWorkflowTask(input:unknown) { return this.projectOperation(()=>this.workflowService().configureTask(projectInputs.configureWorkflowTask.parse(input))); }
+  async adoptWorkflow(input:unknown) { return this.projectOperation(()=>this.workflowService().adopt(projectInputs.adoptWorkflow.parse(input))); }
+  async createProjectTask(input:unknown) { return this.projectOperation(()=>this.projects().createDirectTask(projectInputs.createProjectTask.parse(input))); }
+  async runProjectTask(input:unknown) { return this.projectOperation(()=>this.projects().runDirectTask(projectInputs.runProjectTask.parse(input))); }
   async workflowSnapshot() { return this.projectOperation(() => this.workflowService().snapshot()); }
   async saveWorkflow(input: unknown) { return this.projectOperation(() => this.workflowService().save(input)); }
   async startWorkflow(input: unknown) { return this.projectOperation(() => this.workflowService().start(input)); }

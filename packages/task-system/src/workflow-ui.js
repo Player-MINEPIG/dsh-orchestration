@@ -14,7 +14,7 @@
     );
   const clone = (value) => JSON.parse(JSON.stringify(value));
   const statusNames = {
-    pending: "等待依赖",
+    pending: "等待前序调用",
     waiting_device: "等待设备",
     queued: "等待执行",
     running: "执行中",
@@ -23,7 +23,7 @@
     failed: "失败",
     uncertain: "结果待核实",
     cancelled: "已取消",
-    blocked: "依赖受阻",
+    blocked: "前序调用受阻",
     needs_attention: "需处理",
     online: "在线",
     stale: "离线",
@@ -735,7 +735,7 @@
           binding.kind === "step-output" &&
           !step.dependsOn.includes(binding.stepId)
         )
-          throw Error(`${step.title} 的输入来源须同时设为前置依赖`);
+          throw Error(`${step.title} 的输入来源须有前序调用连线`);
       }
     }
     const complete = new Set(),
@@ -743,7 +743,7 @@
     function visit(step) {
       if (complete.has(step.stepId)) return;
       if (visiting.has(step.stepId))
-        throw Error("步骤依赖存在循环，请调整连线");
+        throw Error("调用顺序存在循环，请调整连线");
       visiting.add(step.stepId);
       for (const dep of step.dependsOn)
         visit(def.steps.find((row) => row.stepId === dep));

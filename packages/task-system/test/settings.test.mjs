@@ -243,8 +243,8 @@ test("browser companion exposes the same served form in Settings and its install
     },
   };
   await ui.apply(ctx);
-  assert.equal(registrations.length, 8);
-  assert.ok(registrations.some(r => r.options.id === "dsh-task-workflows"));
+  assert.equal(registrations.length, 6);
+  assert.ok(!registrations.some(r => r.options.id === "dsh-task-workflows"));
   assert.ok(registrations.some(r => r.options.name === "conversation.view" && r.options.id === "dsh-session-tasks"));
   assert.ok(listeners.has("command/executed"));
   assert.ok(registrations.some(r => r.options.name === "shell.overlay" && r.options.id === "task-project-command-result"));
@@ -264,14 +264,14 @@ test("browser companion exposes the same served form in Settings and its install
     row.options.inject().hooks.taskSettings,
   );
   for (const cleanup of effects.splice(0).reverse()) cleanup?.();
-  assert.equal(disposed.length, 8);
+  assert.equal(disposed.length, 6);
   assert.equal(listeners.size, 0);
   registrations.length = 0;
   ctx.configForms.whileServed = () => () => {};
   await ui.apply(ctx);
   assert.equal(
     registrations.length,
-    6,
+    4,
     "hide both entries while the Host does not serve task-system settings",
   );
   for (const cleanup of effects.splice(0).reverse()) cleanup?.();

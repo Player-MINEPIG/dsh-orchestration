@@ -1,3 +1,4 @@
+import type { TaskSystemService } from "./dsh-plugin.js";
 import type {} from "@deepseek-ai/dsh-session-persistence-jsonl";
 import { Context } from "@deepseek-ai/cordis";
 import {
@@ -100,6 +101,7 @@ export class ProjectRuntime {
     ledger.projectSnapshot = (nodeId) => this.snapshotForNode(nodeId) as unknown as import("./contracts.js").Json;
     this.db
       .exec(`CREATE TABLE IF NOT EXISTS pr_settings(id INTEGER PRIMARY KEY CHECK(id=1),root TEXT,revision INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS pr_task_routes(task TEXT PRIMARY KEY,route TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS pr_models(owner TEXT PRIMARY KEY,selection TEXT,revision INTEGER NOT NULL);
       INSERT OR IGNORE INTO pr_settings VALUES(1,NULL,0);
       CREATE TABLE IF NOT EXISTS pr_projects(id TEXT PRIMARY KEY,command TEXT UNIQUE NOT NULL,digest TEXT NOT NULL,root TEXT NOT NULL,cwd TEXT NOT NULL,title TEXT NOT NULL,goal TEXT NOT NULL,session TEXT NOT NULL,generation INTEGER NOT NULL,state TEXT NOT NULL);
@@ -873,6 +875,8 @@ export class ProjectRuntime {
       if (!task) continue;
       if (row.state === "assigned" && row.run) {
         const run = this.ledger.getRun(row.run);
+        const config = run.configuration;
+        if (config && typeof config === "object" && !Array.isArray(config) && config.workflowInvocation) continue;
         if (run.state === "queued") {
           const health = this.ledger
             .nodeStatuses()
@@ -1629,6 +1633,9 @@ export class ProjectRuntime {
         }[]
       ).map((r) => [r.task, r]),
     );
+    const workflowSnapshot=(this.ctx.get("taskSystem") as TaskSystemService | undefined)?.workflows.snapshot();
+    const workflowDefinitionView=(definition:NonNullable<typeof workflowSnapshot>["definitions"][number])=>({workflowId:definition.workflowId,projectId:definition.projectId??null,title:definition.title,description:definition.description,revision:definition.revision,stages:definition.stages??[],calls:definition.calls??[],steps:definition.steps.map(step=>({stepId:step.stepId,stageId:step.stageId??null,nodeId:step.nodeId,title:step.title,position:step.position??null,dependsOn:step.dependsOn,kind:step.execution.kind}))});
+    const workflowBindings=workflowSnapshot?.taskBindings??[];
     const tasks = data.tasks.map((t) => {
       const dispatch = dispatches.get(t.taskId);
       const runs = data.runs.filter((r) => r.taskId === t.taskId),
@@ -1731,6 +1738,8 @@ export class ProjectRuntime {
         actionVersion: attention.version,
         runId: run?.runId ?? null,
         revision:t.revision??1,
+        workflowBinding:(()=>{const binding=workflowBindings.find(binding=>binding.taskId===t.taskId);return binding?{taskId:binding.taskId,projectId:binding.projectId,workflowId:binding.workflowId,revision:binding.revision}:null;})(),
+        canRunDirect:!!this.db.prepare("SELECT task FROM pr_task_routes WHERE task=?").get(t.taskId),
         maxResultRetries:t.policy?.maxResultRetries??2,
         resultRetry:run?this.ledger.resultRetryInfo(run.runId):null,
         executionStartedAt: run?.executionStartedAt ?? null,
@@ -1739,7 +1748,7 @@ export class ProjectRuntime {
             ? run.updatedAt
             : null,
         canRequestStatus:
-          run?.state === "running" && !run.cancellationRequested,
+          !workflowBindings.some(binding=>binding.taskId===t.taskId) && run?.state === "running" && !run.cancellationRequested,
         progressRequest:
           data.attempts?.find((a) => a.attemptId === run?.currentAttemptId)
             ?.progressRequest ?? null,
@@ -1880,6 +1889,8 @@ export class ProjectRuntime {
     // Explicit public views only. Never expose Run.configuration or provider credentials.
     return {
       settings: this.settings(),
+      workflowDefinitions:(workflowSnapshot?.definitions??[]).map(workflowDefinitionView),
+      workflowRuns:(workflowSnapshot?.runs??[]).map(flow=>({workflowRunId:flow.workflowRunId,workflowId:flow.workflowId,projectId:flow.projectId??null,taskId:flow.taskId??null,runId:flow.runId??null,definitionRevision:flow.definitionRevision,title:flow.title,createdAt:flow.createdAt,state:flow.state,definition:workflowDefinitionView(flow.definition),dispatches:flow.dispatches??[],steps:flow.steps.map(step=>({stepId:step.stepId,nodeId:step.nodeId,title:step.title,kind:step.kind,state:step.state,reason:step.reason??null,taskId:step.taskId??null,runId:step.runId??null,reportId:step.reportId??null,summary:step.summary??null,attemptCount:step.attemptCount}))})),
       viewContext: {role:"planner",scope:"all",nodeId:this.nodeId,observedAt:data.generatedAt},
       projectCollaborations,
       projectRegistrations: (data.projectRegistrations ?? []).map(r => ({
@@ -1934,7 +1945,7 @@ export class ProjectRuntime {
         parentTaskId:data.tasks.find(t=>t.taskId===r.taskId)?.parentTaskId ?? null,
         outcome:r.outcome ?? null,
         observationOnly:!!r.observationOnly,
-        executionDriver:(r.observationOnly ? "source" : r.route?.backend ? "official-codex" : "dsh"),
+        executionDriver:(r.configuration&&typeof r.configuration==="object"&&!Array.isArray(r.configuration)&&r.configuration.workflowInvocation?"workflow":r.observationOnly ? "source" : r.route?.backend ? "official-codex" : "dsh"),
         reasoningEffort:r.route?.reasoningEffort ?? null,
         sessionIds:r.sessionIds,
         taskId: r.taskId,
@@ -1966,6 +1977,31 @@ export class ProjectRuntime {
       sampledAt: now(),
     };
   }
+  createDirectTask(input:{commandId:string;projectId:string;title:string;description:string;routeId:string;start:boolean}) {
+    this.authorize();
+    const created=this.ledger.managementCommand(input.commandId,"project-agent-task",input,()=>{
+      const project=this.workbench.snapshot().projects.find(p=>p.projectId===input.projectId&&p.state!=="archived");
+      if(!project)throw new TaskError("NOT_FOUND","Project unavailable");
+      const selected=new ScheduledPlans(this.ledger).options().routes.find(r=>r.id===input.routeId);
+      if(!selected)throw new TaskError("CONFLICT","Execution route changed; refresh before creating a task");
+      const task=this.ledger.prepareWorkflowTask({title:input.title,description:input.description,tags:["project-task"],...(selected.route.backend?{policy:{allowedBackends:[selected.route.backend]}}:{})});
+      const backlogId=`direct-backlog:${input.projectId}`;
+      this.db.prepare("INSERT OR IGNORE INTO wb_backlogs(backlog_id,revision,project_id,title,goal,state,priority,criteria) VALUES(?,1,?,'项目任务',?,'open','normal','[]')").run(backlogId,input.projectId,project.goal);
+      this.db.prepare("INSERT INTO wb_backlog_tasks(backlog_id,task_id) VALUES(?,?)").run(backlogId,task.taskId);
+      this.db.prepare("INSERT INTO pr_task_routes VALUES(?,?)").run(task.taskId,canonical(selected.route));
+      return {taskId:task.taskId};
+    });
+    const run=input.start?this.runDirectTask({commandId:`project-task-start:${input.commandId}`,taskId:created.taskId}):null;
+    return {taskId:created.taskId,...(run?{runId:run.runId}:{})};
+  }
+  runDirectTask(input:{commandId:string;taskId:string}) {
+    this.authorize();
+    const row=this.db.prepare("SELECT route FROM pr_task_routes WHERE task=?").get(input.taskId);
+    if(!row)throw new TaskError("NOT_FOUND","Task execution settings unavailable");
+    const route=JSON.parse(String(row.route)) as import("./contracts.js").ExecutionRoute;
+    this.ledger.validateRoute(route);
+    return this.ledger.createRun(input.commandId,{taskId:input.taskId,route}).value;
+  }
   scheduleOptions() { this.authorize(); return new ScheduledPlans(this.ledger).options(); }
   createScheduledPlan(input:unknown) { this.authorize(); return new ScheduledPlans(this.ledger).create(input); }
   controlScheduledPlan(input:unknown) { this.authorize(); return new ScheduledPlans(this.ledger).control(input); }
@@ -1994,6 +2030,8 @@ export class ProjectRuntime {
       artifacts:all.artifacts.filter(a=>a.taskId&&ids.has(a.taskId)),milestones:all.milestones.filter(m=>projectIds.has(m.projectId)),schedules:all.schedules.filter(s=>ids.has(s.taskId)),
       projectCollaborations:all.projectCollaborations.filter(c=>c.ownerNodeId===nodeId),
       projectRegistrations:all.projectRegistrations.filter(r=>projectIds.has(r.projectId)),
+      workflowDefinitions:all.workflowDefinitions.filter(flow=>flow.projectId&&projectIds.has(flow.projectId)),
+      workflowRuns:all.workflowRuns.filter(flow=>flow.taskId&&ids.has(flow.taskId)).map(flow=>({...flow,steps:flow.steps.filter(step=>step.nodeId===nodeId||step.taskId&&ids.has(step.taskId))})),
       nodes:all.nodes.filter(n=>n.nodeId===nodeId||runs.some(r=>r.node===n.nodeId)),
       viewContext:{role:"executor",scope:"node",nodeId,observedAt:all.sampledAt},
     };
