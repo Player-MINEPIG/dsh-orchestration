@@ -473,6 +473,7 @@ test('new project exposes real model choices without a default, preserves draft 
  const catalog={defaultSelection:null,providers:[{id:'live',name:'Live',models:[{id:'real',name:'Real model',reasoningEfforts:['low','high']}]}]};
  let pending=p.action('create');assert.equal(p.requests[0].method,'conversationModels');await p.answer({value:catalog});await pending;
  assert.match(p.overlay(),/尚未配置默认统筹模型/);assert.match(p.overlay(),/选择目录/);assert.match(p.overlay(),/创建项目<\/button>/);
+ const form=p.overlay().match(/<form id="create-form">([\s\S]*?)<\/form>/)[1];for(const button of form.matchAll(/<button\b[^>]*>/g))assert.match(button[0],/type="button"/,'setup buttons must not implicitly submit project creation');
  vm.runInContext("document.getElementById('new-title');document.getElementById('new-goal');",p.context);p.elements.get('new-title').value='Saved name';p.elements.get('new-goal').value='Saved goal';
  p.documentEvents.change({target:{id:'project-provider',value:'live'}});p.documentEvents.change({target:{id:'project-model',value:'real'}});p.documentEvents.change({target:{id:'project-effort',value:'high'}});
  assert.match(p.overlay(),/value="Saved name"/);assert.match(p.overlay(),/>Saved goal<\/textarea>/);
