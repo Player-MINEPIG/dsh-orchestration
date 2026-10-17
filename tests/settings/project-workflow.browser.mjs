@@ -274,9 +274,9 @@ try {
     .getByText("执行调用图", { exact: true })
     .waitFor();
   await app
-    .locator('[data-action="workflow-open"]')
-    .filter({ hasText: "编辑调用图" })
+    .locator('.project-flow-stage [data-action="workflow-stage"]')
     .click();
+  await app.locator('#leave-stage').click();
   await app.locator('[data-card="prepare"]').waitFor();
   const reopenedPosition = await app
     .locator('[data-card="prepare"]')
@@ -289,6 +289,13 @@ try {
     savedPosition,
     "reopened editor uses persisted coordinates",
   );
+  await app.locator('#workflow-result-settings summary').click();
+  await app.locator('#workflow-result-mode').selectOption('explicit');
+  await app.locator('[data-result-step="fixture"]').waitFor();
+  assert.equal(await app.locator('[data-result-step="fixture"]').isChecked(), true);
+  await app.locator('#save-workflow').click();
+  await app.locator('#revision').getByText('版本 3', {exact:true}).waitFor();
+  assert.deepEqual(workflows.snapshot().definitions.find(row=>row.workflowId==='browser-flow').resultStepIds,['fixture']);
   await app.locator("#back-project").click();
   await app.locator('[data-action="project-create-task"]').click();
   await app.locator('[data-plan="title"]').fill("手动工作流任务");

@@ -235,7 +235,7 @@
       return;
     }
     $("definition-editor").innerHTML =
-      `<div class="fields"><div><label for="workflow-title">工作流名称</label><input id="workflow-title" value="${esc(def.title)}"></div><div><label for="workflow-description">说明</label><input id="workflow-description" value="${esc(def.description)}"></div></div><p class="muted">流程属于当前项目。参数与触发方式在任务中配置。</p>`;
+      `<div class="fields"><div><label for="workflow-title">工作流名称</label><input id="workflow-title" value="${esc(def.title)}"></div><div><label for="workflow-description">说明</label><input id="workflow-description" value="${esc(def.description)}"></div></div><p class="muted">流程属于当前项目。参数与触发方式在任务中配置。</p><details id="workflow-result-settings"${Array.isArray(def.resultStepIds)?' open':''}><summary>最终输出：${Array.isArray(def.resultStepIds)?'已选 '+def.resultStepIds.length+' 个步骤':'自动采用全部末端步骤'}</summary><label>最终输出来源<select id="workflow-result-mode"><option value="auto"${!Array.isArray(def.resultStepIds)?' selected':''}>自动：全部末端步骤</option><option value="explicit"${Array.isArray(def.resultStepIds)?' selected':''}>选择具体步骤</option></select></label>${Array.isArray(def.resultStepIds)?def.steps.map(step=>`<label class="dependency"><input type="checkbox" data-result-step="${esc(step.stepId)}"${def.resultStepIds.includes(step.stepId)?' checked':''}>${esc(step.title)}</label>`).join(''):'<p class="muted">有多个末端步骤时，最终报告会保留全部输出。</p>'}</details>`;
   }
   function normalized(value) {
     const def = clone(value);
@@ -341,7 +341,7 @@
     ).map((row) => ({
       ...row.position,
       w: state.focusStage ? 230 : 250,
-      h: state.focusStage ? 115 : 140,
+      h: (state.focusStage ? 115 : 140) + Math.max(0, Math.ceil(row.title.length / 16) - 1) * 24,
       id: state.focusStage ? row.stepId : row.stageId,
       row,
     }));
@@ -1064,6 +1064,17 @@
     if (run() || !state.draft) return;
     const step = selectedStep();
     try {
+      if(el.id==='workflow-result-mode') {
+        if(el.value==='auto') delete state.draft.resultStepIds;
+        else state.draft.resultStepIds=state.draft.steps.filter(step=>!state.draft.calls.some(call=>call.fromStepId===step.stepId)).map(step=>step.stepId);
+        setDirty();renderDefinitionEditor();return;
+      }
+      if(el.dataset.resultStep) {
+        const selected=new Set(state.draft.resultStepIds||[]);
+        if(el.checked)selected.add(el.dataset.resultStep);else selected.delete(el.dataset.resultStep);
+        if(!selected.size){el.checked=true;throw Error('请至少选择一个最终输出步骤，或改用自动模式');}
+        state.draft.resultStepIds=[...selected];setDirty();return;
+      }
       if (el.id === "step-kind") {
         step.maxRetries = el.value === "program" ? 0 : 2;
         step.execution =
