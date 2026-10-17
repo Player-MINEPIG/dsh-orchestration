@@ -1,6 +1,6 @@
 {
   "ok": true,
-  "checkedAt": "2026-10-17T18:20:47.273371+00:00",
+  "checkedAt": "2026-10-17T18:51:50.096925+00:00",
   "baseCommit": "076def057dbaf45bb721d598a994031ff8a205ec",
   "runtimeVersion": "0.2.1-rc.2",
   "nodeVersion": "26.5.1",
@@ -44,8 +44,8 @@
     "required": {
       "command": "PATH=/opt/homebrew/opt/node/bin:$PATH npm run check",
       "exitCode": 0,
-      "tests": 982,
-      "passed": 977,
+      "tests": 983,
+      "passed": 978,
       "failed": 0,
       "skipped": 5,
       "suiteOrder": [
@@ -65,7 +65,7 @@
           52,
           78,
           106,
-          25
+          26
         ],
         "pass": [
           602,
@@ -74,7 +74,7 @@
           52,
           78,
           106,
-          21
+          22
         ],
         "fail": [
           0,
@@ -95,7 +95,7 @@
           4
         ]
       },
-      "log": "/private/tmp/dsh-rc2-check-final.log"
+      "log": "/private/tmp/dsh-rc2-check-with-proxy.log"
     },
     "activation": {
       "command": "node --test packages/task-system/test/official-activation.test.mjs",
@@ -131,12 +131,27 @@
     "dependencyTree": {
       "command": "npm ls --depth=0",
       "exitCode": 0
+    },
+    "proxyRegression": {
+      "tests": 8,
+      "passed": 8,
+      "failed": 0,
+      "actualClientAssets": [
+        "0.2.0-rc.2 transforms one settings mirror gate",
+        "0.2.1-rc.2 passes through byte-for-byte"
+      ],
+      "log": "/private/tmp/dsh-rc2-check-with-proxy.log"
     }
   },
   "limitations": [
-    "The aggregate test:settings:official script stops at staged-form-smoke because the official rc2 runtime ships UI primitives inside frontend assets and lacks the fixture’s standalone dsh-client-ui-primitives/lib/index.js. Official settings and startup subcommands passed separately. No rendered-browser pass is claimed.",
+    "The aggregate test:settings:official script stops at staged-form-smoke because the official rc2 runtime ships UI primitives inside frontend assets and lacks the fixture’s standalone dsh-client-ui-primitives/lib/index.js. Official settings and startup subcommands passed separately. This compatibility fixture does not establish a rendered-browser pass; subsequent isolated and production browser checks are recorded in dsh-0.2.1-rc2/proxy.json and deployment.json.",
     "No live model inference, Feishu message delivery, or production deployment was performed by this compatibility worker.",
     "The original dirty checkout and runtime model configuration were not changed."
   ],
-  "deploymentEvidence": "docs/validation/dsh-0.2.1-rc2/deployment.json"
+  "deploymentEvidence": "docs/validation/dsh-0.2.1-rc2/deployment.json",
+  "postDeployment": {
+    "MBP": "verified-complete; official UI HMR without process restart",
+    "aliyun-vps": "verified-complete; minimal runtime switch and rc2 settings proxy compatibility",
+    "PC_AU": "pending explicit authorization to message existing remote execution chat"
+  }
 }

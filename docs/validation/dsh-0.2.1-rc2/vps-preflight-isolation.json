@@ -1,0 +1,12 @@
+{
+  "home": "/opt/dsh-production/releases/task-system-0.2.24-rc2/preflight-home",
+  "taskConfigs": 1,
+  "remoteConfigs": 1,
+  "credentialFieldsReplaced": 0,
+  "copiedEnvFiles": false,
+  "network": "undici MockAgent denies all connections",
+  "autoExecute": false,
+  "schedulerEnabled": false,
+  "remotePaused": true,
+  "productionAuthWriterDisabled": true
+}

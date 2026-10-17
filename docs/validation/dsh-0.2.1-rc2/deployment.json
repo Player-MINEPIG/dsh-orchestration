@@ -14,27 +14,32 @@
       "profile": "/Users/pmp/.dsh/profiles/web",
       "activeSessionObserved": true,
       "observation": "Existing authenticated browser at 127.0.0.1:3080 showed an ongoing generation and Stop generating button",
-      "updateState": "deferred until quiescent",
+      "updateState": "verified-complete",
       "deferredFollowup": {
         "id": "mbp-dsh",
         "cadence": "every 10 minutes",
         "owner": "parent chat",
         "stopWhen": "verified update completes",
-        "idleCheck": "existing authenticated UI and task job/queue/lease state"
-      }
+        "idleCheck": "existing authenticated UI and task job/queue/lease state",
+        "state": "completed",
+        "status": "PAUSED"
+      },
+      "actualRuntime": "0.2.1-rc.2",
+      "actualTaskPlugin": "0.2.24",
+      "restartPerformed": false,
+      "processId": 6574,
+      "evidence": "mbp-install.json"
     },
     "aliyun-vps": {
       "initialRuntime": "0.2.0-rc.2",
       "initialTaskPlugin": "0.2.23",
       "service": "dsh-production-web.service",
       "profile": "/root/.dsh/profiles/web",
-      "runtimePath": "/root/.dsh/runtime",
+      "runtimePath": "/opt/dsh-production/releases/runtime-0.2.1-rc.2",
       "nodeVersion": "v24.13.0",
       "activeTaskRunsBefore": 0,
       "activeAttemptsBefore": 0,
-      "updateState": "old production restored; compatible rc2 profile staged; isolated startup validation in progress",
-      "restoredRuntime": "0.2.0-rc.2",
-      "restoredTaskPlugin": "0.2.23",
+      "updateState": "verified-complete",
       "rollbackVerified": {
         "systemd": "active/running",
         "restarts": 0,
@@ -48,30 +53,91 @@
       },
       "maintenanceEvents": [
         {
-          "event": "initial launch rejected readiness probe --patch after web subcommand"
+          "event": "Probe --patch placed after web was rejected; production service restarted before rollback was initiated",
+          "stoppedAt": "2026-10-17T18:21:58.080178+00:00"
         },
         {
-          "event": "global --patch route required explicit --profile; corrected probe launch still rejected"
+          "event": "Global probe --patch required explicit --profile; restored complete original profile/runtime and reset systemd start-rate limit",
+          "restoredAt": "2026-10-17T18:24:36.247992+00:00"
         },
         {
-          "event": "restored complete prior profile and runtime; cleared systemd start-rate limit"
+          "event": "Rollback HTTP ready and authenticated task/provider UI confirmed",
+          "readyAt": "2026-10-17T18:24:47+00:00"
         },
         {
-          "event": "restored HTTP response and authenticated task/provider UI verified",
-          "observedAt": "2026-10-18T02:24:47+08:00"
+          "event": "Minimal runtime-only switch reached backend ready, but old identity proxy rejected rc2 settings assets; rolled back immediately",
+          "stoppedAt": "2026-10-17T18:33:01.002449+00:00",
+          "backendReadyAt": "2026-10-17T18:33:19+00:00",
+          "rollbackReadyAt": "2026-10-17T18:35:01+00:00"
+        },
+        {
+          "event": "Explicit old/new asset adapter passed isolated real browser and authentication tests; final minimal switch plus proxy fix passed real production UI",
+          "stoppedAt": "2026-10-17T18:44:52.482523+00:00",
+          "backendReadyAt": "2026-10-17T18:45:14+00:00"
         }
-      ]
+      ],
+      "actualRuntime": "0.2.1-rc.2",
+      "actualTaskPlugin": "0.2.24",
+      "actualSubscriptions": "0.9.9-rc2.1",
+      "actualFallbacks": "0.6.6",
+      "processId": 1381756,
+      "systemd": "active/running",
+      "restarts": 0,
+      "backup": "/opt/dsh-production/releases/task-system-0.2.24-rc2/backup-final-proxy",
+      "finalStoppedAt": "2026-10-17T18:44:52.482523+00:00",
+      "finalBackendReadyAt": "2026-10-17T18:45:14+00:00",
+      "finalBackendMaintenanceSeconds": 22,
+      "originalProfilePatchUnchanged": true,
+      "taskRunAttemptScheduleTemplateRowsUnchanged": true,
+      "compatibilityExemptionsAdded": false,
+      "probeAddedToProductionExecStart": false,
+      "authenticatedUi": {
+        "runtimeVersion": "0.2.1-rc.2",
+        "failedPluginsBanner": false,
+        "ordinarySidebarHistoryLoaded": true,
+        "defaultModel": "GPT-6.1-Sol / High (unchanged)",
+        "taskSettingsConfigurationLoaded": true,
+        "taskSettingsRole": "both",
+        "executorCapacities": {
+          "MBP": 2,
+          "PC_AU": 2
+        },
+        "originalExecutionDirectoriesPreserved": true,
+        "localQueueEmpty": true,
+        "settingsSaveDisabledNoDraft": true
+      },
+      "authenticatedSessionRpc": {
+        "method": "existing Tailscale identity proxy, regular session/list RPC",
+        "httpStatus": 200,
+        "sessionCount": 18,
+        "runningSessions": 0
+      },
+      "evidence": [
+        "vps-cutover.json",
+        "vps-ledger.json",
+        "vps-native-preflight.json",
+        "vps-preflight-isolation.json",
+        "proxy.json"
+      ],
+      "testCleanup": {
+        "isolatedHostAndRelayStopped": true,
+        "ports3095To3097Closed": true,
+        "localTunnel13957Absent": true,
+        "productionUnaffected": true
+      }
     },
     "PC_AU": {
       "initialTaskPlugin": "0.2.23",
-      "updateState": "awaiting existing remote chat access authorization"
+      "updateState": "awaiting existing remote chat access authorization",
+      "reason": "SSH unavailable; explicit authorization to message existing remote chat not yet received; no remote change performed."
     }
   },
   "hotReload": {
     "supportedByHost": true,
     "preservesActiveTaskAgents": false,
     "reason": "Official HMR reconciles profile while task-system provider.dispose cancels owned agents; defer until no active sessions, Codex jobs or execution leases.",
-    "mbpObservedStillGenerating": true
+    "mbpObservedStillGenerating": false,
+    "mbpOutcome": "Waited until all sessions and task execution state idle, then official plugin manager HMR activated 0.2.24 without restarting PID 6574."
   },
   "artifacts": {
     "taskSystem": {
@@ -95,5 +161,13 @@
     "codeReview": "parent and execution agent reviewed; no blocking findings",
     "addedCommentReview": "0 added/changed comment lines or suppressions in migrated source and activation test",
     "diffCheck": true
-  }
+  },
+  "completedHosts": [
+    "MBP",
+    "aliyun-vps"
+  ],
+  "pendingHosts": [
+    "PC_AU"
+  ],
+  "checkedAt": "2026-10-17T18:51:34.406786+00:00"
 }

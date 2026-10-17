@@ -1,0 +1,56 @@
+{
+  "checkedAt": "2026-10-17T18:45:14.650365+00:00",
+  "cause": {
+    "component": "existing authenticated Tailscale reverse proxy settings asset adapter",
+    "before": "The old adapter required the 0.2.0-rc.2 persistence/isLoopback statement and returned HTTP 502 for the new settings module, causing client dependency load failures.",
+    "actualOldModule": "0.2.0-rc.2 sets persistence from ctx.remote.$host.isLoopback",
+    "actualNewModule": "0.2.1-rc.2 directly creates SettingsSchemaService and SettingsDescribeMirror; no persistence or isLoopback identifier occurs in that module."
+  },
+  "change": {
+    "source": "scripts/web-auth/tailscale-dsh-proxy.mjs",
+    "settingsModuleScope": "exact unique ModuleLoader settings registration through its factory footer",
+    "legacy": "replace exactly one legacy mirror gate within the settings module",
+    "rc2": "recognize exact apply and ConfigForms initialization and forward the entire asset unchanged",
+    "unknownOrAmbiguous": "reject; no generic expression rewrite",
+    "authenticationCodeChanged": false
+  },
+  "verification": {
+    "focusedHttpTests": {
+      "tests": 8,
+      "passed": 8,
+      "unauthenticatedOrForeignIdentity": 403,
+      "hostileOriginRpc": 403,
+      "unknownOrDuplicateClient": 502
+    },
+    "actualInstalledOfficialAssets": {
+      "0.2.0-rc.2": "one legacy statement changes",
+      "0.2.1-rc.2": "byte-identical pass-through"
+    },
+    "isolatedBrowser": {
+      "runtime": "0.2.1-rc.2",
+      "ordinaryUiLoaded": true,
+      "failedPluginsBanner": false,
+      "nativeTaskSettingsConfigurationAndQueueLoaded": true,
+      "subscriptionProviderControlsLoaded": [
+        "Codex",
+        "Claude",
+        "Grok",
+        "Copilot",
+        "Antigravity"
+      ],
+      "realCredentials": false,
+      "modelInference": false,
+      "isolation": "separate DSH_HOME and databases; scheduler off; remote paused; outbound undici connections blocked; loopback-only synthetic identity relay through SSH tunnel"
+    },
+    "productionBrowser": {
+      "ordinaryUiLoaded": true,
+      "runtimeVersion": "0.2.1-rc.2",
+      "failedPluginsBanner": false,
+      "nativeTaskSettingsConfigurationAndQueueLoaded": true,
+      "existingSessionHistoryLoaded": true,
+      "modelInference": false,
+      "authenticationBoundaryChanged": false
+    }
+  },
+  "deployedProxySha256": "0d92ae683b05bfef1ac9238dedd4e4b5886f35fce6ff68ef2a85721482fcac87"
+}

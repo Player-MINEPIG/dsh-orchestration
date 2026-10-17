@@ -47,9 +47,24 @@ export async function latestLaunchToken(logPath) {
 // This opt-in applies only to assets served through the owner-authenticated
 // proxy. Keep connection.isLoopback and every server authentication fence intact.
 const settingsMirrorGate = 'const persistence = ctx.remote.$host.isLoopback ? "host" : "memory";';
+const settingsRegistration = 'window.__ModuleLoader__.load({\n\tid: "@deepseek-ai/dsh-client-ui-settings",\n\tfactory: (require) => {';
+const settingsFooter = '\n\t\treturn module.exports;\n\t}\n});';
+const nativeSettingsApply = 'function apply(ctx) {\n\t\t\tconst schema = new SettingsSchemaService(ctx);\n\t\t\tconst mirror = new SettingsDescribeMirror(ctx);';
+const nativeConfigForms = 'new ConfigForms(ctx, {\n\t\t\t\tmirror,\n\t\t\t\tschema\n\t\t\t});';
 export function enableHostSettings(source) {
-  if (source.split(settingsMirrorGate).length !== 2) throw new Error('Unsupported DSH settings client');
-  return source.replace(settingsMirrorGate, 'const persistence = "host";');
+  const unsupported = () => { throw new Error('Unsupported DSH settings client'); };
+  if (source.split(settingsRegistration).length !== 2) return unsupported();
+  const start = source.indexOf(settingsRegistration);
+  const end = source.indexOf(settingsFooter, start);
+  if (end < 0) return unsupported();
+  const module = source.slice(start, end + settingsFooter.length);
+  const oldGates = module.split(settingsMirrorGate).length - 1;
+  const nativeApplies = module.split(nativeSettingsApply).length - 1;
+  if (oldGates === 1 && nativeApplies === 0) {
+    return source.slice(0, start) + module.replace(settingsMirrorGate, 'const persistence = "host";') + source.slice(end + settingsFooter.length);
+  }
+  if (oldGates === 0 && nativeApplies === 1 && module.split(nativeConfigForms).length === 2 && !/\b(persistence|isLoopback)\b/.test(module)) return source;
+  return unsupported();
 }
 function settingsAsset(req, config) {
   if (config.hostSettings !== true || !['GET', 'HEAD'].includes(req.method)) return false;

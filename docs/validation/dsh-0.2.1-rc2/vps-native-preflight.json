@@ -1,0 +1,43 @@
+{
+  "sampledAt": "2026-10-17T18:41:38.737Z",
+  "nodeId": "VPS-RC2-PREFLIGHT",
+  "native": true,
+  "sessionController": true,
+  "sessions": 0,
+  "runningSessions": 0,
+  "activeRuns": 0,
+  "activeAttempts": 0,
+  "tasks": 0,
+  "providers": [
+    "codex",
+    "claude",
+    "grok",
+    "copilot",
+    "antigravity",
+    "FallbacksChain",
+    "deepseek-official",
+    "deepseek-account"
+  ],
+  "workspaceController": true,
+  "storageDomain": true,
+  "remote": {
+    "role": "planner",
+    "nodeId": "VPS-RC2-PREFLIGHT",
+    "paused": true,
+    "coordinatorConfigured": false,
+    "endpoint": null,
+    "pollIntervalMs": 0,
+    "concurrency": 2,
+    "polling": false,
+    "authMode": "trusted-network",
+    "executorIdentity": null,
+    "taskSessionsEnabled": true
+  },
+  "tools": [
+    "task_create",
+    "task_run",
+    "task_delegate",
+    "task_settle",
+    "activity_report_submit"
+  ]
+}

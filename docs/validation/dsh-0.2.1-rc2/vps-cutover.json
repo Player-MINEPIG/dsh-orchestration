@@ -1,0 +1,9 @@
+{
+  "stoppedAt": "2026-10-17T18:44:52.482523+00:00",
+  "activeBefore": [],
+  "allVisibleSessionsIdle": true,
+  "localQueueEmpty": true,
+  "localCodexPluginMounted": false,
+  "execStart": "/root/.dsh/runtime-node/bin/node /opt/dsh-production/releases/runtime-0.2.1-rc.2/node_modules/@deepseek-ai/dsh/lib/bin.js web --host 127.0.0.1 --port 3085 --no-open --trusted-host izbp11roeflhmn04yssxm4z.tail435ecd.ts.net:10000",
+  "backup": "/opt/dsh-production/releases/task-system-0.2.24-rc2/backup-final-proxy"
+}

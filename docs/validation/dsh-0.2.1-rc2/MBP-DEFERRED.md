@@ -1,4 +1,9 @@
-# MBP deferred installation
+# MBP deferred installation — completed
+
+Completed after the original task became idle. See `mbp-install.json`: task-system
+`0.2.24` was activated through official profile HMR; PID 6574 was not restarted.
+The follow-up `mbp-dsh` is completed and paused. The remainder records the idle
+gate and installation playbook used during this upgrade.
 
 The runtime is already `0.2.1-rc.2`. The existing authenticated browser at
 `http://127.0.0.1:3080/` showed an ongoing generation during this upgrade.
@@ -34,5 +39,4 @@ host's invocation and restart it only while idle. Do not enable or restart the
 unloaded launchd service merely to force the update. Runtime model selections,
 workflow node models and scheduled task models stay as configured.
 
-The parent chat owns the deferred follow-up and must record its actual outcome;
-this playbook is not a claim that the update has already occurred.
+The actual outcome is recorded in `mbp-install.json` and `deployment.json`.

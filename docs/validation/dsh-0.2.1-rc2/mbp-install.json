@@ -1,0 +1,196 @@
+{
+  "host": "MBP",
+  "checkedAt": "2026-10-17T18:37:44.577755+00:00",
+  "state": "verified-complete",
+  "runtime": "0.2.1-rc.2",
+  "beforeTaskPlugin": "0.2.23",
+  "targetTaskPlugin": "0.2.24",
+  "packageSha256": "bb156bb01afd9661ec29ce94a8bf31feb746ada8e52f0d3c8bc95b80e4513bd2",
+  "baseline": {
+    "ordinaryUi": "loads with no Failed to load plugins banner",
+    "taskSettings": "0.2.23 rejected as incompatible with rc.2; no components mounted",
+    "unrelatedTavern": "also marked abnormal; untouched",
+    "allSessionUi": {
+      "count": 23,
+      "includesArchived": true,
+      "stopGeneratingButtons": 0,
+      "queuedInputsVisible": false,
+      "latestSession": "completed; both background shell jobs terminal"
+    },
+    "localCodex": "bundle default disabled; no config override, no session-codex.sqlite exists",
+    "localTaskLedger": {
+      "runRows": 0,
+      "attemptRows": 0,
+      "resources": 0,
+      "workflowRuns": 0,
+      "nativeResults": 0
+    },
+    "remoteDispatchStates": {
+      "acknowledged": 29,
+      "cancelled": 1
+    },
+    "remoteOutboundHistory": {
+      "done": 571,
+      "uncertain": 4,
+      "sendingExpiredRead": 1,
+      "uncertainMatchingTerminalDispatch": 3,
+      "unmatchedHistoricalClaim": 1
+    }
+  },
+  "preservationBaselineHashes": {
+    "profiles/web/cordis.yml": "c300dcf2ebc5f02062d6591268d29d3db6fe45e0cb138f5467276fe2ba06076e",
+    "profiles/web/cordis.patch.yml": "4bc61b1709087110237b45f34a63f448e31f3a40263a310766bb5722e110b6d2",
+    ".credentials.yaml": "2fc8a445d9a6c5724c0699021cb89f48684839db08cc1dd9e555675289bd5a06",
+    "storages/workspace.json": "55b7d5770e436b98a93229810e060bb254af2e9f29904f4cc06dc87db0d9053c",
+    "storages/session_projcache.json": "adf13597d978654e7587ad9307af9b143b7f240f376eed48b909d7f908b954f3",
+    "storages/session_projcache/sessions/session-a6de0774-cf29-4ec5-8836-083e629da613.json": "58aae80a9e5dd33c7d162316bfb6783289c4f38d74f9ec8a5931f79c65d5853e",
+    "storages/session_projcache/sessions/session-0277ce26-6c02-4018-be67-b73fff1aa1a3.json": "5ace7f5394f83f73c8c3c6b8ba4a29cad4a720fb234a9986cf255fda31feb40d",
+    "storages/session_projcache/sessions/session-001ab555-d632-473f-a14d-525787e12f3f.json": "416b803c4671118c339b9c2bdc8ba204e36fb90837a851e1a43b900d92606f8f",
+    "storages/session_projcache/sessions/session-5b1111bd-d2aa-479a-94a9-5c21548305e0.json": "3ff45dd88fd51813911275278905d175a2d2554cc0a9fee5540efa0a81d260bd",
+    "storages/session_projcache/sessions/session-1fceae81-de53-45c7-9547-74d4ea8974e3.json": "c1338cbc02c78e07c58cc3ce5f57152a91435eda58e5953e197d47827420c53d",
+    "storages/session_projcache/sessions/task-84b0d87d-46d9-4c69-a6bd-00bcc0ce77dd.json": "bed33d3c455f6580d199ee7b21ade2b9d585eeddcd25cd1ef8e1085be51dc5f7",
+    "storages/session_projcache/sessions/session-80accddc-09de-4ca8-8f86-58e3dc0d2ed5.json": "c53061addd94c0b7de90cc98f5c5c6217f3596025031902fa54274e349985277",
+    "storages/session_projcache/sessions/session-8060d57c-cedf-4118-88b8-b666a485d324.json": "64fe1b0237711193b17e55197170374a2abc0d2dafd11389b180312e219f0a30",
+    "storages/session_projcache/sessions/task-ccdf9b67-ea83-4297-acb9-30bb760d6ca1.json": "93841531ffe5eddd3aafafca48ae9f12867d235d271f33f56757623e6f462185",
+    "storages/session_projcache/sessions/session-978e5f84-4ed5-4821-aebe-b8c8dd7823d8.json": "3fb4cd0c64256ad1fd652a237381393d4de0a5f507a8a01d4945039e01b0a59a",
+    "storages/session_projcache/sessions/session-cc46d5ff-0a4d-4400-b597-5f159ab8f669.json": "df64998b48bf7570fcea3e972f8a735fc3a23acd81c44c7dd573ce9a2faedff6",
+    "storages/session_projcache/sessions/session-0fa0c66e-5efc-4775-a62c-6b41bec1e64b.json": "6c7f196568efd8e26fffea81ef2942121c44c110bc790177da596732fd4eda54",
+    "storages/session_projcache/sessions/task-0185c18b-0fab-4ffc-a0c3-f98477853a6f.json": "5293fb077f43937a0304da89598ad88d777b53048f5827d5f0a89d91c928ac1a",
+    "storages/session_projcache/sessions/task-4af9e28c-1ce7-4420-a205-65f663db6244.json": "091bceee151f60e53e82ebd7740f7c0ddb3d0f9bf9c831a74d442ded10b61755",
+    "storages/session_projcache/sessions/task-eec67ff7-0b80-4bc7-ad56-e47f0f46f2ca.json": "c17ba3013a93730266e737e7cde9c9a676627bd8d63b399d4791f33074280ec0",
+    "storages/session_projcache/sessions/acbc6717-cf42-4187-9063-3c9e964c9006.json": "963a0b2ef737616e763f18866e5ffaf9f40f91d86bd11a4394606c28dba24eb3",
+    "storages/session_projcache/sessions/session-91cb5441-c99e-4644-a4ca-e1d503367984.json": "f9ca23f35b535472fe8175777426c2b2f1aa6ea1d0de4941bad804ec5dc01f82",
+    "storages/session_projcache/sessions/session-fef67624-359e-47b9-adbd-ce350d42b518.json": "4e2acb29ba6df0a0d2ad5c664d8670c158dc834ca520c1a8edab9e0b6a33507f",
+    "storages/session_projcache/sessions/session-eb02f455-199d-425b-9884-f7189f9bf547.json": "5fb9a1e9b32aa1efbc631a6050911823e72919099cfb338c6b16a865b6ebf590",
+    "storages/session_projcache/sessions/session-eb84f7af-fc4a-4351-a659-1104afc4786c.json": "6155c4acba0db96984582b31458f9acc6cc210db56b0b74d403a5ece58eefd3c",
+    "storages/session_projcache/sessions/session-97873a79-3508-4755-8a5f-f772977a6f29.json": "185d8cd9e5aa9d1003a09e277604e70c14f4182c97ef478f2efe095eecbeb73b",
+    "storages/session_projcache/sessions/session-f536c70e-90d9-4b60-8edf-0141dca0c13a.json": "9ce3f7495246b6f4713447e44451d8ff570e5a959b941373c079fdc64e7bd2e6",
+    "storages/session_projcache/sessions/session-791120b5-f3c6-4ac9-8241-ab846c2b87d0.json": "e51a80920734ab0c4768b37b3d4bd05ddf8938f0438220f36aed5446f5ce930d",
+    "storages/session_projcache/sessions/session-007094ae-313e-4cd8-ab27-322a6df834e3.json": "2562af129c45a9c745378fa3a5cc80d4aad5e8abac9d962f3c091f96a01bf5a2",
+    "storages/session_projcache/sessions/task-8cc7f087-195e-4385-8cdb-0419ce50693e.json": "eedd930fda606119747e28e4f763ff7b733485e1b461c04e75a6e8a42dde02be",
+    "storages/session_projcache/sessions/task-9a5413b6-cb68-41e3-9816-a8b8bc6e9676.json": "7fdacef9ee024fe1fdc6145c24110dd284e2aa155be247c303e14f5b1b37be08"
+  },
+  "runtimeModelSettingsChanged": false,
+  "tavernChanged": false,
+  "restartPerformed": false,
+  "launchdChanged": false,
+  "backup": {
+    "path": "/Users/pmp/.dsh/releases/task-system-0.2.24-rc2/mbp-preinstall-20261017T183822Z",
+    "fullWebProfile": true,
+    "sqliteIntegrity": {
+      "tasks.sqlite.results.sqlite": "ok",
+      "remote-execution.sqlite": "ok",
+      "tasks.sqlite": "ok"
+    },
+    "accountConfigIncluded": true
+  },
+  "authorityIdle": {
+    "sampledAt": "2026-10-17T18:37:25.364Z",
+    "activeRuns": 0,
+    "activeAttempts": 0,
+    "activeResources": 0,
+    "mbpActive": []
+  },
+  "cliInstall": {
+    "exitCode": 0,
+    "log": "/private/tmp/dsh-rc2-mbp-install.log",
+    "actualInstalledVersion": "0.2.24"
+  },
+  "preservationAfterCli": {
+    "changedFiles": []
+  },
+  "runtimeLifecycle": {
+    "before": {
+      "manualPid": 6574,
+      "parentShellPid": 6125,
+      "tty": "ttys001",
+      "cwd": "/Users/pmp",
+      "invocation": "node /Users/pmp/.local/bin/dsh web"
+    },
+    "cliOnlyDoesNotReloadLiveProfile": true,
+    "officialUiInstallSameVerifiedPackageRequested": true,
+    "originalProcessStillRunning": true,
+    "afterPid": 6574,
+    "sameManualInvocation": true,
+    "restartPerformed": false
+  },
+  "completedAt": "2026-10-17T18:42:38.401691+00:00",
+  "installedVersion": "0.2.24",
+  "liveActivation": {
+    "method": "Official plugin-manager bundle disable then enable; HMR reconcileProfile",
+    "samePackageUiReinstall": "rejected as already installed; no duplicate installation",
+    "bundleEnabledFinal": true,
+    "bundleOrderRestored": true,
+    "originalBundleOrder": [
+      "@deepseek-ai/dsh-base",
+      "@deepseek-ai/dsh-web-app",
+      "dshmarket",
+      "pmp-dsh-tavern",
+      "dsh-jev-plugin",
+      "@dsh-task/task-system",
+      "@minepig/personal-agent-tasks"
+    ],
+    "componentsReportedRunning": 4,
+    "localCodexOptionalEnabled": false,
+    "localCodexDatabaseCreated": false,
+    "restartRequired": false
+  },
+  "verification": {
+    "freshFrontendReload": true,
+    "failedToLoadPluginsBanner": false,
+    "ordinarySessionLoads": true,
+    "ordinarySessionModel": "DeepSeek-V4.1-Flash / High (original)",
+    "nativeSessionTaskTab": {
+      "loads": true,
+      "total": 0
+    },
+    "nativeProjectTaskPage": {
+      "loads": true,
+      "authorityReadOnlyProjection": true,
+      "running": 0,
+      "queued": 0,
+      "cancelling": 0,
+      "needsReview": 3,
+      "completed": 27,
+      "cancelled": 3
+    },
+    "taskSettings": {
+      "customPluginConfigLoads": true,
+      "officialSettingsTabLoads": true,
+      "existingRole": "executor",
+      "queuePending": 0,
+      "saveDisabledNoDraft": true
+    },
+    "remoteConnection": {
+      "existingEndpointPreserved": true,
+      "identityCheck": "connected to coordinator task protocol; MBP authorized",
+      "heartbeat": "acknowledged by coordinator"
+    },
+    "providers": {
+      "DeepSeek": "API key configured",
+      "aws-vps-magpie": "API key configured"
+    },
+    "modelInferencePerformed": false,
+    "tasksCreated": 0
+  },
+  "preservationFinal": {
+    "all31TrackedFilesUnchanged": true,
+    "changedFiles": [],
+    "manifestNonDependencyFieldsUnchanged": true,
+    "onlyChangedDirectDependency": {
+      "@dsh-task/task-system": {
+        "before": "file:/Users/pmp/.dsh/releases/task-system-0.2.23-076def0/dsh-task-task-system-0.2.23.tgz",
+        "after": "file:/Users/pmp/.dsh/releases/task-system-0.2.24-rc2/dsh-task-task-system-0.2.24.tgz"
+      }
+    },
+    "compatibilityExemptionAdded": false
+  },
+  "limitations": [
+    "Unrelated pre-existing pmp-dsh-tavern 3.0.2 incompatibility remains and was not modified.",
+    "No live inference or task dispatch was performed; deployment verification used existing state and read-only connection checks."
+  ],
+  "reviewableBrowser": {
+    "tabId": "1076342166",
+    "url": "http://127.0.0.1:3080/"
+  }
+}

@@ -72,9 +72,11 @@ test('private startup token lookup handles large logs and chunk boundaries',asyn
 });
 
 const mirrorGate = 'const persistence = ctx.remote.$host.isLoopback ? "host" : "memory";';
+const settingsModule = body => 'window.__ModuleLoader__.load({\n\tid: "@deepseek-ai/dsh-client-ui-settings",\n\tfactory: (require) => {\n' + body + '\n\t\treturn module.exports;\n\t}\n});';
+const nativeSettings = settingsModule('function apply(ctx) {\n\t\t\tconst schema = new SettingsSchemaService(ctx);\n\t\t\tconst mirror = new SettingsDescribeMirror(ctx);\n\t\t\tnew ConfigForms(ctx, {\n\t\t\t\tmirror,\n\t\t\t\tschema\n\t\t\t});\n\t\t}');
 const settingsPath = '/plugins/??@deepseek-ai/dsh-client-ui-settings/client.js&rev=fixture';
 test('Host settings opt-in changes only the settings mirror behind owner authentication', async () => {
- const source = '/* 设置 */\n' + mirrorGate + '\n// connection.isLoopback stays unchanged';
+ const source = '/* 设置 */\n' + settingsModule(mirrorGate) + '\n// connection.isLoopback stays unchanged';
  for (const enabled of [false,true]) {
   const f = await fixture({hostSettings:enabled,asset:source});
   try {
@@ -93,8 +95,19 @@ test('Host settings opt-in changes only the settings mirror behind owner authent
   } finally {await f.close()}
  }
 });
+test('rc2 native settings mirror passes through unchanged behind the same owner fence', async () => {
+ const source = 'other.persistence; other.isLoopback;\n' + nativeSettings;
+ const f=await fixture({hostSettings:true,asset:source});
+ try {
+  const response=await request(f.port,settingsPath);
+  assert.equal(response.status,200);assert.equal(response.body,source);
+  assert.equal((await request(f.port,settingsPath,{host:authorized.host})).status,403);
+  assert.equal((await request(f.port,settingsPath,{...authorized,'x-forwarded-for':'100.64.0.2'})).status,403);
+  assert.equal((await request(f.port,'/api',{...authorized,origin:'https://attacker.test'})).status,403);
+ } finally {await f.close()}
+});
 test('an unsupported DSH client fails clearly instead of silently enabling a different contract', async () => {
- for(const source of ['changed client',mirrorGate + mirrorGate]) {
+ for(const source of ['changed client',settingsModule(mirrorGate + mirrorGate),nativeSettings + nativeSettings,nativeSettings.replace('SettingsDescribeMirror(ctx)','UnknownMirror(ctx)'),nativeSettings.replace('function apply(ctx)',mirrorGate+'function apply(ctx)'),nativeSettings.replace('function apply(ctx)','isLoopback; function apply(ctx)')]) {
   const f=await fixture({hostSettings:true,asset:source});
   try {assert.equal((await request(f.port,settingsPath)).status,502)} finally {await f.close()}
  }
