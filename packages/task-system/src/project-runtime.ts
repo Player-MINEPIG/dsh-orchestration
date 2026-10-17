@@ -1636,7 +1636,7 @@ export class ProjectRuntime {
       ).map((r) => [r.task, r]),
     );
     const workflowSnapshot=(this.ctx.get("taskSystem") as TaskSystemService | undefined)?.workflows.snapshot();
-    const workflowDefinitionView=(definition:NonNullable<typeof workflowSnapshot>["definitions"][number])=>({workflowId:definition.workflowId,projectId:definition.projectId??null,title:definition.title,description:definition.description,revision:definition.revision,stages:definition.stages??[],calls:definition.calls??[],steps:definition.steps.map(step=>({stepId:step.stepId,stageId:step.stageId??null,nodeId:step.nodeId,title:step.title,position:step.position??null,dependsOn:step.dependsOn,kind:step.execution.kind}))});
+    const workflowDefinitionView=(definition:NonNullable<typeof workflowSnapshot>["definitions"][number])=>({workflowId:definition.workflowId,projectId:definition.projectId??null,title:definition.title,description:definition.description,revision:definition.revision,resultStepIds:definition.resultStepIds??null,stages:definition.stages??[],calls:definition.calls??[],steps:definition.steps.map(step=>({stepId:step.stepId,stageId:step.stageId??null,nodeId:step.nodeId,title:step.title,position:step.position??null,dependsOn:step.dependsOn,kind:step.execution.kind}))});
     const workflowBindings=workflowSnapshot?.taskBindings??[];
     const tasks = data.tasks.map((t) => {
       const dispatch = dispatches.get(t.taskId);
@@ -1966,6 +1966,7 @@ export class ProjectRuntime {
         runId: r.runId,
         title: r.title,
         body: r.body,
+        workflowOutputs: r.workflowOutputs ?? [],
       })),
       artifacts: wb.artifacts.map((a) => ({ id: a.artifactId, ...a })),
       milestones: wb.milestones,
