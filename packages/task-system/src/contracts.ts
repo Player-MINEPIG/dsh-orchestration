@@ -242,9 +242,16 @@ export type SafeRetryWitness = RetryWitnessFacts &
         completedTools: CompletedToolFingerprint[];
       }
   );
+export interface WorkflowReportSource {
+  stepId: string;
+  taskId: string;
+  runId: string;
+  reportId: string;
+}
 export interface Report {
   reportId: string;
   taskId: string;
+  workflowOutputs?: WorkflowReportSource[];
   runId?: string;
   attemptId?: string;
   sessionId?: string;

@@ -85,6 +85,7 @@ export const WorkflowDefinition = z
       .array(z.object({ fromStepId: Id, toStepId: Id }).strict())
       .max(10000)
       .optional(),
+    resultStepIds: z.array(Id).min(1).max(100).optional(),
     revision: z.number().int().nonnegative(),
     title: z.string().min(1).max(500),
     description: z.string().max(20000),
