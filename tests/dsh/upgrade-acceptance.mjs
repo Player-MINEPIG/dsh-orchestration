@@ -18,7 +18,7 @@ const baselineDirectory = process.env.DSH_TEST_BASELINE_DIR && resolve(process.e
 const finalManifest = JSON.parse(readFileSync(join(results, 'final-pack-integrities.json')));
 const names = ['task-system', 'typed-decisions', 'remote-execution', 'feishu-channel'];
 const expectedVersions = { 'task-system': '0.1.1', 'typed-decisions': '0.1.0', 'remote-execution': '0.1.1', 'feishu-channel': '0.1.1' };
-const receipt = { ok: false, dshVersion: '0.2.0-rc.2', node: process.version, scratch, baselinePackages: [], finalPackages: [], stages: [], privateRegistryRequests: [] };
+const receipt = { ok: false, dshVersion: '0.2.1-rc.2', node: process.version, scratch, baselinePackages: [], finalPackages: [], stages: [], privateRegistryRequests: [] };
 const env = { ...process.env, DSH_HOME: join(scratch, 'home'), DSH_AGENTS_HOME: join(scratch, 'agents'), DSH_TELEMETRY_DISABLED: '1', XDG_DATA_HOME: join(scratch, 'data'), XDG_CACHE_HOME: join(scratch, 'cache'), XDG_STATE_HOME: join(scratch, 'state'), npm_config_cache: join(scratch, 'npm-cache'), npm_config_store_dir: process.env.DSH_TEST_STORE_DIR ?? join(scratch, 'pnpm-store'), npm_config_update_notifier: 'false', npm_config_fetch_retries: '0' };
 for (const key of Object.keys(env)) if (/^(DEEPSEEK|OPENAI|ANTHROPIC|GEMINI|GOOGLE_API|DSH_API|DSH_FEISHU|TYPESAFE_API)/.test(key)) delete env[key];
 mkdirSync(join(scratch, 'workspace'));

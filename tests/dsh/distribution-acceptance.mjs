@@ -9,7 +9,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const scratch = mkdtempSync(join(tmpdir(), 'dsh-task-distribution-'));
 const runtime = process.env.DSH_TEST_RUNTIME_DIR ? resolve(process.env.DSH_TEST_RUNTIME_DIR) : join(scratch, 'runtime');
-const receipt = { ok: false, dshVersion: '0.2.0-rc.2', upstreamCommit: '639ed015397290b3745d163aafe02ffee4aa3f84', node: process.version, scratch, stages: [] };
+const receipt = { ok: false, dshVersion: '0.2.1-rc.2', upstreamCommit: '687f282e8625c6b8d11ff58211a90524be2e4317', node: process.version, scratch, stages: [] };
 const env = {
   ...process.env,
   DSH_HOME: join(scratch, 'home'), DSH_AGENTS_HOME: join(scratch, 'agents'),
@@ -31,11 +31,11 @@ function run(command, args, options = {}) {
 function stage(name, detail = {}) { receipt.stages.push({ name, ok: true, ...detail }); process.stderr.write(`Passed: ${name}\n`); }
 try {
   if (!existsSync(join(runtime, 'node_modules', '@deepseek-ai', 'dsh', 'package.json'))) {
-    run('pnpm', ['--dir', runtime, 'add', '--save-exact', '--reporter=append-only', '--allow-build=@deepseek-ai/dsh-subprocess-local', '--allow-build=@google/genai', '--allow-build=koffi', '--allow-build=node-pty', '--allow-build=protobufjs', '@deepseek-ai/dsh@0.2.0-rc.2'], { timeout: 300000 });
+    run('pnpm', ['--dir', runtime, 'add', '--save-exact', '--reporter=append-only', '--allow-build=@deepseek-ai/dsh-subprocess-local', '--allow-build=@google/genai', '--allow-build=koffi', '--allow-build=node-pty', '--allow-build=protobufjs', '@deepseek-ai/dsh@0.2.1-rc.2'], { timeout: 300000 });
   }
   const require = createRequire(join(runtime, 'package.json'));
   const dshPackage = require.resolve('@deepseek-ai/dsh/package.json');
-  assert.equal(JSON.parse(readFileSync(dshPackage)).version, '0.2.0-rc.2');
+  assert.equal(JSON.parse(readFileSync(dshPackage)).version, '0.2.1-rc.2');
   const dshBin = join(dirname(dshPackage), 'lib', 'bin.js');
   stage('official-pinned-runtime');
   const dsh = args => run(process.execPath, [dshBin, ...args], { cwd: join(scratch, 'workspace') });

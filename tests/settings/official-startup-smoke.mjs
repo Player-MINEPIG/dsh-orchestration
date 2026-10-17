@@ -22,6 +22,8 @@ const { boot, initProfile, readProfilePatches } = await import(
   url("@deepseek-ai/dsh-app-boot")
 );
 const { ScriptedModel } = await import("../dsh/scripted-model.mjs");
+const { Peer } = await import(url("@deepseek-ai/dsh-client-connection"));
+let peer;
 const tmp = mkdtempSync(join(tmpdir(), "dsh-task-startup-"));
 const home = join(tmp, "home"),
   dir = join(home, "profiles", "startup-fixture");
@@ -82,6 +84,7 @@ const rows = [
     { root: join(tmp, "sessions"), compression: "none" },
   ],
   ["typert", "@deepseek-ai/dsh-typert-registry"],
+  ["remote-access", "@deepseek-ai/dsh-api-remote-access"],
   ["gateway", "@deepseek-ai/dsh-api-gateway"],
 ].map(([id, p, config]) => ({ id, name: url(p), config }));
 rows.push({id:"jev",name:"dsh-jev-plugin",config:{provider:"native",nativeProvider:"test-offline",model:"script",profiles:[{id:"a",name:"A",provider:"native",nativeProvider:"test-offline",model:"script"},{id:"b",name:"B",provider:"native",nativeProvider:"test-offline",model:"script"}]}});
@@ -115,9 +118,10 @@ const pass = (name) => {
   console.log(`PASS ${name}`);
 };
 const invoke = (method, args = {}) =>
-  ctx.typertGateway.invoke({ namespace: "taskPluginSettings", method, args });
+  ctx.typertGateway.invoke({ peer, namespace: "taskPluginSettings", method, args });
 try {
   ctx = await start();
+  peer = new Peer(ctx, { principal: { kind: "owner" } });
   ctx.get("taskSystem").ledger.registerWorkspace("fixture-workspace", {
     workspaceId: "default",
     nodeId: "fixture",
@@ -215,6 +219,7 @@ try {
   );
   await ctx.fiber.dispose();
   ctx = await start();
+  peer = new Peer(ctx, { principal: { kind: "owner" } });
   const reopened = await invoke("startup");
   assert.equal(reopened.task.values.defaultWorkspaceId, workspace.workspaceId);
   assert.equal(reopened.task.values.planningDecisionEnabled, false);
@@ -253,6 +258,7 @@ try {
   assert.equal(ctx.get("taskSystem").ledger.getNode("capacity-worker").maxConcurrent, 2);
   await ctx.fiber.dispose();
   ctx = await start();
+  peer = new Peer(ctx, { principal: { kind: "owner" } });
   assert.equal(ctx.get("taskSystem").ledger.getNode("capacity-worker").maxConcurrent, 2);
   assert.equal((await invoke("startup")).task.values.nodeCapacities[0].maxConcurrent, 2);
   const remoteEntry=ctx.get("configEditor").entries().find(entry=>entry.options.id==="task-remote-execution"), remoteFiber=remoteEntry.fiber;
@@ -266,6 +272,7 @@ try {
   const bindingResult=await saveDecisionPreference(ctx,{expected:view.revision,consumer:"task-planning",id:"b"});
   assert.equal(bindingResult.applies,"live");assert.equal(decisionEntry.fiber,decisionFiber);assert.equal(ctx.get("taskSystem").config.decisionBindings["task-planning"],"b");
   await ctx.fiber.dispose();ctx=await start();
+  peer = new Peer(ctx, { principal: { kind: "owner" } });
   assert.equal(ctx.get("remoteExecution").settingsSnapshot().concurrency,2);assert.equal(ctx.get("taskSystem").config.decisionBindings["task-planning"],"b");
   pass("official ConfigEditor hot-updates remote execution limits and decision bindings without replacing fibers; both persist across boot");
   pass("public capacity RPC updates the ledger without replacing either service and remains effective after a fresh host boot");

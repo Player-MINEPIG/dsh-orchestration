@@ -1,6 +1,6 @@
 # Remote execution inside a DSH host
 
-`@dsh-task/task-system/remote` provides an authenticated task bridge and an executor worker inside an existing DSH host. Its default signed mode uses the existing host HTTP carrier. The optional trusted-network mode owns one exact-address listener inside that same host. It does not start a daemon, supervise DSH, install a model runtime, generate credentials, or expose shell execution. Suite version 0.2.0 targets Node 24 and DSH `0.2.0-rc.2`, pinned upstream commit `639ed015397290b3745d163aafe02ffee4aa3f84`, with Cordis `4.0.4` and Schemastery `3.18.4`.
+`@dsh-task/task-system/remote` provides an authenticated task bridge and an executor worker inside an existing DSH host. Its default signed mode uses the existing host HTTP carrier. The optional trusted-network mode owns one exact-address listener inside that same host. It does not start a daemon, supervise DSH, install a model runtime, generate credentials, or expose shell execution. Task-system 0.2.24 targets Node 24+ and DSH `0.2.1-rc.2`, pinned upstream commit `687f282e8625c6b8d11ff58211a90524be2e4317`, with Cordis `4.0.5` and Schemastery `3.18.5`.
 
 ## Installation and composition
 

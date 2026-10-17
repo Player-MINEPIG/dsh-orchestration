@@ -19,7 +19,8 @@ import {
 import { ExecutorWorker, RecoveryStore } from "../dist/remote/api.js";
 const capabilities = {
   agentOptions: false,
-  toolFilter: false,
+  agentPreset: false,
+  outputSchema: false,
   depthLimit: false,
 };
 function profile(t) {
@@ -72,11 +73,11 @@ test("same physical profile waits through disposal, queued abort never starts, o
     starts = [];
   const subagents = {
     getProvider: () => ({ capabilities }),
-    start: async (_, input) => {
+    startActivation: async ({ request: input }) => {
       const prompt = input.prompt[0].text;
       starts.push(prompt);
       return {
-        id: prompt,
+        childId: prompt,
         result: Promise.resolve(completed),
         dispose: async () => {
           if (prompt === "first") {
@@ -162,9 +163,10 @@ test("official rc.2 provider process early exit settles failure only after obser
   );
   const subagents = {
     getProvider: () => provider,
-    start: (name, input) => {
+    startActivation: async ({ provider: name, request, signal, label }) => {
       assert.equal(name, b.backend);
-      return provider.start(input);
+      const run = await provider.start({ ...request, cwd: request.cwd ?? request.parent.session.header.cwd, signal, label });
+      return { childId: run.id, result: run.result, dispose: () => run.dispose() };
     },
   };
   const first = invoke(b, subagents, "first failing startup");
@@ -273,10 +275,10 @@ test("unconfirmed official teardown blocks another same-profile launch and never
   let starts = 0;
   const subagents = {
     getProvider: () => ({ capabilities }),
-    start: async () => {
+    startActivation: async () => {
       starts++;
       return {
-        id: "unconfirmed-range",
+        childId: "unconfirmed-range",
         result: Promise.resolve(completed),
         dispose: async () => {
           throw new Error("fixture exit observation failed");

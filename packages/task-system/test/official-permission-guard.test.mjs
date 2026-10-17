@@ -179,7 +179,10 @@ function fixture(t, change = {}) {
     executeOfficialSubagent({
       subagents: {
         getProvider: () => provider,
-        start: (_, input) => provider.start(input),
+        startActivation: async ({ request, signal, label }) => {
+          const run = await provider.start({ ...request, cwd: request.cwd ?? request.parent.session.header.cwd, signal, label });
+          return { childId: run.id, result: run.result, dispose: () => run.dispose() };
+        },
       },
       parent: { session: { header: { cwd } } },
       route: {

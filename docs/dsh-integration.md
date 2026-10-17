@@ -1,6 +1,6 @@
 # Native DSH integration
 
-This implementation targets `@deepseek-ai/dsh@0.2.0-rc.2`, upstream commit `639ed015397290b3745d163aafe02ffee4aa3f84`, Cordis `4.0.4`, and Schemastery `3.18.4`. Acceptance runs use Node 24. The installed distribution is the official npm package. The DSH host, Loader, tool dispatcher, AgentLoop, session persistence, and lifecycle are real in the native tests; the external model and network peer are explicitly scripted.
+This implementation targets `@deepseek-ai/dsh@0.2.1-rc.2`, upstream commit `687f282e8625c6b8d11ff58211a90524be2e4317`, Cordis `4.0.5`, and Schemastery `3.18.5`. Acceptance runs use Node 26.5.1. The installed distribution is the official npm package. The DSH host, Loader, tool dispatcher, AgentLoop, session persistence, and lifecycle are real in the native tests; the external model and network peer are explicitly scripted.
 
 ## Host lifecycle
 
@@ -124,3 +124,7 @@ The task distribution runner packs built code, invokes actual `dsh plugin add`, 
 The installed task-system probe mounts the packaged task-pack entry, performs native root report preparation and settlement, and mounts disabled quota and approval bridge modules. The installed typed-decision probe also mounts the ordinary-model completion bridge and calls the native LLM service with a scripted external model. The installed Feishu probe mounts its optional native-chat module disabled. The remote probe verifies signed result and observation intake, structured report fields, and a registered semantic validator. Receipts include npm tarball integrity values. `finalize-packages.mjs` repacks both core distributions and the optional channel adapter, checks every byte against both successful CLI receipts, and retains the tarballs under `tests/dsh/results/final-packages/` with SHA-512 integrity and SHA-256 hashes. A package changed after validation fails this comparison.
 
 Offline tests do not establish model quality, live Feishu delivery, public TLS deployment, cross-device operating-system behavior, Windows supervisor behavior, or production suitability. Publishing packages or deploying a host remains separate from this isolated implementation and validation.
+
+Official Codex execution uses `ctx.subagents.startActivation` with `delivery: "caller"`. The activation returns `childId`, `result`, and `dispose`; task-system awaits disposal before returning evidence or propagating cancellation. The parent must be the exact live Agent registered with DSH. The official provider owns native execution permissions, and task-system does not pass unsupported agent options, presets, output schemas, or depth overrides.
+
+DSH 0.2.1-rc.2 pins Zod 4.4.3 for its session projection and subagent APIs. Task-system uses the same version for projection schemas. Its custom host-only observation fold has an explicit `ZodType<ObservationFold>` schema.

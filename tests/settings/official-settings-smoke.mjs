@@ -22,6 +22,8 @@ const { boot, initProfile, readProfilePatches } = await import(
   url("@deepseek-ai/dsh-app-boot")
 );
 const { ScriptedModel } = await import("../dsh/scripted-model.mjs");
+const { Peer } = await import(url("@deepseek-ai/dsh-client-connection"));
+let peer;
 const tmp = mkdtempSync(join(tmpdir(), "dsh-task-settings-"));
 const home = join(tmp, "home"),
   dir = join(home, "profiles", "settings-fixture");
@@ -81,6 +83,7 @@ const rows = [
     { root: join(tmp, "sessions"), compression: "none" },
   ],
   ["typert", "@deepseek-ai/dsh-typert-registry"],
+  ["remote-access", "@deepseek-ai/dsh-api-remote-access"],
   ["gateway", "@deepseek-ai/dsh-api-gateway"],
 ].map(([id, p, config]) => ({ id, name: url(p), config }));
 rows.push({
@@ -121,6 +124,7 @@ async function until(fn, ms = 2000) {
 }
 try {
   ctx = await start();
+  peer = new Peer(ctx, { principal: { kind: "owner" } });
   ctx.get("taskSystem").ledger.registerWorkspace("fixture-workspace", {
     workspaceId: "default",
     nodeId: "fixture",
@@ -307,7 +311,7 @@ try {
   assert.equal(info.remote, null);
   assert.deepEqual(ctx.typert.local.list().filter(d=>d.namespace==="taskPluginSettings").map(d=>d.method).sort(), [
     "describe","queue","workspaces","executorIdentity","startup","saveStartup","checkConnection","decisionSettings","saveDecisionSettings","decisionConsole","setDecisionPreset",
-    "executionDirectorySettings","saveExecutionDirectorySettings","sessionTasks","setReportRetryLimit","projectSettings","projectSnapshot","projectPage","saveProjectSettings","createProject","createTemporaryTask","scheduleOptions","createScheduledPlan","controlScheduledPlan","conversationModels","selectConversationModel","sendExecutorMessage","taskConversation","sendTaskMessage","projectConversation","sendProjectMessage","handoffProject","actOnProjectTask","reviewProjectTask"
+    "executionDirectorySettings","saveExecutionDirectorySettings","sessionTasks","setReportRetryLimit","projectSettings","projectSnapshot","projectPage","saveProjectSettings","createProject","createTemporaryTask","scheduleOptions","createScheduledPlan","controlScheduledPlan","conversationModels","selectConversationModel","sendExecutorMessage","taskConversation","sendTaskMessage","projectConversation","sendProjectMessage","handoffProject","actOnProjectTask","reviewProjectTask", "adoptWorkflow", "cancelWorkflow", "configureWorkflowTask", "createProjectTask", "retryWorkflowStep", "runProjectTask", "saveWorkflow", "startWorkflow", "workflowPage", "workflowSnapshot"
   ].sort());
   assert.equal(
     ctx.typert.local.get("taskPluginSettings/describe").parameters.length,
@@ -319,7 +323,7 @@ try {
   );
   pass("allowlisted deployment data and current typed settings/project Remote methods");
   assert.deepEqual(
-    await ctx.typertGateway.invoke({
+    await ctx.typertGateway.invoke({ peer,
       namespace: "taskPluginSettings",
       method: "describe",
       args: {},
@@ -327,14 +331,14 @@ try {
     info,
   );
   await assert.rejects(
-    ctx.typertGateway.invoke({
+    ctx.typertGateway.invoke({ peer,
       namespace: "taskPluginSettings",
       method: "describe",
       args: { extra: true },
     }),
   );
   await assert.rejects(
-    ctx.typertGateway.invoke({
+    ctx.typertGateway.invoke({ peer,
       namespace: "taskPluginSettings",
       method: "update",
       args: {},
@@ -345,6 +349,7 @@ try {
   );
   await ctx.fiber.dispose();
   ctx = await start();
+  peer = new Peer(ctx, { principal: { kind: "owner" } });
   const persisted = ctx.settings
     .describe()
     .find((d) => d.ns === "task-system").value;
@@ -379,6 +384,7 @@ try {
     { id: "task-system", config: { ...taskConfig, maxConcurrent: 4 } },
   ];
   ctx = await start();
+  peer = new Peer(ctx, { principal: { kind: "owner" } });
   assert.equal(
     (await ctx.taskPluginSettings.describe()).commandLineConfigOverride,
     true,

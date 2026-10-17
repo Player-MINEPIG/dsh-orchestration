@@ -929,6 +929,7 @@ test('actual DSH file tools reject traversal, outside absolute paths, symlinks a
     symlinkSync(outside, join(workspace, 'escape.txt'));
     symlinkSync(join(h.dir, 'not-created.txt'), join(workspace, 'dangling.txt'));
     await h.ctx.loader.create({ id: 'fs', name: '@deepseek-ai/dsh-fs-local', config: { cwd: workspace } });
+    await h.ctx.loader.create({ id: 'working-directory', name: '@deepseek-ai/dsh-working-directory', config: {} });
     await h.ctx.loader.create({ id: 'file-tools', name: '@deepseek-ai/dsh-tool-fs', config: {} });
     await h.ctx.loader.await();
     let shellEffects = 0;
@@ -1262,7 +1263,7 @@ test('actual native daily work summary derives turn shares from configured Codex
 test('reviewed completed native tools continue the same session across two restarts and exact prior writes cannot replay', { timeout: 15000 }, async () => {
   const dir = join(scratch, 'completed-tools-continuation');
   const config = { executionTools: ['write'], safeRetry: { maxRetries: 2, baseDelayMs: 100, maxDelayMs: 100, resumableTools: ['write'] } };
-  const mountFiles = async h => { await h.ctx.loader.create({ id: 'continuation-fs', name: '@deepseek-ai/dsh-fs-local', config: { cwd: dir } }); await h.ctx.loader.create({ id: 'continuation-files', name: '@deepseek-ai/dsh-tool-fs', config: {} }); await h.ctx.loader.await(); };
+  const mountFiles = async h => { await h.ctx.loader.create({ id: 'continuation-fs', name: '@deepseek-ai/dsh-fs-local', config: { cwd: dir } }); await h.ctx.loader.create({ id: 'continuation-directory', name: '@deepseek-ai/dsh-working-directory', config: {} }); await h.ctx.loader.create({ id: 'continuation-files', name: '@deepseek-ai/dsh-tool-fs', config: {} }); await h.ctx.loader.await(); };
   const writeA = { name: 'write', args: { file_path: 'completed-a.txt', content: 'first completed effect' } };
   const writeB = { name: 'write', args: { file_path: 'completed-b.txt', content: 'second completed effect' } };
   let h = await harness({ dir, config, script: [writeA, () => { throw new LlmError('Synthetic transient after confirmed write', 'SERVER'); }] });

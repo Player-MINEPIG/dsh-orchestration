@@ -72,15 +72,16 @@ test("fixture official result awaits quiescent disposal, sends no unsupported ca
     getProvider: () => ({
       capabilities: {
         agentOptions: false,
-        toolFilter: false,
+        agentPreset: false,
+        outputSchema: false,
         depthLimit: false,
       },
     }),
-    start: async (name, r) => {
+    startActivation: async ({ provider: name, request: r }) => {
       assert.equal(name, b.backend);
       request = r;
       return {
-        id: "official-fixture-id",
+        childId: "official-fixture-id",
         result: Promise.resolve({
           stopReason: "completed",
           output: [{ type: "text", text: "analysis artifact" }],
@@ -103,7 +104,7 @@ test("fixture official result awaits quiescent disposal, sends no unsupported ca
     onPublished: (id) => order.push(id),
   });
   order.push("returned");
-  assert.deepEqual(Object.keys(request).sort(), ["parent", "prompt", "signal"]);
+  assert.deepEqual(Object.keys(request).sort(), ["parent", "prompt"]);
   assert.deepEqual(order, ["official-fixture-id", "disposed", "returned"]);
   assert.equal(result.report.data.acceptance, "pending_user");
   assert.equal(result.outcome, "success");
@@ -116,12 +117,13 @@ test("fixture abort drains official child and suppresses result commitment", asy
     getProvider: () => ({
       capabilities: {
         agentOptions: false,
-        toolFilter: false,
+        agentPreset: false,
+        outputSchema: false,
         depthLimit: false,
       },
     }),
-    start: async () => ({
-      id: "cancel-fixture",
+    startActivation: async () => ({
+      childId: "cancel-fixture",
       result: new Promise((resolve) =>
         abort.signal.addEventListener("abort", () =>
           resolve({ stopReason: "cancelled", output: [] }),

@@ -12,6 +12,12 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { StringDecoder } from "node:string_decoder";
 
+declare module "@deepseek-ai/dsh-jobs" {
+  interface JobKindMap {
+    codex: "codex";
+  }
+}
+
 export const name = "task-local-codex";
 export const inject = ["taskSystem", "tools", "jobs", "subprocess", "sandboxPolicy"];
 export interface Config { enabled: boolean; databasePath: string; cliPath?: string; model: string; reasoningEffort: string; maxConcurrent: number }
@@ -169,7 +175,7 @@ export class LocalCodexService extends Service {
     const controller = new AbortController();
     this.store.save(task);
     try {
-      task.jobId = this.ctx.jobs.start({ kind: "subagent", label: task.title, owner: agent.id, run: () => {
+      task.jobId = this.ctx.jobs.start({ kind: "codex", label: task.title, owner: agent.id, run: () => {
         const done = Promise.resolve().then(() => this.execute(task, controller.signal));
         this.active.set(task.id, { controller, done });
         void done.then(() => this.active.delete(task.id), () => this.active.delete(task.id));

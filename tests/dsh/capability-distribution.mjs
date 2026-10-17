@@ -10,7 +10,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const scratch = mkdtempSync(join(tmpdir(), 'dsh-capability-distribution-'));
 const runtime = resolve(process.env.DSH_TEST_RUNTIME_DIR ?? join(scratch, 'runtime'));
-const receipt = { ok: false, dshVersion: '0.2.0-rc.2', scratch, packages: [], stages: [] };
+const receipt = { ok: false, dshVersion: '0.2.1-rc.2', scratch, packages: [], stages: [] };
 const env = { ...process.env, DSH_HOME: join(scratch, 'home'), DSH_AGENTS_HOME: join(scratch, 'agents'), DSH_TELEMETRY_DISABLED: '1', XDG_DATA_HOME: join(scratch, 'data'), XDG_CACHE_HOME: join(scratch, 'cache'), XDG_STATE_HOME: join(scratch, 'state'), npm_config_cache: join(scratch, 'npm-cache'), npm_config_store_dir: process.env.DSH_TEST_STORE_DIR ?? join(scratch, 'pnpm-store'), npm_config_update_notifier: 'false' };
 for (const key of Object.keys(env)) if (/^(DEEPSEEK|OPENAI|ANTHROPIC|GEMINI|GOOGLE_API|DSH_API)/.test(key)) delete env[key];
 mkdirSync(join(scratch, 'workspace'));
@@ -53,11 +53,11 @@ let bin;
 try {
   mkdirSync(runtime, { recursive: true });
   if (!existsSync(join(runtime, 'node_modules/@deepseek-ai/dsh/package.json'))) {
-    run('pnpm', ['--dir', runtime, 'add', '--save-exact', '--reporter=append-only', '--allow-build=@deepseek-ai/dsh-subprocess-local', '--allow-build=@google/genai', '--allow-build=koffi', '--allow-build=node-pty', '--allow-build=protobufjs', '@deepseek-ai/dsh@0.2.0-rc.2'], { timeout: 300000 });
+    run('pnpm', ['--dir', runtime, 'add', '--save-exact', '--reporter=append-only', '--allow-build=@deepseek-ai/dsh-subprocess-local', '--allow-build=@google/genai', '--allow-build=koffi', '--allow-build=node-pty', '--allow-build=protobufjs', '@deepseek-ai/dsh@0.2.1-rc.2'], { timeout: 300000 });
   }
   const require = createRequire(join(runtime, 'package.json'));
   const dshPackage = require.resolve('@deepseek-ai/dsh/package.json');
-  assert.equal(JSON.parse(readFileSync(dshPackage)).version, '0.2.0-rc.2');
+  assert.equal(JSON.parse(readFileSync(dshPackage)).version, '0.2.1-rc.2');
   bin = join(dirname(dshPackage), 'lib/bin.js');
   stage('official-pinned-runtime');
   const jev = 'dsh-jev-plugin';

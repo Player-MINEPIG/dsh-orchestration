@@ -4,7 +4,7 @@ The optional `task-local-codex` plugin runs `codex exec --json` as a DSH backgro
 
 ## Requirements and configuration
 
-- DSH 0.2.0-rc.2 with the task-system bundle, jobs/controller, subprocess and sandbox-policy services. Task-system must expose workload tools (`executor` or `both` role).
+- DSH 0.2.1-rc.2 with the task-system bundle, jobs/controller, subprocess and sandbox-policy services. Task-system must expose workload tools (`executor` or `both` role). The local adapter registers its own `codex` job kind; the official subagent service is not required for that registration.
 - Codex Desktop installed and signed in with file credentials at the current user's `~/.codex/auth.json`. Keyring-only authentication is currently unsupported and fails explicitly.
 - Windows automatically discovers `%LOCALAPPDATA%/OpenAI/Codex/bin/*/codex.exe`. Other systems require `cliPath`; those hosts have not yet been validated. No username, machine-specific executable path or private service is embedded in the adapter.
 - The adapter is disabled by default. Enable it only on hosts that should execute local tasks. The override must include `databasePath`, because DSH replaces the entry's config object.

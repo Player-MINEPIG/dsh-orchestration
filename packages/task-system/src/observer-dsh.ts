@@ -28,7 +28,7 @@ const capturedSchema = z.object({
   truncated: z.boolean(),
   cwd: z.string().optional(),
 });
-const stateSchema = z.object({
+const stateSchema: z.ZodType<ObservationFold> = z.object({
   sessionId: z.string(),
   inheritedCut: z.number().int().nonnegative(),
   excluded: z.boolean(),

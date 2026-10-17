@@ -31,11 +31,12 @@ async function fixture(t, role) {
     getProvider: () => ({
       capabilities: {
         agentOptions: false,
-        toolFilter: false,
+        agentPreset: false,
+        outputSchema: false,
         depthLimit: false,
       },
     }),
-    async start(name, input) {
+    async startActivation({ provider: name, request: input }) {
       calls.push({
         name,
         prompt: JSON.parse(input.prompt[0].text),
@@ -50,7 +51,7 @@ async function fixture(t, role) {
         productThreadId: `product-thread-${calls.length}`,
       });
       return {
-        id: `fixture-${calls.length}`,
+        childId: `fixture-${calls.length}`,
         result: Promise.resolve({
           stopReason: "completed",
           output: [{ type: "text", text: "fixture verified output" }],

@@ -159,7 +159,8 @@ export async function executeOfficialSubagent(input: {
   if (
     !provider ||
     provider.capabilities.agentOptions ||
-    provider.capabilities.toolFilter ||
+    provider.capabilities.agentPreset ||
+    provider.capabilities.outputSchema ||
     provider.capabilities.depthLimit
   )
     throw new Error("expected official one-shot Codex capability contract");
@@ -170,10 +171,16 @@ export async function executeOfficialSubagent(input: {
     runtimeEvidence.delete(realpathSync(backend.codexHome));
     let run;
     try {
-      run = await input.subagents.start(backend.backend, {
-        parent: input.parent,
+      run = await input.subagents.startActivation({
+        provider: backend.backend,
+        label: "Task execution",
+        delivery: "caller",
         signal: input.signal,
-        prompt: [{ type: "text", text: input.prompt }],
+        request: {
+          parent: input.parent,
+          prompt: [{ type: "text", text: input.prompt }],
+          ...(input.workspacePath ? { cwd: input.workspacePath } : {}),
+        },
       });
     } catch (error) {
       // rc.2 emits AggregateError only when unpublished-start cleanup also fails.
@@ -200,10 +207,19 @@ export async function executeOfficialSubagent(input: {
       };
     }
     let result;
+    let onAbort: (() => void) | undefined;
     try {
-      await input.onPublished?.(run.id);
-      result = await run.result;
+      await input.onPublished?.(run.childId);
+      result = await Promise.race([
+        run.result,
+        new Promise<never>((_, reject) => {
+          onAbort = () => reject(input.signal.reason);
+          input.signal.addEventListener("abort", onAbort, { once: true });
+          if (input.signal.aborted) onAbort();
+        }),
+      ]);
     } finally {
+      if (onAbort) input.signal.removeEventListener("abort", onAbort);
       // Result is never delivered to the journal/worker until all child effects quiesce.
       try {
         await run.dispose();
@@ -215,7 +231,7 @@ export async function executeOfficialSubagent(input: {
     input.signal.throwIfAborted();
     const body = result.output
       .filter((block: ContentBlock) => block.type === "text")
-      .map((block) => (block as { text: string }).text)
+      .map((block) => block.text)
       .join("\n");
     const completed =
       result.stopReason === "completed" && body.trim().length > 0;
@@ -232,7 +248,7 @@ export async function executeOfficialSubagent(input: {
         title: "Official Codex execution evidence",
         body: body || "No final assistant text was returned.",
         data: {
-          officialSubagentId: run.id,
+          officialSubagentId: run.childId,
           backend: backend.backend,
           ...(officialRuntimeEvidence(backend.codexHome) ?? {}),
           stopReason: result.stopReason,

@@ -1,0 +1,99 @@
+{
+  "targetRuntime": "0.2.1-rc.2",
+  "baseline": "076def057dbaf45bb721d598a994031ff8a205ec",
+  "branch": "codex/dsh-0.2.1-rc2",
+  "officialSource": "https://github.com/deepseek-ai/deepseek-harness/tree/dsh-v0.2.1-rc.2",
+  "officialCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+  "registryIntegrity": "sha512-tvY+yhfKRifthbqPe/OK0AYxM5ZkvqfYq/jMYgJcEUxiRRL1Vwra3Ti5TB6AXgSWQdiPHYh/Vp6SJa9yHwMNuw==",
+  "developmentExecutor": "GPT-6.1-Sol High",
+  "runtimeModelSettingsChanged": false,
+  "hosts": {
+    "MBP": {
+      "initialRuntime": "0.2.1-rc.2",
+      "initialTaskPlugin": "0.2.23",
+      "profile": "/Users/pmp/.dsh/profiles/web",
+      "activeSessionObserved": true,
+      "observation": "Existing authenticated browser at 127.0.0.1:3080 showed an ongoing generation and Stop generating button",
+      "updateState": "deferred until quiescent",
+      "deferredFollowup": {
+        "id": "mbp-dsh",
+        "cadence": "every 10 minutes",
+        "owner": "parent chat",
+        "stopWhen": "verified update completes",
+        "idleCheck": "existing authenticated UI and task job/queue/lease state"
+      }
+    },
+    "aliyun-vps": {
+      "initialRuntime": "0.2.0-rc.2",
+      "initialTaskPlugin": "0.2.23",
+      "service": "dsh-production-web.service",
+      "profile": "/root/.dsh/profiles/web",
+      "runtimePath": "/root/.dsh/runtime",
+      "nodeVersion": "v24.13.0",
+      "activeTaskRunsBefore": 0,
+      "activeAttemptsBefore": 0,
+      "updateState": "old production restored; compatible rc2 profile staged; isolated startup validation in progress",
+      "restoredRuntime": "0.2.0-rc.2",
+      "restoredTaskPlugin": "0.2.23",
+      "rollbackVerified": {
+        "systemd": "active/running",
+        "restarts": 0,
+        "http": 401,
+        "authenticatedUi": [
+          "project center refreshed without error banner",
+          "task settings loaded current configuration and empty local queue",
+          "DeepSeek provider configured",
+          "Codex subscription account connected"
+        ]
+      },
+      "maintenanceEvents": [
+        {
+          "event": "initial launch rejected readiness probe --patch after web subcommand"
+        },
+        {
+          "event": "global --patch route required explicit --profile; corrected probe launch still rejected"
+        },
+        {
+          "event": "restored complete prior profile and runtime; cleared systemd start-rate limit"
+        },
+        {
+          "event": "restored HTTP response and authenticated task/provider UI verified",
+          "observedAt": "2026-10-18T02:24:47+08:00"
+        }
+      ]
+    },
+    "PC_AU": {
+      "initialTaskPlugin": "0.2.23",
+      "updateState": "awaiting existing remote chat access authorization"
+    }
+  },
+  "hotReload": {
+    "supportedByHost": true,
+    "preservesActiveTaskAgents": false,
+    "reason": "Official HMR reconciles profile while task-system provider.dispose cancels owned agents; defer until no active sessions, Codex jobs or execution leases.",
+    "mbpObservedStillGenerating": true
+  },
+  "artifacts": {
+    "taskSystem": {
+      "version": "0.2.24",
+      "filename": "dsh-task-task-system-0.2.24.tgz",
+      "sha256": "bb156bb01afd9661ec29ce94a8bf31feb746ada8e52f0d3c8bc95b80e4513bd2",
+      "durableMbpPath": "/Users/pmp/.dsh/releases/task-system-0.2.24-rc2/dsh-task-task-system-0.2.24.tgz"
+    },
+    "subscriptions": {
+      "version": "0.9.9-rc2.1",
+      "filename": "dsh-plugin-subscriptions-0.9.9-rc2.1.tgz",
+      "sha256": "ef17b34b5601e0cd758ae690f2a1aa26e391183b3387bb5f2b1b730b6d213f6d",
+      "sourceAndReproduction": "subscriptions.json"
+    },
+    "fallbacks": {
+      "version": "0.6.6",
+      "source": "official npm registry"
+    }
+  },
+  "review": {
+    "codeReview": "parent and execution agent reviewed; no blocking findings",
+    "addedCommentReview": "0 added/changed comment lines or suppressions in migrated source and activation test",
+    "diffCheck": true
+  }
+}

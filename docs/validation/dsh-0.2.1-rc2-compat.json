@@ -1,0 +1,142 @@
+{
+  "ok": true,
+  "checkedAt": "2026-10-17T18:20:47.273371+00:00",
+  "baseCommit": "076def057dbaf45bb721d598a994031ff8a205ec",
+  "runtimeVersion": "0.2.1-rc.2",
+  "nodeVersion": "26.5.1",
+  "upstream": {
+    "tag": "dsh-v0.2.1-rc.2",
+    "commit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+    "tagVerifiedBy": "git ls-remote https://github.com/deepseek-ai/deepseek-harness.git *0.2.1-rc.2*",
+    "registryPackage": "@deepseek-ai/dsh@0.2.1-rc.2",
+    "registryIntegrity": "sha512-tvY+yhfKRifthbqPe/OK0AYxM5ZkvqfYq/jMYgJcEUxiRRL1Vwra3Ti5TB6AXgSWQdiPHYh/Vp6SJa9yHwMNuw=="
+  },
+  "releases": [
+    {
+      "name": "@dsh-task/task-system",
+      "version": "0.2.24",
+      "path": "/private/tmp/dsh-rc2-upgrade-artifacts/dsh-task-task-system-0.2.24.tgz",
+      "sha256": "bb156bb01afd9661ec29ce94a8bf31feb746ada8e52f0d3c8bc95b80e4513bd2",
+      "integrity": "sha512-ZID4eI1+bnYhOlgrA3SvO4UDCzBqrmZ0vcviL97jUdvDGMpNq9ujSGsuDL2XIjODZtaelHsfGgCOqdjwXEBpTQ=="
+    },
+    {
+      "name": "@dsh-task/feishu-channel",
+      "version": "0.1.2",
+      "path": "/private/tmp/dsh-rc2-upgrade-artifacts/dsh-task-feishu-channel-0.1.2.tgz",
+      "sha256": "95713165b62ddc5d2e14df06cc61762a03fc37a0687eef0859322d4dd77e400b",
+      "integrity": "sha512-xzDRogZNlN4sL9K4nZT0IWoya+muRT5VnjAW+F3IBFvTPeruWXyJjcW0gZmXRnUkTlf5YdeVe0vNHhUyT5XSKQ=="
+    }
+  ],
+  "migrations": [
+    "Use SubagentRuntime.startActivation with delivery caller, childId, and explicit post-publication cancellation that awaits disposal.",
+    "Validate the official provider capability map against agentOptions, agentPreset, outputSchema, and depthLimit.",
+    "Register a task-owned codex JobKindMap entry because rc2 no longer registers a subagent job kind.",
+    "Align Cordis 4.0.5, loader 1.0.6, Cosmokit 1.8.6, Schemastery 3.18.5, and exact DSH 0.2.1-rc.2 dependency pins.",
+    "Mount new workingDirectory service in native file-tool fixtures; mount remoteAccess and real owner Peer scopes in official Gateway fixtures."
+  ],
+  "zodAlignment": {
+    "before": "Task-system used Zod 4.6.5 while official rc2 projection, subagent, and protocol packages pin 4.4.3.",
+    "observedFailure": "Default 4GB tsc heap exhausted. A 12GB diagnostic run reported TS2589 at observation projection registration and mismatched fold inference.",
+    "change": "Use exact Zod 4.4.3 and explicit ZodType<ObservationFold>. npm ls confirms a shared deduplicated 4.4.3 tree.",
+    "verification": "Final npm run check builds on the default heap and passes template, configuration, semantic report/result validation, observer projection, native retry, and installed plugin schema tests."
+  },
+  "checks": {
+    "required": {
+      "command": "PATH=/opt/homebrew/opt/node/bin:$PATH npm run check",
+      "exitCode": 0,
+      "tests": 982,
+      "passed": 977,
+      "failed": 0,
+      "skipped": 5,
+      "suiteOrder": [
+        "task-system unit",
+        "feishu unit",
+        "Jev unit",
+        "dashboard unit",
+        "native",
+        "legacy",
+        "management"
+      ],
+      "suiteCounts": {
+        "tests": [
+          603,
+          51,
+          67,
+          52,
+          78,
+          106,
+          25
+        ],
+        "pass": [
+          602,
+          51,
+          67,
+          52,
+          78,
+          106,
+          21
+        ],
+        "fail": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "skipped": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          4
+        ]
+      },
+      "log": "/private/tmp/dsh-rc2-check-final.log"
+    },
+    "activation": {
+      "command": "node --test packages/task-system/test/official-activation.test.mjs",
+      "passed": 2,
+      "detail": "Real rc2 SubagentRuntime, native Loader, registered live parent, workingDirectory, and scripted external provider. Success and post-publication abort remain pending until provider quiescence."
+    },
+    "distribution": {
+      "command": "PATH=/opt/homebrew/opt/node/bin:$PATH DSH_TEST_RUNTIME_DIR=/Users/pmp/.local/lib/deepseek-harness/0.2.1-rc.2 npm run test:distribution",
+      "exitCode": 0,
+      "taskStages": 10,
+      "capabilityStages": 13,
+      "receipts": [
+        "tests/dsh/results/distribution.json",
+        "tests/dsh/results/capabilities.json"
+      ],
+      "finalPackageIntegritiesMatchReceipts": true,
+      "log": "/private/tmp/dsh-rc2-distribution-final.log"
+    },
+    "officialSettings": {
+      "passed": 13,
+      "log": "/private/tmp/dsh-rc2-settings.log",
+      "detail": "Live settings, exact RPC methods, public owner Gateway calls, restart persistence and client module graph."
+    },
+    "officialStartup": {
+      "passed": 6,
+      "log": "/private/tmp/dsh-rc2-startup.log",
+      "detail": "Real ConfigEditor saves, Gateway calls, role/workspace/decision/capacity persistence, zero model calls."
+    },
+    "diffWhitespace": {
+      "command": "git diff --check",
+      "exitCode": 0
+    },
+    "dependencyTree": {
+      "command": "npm ls --depth=0",
+      "exitCode": 0
+    }
+  },
+  "limitations": [
+    "The aggregate test:settings:official script stops at staged-form-smoke because the official rc2 runtime ships UI primitives inside frontend assets and lacks the fixture’s standalone dsh-client-ui-primitives/lib/index.js. Official settings and startup subcommands passed separately. No rendered-browser pass is claimed.",
+    "No live model inference, Feishu message delivery, or production deployment was performed by this compatibility worker.",
+    "The original dirty checkout and runtime model configuration were not changed."
+  ],
+  "deploymentEvidence": "docs/validation/dsh-0.2.1-rc2/deployment.json"
+}

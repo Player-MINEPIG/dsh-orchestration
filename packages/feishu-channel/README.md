@@ -30,7 +30,7 @@ The operator configures the existing Feishu self-built app to receive `im.messag
 
 Ordinary natural-language messages can run directly through the supplied `@dsh-task/feishu-channel/dsh-chat` plugin. A custom consumer is not required. This entrypoint uses the host's real `ctx.agents.create/resume`, scoped tools, AgentLoop and persisted sessions. It is opt-in; the channel bundle does not import it automatically.
 
-The host must already load its provider adapter and the pinned DSH `0.2.0-rc.2` services: `@deepseek-ai/dsh-llm`, `dsh-session`, `dsh-session-projection`, `dsh-system-prompt`, `dsh-tools`, `dsh-agent`, `dsh-session-persistence-jsonl` (or the host's persistence provider), and `dsh-agent-loop`. Use the full `@deepseek-ai/` package prefix for each. The ordinary chat entrypoint works without task-system. The plain channel entrypoint does not load these optional DSH peers.
+The host must already load its provider adapter and the pinned DSH `0.2.1-rc.2` services: `@deepseek-ai/dsh-llm`, `dsh-session`, `dsh-session-projection`, `dsh-system-prompt`, `dsh-tools`, `dsh-agent`, `dsh-session-persistence-jsonl` (or the host's persistence provider), and `dsh-agent-loop`. Use the full `@deepseek-ai/` package prefix for each. The ordinary chat entrypoint works without task-system. The plain channel entrypoint does not load these optional DSH peers.
 
 After enabling the channel as above, explicitly merge [`dsh-chat.patch.example.yml`](./dsh-chat.patch.example.yml), replacing `YOUR_EXISTING_PROVIDER` and `YOUR_EXISTING_MODEL` with the host's existing route. Set `reasoningEffort` only when supported by that route. Equivalent native Loader entry:
 
@@ -196,4 +196,4 @@ Run `npm run build -w @dsh-task/feishu-channel` and `npm run test -w @dsh-task/f
 
 Source references: [official SDK](https://github.com/larksuite/node-sdk), [channel reference](https://github.com/larksuite/node-sdk/blob/main/docs/channel.md). The installed pinned SDK implementation was also inspected to verify dispatcher ACK and WebSocket startup behavior.
 
-Native API reference inspected at DSH commit [`639ed015397290b3745d163aafe02ffee4aa3f84`](https://github.com/deepseek-ai/deepseek-harness/tree/639ed015397290b3745d163aafe02ffee4aa3f84/packages/core): agent registry factory/setup/owned handles, inbox claim and turn events, session flush, scoped tool restrictions/guards and system-prompt sections. Runtime acceptance uses the installed `0.2.0-rc.2` packages.
+Native API reference inspected at DSH commit [`687f282e8625c6b8d11ff58211a90524be2e4317`](https://github.com/deepseek-ai/deepseek-harness/tree/687f282e8625c6b8d11ff58211a90524be2e4317/packages/core): agent registry factory/setup/owned handles, inbox claim and turn events, session flush, scoped tool restrictions/guards and system-prompt sections. Runtime acceptance uses the installed `0.2.1-rc.2` packages.

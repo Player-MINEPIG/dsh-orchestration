@@ -2,7 +2,7 @@
 
 Configurable task management mounted inside DeepSeek Harness. A stable task keeps multiple runs, sessions, reports, revisions and artifacts. User-defined templates and schedules use the same ledger and lifecycle. Planner, executor and combined roles compose through explicit permissions and authenticated peer protocols.
 
-This monorepo targets **DeepSeek Harness 0.2.0-rc.2** and **Node 24+**. The TLS fixture test also uses the system OpenSSL executable. All plugins attach to a DSH host; an external supervisor may keep that host alive. The plugins do not install their own OS services or manage platform updates.
+This monorepo targets **DeepSeek Harness 0.2.1-rc.2** and **Node 24+**. The TLS fixture test also uses the system OpenSSL executable. All plugins attach to a DSH host; an external supervisor may keep that host alive. The plugins do not install their own OS services or manage platform updates.
 
 ## Core plugins and optional adapter
 

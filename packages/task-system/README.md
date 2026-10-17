@@ -24,7 +24,7 @@ by this suite, and installing the suite never opens a Feishu connection.
 
 A durable task management plugin mounted inside DeepSeek Harness. One task survives session changes and contains multiple runs, reports, corrections and artifacts. Configurable task templates and schedules share the same state machine. The default plugin registers tools, keeps the DSH host alive and stores its ledger locally; it does not install a separate OS service.
 
-Target: Node 24+, DSH 0.2.0-rc.2. Build this monorepo with `npm ci --ignore-scripts && npm run build`. Pack this directory with `npm pack`. Install the tarball with `dsh plugin --profile task-host add /absolute/path/to/tarball`. The CLI creates a base-backed profile, not the one-shot headless runner. Start `dsh --profile task-host`. Changes to installed bundle membership need a host restart.
+Target: Node 24+, DSH 0.2.1-rc.2. Build this monorepo with `npm ci --ignore-scripts && npm run build`. Pack this directory with `npm pack`. Install the tarball with `dsh plugin --profile task-host add /absolute/path/to/tarball`. The CLI creates a base-backed profile, not the one-shot headless runner. Start `dsh --profile task-host`. Changes to installed bundle membership need a host restart.
 
 Set `DSH_TASK_DATABASE` to the intended database path and use that **same path** for WebUI `--ledger`. The project's private demonstration uses `.runtime/tasks.sqlite`; it is ignored by Git. Each task has one authority; a remote executor must connect to that authority rather than independently accepting conflicting task state.
 

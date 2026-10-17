@@ -13,6 +13,7 @@ test('two native DSH hosts dispatch pinned project and temporary context into is
  const stores=['server','client','worker'].map(n=>new RecoveryStore(join(worker.dir,n+'.sqlite')));let gateway,executor,client;
  try {
   await worker.ctx.loader.create({id:'fs',name:'@deepseek-ai/dsh-fs-local',config:{cwd:worker.dir}});
+  await worker.ctx.loader.create({id:'working-directory',name:'@deepseek-ai/dsh-working-directory',config:{}});
   await worker.ctx.loader.create({id:'presets',name:'@deepseek-ai/dsh-agent-preset-registry',config:{default:'executor-files'}});
   await worker.ctx.loader.create({id:'file-preset',name:'@deepseek-ai/dsh-agent-preset',config:{id:'executor-files',plugins:[{id:'file-tools',name:'@deepseek-ai/dsh-tool-fs',config:{}}]}});await worker.ctx.loader.await();
   const ledger=planner.ledger,runtime=planner.ctx.taskSystem.projects;runtime.saveSettings({root:join(planner.dir,'projects'),expectedRevision:0});
