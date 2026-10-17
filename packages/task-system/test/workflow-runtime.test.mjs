@@ -1477,3 +1477,71 @@ test("cancelled workflow keeps observing an uncertain step until authoritative r
     await f.close();
   }
 });
+
+async function settlePrograms(f, root, worker) {
+  for (let n = 0; n < 8 && !['succeeded','partial'].includes(view(f, root).state); n++) {
+    f.runtime.tick(); await worker.pollOnce(); f.runtime.tick();
+  }
+  assert.ok(['succeeded','partial'].includes(view(f,root).state));
+}
+function rootResults(f, root) {
+  return f.ledger.history(root.taskId).reports.filter(r => r.runId === root.runId && r.kind === 'result');
+}
+test('root Run exposes its own final output once and never borrows an older Run report', async () => {
+  const f=fixture();
+  try {
+    f.register('vps','render',({input})=>({data:{text:input.text},body:'Report '+input.text,summary:'Rendered '+input.text}));
+    save(f,definition([programStep('render','vps','render',[],{text:{kind:'workflow-input',path:['text']}})]));
+    const worker=f.worker('vps'),first=start(f,{text:'first'});
+    await settlePrograms(f,first,worker);
+    const source=view(f,first).steps[0],result=rootResults(f,first)[0];
+    assert.equal(result.body,'Report first');assert.deepEqual(result.data,{text:'first'});
+    assert.deepEqual(result.workflowOutputs,[{stepId:'render',taskId:source.taskId,runId:source.runId,reportId:source.reportId}]);
+    const again=f.runtime.reconcileResultReport(first.runId);assert.equal(again.reportId,result.reportId);
+    f.runtime.tick();assert.equal(rootResults(f,first).length,1);
+    const second=start(f,{text:'second'});assert.equal(rootResults(f,second).length,0);
+    assert.equal(f.runtime.reconcileResultReport(second.runId),null);
+    await settlePrograms(f,second,worker);
+    assert.equal(rootResults(f,second)[0].body,'Report second');assert.equal(rootResults(f,first)[0].body,'Report first');
+    assert.notEqual(rootResults(f,second)[0].workflowOutputs[0].runId,source.runId);
+    assert.throws(()=>f.ledger.appendReport(id(),{taskId:second.taskId,runId:second.runId,kind:'result',title:'Cross-Run',body:'invalid',workflowOutputs:result.workflowOutputs}),/this workflow Run/);
+  } finally {await f.close();}
+});
+test('all terminal outputs are included deterministically and explicit final output selection is respected', async () => {
+  for (const selected of [undefined,['left']]) {
+    const f=fixture();
+    try {
+      f.register('vps','leaf',({input})=>({data:{name:input.name},body:'Output '+input.name,summary:input.name}));
+      const d=definition(['left','right'].map(name=>programStep(name,'vps','leaf',[],{name:{kind:'literal',value:name}})));
+      if(selected)d.resultStepIds=selected;
+      save(f,d);const root=start(f);await settlePrograms(f,root,f.worker('vps'));
+      const report=rootResults(f,root)[0];
+      assert.deepEqual(report.workflowOutputs.map(r=>r.stepId),selected??['left','right']);
+      assert.match(report.body,/Output left/);assert.equal(report.body.includes('Output right'),!selected);
+      assert.throws(()=>f.runtime.save({commandId:id(),expectedRevision:1,definition:{...d,revision:1,resultStepIds:['missing']}}),/Final output/);
+    } finally {await f.close();}
+  }
+});
+test('legacy completed workflow report repair is idempotent and preserves frozen execution and original evidence', async () => {
+  const f=fixture();
+  try {
+    f.register('vps','leaf',()=>({data:{final:true},body:'Legacy report',summary:'done'}));
+    save(f,definition([programStep('leaf','vps','leaf')]));const root=start(f);
+    // Model the previously deployed completion path, which only updated root state.
+    f.runtime.publishResultReport=()=>null;
+    await settlePrograms(f,root,f.worker('vps'));assert.equal(rootResults(f,root).length,0);
+    const frozen=JSON.stringify(view(f,root)),child=view(f,root).steps[0],original=f.ledger.history(child.taskId).reports;
+    f.reopen();
+    assert.throws(()=>f.ledger.workflowAtomic(()=>{
+      f.runtime.reconcileResultReport(root.runId);
+      throw new Error('simulated interrupted completion');
+    }),/simulated interrupted completion/);
+    assert.equal(rootResults(f,root).length,0);
+    const repaired=f.runtime.reconcileResultReport(root.runId);
+    assert.equal(repaired.body,'Legacy report');assert.equal(rootResults(f,root).length,1);
+    assert.equal(f.runtime.reconcileResultReport(root.runId).reportId,repaired.reportId);
+    assert.equal(JSON.stringify(view(f,root)),frozen);assert.deepEqual(f.ledger.history(child.taskId).reports,original);
+    const cancelled=start(f);f.runtime.cancel({commandId:id(),workflowRunId:cancelled.runId});
+    assert.equal(f.runtime.reconcileResultReport(cancelled.runId),null);assert.equal(rootResults(f,cancelled).length,0);
+  } finally {await f.close();}
+});

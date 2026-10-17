@@ -27,6 +27,8 @@ export function compileWorkflow(
       })),
     );
   const stepIds = new Set(copy.steps.map((step) => step.stepId));
+  if (copy.resultStepIds && (new Set(copy.resultStepIds).size !== copy.resultStepIds.length || copy.resultStepIds.some(id => !stepIds.has(id))))
+    throw new TaskError("WORKFLOW_OUTPUT", "Final output steps must be distinct existing steps");
   const seen = new Set<string>();
   for (const call of calls) {
     const key = JSON.stringify([call.fromStepId, call.toStepId]);
@@ -62,4 +64,10 @@ export function compileWorkflow(
     };
   });
   return { ...copy, stages, calls };
+}
+
+export function workflowResultStepIds(definition: WorkflowDefinition): string[] {
+  if (definition.resultStepIds) return [...definition.resultStepIds];
+  const called = new Set(definition.steps.flatMap(step => step.dependsOn));
+  return definition.steps.filter(step => !called.has(step.stepId)).map(step => step.stepId);
 }

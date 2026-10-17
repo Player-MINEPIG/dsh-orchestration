@@ -221,6 +221,7 @@ export interface RunInput {
   contextNotes?: Run["contextNotes"];
 }
 export interface ReportInput {
+  workflowOutputs?: Report["workflowOutputs"];
   reportId?: string;
   taskId: string;
   runId?: string;
@@ -655,13 +656,16 @@ export class TaskLedger {
     input: unknown,
     fn: () => T,
     transient = false,
+    existingWorkflowTransaction = false,
   ): Receipt<T> {
     id(commandId, "commandId");
     if (canonical(input).length > 2_000_000)
       fail("TOO_LARGE", "Command exceeds size limit");
     if (this.options.readOnly) fail("READ_ONLY", "Read-only ledger");
     const digest = hash({ operation, input });
-    this.db.exec("BEGIN IMMEDIATE");
+    if (existingWorkflowTransaction && !this.db.isTransaction)
+      fail("FORBIDDEN", "Workflow report publication requires a transaction");
+    if (!existingWorkflowTransaction) this.db.exec("BEGIN IMMEDIATE");
     try {
       const now = this.clock();
       this.db.prepare("DELETE FROM commands WHERE id IN (SELECT id FROM transient_command_expiry WHERE expires <= ?)").run(now);
@@ -672,7 +676,7 @@ export class TaskLedger {
       if (old) {
         if (old.digest !== digest)
           fail("CONFLICT", "Idempotency key reused with a different command");
-        this.db.exec("COMMIT");
+        if (!existingWorkflowTransaction) this.db.exec("COMMIT");
         return JSON.parse(old.receipt) as Receipt<T>;
       }
       const result: Receipt<T> = {
@@ -685,10 +689,10 @@ export class TaskLedger {
         .run(commandId, digest, canonical(result));
       if (transient)
         this.db.prepare("INSERT INTO transient_command_expiry(id,expires) VALUES(?,?)").run(commandId, now + TRANSIENT_RECEIPT_TTL_MS);
-      this.db.exec("COMMIT");
+      if (!existingWorkflowTransaction) this.db.exec("COMMIT");
       return result;
     } catch (e) {
-      this.db.exec("ROLLBACK");
+      if (!existingWorkflowTransaction) this.db.exec("ROLLBACK");
       throw e;
     }
   }
@@ -3432,6 +3436,18 @@ export class TaskLedger {
       if (a.taskId !== input.taskId || (input.runId && a.runId !== input.runId))
         fail("FORBIDDEN", "Report attempt belongs to another task");
     }
+    if (input.workflowOutputs) {
+      const root = input.runId ? this.getRun(input.runId) : fail("WORKFLOW_OUTPUT", "Workflow result requires a root Run");
+      if ( !this.isWorkflowInvocation(root) || !["succeeded", "partial"].includes(root.state) || input.kind !== "result" || !input.workflowOutputs.length)
+        fail("WORKFLOW_OUTPUT", "Only completed workflow roots may associate final reports");
+      for (const source of input.workflowOutputs) {
+        const report = this.need<Report>("report", source.reportId), run = this.getRun(source.runId);
+        const configuration = run.configuration;
+        const flow = configuration && typeof configuration === "object" && !Array.isArray(configuration) ? configuration.workflow : null;
+        if (report.taskId !== source.taskId || report.runId !== source.runId || report.kind !== "result" || run.taskId !== source.taskId || !["succeeded", "partial"].includes(run.state) || !flow || typeof flow !== "object" || Array.isArray(flow) || flow.workflowRunId !== root.runId || flow.stepId !== source.stepId)
+          fail("WORKFLOW_OUTPUT", "Final report must come from a successful step of this workflow Run");
+      }
+    }
     const reportId = id(input.reportId ?? randomUUID());
     if (this.get("report", reportId)) fail("CONFLICT", "Report ID exists");
     let revision = 1;
@@ -3478,6 +3494,7 @@ export class TaskLedger {
       createdAt: input.createdAt ?? this.now(),
       recordedAt: this.now(),
       artifactIds: artifacts,
+      ...(input.workflowOutputs ? { workflowOutputs: structuredClone(input.workflowOutputs) } : {}),
       ...(input.runId ? { runId: input.runId } : {}),
       ...(input.attemptId ? { attemptId: input.attemptId } : {}),
       ...(input.sessionId ? { sessionId: input.sessionId } : {}),
@@ -3500,6 +3517,11 @@ export class TaskLedger {
     return this.command(commandId, "appendReport", input, () =>
       this.report(input),
     );
+  }
+  publishWorkflowResult(commandId: string, input: ReportInput) {
+    this.assertManagementWritable();
+    if (!input.workflowOutputs) fail("WORKFLOW_OUTPUT", "Workflow result requires output provenance");
+    return this.command(commandId, "appendReport", input, () => this.report(input), false, true);
   }
   registerArtifact(commandId: string, input: Omit<Artifact, "createdAt">) {
     return this.command(commandId, "registerArtifact", input, () => {

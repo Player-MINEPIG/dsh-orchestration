@@ -1,6 +1,6 @@
 import { Workbench } from "./workbench.js";
-import { compileWorkflow } from "./workflow-graph.js";
-import { randomUUID } from "node:crypto";
+import { compileWorkflow, workflowResultStepIds } from "./workflow-graph.js";
+import { createHash, randomUUID } from "node:crypto";
 import { CronExpressionParser } from "cron-parser";
 import { TaskError, canonical, type TaskLedger } from "./ledger.js";
 import type { ExecutionRoute, Json, Run, Task } from "./contracts.js";
@@ -418,7 +418,35 @@ export class WorkflowRuntime {
               : "cancelled"
             : run.state;
       this.ledger.updateWorkflowRoot(run.runId, state);
+      this.publishResultReport(run);
     }
+  }
+  reconcileResultReport(workflowRunId: string) {
+    return this.ledger.workflowAtomic(() => this.publishResultReport(this.getRun(workflowRunId)));
+  }
+  private publishResultReport(run: WorkflowRunView) {
+    if (!run.runId || !run.taskId || !["succeeded", "partial"].includes(run.state)) return null;
+    const selected = workflowResultStepIds(run.definition);
+    const sources = selected.map(stepId => {
+      const step = run.steps.find(step => step.stepId === stepId);
+      if (!step?.runId || !step.taskId || !step.reportId || !["succeeded", "partial"].includes(step.state))
+        return fail("WORKFLOW_OUTPUT", "Final output step has no completed result report");
+      const report = this.ledger.history(step.taskId).reports.find(report => report.reportId === step.reportId && report.runId === step.runId && report.kind === "result");
+      if (!report) return fail("WORKFLOW_OUTPUT", "Final output report does not belong to the selected step Run");
+      return { step, report, link: { stepId, taskId: step.taskId, runId: step.runId, reportId: step.reportId } };
+    });
+    if (!sources.length) return fail("WORKFLOW_OUTPUT", "Workflow has no final output steps");
+    const links = sources.map(source => source.link), single = sources.length === 1 ? sources[0]!.report : null;
+    const identity = createHash("sha256").update(canonical(links)).digest("hex");
+    return this.ledger.publishWorkflowResult(`workflow-result:${run.runId}:${identity}`, {
+      taskId: run.taskId, runId: run.runId, kind: "result",
+      title: single?.title ?? run.title + " · 最终输出",
+      body: single?.body ?? sources.map(source => `## ${source.step.title}\n\n${source.report.body}`).join("\n\n"),
+      ...(single?.data !== undefined ? { data: single.data } : {}),
+      ...(single?.schemaId ? { schemaId: single.schemaId } : {}),
+      createdAt: sources.map(source => source.report.createdAt).sort().at(-1)!,
+      workflowOutputs: links,
+    }).value;
   }
   private catalog(nodes = this.ledger.nodeStatuses()): ProgramCatalogEntry[] {
     const entries = nodes.flatMap((node) => {
