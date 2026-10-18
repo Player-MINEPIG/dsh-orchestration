@@ -1,0 +1,259 @@
+{
+  "target": "aliyun-vps",
+  "entry": "https://izbp11roeflhmn04yssxm4z.tail435ecd.ts.net:10000/",
+  "developmentExecutor": "GPT-6.1-Sol High",
+  "git": {
+    "remote": "https://github.com/Player-MINEPIG/dsh-orchestration.git",
+    "branch": "codex/dashboard-feedback",
+    "deployedCommit": "bab6fb95807a384064a17d2c680a66af2aa7433b",
+    "pushVerifiedBeforeCutover": true
+  },
+  "package": {
+    "name": "@dsh-task/task-system",
+    "version": "0.2.27",
+    "archiveSha256": "d3e49e26e43479c15bd77fde18160afff570aa56e8aa4d6b7aebee9ac01a51b0",
+    "installedFilesMatched": 283
+  },
+  "times": {
+    "stoppedAt": "2026-10-18T12:20:38.541513+00:00",
+    "activatedAt": "2026-10-18T12:20:40.010571+00:00",
+    "serviceStartRequestedAt": "2026-10-18T12:20:40.032193+00:00"
+  },
+  "backup": {
+    "preparedAt": "2026-10-18T12:20:07.584722+00:00",
+    "path": "/opt/dsh-production/releases/dashboard-feedback-bab6fb9/backup",
+    "sqliteFiles": [
+      "tasks.sqlite",
+      "tasks.sqlite.results.sqlite",
+      "tasks.sqlite.program-executions",
+      "remote-execution.sqlite"
+    ],
+    "onlineQuickCheck": "ok",
+    "stoppedDatabaseCopy": "backup/stopped",
+    "sessions": 38,
+    "systemdDefinitionAndDropins": true,
+    "previousProfile": "/root/.dsh/profiles/web.dashboard-bab6fb9-before",
+    "rollbackScript": "/opt/dsh-production/releases/dashboard-feedback-bab6fb9/rollback.py",
+    "rollbackRestoresDatabases": false
+  },
+  "preflight": {
+    "sampledAt": "2026-10-18T12:20:37.396902+00:00",
+    "sessions": 19,
+    "runningSessions": 0,
+    "queueCount": 0,
+    "queueTruncated": false,
+    "activeRunOrAttemptGroups": [],
+    "activeProjectTurns": 0,
+    "codexDatabaseExists": false,
+    "codexQueuedOrRunning": 0,
+    "codexProcesses": 0,
+    "codexOverrideMentioned": false,
+    "remoteCounts": {
+      "dispatches": 0,
+      "outbound": 0
+    },
+    "programTableCounts": {
+      "peer_sequences": 0,
+      "nonces": 0,
+      "commands": 0,
+      "dispatches": 13,
+      "outbound": 0,
+      "metadata": 1
+    },
+    "readRows": 2,
+    "presentationRows": 1,
+    "programDispatchStates": {
+      "acknowledged": 13
+    }
+  },
+  "verification": {
+    "httpsStatus": 200,
+    "rpc": {
+      "htmlPreview": {
+        "exactIdentity": true,
+        "bodyChars": 10093,
+        "defaultContainsBody": false
+      },
+      "verifiedAt": "2026-10-18T12:21:09.184Z",
+      "queueCount": 0,
+      "runningSessions": 0,
+      "sessions": 19,
+      "taskCount": 62,
+      "coordinatorTasks": 5,
+      "reportCount": 92,
+      "reportReadingFields": true,
+      "workflowRuns": 9,
+      "summaryHasNoOutputs": true,
+      "servedProjectPageSha256": "7dccbf5f7a9a58e0ac7b9a61cc51e80d50b9a4da86b59bff315d60b2e454635a",
+      "servedWorkflowPageSha256": "939cf34b798a4a630914f996a7c452e5cd5beee648898bd27c8f9bbae84a98d8",
+      "history": {
+        "workflowRunId": "4c1171d5-f9d3-4627-a2f7-91821cc018b7",
+        "definitionRevision": 1,
+        "exactSteps": 3,
+        "selectedFullOutput": true,
+        "latestDifferent": true
+      }
+    },
+    "state": {
+      "verifiedAt": "2026-10-18T12:21:09.810034+00:00",
+      "packageVersion": "0.2.27",
+      "sourceCommit": "bab6fb95807a384064a17d2c680a66af2aa7433b",
+      "packageFilesMatched": 283,
+      "businessEntitiesUnchanged": [
+        "task",
+        "run",
+        "attempt",
+        "report",
+        "schedule",
+        "occurrence",
+        "template"
+      ],
+      "planningTablesUnchanged": [
+        "workflow_definitions",
+        "workflow_runs",
+        "workflow_task_bindings",
+        "workflow_adoptions",
+        "pr_projects",
+        "wb_projects",
+        "wb_backlogs",
+        "wb_backlog_tasks",
+        "execution_directory_settings",
+        "execution_directory_bindings",
+        "pr_report_reads",
+        "pr_task_presentation"
+      ],
+      "originalSessionFilesUnchanged": 38,
+      "profileConfigUnchanged": true,
+      "proxyUnchanged": true,
+      "readingRows": 2,
+      "presentationRows": 1,
+      "entityCounts": [
+        [
+          "attempt",
+          91
+        ],
+        [
+          "report",
+          92
+        ],
+        [
+          "run",
+          99
+        ],
+        [
+          "schedule",
+          4
+        ],
+        [
+          "task",
+          62
+        ]
+      ],
+      "service": "MainPID=1429767\nNRestarts=0\nExecMainStartTimestamp=Sun 2026-10-18 20:20:40 CST\nActiveState=active\nSubState=running"
+    },
+    "startupJournal": "Normal stop/start, SQLite experimental warning only; no observed error or restart loop",
+    "finalState": {
+      "verifiedAt": "2026-10-18T12:28:45.806334+00:00",
+      "packageVersion": "0.2.27",
+      "sourceCommit": "bab6fb95807a384064a17d2c680a66af2aa7433b",
+      "packageFilesMatched": 283,
+      "businessEntitiesUnchanged": [
+        "task",
+        "run",
+        "attempt",
+        "report",
+        "schedule",
+        "occurrence",
+        "template"
+      ],
+      "planningTablesUnchanged": [
+        "workflow_definitions",
+        "workflow_runs",
+        "workflow_task_bindings",
+        "workflow_adoptions",
+        "pr_projects",
+        "wb_projects",
+        "wb_backlogs",
+        "wb_backlog_tasks",
+        "execution_directory_settings",
+        "execution_directory_bindings",
+        "pr_report_reads",
+        "pr_task_presentation"
+      ],
+      "originalSessionFilesUnchanged": 38,
+      "profileConfigUnchanged": true,
+      "proxyUnchanged": true,
+      "readingRows": 2,
+      "presentationRows": 1,
+      "entityCounts": [
+        [
+          "attempt",
+          91
+        ],
+        [
+          "report",
+          92
+        ],
+        [
+          "run",
+          99
+        ],
+        [
+          "schedule",
+          4
+        ],
+        [
+          "task",
+          62
+        ]
+      ],
+      "service": "MainPID=1429767\nNRestarts=0\nExecMainStartTimestamp=Sun 2026-10-18 20:20:40 CST\nActiveState=active\nSubState=running"
+    }
+  },
+  "tests": {
+    "total": 654,
+    "pass": 653,
+    "fail": 0,
+    "skip": 1,
+    "skipReason": "existing macOS loopback alias case",
+    "buildPassed": true,
+    "diffCheckPassed": true
+  },
+  "gui": {
+    "local": {
+      "desktop": "evidence/dashboard-revision4-history-desktop.png",
+      "mobile": "evidence/dashboard-revision4-history-mobile.png",
+      "passed": true,
+      "mobileScope": "390px iframe responsive layout, not real-device touch validation"
+    },
+    "production": {
+      "status": "passed",
+      "screenshot": "evidence/dashboard-revision4-production-history.png",
+      "source": "new independent Chrome page; original user report page unchanged",
+      "parentExecutionGroups": 16,
+      "attentionItems": 17,
+      "pageSize": 5,
+      "pages": 4,
+      "observedPages": [
+        1,
+        2
+      ],
+      "expandedPagePreserved": true,
+      "resultSummaryAndProvenanceFilterPassed": true,
+      "processContainsNoHistoryList": true,
+      "reportsOpened": 0
+    }
+  },
+  "unchanged": [
+    "runtime0.2.1-rc.2",
+    "proxy",
+    "other plugins",
+    "model/capacity/workspace configuration",
+    "business data and exact historical references",
+    "reading and presentation facts"
+  ],
+  "limits": [
+    "Intermittent transport disconnect trigger remains unlocated; no root-cause resolution claimed",
+    "No real execution, review, or unread-report read used for production testing"
+  ]
+}
