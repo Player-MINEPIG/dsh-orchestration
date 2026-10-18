@@ -13,3 +13,7 @@
 主会话操作合成预览4342，本执行会话view_image验收：evidence/dashboard-revision-cards.png、card-mobile.png、html-task.png、html-project.png。卡片深色和390px iframe无重叠，任务与项目两个入口的蓝底HTML可见。工作流三张workflow-node截图证明选中详情/步骤及只读提示，真实Chrome节点点击与拖动验证由workflow_execution执行。390px不等同实体触摸测试。
 
 工作流模块b347003已整合为cd5b626，真实Chrome验证已由执行会话复核截图。后续部署状态见本轮上线回执。
+
+## 发行身份修正
+
+首次0.2.24候选安装被283文件哈希验证拦截，9个变更文件仍是上一版本。包与manifest自身一致，候选为独立普通目录，pnpm hoisted同名同版本报告Already up to date/added0。未进入备份或切换，生产未改。改用task-system 0.2.25区分发行，npm生成对应lock；核对所有依赖version/resolved/integrity及依赖关系未变，只有本插件版本变，其他差异为npm生成的依赖分类元数据。重新build与644测试643pass/1skip/0fail通过。
