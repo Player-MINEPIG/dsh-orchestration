@@ -14,3 +14,7 @@
 ## 第二轮修订最终验证
 
 0.2.25构建通过；完整套件644 tests / 643 pass / 0 fail / 1 skip，原因同上。日志dashboard-refinement-release-{build,suite}.log。本轮新增卡片分钟、真实设备、lazy HTML、精确artifact、错版本拒绝及可见读取行为；工作流节点点击/拖动与详情整合有真实Chrome补证。线上只读发布证据见docs/validation/dashboard-refinement-20261018.json。
+
+## 第三轮修订（0.2.26）
+
+整合workflow模块f447709与项目页详情重排。构建通过，完整649项648pass/0fail/1既有平台skip。最终恢复提示与select右间距文案调整后再build+67页/递归测试通过。root真实UI验证Task/Run/项目/390px模块层次、按钮间距与workflow分区；执行会话查看截图。真实Chrome旧页同已读报告失败且全局snapshot也gateway/internal；单次刷新后同报告HTML恢复，读取状态未新增。官方SDK动态取当前connection，故不加入猜测性remount；底层断线触发条件未定位。预览保留安全错误分类及恢复提示，原Run/version重试有回归。

@@ -4,6 +4,10 @@
 
 当前部署回执见 [第二轮部署记录](../../../docs/validation/dashboard-refinement-20261018.md) 及同名JSON；[首轮记录](../../../docs/validation/dashboard-feedback-20261018.md)保留为历史。生产主列表、未读筛选和历史提示的只读浏览器验收通过，截图在evidence/dashboard-feedback-production-deployed.png；未打开真实报告，最终阅读与呈现表仍为0行。
 
+## 当前第三轮修订
+
+基线c7c9700。统一`0 d 06:33:07`时长、“多个执行端”、select箭头inset和详情模块层次；子树仅精确Run，任务顶层留历史入口。真实用户HTML失败现场已保留，单次刷新同既有已读报告恢复；底层连接异常未定位，本轮补错误分类与恢复提示，不虚称根因修复。649项测试648pass/1skip，主会话视觉复核通过。按授权先push再发布0.2.26，记录见[第三轮](revision3-20261018.md)。
+
 ## 当前第二轮修订
 
 新反馈的卡片、节点交互及HTML按需预览已完成构建、644项测试与本地视觉验收。`b63fadd`已先push再于UTC09:26部署aliyun-vps，版本0.2.25，线上哈希与只读RPC通过；见[本轮部署回执](../../../docs/validation/dashboard-refinement-20261018.md)及[修订记录](refinement-20261018.md)。下文68ef21e是上一轮历史基线，当前代码以本轮为准。
