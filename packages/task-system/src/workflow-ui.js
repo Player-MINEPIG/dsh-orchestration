@@ -44,6 +44,7 @@
     nodeId: "",
     stageId: "",
     focusStage: false,
+    connection: null,
     viewport: { x: 35, y: 35, zoom: 1 },
     taskId: context.taskId || "",
     connectFrom: "",
@@ -485,42 +486,25 @@
         .join("") || option("", "没有已登记设备", "");
     $("add-device").disabled = !$("add-device-select").value || state.pending;
     $("add-step").disabled = !stage || state.pending;
-    $("stage-controls").innerHTML = stage
-      ? `<label>阶段名称<input id="stage-title" value="${esc(stage.title)}"${run() ? " disabled" : ""}></label><label>执行设备<select id="stage-node"${run() ? " disabled" : ""}>${state.snapshot.nodes.map((row) => option(row.nodeId, row.nodeId, stage.nodeId)).join("")}${!state.snapshot.nodes.some((row) => row.nodeId === stage.nodeId) ? option(stage.nodeId, stage.nodeId, stage.nodeId) : ""}</select></label><button type="button" id="enter-stage">查看内部步骤</button>${!run() ? '<button type="button" id="remove-stage" class="danger">删除阶段</button>' : ""}`
-      : '<p class="muted">添加阶段并指定执行设备。</p>';
-    $("call-controls").classList.toggle("hidden", !!run());
-    const endpointOptions = def.steps
-      .map((step) =>
-        option(
-          step.stepId,
-          `${def.stages.find((s) => s.stageId === step.stageId)?.title} / ${step.title}`,
-          "",
-        ),
-      )
-      .join("");
-    $("call-from").innerHTML = endpointOptions;
-    $("call-to").innerHTML = endpointOptions;
-    $("call-list").innerHTML =
-      def.calls
-        .map(
-          (call, index) =>
-            `<div class="call-row"><span>${esc(def.steps.find((s) => s.stepId === call.fromStepId)?.title)} → ${esc(def.steps.find((s) => s.stepId === call.toStepId)?.title)}</span>${!run() ? `<button type="button" data-remove-call="${index}" aria-label="删除调用连线">删除</button>` : ""}</div>`,
-        )
-        .join("") ||
-      '<p class="muted">暂无调用。没有前置调用的步骤会并行开始。</p>';
+    const readOnly = !!run();
+    $("graph-panel").classList.toggle("is-readonly", readOnly);
+    $("graph-legend").textContent = readOnly
+      ? "执行快照只读。点击节点查看详情，拖动空白平移，滚轮缩放。"
+      : "点击节点查看和编辑详情。拖动卡片移动，拖动空白平移，滚轮缩放，圆点之间拖动连线。";
+    $("graph-container").setAttribute("aria-label", readOnly
+      ? "只读执行画布。点击节点查看详情，拖动空白平移，滚轮缩放。"
+      : "计划画布。点击节点编辑详情，拖动卡片移动，拖动空白平移，滚轮缩放。");
     applyViewport();
   }
   function stepList() {
     const def = definition();
     if (!def) return;
     const steps = def.steps.filter((step) => step.stageId === state.stageId);
-    if (!steps.some((step) => step.stepId === state.stepId))
-      state.stepId = steps[0]?.stepId || "";
-    $("device-heading").textContent = state.nodeId
-      ? `${def.stages.find((stage) => stage.stageId === state.stageId)?.title || state.nodeId} · 内部步骤`
-      : "设备内工作流";
+    if (!steps.some((step) => step.stepId === state.stepId)) state.stepId = "";
+    const stage = def.stages.find(row => row.stageId === state.stageId);
+    $("device-heading").textContent = selectedStep() ? `${selectedStep().title} · 步骤详情` : `${stage?.title || "节点"} · 阶段详情`;
     $("step-list").innerHTML =
-      steps
+      (stage ? `<button type="button" class="step ${!state.stepId ? "active" : ""}" data-stage-detail="${esc(stage.stageId)}"><strong>${esc(stage.title)}</strong><span class="muted">设备 ${esc(stage.nodeId)} · ${steps.length} 个步骤</span></button>` : "") + steps
         .map((step) => {
           const view = run()?.steps.find((row) => row.stepId === step.stepId);
           const upstream = step.dependsOn
@@ -557,11 +541,45 @@
         "",
       )}</div><button type="button" id="add-binding" style="margin-top:10px">添加输入映射</button>`;
   }
+  function selectNode({ kind, id }) {
+    const def = definition();
+    const step = kind === "step" ? def.steps.find(row => row.stepId === id) : null;
+    const stage = def.stages.find(row => row.stageId === (step?.stageId || id));
+    if (!stage || (kind === "step" && !step)) return;
+    state.stageId = stage.stageId;
+    state.nodeId = stage.nodeId;
+    state.stepId = step?.stepId || "";
+    state.connection = null;
+    graph();
+    stepList();
+    renderStepEditor();
+  }
+  function renderStageEditor() {
+    const def = definition();
+    const stage = def?.stages.find(row => row.stageId === state.stageId);
+    if (!stage) {
+      $("step-detail").innerHTML = '<p class="empty">添加或选择一个设备阶段。</p>';
+      return;
+    }
+    const steps = def.steps.filter(step => step.stageId === stage.stageId);
+    const ids = new Set(steps.map(step => step.stepId));
+    const calls = def.calls.filter(call => ids.has(call.fromStepId) || ids.has(call.toStepId));
+    const readOnly = !!run();
+    const title = id => def.steps.find(step => step.stepId === id)?.title || id;
+    const connection = state.connection;
+    const source = connection ? def.steps.filter(step => step.stageId === connection.fromStageId) : [];
+    const destination = connection ? def.steps.filter(step => step.stageId === connection.toStageId) : [];
+    $("step-detail").innerHTML = `<h3>${esc(stage.title)}</h3>${readOnly
+      ? `<p>执行设备 ${esc(stage.nodeId)} · ${steps.length} 个内部步骤</p><p class="hint">本次执行固定使用版本 ${esc(run().definitionRevision)}。阶段与连线只读，选择左侧步骤查看本次结果。</p>`
+      : `<div class="fields"><label>阶段名称<input id="stage-title" value="${esc(stage.title)}"></label><label>执行设备<select id="stage-node">${state.snapshot.nodes.map(row => option(row.nodeId, row.nodeId, stage.nodeId)).join("")}${!state.snapshot.nodes.some(row => row.nodeId === stage.nodeId) ? option(stage.nodeId, stage.nodeId, stage.nodeId) : ""}</select></label></div><p class="muted">选择左侧步骤可设置执行方式、前序调用和输入映射。</p>`}
+      <div class="row">${!state.focusStage ? '<button type="button" id="enter-stage">查看内部步骤图</button>' : ''}${!readOnly ? '<button type="button" id="remove-stage" class="danger">删除阶段</button>' : ''}</div>
+      ${connection && !readOnly ? `<section class="node-connection"><h3>连接这两个阶段的步骤</h3><label>调用出口<select id="call-from">${source.map(step => option(step.stepId, step.title, "")).join("")}</select></label><label>调用入口<select id="call-to">${destination.map(step => option(step.stepId, step.title, "")).join("")}</select></label><button type="button" id="add-call"${source.length && destination.length ? "" : " disabled"}>添加调用</button><p class="muted">连线决定先后顺序。传递数据时，在步骤详情中设置输入映射。</p></section>` : ''}
+      <h3 style="margin-top:20px">此阶段的调用</h3>${calls.map(call => `<div class="call-row"><span>${esc(title(call.fromStepId))} → ${esc(title(call.toStepId))}</span>${!readOnly ? `<button type="button" data-remove-call="${def.calls.indexOf(call)}" aria-label="删除调用连线">删除</button>` : ''}</div>`).join("") || '<p class="muted">暂无调用。选择步骤可设置前序调用。</p>'}`;
+  }
   function renderStepEditor() {
     const step = selectedStep();
     if (!step) {
-      $("step-detail").innerHTML =
-        '<p class="empty">选择一个步骤查看详情。</p>';
+      renderStageEditor();
       return;
     }
     if (run()) {
@@ -646,6 +664,7 @@
       stepId: "",
       stageId: "",
       focusStage: false,
+      connection: null,
     });
     fullRender();
     fit();
@@ -689,6 +708,7 @@
         );
         if (selectedRun) {
           state.runId = selectedRun.workflowRunId;
+          state.stepId = selectedRun.definition.steps.find(step => step.stageId === state.stageId)?.stepId || "";
           fullRender();
           fit();
         }
@@ -719,7 +739,8 @@
       graph();
       stepList();
       renderHeading();
-      if (run()) {
+      if (run() && !selectedStep()) renderStageEditor();
+      if (run() && selectedStep()) {
         const resultKey = JSON.stringify({
           workflowRunId: run().workflowRunId,
           step: run().steps.find((row) => row.stepId === state.stepId),
@@ -835,6 +856,9 @@
           runId: "",
           nodeId: "",
           stepId: "",
+          stageId: "",
+          focusStage: false,
+          connection: null,
         });
         state.draft.workflowId = state.workflowId;
         fullRender();
@@ -933,10 +957,16 @@
         requestAnimationFrame(fit);
       } else if (action === "enter-stage" || action === "leave-stage") {
         state.focusStage = action === "enter-stage";
+        state.stepId = state.focusStage ? definition().steps.find(step => step.stageId === state.stageId)?.stepId || "" : "";
+        state.connection = null;
         graph();
+        stepList();
+        renderStepEditor();
         fit();
       } else if (action === "add-call") {
         changeCall($("call-from").value, $("call-to").value);
+        state.connection = null;
+        renderStepEditor();
       } else if (action === "remove-stage") {
         if (state.draft.steps.some((step) => step.stageId === state.stageId))
           throw Error("请先删除阶段中的步骤");
@@ -1059,12 +1089,8 @@
       selectWorkflow(target.dataset.workflow);
       return;
     }
-    if (target.dataset.stage) {
-      state.stageId = target.dataset.stage;
-      state.stepId = "";
-      graph();
-      stepList();
-      renderStepEditor();
+    if (target.dataset.stage || target.dataset.stageDetail) {
+      selectNode({ kind: "stage", id: target.dataset.stage || target.dataset.stageDetail });
       return;
     }
     if (target.dataset.removeCall !== undefined) {
@@ -1078,9 +1104,7 @@
     }
     if (target.dataset.port) return;
     if (target.dataset.step) {
-      state.stepId = target.dataset.step;
-      stepList();
-      renderStepEditor();
+      selectNode({ kind: "step", id: target.dataset.step });
       return;
     }
     if (target.dataset.removeBinding) {
@@ -1112,7 +1136,8 @@
         return;
       }
       state.runId = el.value;
-      state.stepId = "";
+      state.stepId = state.runId ? definition()?.steps.find(step => step.stageId === state.stageId)?.stepId || "" : "";
+      state.connection = null;
       fullRender();
       fit();
       return refresh({ force: true });
@@ -1225,6 +1250,8 @@
         setDirty();
       } else if (el.id === "stage-title") {
         graph();
+        stepList();
+        renderStageEditor();
       } else if (el.id === "stage-node") {
         const stage = state.draft.stages.find(
           (row) => row.stageId === state.stageId,
@@ -1238,6 +1265,7 @@
         }
         setDirty();
         graph();
+        stepList();
         renderStepEditor();
       }
     } catch (error) {
@@ -1292,6 +1320,7 @@
   }
   $("graph-container").addEventListener("pointerdown", (event) => {
     if (event.button !== 0 || state.pending) return;
+    suppressClick = false;
     const port = event.target.closest("[data-port]");
     const card = event.target.closest("[data-card]");
     if (port && !run())
@@ -1316,8 +1345,9 @@
         start: pointer(event),
         origin: { ...state.viewport },
       };
-    if (gesture) {
+    if (gesture && gesture.kind !== "drag") {
       $("graph-container").setPointerCapture(event.pointerId);
+      gesture.captured = true;
       event.preventDefault();
     }
   });
@@ -1326,7 +1356,13 @@
     const point = pointer(event),
       dx = point.x - gesture.start.x,
       dy = point.y - gesture.start.y;
-    if (Math.abs(dx) + Math.abs(dy) > 4) gesture.moved = true;
+    if (Math.abs(dx) + Math.abs(dy) > 4) {
+      gesture.moved = true;
+      if (!gesture.captured) {
+        $("graph-container").setPointerCapture(event.pointerId);
+        gesture.captured = true;
+      }
+    }
     if (gesture.kind === "pan") {
       state.viewport.x = gesture.origin.x + dx;
       state.viewport.y = gesture.origin.y + dy;
@@ -1348,8 +1384,9 @@
     if (!gesture) return;
     const current = gesture;
     gesture = null;
-    if (current.kind === "drag" && current.moved) {
-      setDirty();
+    if (current.kind === "drag") {
+      if (current.moved) setDirty();
+      else selectNode({ kind: state.focusStage ? "step" : "stage", id: current.id });
       suppressClick = true;
     }
     if (current.kind === "connect") {
@@ -1371,13 +1408,9 @@
           const def = definition(),
             source = def.steps.filter((step) => step.stageId === from),
             dest = def.steps.filter((step) => step.stageId === to);
-          $("call-from").innerHTML = source
-            .map((step) => option(step.stepId, step.title, ""))
-            .join("");
-          $("call-to").innerHTML = dest
-            .map((step) => option(step.stepId, step.title, ""))
-            .join("");
-          $("connection-form").open = true;
+          selectNode({ kind: "stage", id: from });
+          state.connection = { fromStageId: from, toStageId: to };
+          renderStageEditor();
           $("call-from").focus();
           notice(
             source.length && dest.length
@@ -1388,7 +1421,7 @@
       }
       suppressClick = true;
     }
-    $("graph-container").releasePointerCapture(event.pointerId);
+    if (current.captured) $("graph-container").releasePointerCapture(event.pointerId);
   });
   $("graph-container").addEventListener("pointercancel", () => {
     gesture = null;
@@ -1396,7 +1429,7 @@
   $("graph-container").addEventListener(
     "click",
     (event) => {
-      if (suppressClick) {
+      if (suppressClick && event.detail !== 0) {
         event.stopPropagation();
         suppressClick = false;
       }

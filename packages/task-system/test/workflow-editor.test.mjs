@@ -9,7 +9,7 @@ function editor(contextOverride = {}) {
     "utf8",
   ).replace(
     "  refresh();\n  setInterval(refresh, 10000);",
-    "  window.editor={state,loadedRuns,normalized,derive,checkCalls,changeCall,visibleBoxes,graphTerminals,validate,fit,zoomAt,graph,act,fullRender,refresh};",
+    "  window.editor={state,loadedRuns,selectNode,normalized,derive,checkCalls,changeCall,visibleBoxes,graphTerminals,validate,fit,zoomAt,graph,act,fullRender,refresh};",
   );
   const elements = new Map(),
     listeners = {},
@@ -535,4 +535,132 @@ test("a missing deep-linked historical Run reports an error and never falls back
   assert.equal(e.state.snapshot, null);
   assert.equal(e.state.workflowId, "");
   assert.equal(e.loadedRuns.size, 0);
+});
+
+
+function pointerEvent(x, y, { card, port } = {}) {
+  return { button: 0, clientX: x, clientY: y, pointerId: 1, preventDefault() {}, target: { closest: selector => selector === "[data-card]" ? card : selector === "[data-port]" ? port : null } };
+}
+function tapCard(e, id) {
+  const canvas = e.element("graph-container");
+  const event = pointerEvent(100, 100, { card: { dataset: { card: id } } });
+  canvas.events.pointerdown(event); canvas.events.pointerup(event);
+}
+
+test("an unmoved pointer selects an editable stage and the next independent click is retained", () => {
+  const e = editor(); e.fullRender();
+  const before = JSON.stringify(e.state.draft.stages);
+  tapCard(e, "b");
+  assert.equal(e.state.stageId, "b");
+  assert.equal(e.state.nodeId, "mbp");
+  assert.equal(e.state.stepId, "");
+  assert.match(e.element("step-detail").innerHTML, /id="stage-title" value="b"/);
+  assert.equal(e.state.dirty, false);
+  assert.equal(JSON.stringify(e.state.draft.stages), before);
+  tapCard(e, "c");
+  assert.equal(e.state.stageId, "c");
+  assert.match(e.element("step-detail").innerHTML, /id="stage-title" value="c"/);
+});
+
+test("a drag suppresses its synthetic click without swallowing the following tap or keyboard click", () => {
+  const e = editor(); e.graph(); const canvas = e.element("graph-container");
+  const card = { dataset: { card: "b" } };
+  canvas.events.pointerdown(pointerEvent(100, 100, { card }));
+  canvas.events.pointermove(pointerEvent(140, 130, { card }));
+  canvas.events.pointerup(pointerEvent(140, 130, { card }));
+  assert.equal(e.state.dirty, true);
+  let stopped = false;
+  canvas.events.click({ detail: 1, stopPropagation() { stopped = true; } });
+  assert.equal(stopped, true);
+  tapCard(e, "c"); assert.equal(e.state.stageId, "c");
+  stopped = false;
+  canvas.events.click({ detail: 0, stopPropagation() { stopped = true; } });
+  assert.equal(stopped, false);
+  e.listeners.click({ target: { closest: () => ({ dataset: { stage: "a" } }) } });
+  assert.equal(e.state.stageId, "a");
+});
+
+test("selecting a step synchronizes its stage, node and graph highlight", async () => {
+  const e = editor();
+  e.listeners.click({ target: { closest: () => ({ dataset: { step: "b" } }) } });
+  assert.equal(e.state.stageId, "b"); assert.equal(e.state.nodeId, "mbp"); assert.equal(e.state.stepId, "b");
+  assert.match(e.element("step-detail").innerHTML, /id="step-title" value="b"/);
+  await e.act("enter-stage"); tapCard(e, "b");
+  assert.equal(e.state.stepId, "b");
+  assert.match(e.element("device-graph").innerHTML, /graph-card active/);
+  e.listeners.change({ target: { dataset: { dependency: "a" }, checked: true } });
+  assert.equal(e.state.draft.calls[0].fromStepId, "a");
+  assert.equal(e.state.draft.calls[0].toStepId, "b");
+  await e.act("add-binding");
+  assert.equal(e.state.draft.steps[1].inputs.input1.kind, "workflow-input");
+});
+
+test("read-only execution hints allow inspection, pan and zoom without advertising edits", () => {
+  const e = editor(); const historical = runSummary(e, "historic");
+  e.state.snapshot.runs = [historical]; e.loadedRuns.set("historic", historical); e.state.runId = "historic";
+  const before = JSON.stringify(historical.definition);
+  e.graph(); const canvas = e.element("graph-container");
+  assert.match(e.element("graph-legend").textContent, /只读.*平移.*缩放/);
+  assert.doesNotMatch(e.element("graph-legend").textContent, /拖动卡片|连线|编辑/);
+  assert.doesNotMatch(canvas["aria-label"], /拖动卡片|编辑/);
+  assert.doesNotMatch(e.element("device-graph").innerHTML, /data-port=/);
+  canvas.events.pointerdown(pointerEvent(100, 100, { card: { dataset: { card: "a" } } }));
+  canvas.events.pointermove(pointerEvent(180, 150)); canvas.events.pointerup(pointerEvent(180, 150));
+  canvas.events.pointerdown(pointerEvent(100, 100)); canvas.events.pointermove(pointerEvent(120, 140)); canvas.events.pointerup(pointerEvent(120, 140));
+  assert.equal(e.state.viewport.x, 55); assert.equal(e.state.viewport.y, 75);
+  assert.equal(JSON.stringify(historical.definition), before);
+  e.selectNode({ kind: "stage", id: "b" });
+  assert.match(e.element("step-detail").innerHTML, /执行设备 mbp/);
+  assert.doesNotMatch(e.element("step-detail").innerHTML, /id="stage-title"|id="stage-node"|data-remove-call/);
+});
+
+test("stage controls and scoped calls live only in selected-node details", () => {
+  const e = editor(); e.changeCall("a", "b"); e.changeCall("b", "c"); e.selectNode({ kind: "stage", id: "a" });
+  const page = readFileSync(new URL("../src/workflow-page.html", import.meta.url), "utf8");
+  assert.doesNotMatch(page, /id="stage-controls"|id="connection-form"|id="call-list"|调用连接与具体端点/);
+  const detail = e.element("step-detail").innerHTML;
+  assert.match(detail, /id="stage-title"/); assert.match(detail, /id="stage-node"/);
+  assert.match(detail, /a → b/); assert.doesNotMatch(detail, /b → c/);
+  assert.equal(e.state.draft.calls.length, 2);
+});
+
+test("dragging between stage ports edits concrete endpoints within that stage detail", async () => {
+  const e = editor(); e.graph(); const canvas = e.element("graph-container");
+  const from = { dataset: { port: "out", endpoint: "a" } }, to = { dataset: { port: "in", endpoint: "b" } };
+  e.document.elementFromPoint = () => ({ closest: () => to });
+  canvas.events.pointerdown(pointerEvent(100, 100, { port: from })); canvas.events.pointerup(pointerEvent(200, 100));
+  assert.equal(e.state.stageId, "a"); assert.equal(e.state.connection.toStageId, "b");
+  assert.match(e.element("step-detail").innerHTML, /连接这两个阶段的步骤/);
+  e.element("call-from").value = "a"; e.element("call-to").value = "b";
+  await e.act("add-call");
+  assert.equal(e.state.draft.calls[0].fromStepId, "a"); assert.equal(e.state.draft.calls[0].toStepId, "b");
+  assert.equal(e.state.connection, null);
+  assert.doesNotMatch(e.element("step-detail").innerHTML, /id="call-from"/);
+});
+
+
+test("unmoved pointers switch between different internal step cards", async () => {
+  const e = editor();
+  const original = e.state.draft.steps[0];
+  e.state.draft.steps.push({ ...structuredClone(original), stepId: "a-next", title: "Next internal work" });
+  await e.act("enter-stage");
+  assert.equal(e.state.stepId, "a");
+  tapCard(e, "a-next");
+  assert.equal(e.state.stageId, "a"); assert.equal(e.state.stepId, "a-next");
+  assert.match(e.element("step-detail").innerHTML, /value="Next internal work"/);
+  tapCard(e, "a"); assert.equal(e.state.stepId, "a");
+});
+
+test("stage detail edits update graph and navigation while retaining concrete workspace validation", () => {
+  const e = editor(); e.selectNode({ kind: "stage", id: "a" });
+  e.listeners.input({ target: { id: "stage-title", value: "Preparation" } });
+  e.listeners.change({ target: { id: "stage-title", dataset: {} } });
+  assert.match(e.element("device-heading").textContent, /Preparation/);
+  assert.match(e.element("step-list").innerHTML, /Preparation/);
+  assert.match(e.element("device-graph").innerHTML, /Preparation/);
+  e.listeners.change({ target: { id: "stage-node", value: "mbp", dataset: {} } });
+  assert.equal(e.state.draft.steps[0].nodeId, "mbp");
+  assert.equal(e.state.draft.steps[0].workspaceId, "");
+  assert.match(e.element("step-list").innerHTML, /设备 mbp/);
+  assert.throws(() => e.validate(e.state.draft), /工作区/);
 });

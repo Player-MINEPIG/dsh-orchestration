@@ -548,6 +548,8 @@
       .stage-step { display: flex; justify-content: space-between; gap: 8px; padding: 5px 8px; border: 1px solid var(--border); border-radius: 6px; font-size: 11px; }
       .stage-step > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .stage-step small { color: var(--muted); flex-shrink: 0; }
+      .is-readonly .graph-card { cursor: pointer; }
+      .node-connection { margin-top: 20px; padding: 14px; border: 1px solid var(--border); border-radius: 10px; }
       .graph-card.active {
         border-color: var(--accent);
         box-shadow: 0 0 0 2px var(--soft);
@@ -647,23 +649,6 @@
         text-align: center;
         color: var(--muted);
       }
-      .stage-controls {
-        display: flex;
-        align-items: end;
-        gap: 12px;
-        flex-wrap: wrap;
-        margin-top: 14px;
-      }
-      .stage-controls label {
-        flex: 1;
-        min-width: 140px;
-        margin: 0;
-      }
-      .stage-controls input,
-      .stage-controls select {
-        display: block;
-        margin-top: 7px;
-      }
       .call-row {
         display: flex;
         align-items: center;
@@ -695,9 +680,7 @@
         height: auto;
         max-height: none;
       }
-      .canvas-fullscreen .stage-controls,
-      .canvas-fullscreen #device-controls,
-      .canvas-fullscreen #connection-form {
+      .canvas-fullscreen #device-controls {
         display: none;
       }
       @media (max-width: 900px) {
@@ -734,12 +717,6 @@
         .canvas-tools {
           width: 100%;
           justify-content: flex-end;
-        }
-        .stage-controls {
-          gap: 8px;
-        }
-        .stage-controls button {
-          font-size: 12px;
         }
       }
     </style>
@@ -840,17 +817,14 @@
               id="graph-container"
               class="graph-scroll"
               role="region"
-              aria-label="流程画布。拖动卡片移动，拖动空白平移，滚轮缩放。"
+              aria-label="流程画布。点击节点查看详情，可平移和缩放。"
             >
               <div id="device-graph" class="device-graph"></div>
               <p id="canvas-empty" class="empty">
                 添加设备阶段，再添加抽象或可执行步骤。
               </p>
             </div>
-            <p class="muted legend">
-              拖动卡片移动 · 拖动空白平移 · 滚轮缩放 ·
-              右侧圆点拖到入口连线。箭头决定调用顺序；同一设备可添加多个阶段。开始与结束根据步骤连线显示。
-            </p>
+            <p id="graph-legend" class="muted legend"></p>
             <div id="device-controls" class="row">
               <select
                 id="add-device-select"
@@ -859,26 +833,10 @@
               ></select
               ><button type="button" id="add-device">添加阶段</button>
             </div>
-            <div id="stage-controls" class="stage-controls"></div>
-            <details id="connection-form">
-              <summary>调用连接与具体端点</summary>
-              <div id="call-controls" class="row">
-                <label class="grow"
-                  >调用出口<select id="call-from"></select></label
-                ><span>→</span
-                ><label class="grow"
-                  >调用入口<select id="call-to"></select></label
-                ><button type="button" id="add-call">添加调用</button>
-              </div>
-              <p class="muted">
-                连线只表示控制顺序。传递数据请在步骤中单独配置输入映射。无前置调用的步骤会并行开始。
-              </p>
-              <div id="call-list"></div>
-            </details>
           </section>
-          <section class="panel">
+          <section class="panel" id="node-detail-panel">
             <div class="row between">
-              <h2 id="device-heading">阶段内部步骤</h2>
+              <h2 id="device-heading">选中节点详情</h2>
               <button type="button" id="add-step">添加步骤</button>
             </div>
             <div class="split">
