@@ -30,39 +30,51 @@ export const InputBinding = z.discriminatedUnion("kind", [
     })
     .strict(),
 ]);
-export const WorkflowStep = z
+const StepFields = z
   .object({
     stepId: Id,
     title: z.string().min(1).max(500),
     nodeId: Id,
     stageId: Id.optional(),
     position: WorkflowPosition.optional(),
-    workspaceId: Id,
     dependsOn: z.array(Id).max(100),
     inputs: z.record(z.string().min(1).max(100), InputBinding),
-    execution: z.discriminatedUnion("kind", [
-      z
-        .object({
-          kind: z.literal("program"),
-          programId: z.string().min(1).max(100),
-          version: z.string().min(1).max(80),
-        })
-        .strict(),
-      z
-        .object({
-          kind: z.literal("agent"),
-          provider: z.string().min(1).max(100),
-          model: z.string().min(1).max(200),
-          reasoningEffort: z.string().max(100).optional(),
-          instructions: z.string().min(1).max(40000),
-          inputExposure: z.enum(["inline", "tools"]).optional(),
-          allowedTools: z.array(z.string().min(1).max(200)).max(100),
-        })
-        .strict(),
-    ]),
     maxRetries: z.number().int().min(0).max(5),
   })
   .strict();
+const BoundExecution = z.discriminatedUnion("kind", [
+  z
+    .object({
+      kind: z.literal("program"),
+      programId: z.string().min(1).max(100),
+      version: z.string().min(1).max(80),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("agent"),
+      provider: z.string().min(1).max(100),
+      model: z.string().min(1).max(200),
+      reasoningEffort: z.string().max(100).optional(),
+      instructions: z.string().min(1).max(40000),
+      inputExposure: z.enum(["inline", "tools"]).optional(),
+      allowedTools: z.array(z.string().min(1).max(200)).max(100),
+    })
+    .strict(),
+]);
+
+export const RunnableWorkflowStep = StepFields.extend({
+  workspaceId: Id,
+  execution: BoundExecution,
+}).strict();
+export type RunnableWorkflowStep = z.infer<typeof RunnableWorkflowStep>;
+export const WorkflowStep = z.union([
+  StepFields.extend({
+    workspaceId: Id.optional(),
+    execution: z.object({ kind: z.literal("unbound") }).strict(),
+  }).strict(),
+  RunnableWorkflowStep,
+]);
 export type WorkflowStep = z.infer<typeof WorkflowStep>;
 export const WorkflowDefinition = z
   .object({
@@ -169,7 +181,7 @@ export interface WorkflowStepView {
   stepId: string;
   nodeId: string;
   title: string;
-  kind: "program" | "agent";
+  kind: RunnableWorkflowStep["execution"]["kind"];
   state: StepState;
   reason?: string;
   taskId?: string;

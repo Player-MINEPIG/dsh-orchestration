@@ -22,11 +22,21 @@ import {
   type WorkflowRunView,
   type WorkflowSnapshot,
   type WorkflowStep,
+  type RunnableWorkflowStep,
   type WorkflowStepView,
 } from "./workflow-contracts.js";
 
 function fail(code: string, message: string): never {
   throw new TaskError(code, message);
+}
+function requireRunnableStep(step: WorkflowStep): asserts step is RunnableWorkflowStep {
+  if (step.execution.kind === "unbound" || !step.workspaceId)
+    fail("WORKFLOW_UNBOUND", `Choose an execution mode (Agent or program) and workspace for step ${step.title} (${step.stepId}) before running`);
+}
+function requireRunnableDefinition(definition: WorkflowDefinition) {
+  const unbound = definition.steps.filter(step => step.execution.kind === "unbound");
+  if (unbound.length)
+    fail("WORKFLOW_UNBOUND", `Choose an execution mode (Agent or program) for these steps before running: ${unbound.map(step => `${step.title} (${step.stepId})`).join(", ")}`);
 }
 function readPath(value: Json, path: string[]): Json {
   let current = value;
@@ -60,6 +70,11 @@ export class WorkflowRuntime {
     ledger.workflowRunAdmission = (run, invocation) =>
       this.admitRoot(run, invocation);
     ledger.workflowTaskConfiguration = (input) => this.configureTask(input);
+    ledger.workflowExecutionPreflight = (workflowId) => {
+      const definition = this.definitions().find(item => item.workflowId === workflowId)
+        ?? fail("NOT_FOUND", "Workflow not found");
+      requireRunnableDefinition(definition);
+    };
     ledger.workflowOptions = () =>
       this.definitions().flatMap((definition) =>
         definition.projectId
@@ -119,9 +134,10 @@ export class WorkflowRuntime {
   private validateTaskScope(task: Task, definition: WorkflowDefinition) {
     const required = {
       allowedNodeIds: definition.steps.map((step) => step.nodeId),
-      allowedWorkspaceIds: definition.steps.map((step) => step.workspaceId),
+      allowedWorkspaceIds: definition.steps.flatMap((step) => step.workspaceId ? [step.workspaceId] : []),
       allowedTools: definition.steps.flatMap((step) => this.stepTools(step)),
       allowedBackends: definition.steps.flatMap((step) => {
+        if (step.execution.kind === "unbound") return [];
         const backend = this.route(step).backend;
         return backend ? [backend] : [];
       }),
@@ -164,6 +180,7 @@ export class WorkflowRuntime {
       this.definitions().find(
         (item) => item.workflowId === command.workflowId,
       ) ?? fail("NOT_FOUND", "Workflow not found");
+    requireRunnableDefinition(definition);
     if (definition.projectId !== command.projectId)
       fail("WORKFLOW_PROJECT", "Workflow belongs to another Project");
     const old = command.taskId ? this.binding(command.taskId) : undefined;
@@ -337,6 +354,7 @@ export class WorkflowRuntime {
       definition.projectId !== binding.projectId
     )
       fail("WORKFLOW_PROJECT", "Task workflow binding changed");
+    requireRunnableDefinition(definition);
     this.taskProject(root.taskId, binding.projectId);
     this.validateTaskScope(this.ledger.getTask(root.taskId), definition);
     this.validate(definition);
@@ -355,14 +373,17 @@ export class WorkflowRuntime {
       updatedAt: now,
       state: "running",
       dispatches: [],
-      steps: definition.steps.map((step) => ({
-        stepId: step.stepId,
-        nodeId: step.nodeId,
-        title: step.title,
-        kind: step.execution.kind,
-        state: "pending",
-        attemptCount: 0,
-      })),
+      steps: definition.steps.map((step) => {
+        requireRunnableStep(step);
+        return {
+          stepId: step.stepId,
+          nodeId: step.nodeId,
+          title: step.title,
+          kind: step.execution.kind,
+          state: "pending",
+          attemptCount: 0,
+        };
+      }),
     });
   }
   private definitions(): WorkflowDefinition[] {
@@ -549,6 +570,8 @@ export class WorkflowRuntime {
         )
           fail("WORKFLOW_INPUT", "Unsafe input path");
       }
+      if (step.execution.kind === "unbound") continue;
+      requireRunnableStep(step);
       const node = this.ledger.getNode(step.nodeId),
         workspace = this.ledger.getWorkspace(step.workspaceId);
       if (
@@ -654,6 +677,7 @@ export class WorkflowRuntime {
             this.definitions().find(
               (item) => item.workflowId === command.workflowId,
             ) ?? fail("NOT_FOUND", "Workflow not found");
+          requireRunnableDefinition(definition);
           if (!definition.projectId)
             fail(
               "WORKFLOW_PROJECT",
@@ -675,6 +699,9 @@ export class WorkflowRuntime {
         }
         if (command.workflowId && command.workflowId !== binding.workflowId)
           fail("WORKFLOW_PROJECT", "Task is configured for another workflow");
+        const definition = this.definitions().find(item => item.workflowId === binding.workflowId)
+          ?? fail("NOT_FOUND", "Workflow not found");
+        requireRunnableDefinition(definition);
         const admitted = this.ledger.prepareWorkflowRun({
           taskId: binding.taskId,
           configuration: {
@@ -763,6 +790,7 @@ export class WorkflowRuntime {
         );
   }
   private route(step: WorkflowStep): ExecutionRoute {
+    requireRunnableStep(step);
     const common = {
       nodeId: step.nodeId,
       workspaceId: step.workspaceId,
@@ -997,6 +1025,7 @@ export class WorkflowRuntime {
           continue;
         }
         try {
+          requireRunnableStep(definition);
           const input = this.resolvedInput(run, definition),
             taskId = step.taskId ?? randomUUID();
           const task = {

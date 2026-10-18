@@ -31,6 +31,7 @@
     unavailable: "执行端未就绪",
     disabled: "已停用",
   };
+  const kindName = (kind) => ({ unbound: "待选执行方式", program: "程序", agent: "Agent" })[kind] || kind;
   const badge = (status) =>
     `<span class="badge ${esc(status)}">${esc(statusNames[status] || status)}</span>`;
   const context = window.__DSH_WORKFLOW_CONTEXT__ || {};
@@ -211,7 +212,8 @@
     $("add-step").classList.toggle("hidden", !!run());
     $("device-controls").classList.toggle("hidden", !!run());
     $("start-input").classList.toggle("hidden", !!run());
-    $("run-state").innerHTML = run() ? badge(run().state) : "";
+    const unbound = def.steps.filter(step => step.execution.kind === "unbound");
+    $("run-state").innerHTML = run() ? badge(run().state) : unbound.length ? `<span class="badge">计划中 · ${unbound.length} 个步骤待选执行方式</span>` : "";
   }
   function history() {
     $("history").innerHTML =
@@ -235,7 +237,7 @@
       return;
     }
     $("definition-editor").innerHTML =
-      `<div class="fields"><div><label for="workflow-title">工作流名称</label><input id="workflow-title" value="${esc(def.title)}"></div><div><label for="workflow-description">说明</label><input id="workflow-description" value="${esc(def.description)}"></div></div><p class="muted">流程属于当前项目。参数与触发方式在任务中配置。</p><details id="workflow-result-settings"${Array.isArray(def.resultStepIds)?' open':''}><summary>最终输出：${Array.isArray(def.resultStepIds)?'已选 '+def.resultStepIds.length+' 个步骤':'自动采用全部末端步骤'}</summary><label>最终输出来源<select id="workflow-result-mode"><option value="auto"${!Array.isArray(def.resultStepIds)?' selected':''}>自动：全部末端步骤</option><option value="explicit"${Array.isArray(def.resultStepIds)?' selected':''}>选择具体步骤</option></select></label>${Array.isArray(def.resultStepIds)?def.steps.map(step=>`<label class="dependency"><input type="checkbox" data-result-step="${esc(step.stepId)}"${def.resultStepIds.includes(step.stepId)?' checked':''}>${esc(step.title)}</label>`).join(''):'<p class="muted">有多个末端步骤时，最终报告会保留全部输出。</p>'}</details>`;
+      `<div class="fields"><div><label for="workflow-title">工作流名称</label><input id="workflow-title" value="${esc(def.title)}"></div><div><label for="workflow-description">说明</label><input id="workflow-description" value="${esc(def.description)}"></div></div><p class="muted">流程是当前项目的执行计划，可先保存抽象步骤。选择执行方式（Agent 或程序）后才能运行。Agent 可以根据自然语言工作要求执行。参数与触发方式在任务中配置。</p><details id="workflow-result-settings"${Array.isArray(def.resultStepIds)?' open':''}><summary>最终输出：${Array.isArray(def.resultStepIds)?'已选 '+def.resultStepIds.length+' 个步骤':'自动采用全部末端步骤'}</summary><label>最终输出来源<select id="workflow-result-mode"><option value="auto"${!Array.isArray(def.resultStepIds)?' selected':''}>自动：全部末端步骤</option><option value="explicit"${Array.isArray(def.resultStepIds)?' selected':''}>选择具体步骤</option></select></label>${Array.isArray(def.resultStepIds)?def.steps.map(step=>`<label class="dependency"><input type="checkbox" data-result-step="${esc(step.stepId)}"${def.resultStepIds.includes(step.stepId)?' checked':''}>${esc(step.title)}</label>`).join(''):'<p class="muted">有多个末端步骤时，最终报告会保留全部输出。</p>'}</details>`;
   }
   function normalized(value) {
     const def = clone(value);
@@ -341,10 +343,19 @@
     ).map((row) => ({
       ...row.position,
       w: state.focusStage ? 230 : 250,
-      h: (state.focusStage ? 115 : 140) + Math.max(0, Math.ceil(row.title.length / 16) - 1) * 24,
+      h: (state.focusStage ? 115 : 150 + def.steps.filter(step => step.stageId === row.stageId).length * 32) + Math.max(0, Math.ceil(row.title.length / 16) - 1) * 24,
       id: state.focusStage ? row.stepId : row.stageId,
       row,
     }));
+  }
+  function graphTerminals(boxes = visibleBoxes()) {
+    const left = boxes.length ? Math.min(...boxes.map(box => box.x)) : 180;
+    const right = boxes.length ? Math.max(...boxes.map(box => box.x + box.w)) : 250;
+    const top = boxes.length ? Math.min(...boxes.map(box => box.y)) : 0;
+    return [
+      { id: "start", title: "开始", x: left - 180, y: top + 35, w: 110, h: 58 },
+      { id: "end", title: "结束", x: right + 70, y: top + 35, w: 110, h: 58 },
+    ];
   }
   function applyViewport() {
     const v = state.viewport;
@@ -353,13 +364,8 @@
     $("zoom-label").textContent = `${Math.round(v.zoom * 100)}%`;
   }
   function fit() {
-    const boxes = visibleBoxes(),
+    const boxes = [...visibleBoxes(), ...graphTerminals()],
       rect = $("graph-container").getBoundingClientRect();
-    if (!boxes.length) {
-      state.viewport = { x: 35, y: 35, zoom: 1 };
-      applyViewport();
-      return;
-    }
     const left = Math.min(...boxes.map((b) => b.x)),
       top = Math.min(...boxes.map((b) => b.y));
     const width = Math.max(...boxes.map((b) => b.x + b.w)) - left,
@@ -440,11 +446,26 @@
             : views.some((view) => view.state === "running")
               ? "running"
               : "pending";
-        return `<article class="graph-card ${box.id === (isStep ? state.stepId : state.stageId) ? "active" : ""}" data-card="${esc(box.id)}" style="left:${box.x}px;top:${box.y}px;width:${box.w}px;height:${box.h}px"><button type="button" class="card-main" ${isStep ? `data-step="${esc(row.stepId)}"` : `data-stage="${esc(row.stageId)}"`}><span class="card-kind">${isStep ? (row.execution.kind === "program" ? "程序" : "Agent") : "执行阶段"}</span><strong>${esc(row.title)}</strong>${isStep ? "" : `<span class="muted">设备 ${esc(row.nodeId)} · ${steps.length} 个内部步骤</span>`}${run() ? badge(result) : ""}</button>${!isStep ? `<span class="availability">当前设备 ${badge(nodeStatus(row.nodeId).state)}</span>` : ""}${!run() ? `<button type="button" class="port in" data-port="in" data-endpoint="${esc(box.id)}" aria-label="连接到 ${esc(row.title)}">●</button><button type="button" class="port out" data-port="out" data-endpoint="${esc(box.id)}" aria-label="从 ${esc(row.title)} 调用">●</button>` : ""}</article>`;
+        return `<article class="graph-card ${box.id === (isStep ? state.stepId : state.stageId) ? "active" : ""}" data-card="${esc(box.id)}" style="left:${box.x}px;top:${box.y}px;width:${box.w}px;height:${box.h}px"><button type="button" class="card-main" ${isStep ? `data-step="${esc(row.stepId)}"` : `data-stage="${esc(row.stageId)}"`}><span class="card-kind">${isStep ? kindName(row.execution.kind) : "设备阶段"}</span><strong>${esc(row.title)}</strong>${isStep ? "" : `<span class="muted">设备 ${esc(row.nodeId)} · ${steps.length} 个内部步骤</span><span class="stage-steps">${steps.map(step => `<span class="stage-step"><span>${esc(step.title)}</span><small>${esc(kindName(step.execution.kind))}</small></span>`).join("")}</span>`}${run() ? badge(result) : ""}</button>${!isStep ? `<span class="availability">当前设备 ${badge(nodeStatus(row.nodeId).state)}</span>` : ""}${!run() ? `<button type="button" class="port in" data-port="in" data-endpoint="${esc(box.id)}" aria-label="连接到 ${esc(row.title)}">●</button><button type="button" class="port out" data-port="out" data-endpoint="${esc(box.id)}" aria-label="从 ${esc(row.title)} 调用">●</button>` : ""}</article>`;
       })
       .join("");
+    const terminals = graphTerminals(boxes);
+    const terminalCards = terminals.map(terminal => `<div class="graph-terminal" data-terminal="${terminal.id}" style="left:${terminal.x}px;top:${terminal.y}px;width:${terminal.w}px;height:${terminal.h}px">${terminal.title}</div>`).join("");
+    const visibleStepIds = new Set(boxes.flatMap(box => state.focusStage ? [box.row.stepId] : def.steps.filter(step => step.stageId === box.id).map(step => step.stepId)));
+    const visibleCalls = def.calls.filter(call => visibleStepIds.has(call.fromStepId) && visibleStepIds.has(call.toStepId));
+    const terminalEdges = [];
+    for (const [index, terminal] of terminals.entries()) {
+      const endpointIds = new Set(def.steps.filter(step => visibleStepIds.has(step.stepId) && !visibleCalls.some(call => (index ? call.fromStepId : call.toStepId) === step.stepId)).map(step => state.focusStage ? step.stepId : step.stageId));
+      for (const endpointId of endpointIds) {
+        const box = byId.get(endpointId);
+        if (!box) continue;
+        const from = index ? box : terminal, to = index ? terminal : box;
+        terminalEdges.push(`<path class="route terminal-route" d="M${from.x + from.w} ${from.y + from.h / 2} L${to.x} ${to.y + to.h / 2}" marker-end="url(#arrow)"/>`);
+      }
+    }
+    if (!visibleStepIds.size) terminalEdges.push(`<path class="route terminal-route" d="M${terminals[0].x + terminals[0].w} ${terminals[0].y + 29} L${terminals[1].x} ${terminals[1].y + 29}" marker-end="url(#arrow)"/>`);
     $("device-graph").innerHTML =
-      `<svg class="graph-lines" aria-hidden="true"><defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8" fill="var(--accent)"/></marker></defs>${lines}</svg>${cards}`;
+      `<svg class="graph-lines" aria-hidden="true"><defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8" fill="var(--accent)"/></marker></defs>${lines}${terminalEdges.join("")}</svg>${terminalCards}${cards}`;
     $("canvas-empty").classList.toggle("hidden", !!boxes.length);
     $("canvas-breadcrumb").textContent = state.focusStage
       ? `${stage?.title || "阶段"} · 内部步骤`
@@ -506,7 +527,7 @@
               return row ? `${row.nodeId} / ${row.title}` : dep;
             })
             .join("、");
-          return `<button type="button" class="step ${step.stepId === state.stepId ? "active" : ""}" data-step="${esc(step.stepId)}"><span class="step-title"><strong>${esc(step.title || "未命名步骤")}</strong><span class="badge">${step.execution.kind === "program" ? "程序" : "Agent"}</span></span><span class="muted">${upstream ? `← ${esc(upstream)}` : "起始步骤"}</span>${view ? badge(view.state) : ""}</button>`;
+          return `<button type="button" class="step ${step.stepId === state.stepId ? "active" : ""}" data-step="${esc(step.stepId)}"><span class="step-title"><strong>${esc(step.title || "未命名步骤")}</strong><span class="badge">${kindName(step.execution.kind)}</span></span><span class="muted">${upstream ? `← ${esc(upstream)}` : "起始步骤"}</span>${view ? badge(view.state) : ""}</button>`;
         })
         .join("") || '<p class="empty">此设备还没有步骤。</p>';
   }
@@ -552,7 +573,7 @@
     const models = capabilities?.models || [];
     const selectedModel = JSON.stringify([e.provider, e.model]);
     $("step-detail").innerHTML =
-      `<div class="fields"><div><label for="step-title">步骤名称</label><input id="step-title" value="${esc(step.title)}"></div><div><label for="step-kind">执行类型</label><select id="step-kind">${option("program", "程序", e.kind)}${option("agent", "Agent", e.kind)}</select></div><div class="span-all"><label for="step-workspace">执行工作区</label><select id="step-workspace">${workspaceOptions(step.nodeId, step.workspaceId)}</select></div></div>${e.kind === "program" ? `<label for="step-program">已登记的程序与版本</label><select id="step-program">${programOptions(step)}</select><p class="hint">${programsFor(step.nodeId).length ? "程序入口由该设备的插件登记。工作流只引用入口与版本。" : "此设备没有公布可用程序。请先在设备上安装并登记业务程序，恢复连接后刷新。"}</p>` : `<label for="step-model">模型</label><select id="step-model">${option("", models.length ? "选择模型" : "此设备未公布模型", selectedModel)}${models.map((row) => option(JSON.stringify([row.provider, row.model]), `${row.provider} / ${row.model}`, selectedModel)).join("")}${e.model && !models.some((row) => row.provider === e.provider && row.model === e.model) ? option(selectedModel, `${e.provider} / ${e.model} · 当前不可用`, selectedModel) : ""}</select><label for="step-effort">推理档位</label><select id="step-effort">${option("", "模型默认", e.reasoningEffort || "")}${(models.find((row) => row.provider === e.provider && row.model === e.model)?.reasoningEfforts || []).map((value) => option(value, value, e.reasoningEffort)).join("")}</select><label for="step-input-exposure">输入提供方式</label><select id="step-input-exposure">${option("inline", "直接提供给 Agent", e.inputExposure || "inline")}${option("tools", "通过工具按需读取", e.inputExposure || "inline")}</select><p class="muted">大量来源数据可由工具分页读取。选择此方式前，需要为 Agent 配置可读取本次工作流输入的工具。</p><label for="step-instructions">Agent 执行要求</label><textarea id="step-instructions">${esc(e.instructions)}</textarea><label for="step-tools">允许使用的工具（每行一个）</label><textarea id="step-tools">${esc(e.allowedTools.join("\n"))}</textarea>`}<label for="step-retries">${e.kind === "agent" ? "Agent 自动重试次数" : "程序步骤仅支持手动重试"}</label><input id="step-retries" type="number" min="0" max="5" value="${step.maxRetries}"${e.kind === "program" ? " disabled" : ""}><h3 style="margin-top:20px">等待哪些步骤完成</h3><div id="dependencies">${
+      `<div class="fields"><div><label for="step-title">步骤名称</label><input id="step-title" value="${esc(step.title)}"></div><div><label for="step-kind">执行方式</label><select id="step-kind">${option("unbound", "待选执行方式", e.kind)}${option("program", "程序", e.kind)}${option("agent", "Agent", e.kind)}</select></div>${e.kind !== "unbound" ? `<div class="span-all"><label for="step-workspace">执行工作区</label><select id="step-workspace">${workspaceOptions(step.nodeId, step.workspaceId)}</select></div>` : ""}</div>${e.kind === "unbound" ? `<p class="hint">此步骤描述计划中的工作，尚未选择执行方式。可以保存设计。执行前请选择执行方式（Agent 或程序），并指定工作区。Agent 可以根据自然语言工作要求执行。</p>` : e.kind === "program" ? `<label for="step-program">已登记的程序与版本</label><select id="step-program">${programOptions(step)}</select><p class="hint">${programsFor(step.nodeId).length ? "程序入口由该设备的插件登记。工作流只引用入口与版本。" : "此设备没有公布可用程序。请先在设备上安装并登记业务程序，恢复连接后刷新。"}</p>` : `<label for="step-model">模型</label><select id="step-model">${option("", models.length ? "选择模型" : "此设备未公布模型", selectedModel)}${models.map((row) => option(JSON.stringify([row.provider, row.model]), `${row.provider} / ${row.model}`, selectedModel)).join("")}${e.model && !models.some((row) => row.provider === e.provider && row.model === e.model) ? option(selectedModel, `${e.provider} / ${e.model} · 当前不可用`, selectedModel) : ""}</select><label for="step-effort">推理档位</label><select id="step-effort">${option("", "模型默认", e.reasoningEffort || "")}${(models.find((row) => row.provider === e.provider && row.model === e.model)?.reasoningEfforts || []).map((value) => option(value, value, e.reasoningEffort)).join("")}</select><label for="step-input-exposure">输入提供方式</label><select id="step-input-exposure">${option("inline", "直接提供给 Agent", e.inputExposure || "inline")}${option("tools", "通过工具按需读取", e.inputExposure || "inline")}</select><p class="muted">大量来源数据可由工具分页读取。选择此方式前，需要为 Agent 配置可读取本次工作流输入的工具。</p><label for="step-instructions">Agent 执行要求</label><textarea id="step-instructions">${esc(e.instructions)}</textarea><label for="step-tools">允许使用的工具（每行一个）</label><textarea id="step-tools">${esc(e.allowedTools.join("\n"))}</textarea>`}<label for="step-retries">${e.kind === "unbound" ? "选择执行方式后可配置重试" : e.kind === "agent" ? "Agent 自动重试次数" : "程序步骤仅支持手动重试"}</label><input id="step-retries" type="number" min="0" max="5" value="${step.maxRetries}"${e.kind !== "agent" ? " disabled" : ""}><h3 style="margin-top:20px">等待哪些步骤完成</h3><div id="dependencies">${
         definition()
           .steps.filter((row) => row.stepId !== step.stepId)
           .map(
@@ -586,7 +607,7 @@
       (["failed", "cancelled"].includes(view.state) ||
         (view.state === "blocked" && !!view.runId));
     $("step-detail").innerHTML =
-      `<h3>${esc(step.title)}</h3><div class="row">${badge(view.state)}<span class="muted">尝试 ${view.attemptCount} 次</span></div>${view.reason ? `<p class="hint">${esc(view.reason)}</p>` : ""}<p style="margin-top:12px">${esc(view.summary || "尚无结果摘要")}</p><div class="row">${canRetry ? '<button type="button" id="retry-step">重试此步骤</button>' : ""}${view.taskId ? '<button type="button" id="show-task">查看任务记录</button>' : ""}</div>${htmlPreview(view.output)}<details${view.output?.presentation?.mediaType === "text/html" ? "" : " open"}><summary>输出数据</summary><pre>${esc(view.output === undefined ? "尚未产生输出" : JSON.stringify(view.output, null, 2))}</pre></details><details><summary>执行记录</summary><pre>${esc(JSON.stringify({ nodeId: view.nodeId, taskId: view.taskId, runId: view.runId, reportId: view.reportId, sessionId: view.sessionId }, null, 2))}</pre></details><details><summary>本次执行固定输入与映射</summary><pre>${esc(JSON.stringify({ parameters: run().input, bindings: step.inputs }, null, 2))}</pre></details><details><summary>历次执行回执（${dispatches.length}）</summary><pre>${esc(JSON.stringify(dispatches, null, 2))}</pre></details><div id="task-record"></div>`;
+      `<h3>${esc(step.title)}</h3><div class="row">${badge(view.state)}<span class="muted">尝试 ${view.attemptCount} 次</span></div>${view.reason ? `<p class="hint">${esc(view.reason)}</p>` : ""}<p style="margin-top:12px">${esc(view.summary || "尚无结果摘要")}</p><div class="row">${canRetry ? '<button type="button" id="retry-step">重试此步骤</button>' : ""}${view.taskId ? '<button type="button" id="show-task">查看本次任务执行</button>' : ""}</div>${htmlPreview(view.output)}<details${view.output?.presentation?.mediaType === "text/html" ? "" : " open"}><summary>输出数据</summary><pre>${esc(view.output === undefined ? "尚未产生输出" : JSON.stringify(view.output, null, 2))}</pre></details><details><summary>执行记录</summary><pre>${esc(JSON.stringify({ nodeId: view.nodeId, taskId: view.taskId, runId: view.runId, reportId: view.reportId, sessionId: view.sessionId }, null, 2))}</pre></details><details><summary>本次执行固定输入与映射</summary><pre>${esc(JSON.stringify({ parameters: run().input, bindings: step.inputs }, null, 2))}</pre></details><details><summary>历次执行回执（${dispatches.length}）</summary><pre>${esc(JSON.stringify(dispatches, null, 2))}</pre></details><div id="task-record"></div>`;
   }
   function fullRender() {
     const visible = !!definition();
@@ -707,7 +728,7 @@
     if (!def.steps.length) throw Error("至少添加一个步骤");
     const ids = new Set(def.steps.map((step) => step.stepId));
     for (const step of def.steps) {
-      if (!step.title.trim() || !step.workspaceId)
+      if (!step.title.trim() || (step.execution.kind !== "unbound" && !step.workspaceId))
         throw Error(`${step.title || "步骤"} 需要名称和工作区`);
       if (
         step.execution.kind === "program" &&
@@ -818,6 +839,8 @@
         notice("工作流已保存");
       } else if (action === "start-workflow") {
         if (state.dirty) throw Error("请先保存定义");
+        const unbound = state.draft.steps.filter(step => step.execution.kind === "unbound");
+        if (unbound.length) throw Error(`执行前请为这些步骤选择执行方式（Agent 或程序）：${unbound.map(step => step.title).join("、")}`);
         let input;
         try {
           input = JSON.parse($("workflow-input").value);
@@ -925,9 +948,6 @@
       } else if (action === "add-step") {
         const nodeId = state.nodeId;
         if (!nodeId) return;
-        const workspace = state.snapshot.workspaces.find(
-          (row) => row.nodeId === nodeId && row.state === "ready",
-        );
         const step = {
           stepId: id(),
           title: "新步骤",
@@ -939,10 +959,9 @@
             y: 0,
           },
           nodeId,
-          workspaceId: workspace?.workspaceId || "",
           dependsOn: [],
           inputs: {},
-          execution: { kind: "program", programId: "", version: "" },
+          execution: { kind: "unbound" },
           maxRetries: 0,
         };
         state.draft.steps.push(step);
@@ -985,10 +1004,14 @@
         renderStepEditor();
       } else if (action === "show-task") {
         const view = run().steps.find((row) => row.stepId === state.stepId);
-        const snapshot = await api("projectSnapshot");
-        const task = snapshot.tasks.find((row) => row.id === view.taskId);
+        const execution = {
+          workflowRunId: run().workflowRunId,
+          definitionRevision: run().definitionRevision,
+          ...view,
+          dispatches: (run().dispatches || []).filter(row => row.stepId === view.stepId && row.runId === view.runId),
+        };
         $("task-record").innerHTML =
-          `<details open><summary>任务记录</summary><pre>${esc(task ? JSON.stringify(task, null, 2) : "该任务暂未出现在项目快照中，可在任务中心按任务 ID 查找。")}</pre></details>`;
+          `<details open><summary>本次任务执行 · ${esc(view.runId || "尚未派发")}</summary><p class="muted">固定为所选工作流运行中的步骤回执。</p><pre>${esc(JSON.stringify(execution, null, 2))}</pre></details>`;
       }
     } catch (error) {
       notice(error.message);
@@ -1076,11 +1099,15 @@
         state.draft.resultStepIds=[...selected];setDirty();return;
       }
       if (el.id === "step-kind") {
-        step.maxRetries = el.value === "program" ? 0 : 2;
+        step.maxRetries = el.value === "agent" ? 2 : 0;
+        if (el.value === "unbound") delete step.workspaceId;
+        else step.workspaceId ||= state.snapshot.workspaces.find(row => row.nodeId === step.nodeId && row.state === "ready")?.workspaceId || "";
         step.execution =
-          el.value === "program"
-            ? { kind: "program", programId: "", version: "" }
-            : {
+          el.value === "unbound"
+            ? { kind: "unbound" }
+            : el.value === "program"
+              ? { kind: "program", programId: "", version: "" }
+              : {
                 kind: "agent",
                 provider: "",
                 model: "",
@@ -1088,6 +1115,7 @@
                 allowedTools: [],
               };
         setDirty();
+        graph();
         stepList();
         renderStepEditor();
       } else if (el.id === "step-program") {
@@ -1173,7 +1201,7 @@
           (row) => row.stageId === stage.stageId,
         )) {
           row.nodeId = stage.nodeId;
-          row.workspaceId = "";
+          if (row.execution.kind !== "unbound") row.workspaceId = "";
         }
         setDirty();
         graph();

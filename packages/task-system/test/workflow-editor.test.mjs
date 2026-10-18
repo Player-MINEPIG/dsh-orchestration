@@ -9,7 +9,7 @@ function editor() {
     "utf8",
   ).replace(
     "  refresh();\n  setInterval(refresh, 10000);",
-    "  window.editor={state,normalized,derive,checkCalls,changeCall,visibleBoxes,fit,zoomAt,graph,act,fullRender,refresh};",
+    "  window.editor={state,normalized,derive,checkCalls,changeCall,visibleBoxes,graphTerminals,validate,fit,zoomAt,graph,act,fullRender,refresh};",
   );
   const elements = new Map(),
     listeners = {},
@@ -314,4 +314,78 @@ test("failed optimistic save keeps the current graph draft and revision for conf
   assert.equal(e.state.draft.revision, 1);
   assert.equal(e.state.dirty, true);
   assert.match(e.element("error").textContent, /记录已变化/);
+});
+
+
+test("Start and End frame repeated device stages and focused internal calls without executable sentinels", () => {
+  const e = editor();
+  e.changeCall("a", "b"); e.changeCall("b", "c"); e.fit();
+  const html = e.element("device-graph").innerHTML;
+  assert.match(html, /data-terminal="start"[^>]*>开始/);
+  assert.match(html, /data-terminal="end"[^>]*>结束/);
+  assert.equal((html.match(/class="stage-step"/g) || []).length, 3);
+  assert.equal(e.state.draft.steps.length, 3);
+  for (const box of e.graphTerminals()) {
+    assert.ok(box.x * e.state.viewport.zoom + e.state.viewport.x >= 0);
+    assert.ok((box.x + box.w) * e.state.viewport.zoom + e.state.viewport.x <= 800);
+  }
+  e.state.focusStage = true; e.graph();
+  assert.match(e.element("device-graph").innerHTML, /data-terminal="start"/);
+  assert.match(e.element("device-graph").innerHTML, /data-terminal="end"/);
+});
+
+test("new abstract steps are editable and saveable without a program, model or workspace", async () => {
+  const e = editor();
+  e.graph(); await e.act("add-step");
+  const step = e.state.draft.steps.at(-1);
+  assert.equal(step.execution.kind, "unbound");
+  assert.equal(step.workspaceId, undefined);
+  assert.doesNotThrow(() => e.validate(e.state.draft));
+  const detail = e.element("step-detail").innerHTML;
+  assert.match(detail, /待选执行方式/);
+  assert.match(detail, /可以保存设计/);
+  assert.doesNotMatch(detail, /id="step-workspace"|id="step-model"|id="step-program"/);
+  const saving = e.act("save-workflow");
+  const request = e.requests[0];
+  assert.equal(request.method, "saveWorkflow");
+  assert.equal(request.input.definition.steps.at(-1).execution.kind, "unbound");
+  e.windowEvents.message({ source: e.parent, data: { channel: "dsh-project-runtime", id: request.id, error: "Stop fixture before refresh" } });
+  await saving;
+});
+
+test("switching abstract steps to a bound executor restores workspace validation and can return to plan", () => {
+  const e = editor();
+  e.state.stepId = "a";
+  e.listeners.change({ target: { id: "step-kind", value: "unbound", dataset: {} } });
+  const step = e.state.draft.steps[0];
+  assert.equal(step.execution.kind, "unbound");
+  assert.equal(step.workspaceId, undefined);
+  assert.doesNotThrow(() => e.validate(e.state.draft));
+  e.listeners.change({ target: { id: "step-kind", value: "program", dataset: {} } });
+  assert.throws(() => e.validate(e.state.draft), /工作区/);
+  e.listeners.change({ target: { id: "step-kind", value: "unbound", dataset: {} } });
+  assert.deepEqual(Object.keys(step.execution), ["kind"]);
+});
+
+test("starting an abstract plan names its missing bindings and sends no configuration or start request", async () => {
+  const e = editor();
+  e.state.draft.steps[0].execution = { kind: "unbound" };
+  delete e.state.draft.steps[0].workspaceId;
+  await e.act("start-workflow");
+  assert.match(e.element("error").textContent, /执行前请为这些步骤选择执行方式（Agent 或程序）：a/);
+  assert.equal(e.requests.length, 0);
+});
+
+test("historical task details use the selected workflow step Run rather than the Task latest", async () => {
+  const e = editor();
+  e.state.runId = "historical";
+  e.state.stepId = "a";
+  e.state.snapshot.runs.push({ workflowRunId: "historical", workflowId: "w", definitionRevision: 1, definition: structuredClone(e.state.draft), steps: [{ stepId: "a", taskId: "task-a", runId: "run-original", reportId: "report-original", summary: "Original result", output: { value: "Original output" } }], dispatches: [{ stepId: "a", taskId: "task-a", runId: "run-original", ordinal: 1 }, { stepId: "a", taskId: "task-a", runId: "run-another", ordinal: 2 }] });
+  await e.act("show-task");
+  assert.equal(e.requests.length, 0);
+  const html = e.element("task-record").innerHTML;
+  assert.match(html, /run-original/);
+  assert.match(html, /report-original/);
+  assert.match(html, /Original output/);
+  assert.doesNotMatch(html, /run-another/);
 });

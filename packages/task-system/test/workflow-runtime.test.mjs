@@ -7,6 +7,7 @@ import { ScheduledPlans } from "../dist/scheduled-plans.js";
 import { Workbench } from "../dist/workbench.js";
 import { TaskLedger } from "../dist/ledger.js";
 import { ProgramRegistry } from "../dist/workflow-programs.js";
+import { WorkflowStep } from "../dist/workflow-contracts.js";
 import { WorkflowRuntime } from "../dist/workflows.js";
 import { ExecutorWorker } from "../dist/remote/worker.js";
 import { RecoveryStore } from "../dist/remote/store.js";
@@ -1544,4 +1545,88 @@ test('legacy completed workflow report repair is idempotent and preserves frozen
     const cancelled=start(f);f.runtime.cancel({commandId:id(),workflowRunId:cancelled.runId});
     assert.equal(f.runtime.reconcileResultReport(cancelled.runId),null);assert.equal(rootResults(f,cancelled).length,0);
   } finally {await f.close();}
+});
+
+
+test("abstract steps save without a workspace while bound step schemas retain required routes", () => {
+  const abstract = { ...programStep("plan", "mbp", "work"), execution: { kind: "unbound" } };
+  delete abstract.workspaceId;
+  assert.equal(WorkflowStep.parse(abstract).execution.kind, "unbound");
+  assert.equal(WorkflowStep.safeParse({ ...abstract, execution: { kind: "unbound", programId: "fake" } }).success, false);
+  assert.equal(WorkflowStep.safeParse({ ...abstract, execution: { kind: "program", programId: "work", version: "1" } }).success, false);
+  assert.equal(WorkflowStep.safeParse({ ...abstract, workspaceId: "", execution: { kind: "program", programId: "work", version: "1" } }).success, false);
+  assert.equal(WorkflowStep.safeParse({ ...abstract, execution: { kind: "agent", provider: "test", model: "model", instructions: "Work", allowedTools: [] } }).success, false);
+});
+
+test("abstract definitions reject start and configuration before creating Tasks or Runs", async () => {
+  const f = fixture();
+  try {
+    const step = { ...programStep("outline", "mbp", "work"), execution: { kind: "unbound" } };
+    delete step.workspaceId;
+    const saved = save(f, definition([step]));
+    assert.equal(saved.steps[0].workspaceId, undefined);
+    const before = f.ledger.snapshot();
+    const rejectsUnbound = error => error.code === "WORKFLOW_UNBOUND" && /outline/.test(error.message);
+    assert.throws(() => start(f), rejectsUnbound);
+    assert.throws(() => f.runtime.configureTask({ commandId: id(), projectId: "project", workflowId: "daily", input: {} }), rejectsUnbound);
+    assert.throws(() => new ScheduledPlans(f.ledger).create({ commandId: id(), title: "Abstract", description: "Plan", projectId: "project", execution: { kind: "workflow", workflowId: "daily", input: {} }, cadence: { mode: "interval", minutes: 1 } }), rejectsUnbound);
+    const after = f.ledger.snapshot();
+    for (const field of ["tasks", "runs", "reports", "schedules"]) assert.deepEqual(after[field], before[field]);
+    assert.equal(f.runtime.snapshot().taskBindings.length, 0);
+    assert.equal(f.runtime.snapshot().runs.length, 0);
+  } finally { await f.close(); }
+});
+
+test("an existing scheduled Task rejects an unbound revision atomically and resumes after binding", async () => {
+  const f = fixture();
+  try {
+    let effects = 0;
+    f.register("mbp", "work", () => { effects++; return { summary: "Done", data: { ok: true } }; });
+    const saved = save(f, definition([programStep("outline", "mbp", "work")]));
+    const created = new ScheduledPlans(f.ledger).create({ commandId: id(), title: "Scheduled", description: "Plan", projectId: "project", execution: { kind: "workflow", workflowId: "daily", input: {} }, cadence: { mode: "interval", minutes: 1 } });
+    const schedule = f.ledger.getSchedule(created.scheduleId);
+    schedule.nextDueAt = new Date(Date.now() - 1000).toISOString();
+    f.ledger.managementDatabase().prepare("UPDATE entities SET data=? WHERE kind='schedule' AND id=?").run(JSON.stringify(schedule), schedule.scheduleId);
+    const abstract = structuredClone(saved);
+    abstract.steps[0].execution = { kind: "unbound" };
+    delete abstract.steps[0].workspaceId;
+    const draft = f.runtime.save({ commandId: id(), expectedRevision: saved.revision, definition: abstract });
+    const before = f.ledger.snapshot();
+    assert.throws(() => f.runtime.start({ commandId: id(), taskId: created.taskId }), error => error.code === "WORKFLOW_UNBOUND");
+    assert.throws(() => f.ledger.fireSchedule(id(), { scheduleId: created.scheduleId, occurrenceAt: schedule.nextDueAt }), error => error.code === "WORKFLOW_UNBOUND");
+    for (const field of ["tasks", "runs", "reports", "schedules"]) assert.deepEqual(f.ledger.snapshot()[field], before[field]);
+    assert.equal(f.ledger.scheduleHistory(created.scheduleId).length, 0);
+    assert.equal(f.runtime.snapshot().runs.length, 0);
+    assert.equal(effects, 0);
+    f.runtime.save({ commandId: id(), expectedRevision: draft.revision, definition: { ...saved, revision: draft.revision } });
+    const occurrence = f.ledger.fireSchedule(id(), { scheduleId: created.scheduleId, occurrenceAt: schedule.nextDueAt }).value;
+    const worker = f.worker("mbp");
+    f.runtime.tick({ scheduleEnabled: false }); await worker.pollOnce(); f.runtime.tick({ scheduleEnabled: false });
+    assert.equal(effects, 1);
+    assert.equal(f.runtime.getRun(occurrence.runId).definitionRevision, 3);
+  } finally { await f.close(); }
+});
+
+test("a later abstract plan keeps historical revision and exact task Run report associations", async () => {
+  const f = fixture();
+  try {
+    f.register("mbp", "work", () => ({ summary: "Original report", data: { revision: 1 } }));
+    const saved = save(f, definition([programStep("report", "mbp", "work")]));
+    const execution = start(f), worker = f.worker("mbp");
+    f.runtime.tick(); await worker.pollOnce(); f.runtime.tick();
+    const original = f.runtime.getRun(execution.workflowRunId);
+    assert.ok(original.steps[0].taskId && original.steps[0].runId && original.steps[0].reportId);
+    const changed = structuredClone(saved);
+    changed.steps[0].execution = { kind: "unbound" };
+    delete changed.steps[0].workspaceId;
+    f.runtime.save({ commandId: id(), expectedRevision: 1, definition: changed });
+    f.reopen();
+    const history = f.runtime.getRun(execution.workflowRunId);
+    assert.deepEqual(history.definition, original.definition);
+    assert.equal(history.definitionRevision, 1);
+    assert.deepEqual(history.steps, original.steps);
+    const report = f.ledger.snapshot().reports.find(report => report.reportId === history.steps[0].reportId);
+    assert.equal(report.runId, history.steps[0].runId);
+    assert.equal(report.taskId, history.steps[0].taskId);
+  } finally { await f.close(); }
 });

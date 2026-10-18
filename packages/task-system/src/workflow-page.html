@@ -284,6 +284,7 @@
         gap: 20px;
       }
       .steps {
+        align-content: start;
         display: grid;
         gap: 10px;
       }
@@ -533,6 +534,20 @@
         box-shadow: 0 6px 20px #1526490d;
         cursor: move;
       }
+      .graph-terminal {
+        position: absolute;
+        display: grid;
+        place-items: center;
+        border: 2px solid var(--accent);
+        border-radius: 40px;
+        color: var(--accent);
+        background: var(--panel);
+        font-weight: 600;
+      }
+      .stage-steps { display: grid; gap: 6px; width: 100%; }
+      .stage-step { display: flex; justify-content: space-between; gap: 8px; padding: 5px 8px; border: 1px solid var(--border); border-radius: 6px; font-size: 11px; }
+      .stage-step > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .stage-step small { color: var(--muted); flex-shrink: 0; }
       .graph-card.active {
         border-color: var(--accent);
         box-shadow: 0 0 0 2px var(--soft);
@@ -829,12 +844,12 @@
             >
               <div id="device-graph" class="device-graph"></div>
               <p id="canvas-empty" class="empty">
-                添加执行阶段，再添加内部步骤。
+                添加设备阶段，再添加抽象或可执行步骤。
               </p>
             </div>
             <p class="muted legend">
               拖动卡片移动 · 拖动空白平移 · 滚轮缩放 ·
-              右侧圆点拖到入口连线。箭头决定调用顺序；设备在线状态单独显示。
+              右侧圆点拖到入口连线。箭头决定调用顺序；同一设备可添加多个阶段。开始与结束根据步骤连线显示。
             </p>
             <div id="device-controls" class="row">
               <select
