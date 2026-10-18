@@ -664,7 +664,8 @@
       if (!current()) return;
       if (workflowRunId) {
         const detail = snapshot.runs.find(row => row.workflowRunId === workflowRunId || row.runId === workflowRunId);
-        if (detail) loadedRuns.set(detail.workflowRunId, detail);
+        if (!detail) throw Error("所选历史执行不存在或不可读取，请核对记录后重试。");
+        loadedRuns.set(detail.workflowRunId, detail);
       }
       state.snapshot = snapshot;
       $("connection").textContent = `已更新 ${new Date().toLocaleTimeString()}`;
@@ -732,7 +733,7 @@
       }
     } catch (error) {
       if (!current()) return;
-      $("connection").textContent = "连接中断，点击刷新重试";
+      $("connection").textContent = "连接中断，当前保留最近已载入数据。点击刷新重试";
       $("error").textContent = error.message;
     } finally {
       if (sequence === refreshSequence) refreshing = false;

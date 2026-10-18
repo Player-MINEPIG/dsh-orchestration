@@ -1630,3 +1630,50 @@ test("a later abstract plan keeps historical revision and exact task Run report 
     assert.equal(report.taskId, history.steps[0].taskId);
   } finally { await f.close(); }
 });
+
+
+test("exact workflow views retrieve Runs outside the latest twenty with no latest fallback", async () => {
+  const f = fixture();
+  try {
+    let ordinal = 0;
+    f.register("mbp", "work", () => ({ summary: `Result ${++ordinal}`, data: { ordinal } }));
+    save(f, definition([programStep("report", "mbp", "work")]));
+    const worker = f.worker("mbp");
+    let first;
+    for (let index = 0; index < 21; index++) {
+      const execution = start(f);
+      f.runtime.tick(); await worker.pollOnce(); f.runtime.tick();
+      if (!first) first = f.runtime.getRunView(execution.workflowRunId);
+    }
+    assert.equal(f.runtime.snapshot().runs.length, 20);
+    assert.equal(f.runtime.snapshot().runs.some(run => run.workflowRunId === first.workflowRunId), false);
+    const exact = f.runtime.getRunView(first.workflowRunId);
+    assert.deepEqual(exact, first);
+    assert.equal(exact.steps[0].summary, "Result 1");
+    assert.ok(exact.steps[0].taskId && exact.steps[0].runId && exact.steps[0].reportId);
+    assert.throws(() => f.runtime.getRunView("unknown-history"), error => error.code === "NOT_FOUND");
+    const alias = { ...exact, workflowRunId: "imported-history" };
+    f.ledger.managementDatabase().prepare("UPDATE workflow_runs SET id=?,data=? WHERE id=?").run(alias.workflowRunId, JSON.stringify(alias), exact.workflowRunId);
+    assert.deepEqual(f.runtime.getRunView(exact.runId), alias);
+    assert.deepEqual(f.runtime.getRunView(alias.workflowRunId), alias);
+  } finally { await f.close(); }
+});
+
+test("read-only exact views retain legacy adoption ownership without changing frozen records", async () => {
+  const f = fixture();
+  try {
+    const legacy = { workflowRunId: "legacy-history", workflowId: "legacy-flow", definitionRevision: 1, title: "Legacy", definition: definition([programStep("a", "mbp", "work")]), input: { original: true }, createdAt: "2026-01-01", updatedAt: "2026-01-01", state: "succeeded", steps: [] };
+    const db = f.ledger.managementDatabase();
+    db.prepare("INSERT INTO workflow_runs(id,data) VALUES(?,?)").run(legacy.workflowRunId, JSON.stringify(legacy));
+    db.prepare("INSERT INTO workflow_adoptions(workflow_id,data) VALUES(?,?)").run(legacy.workflowId, JSON.stringify({ taskId: "adopted-task", projectId: "project" }));
+    const before = db.prepare("SELECT data FROM workflow_runs WHERE id=?").get(legacy.workflowRunId).data;
+    const view = f.runtime.getRunView(legacy.workflowRunId);
+    assert.equal(view.taskId, "adopted-task");
+    assert.equal(view.projectId, "project");
+    assert.deepEqual(view.dispatches, []);
+    assert.deepEqual(view.input, legacy.input);
+    assert.equal(view.definitionRevision, 1);
+    assert.deepEqual(f.runtime.snapshot().runs[0], view);
+    assert.equal(db.prepare("SELECT data FROM workflow_runs WHERE id=?").get(legacy.workflowRunId).data, before);
+  } finally { await f.close(); }
+});

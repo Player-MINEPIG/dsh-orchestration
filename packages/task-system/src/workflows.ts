@@ -404,6 +404,24 @@ export class WorkflowRuntime {
     run.dispatches ??= [];
     return run;
   }
+  getRunView(id: string): WorkflowRunView {
+    const row = this.db.prepare("SELECT data FROM workflow_runs WHERE id=?").get(id)
+      ?? this.db.prepare("SELECT data FROM workflow_runs WHERE json_extract(data,'$.runId')=?").get(id);
+    if (!row) fail("NOT_FOUND", "Workflow execution not found");
+    return this.projectRunView(JSON.parse(String(row.data)) as WorkflowRunView);
+  }
+  private projectRunView(run: WorkflowRunView): WorkflowRunView {
+    run.dispatches ??= [];
+    if (!run.taskId) {
+      const adopted = this.db.prepare("SELECT data FROM workflow_adoptions WHERE workflow_id=?").get(run.workflowId);
+      if (adopted) {
+        const mapping = JSON.parse(String(adopted.data)) as { taskId: string; projectId: string };
+        run.taskId = mapping.taskId;
+        run.projectId = mapping.projectId;
+      }
+    }
+    return run;
+  }
   private writeRun(run: WorkflowRunView) {
     return this.ledger.workflowAtomic(() => this.persistRun(run));
   }
@@ -503,22 +521,7 @@ export class WorkflowRuntime {
       runs: this.db
         .prepare("SELECT data FROM workflow_runs ORDER BY rowid DESC LIMIT 20")
         .all()
-        .map((row) => {
-          const run = JSON.parse(String(row.data)) as WorkflowRunView;
-          run.dispatches ??= [];
-          const adopted = this.db
-            .prepare("SELECT data FROM workflow_adoptions WHERE workflow_id=?")
-            .get(run.workflowId);
-          if (!run.taskId && adopted) {
-            const mapping = JSON.parse(String(adopted.data)) as {
-              taskId: string;
-              projectId: string;
-            };
-            run.taskId = mapping.taskId;
-            run.projectId = mapping.projectId;
-          }
-          return run;
-        }),
+        .map((row) => this.projectRunView(JSON.parse(String(row.data)) as WorkflowRunView)),
       nodes,
       workspaces: this.ledger
         .registeredNodes()

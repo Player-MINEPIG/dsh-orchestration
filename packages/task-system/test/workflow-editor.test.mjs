@@ -522,3 +522,17 @@ test("an execution report deep link restores the exact step and its stage in the
   assert.match(e.element("step-detail").innerHTML, /Selected B report/);
   assert.match(e.element("step-detail").innerHTML, /run-b/);
 });
+
+
+test("a missing deep-linked historical Run reports an error and never falls back to the current plan", async () => {
+  const e = editor({ runId: "missing-history" });
+  const snapshot = structuredClone(e.state.snapshot);
+  e.state.draft = null; e.state.snapshot = null; e.state.workflowId = "";
+  const initial = e.refresh();
+  answer(e, e.requests.at(-1), snapshot); await initial;
+  assert.match(e.element("error").textContent, /所选历史执行不存在或不可读取/);
+  assert.equal(e.state.draft, null);
+  assert.equal(e.state.snapshot, null);
+  assert.equal(e.state.workflowId, "");
+  assert.equal(e.loadedRuns.size, 0);
+});
