@@ -8,3 +8,5 @@
 关键回归包括：独立分页/过滤；展开项目图→节点详情→快照改变poll→关闭仍展开；451节点末端可达；自动已读仅实际可见正文且固定版本，失败可重试，旧报告状态持久；根交付默认+显式子交付+完整记录+executor树；同子Task旧pending partial不被后来成功消除，普通无review failure重试成功不永久报警；成功不强制验收，已accepted/rejected不覆写；未绑定步骤所有启动入口在副作用前拒绝；真实21次工作流历史首Run可查；workflowView未知ID不泄露、executor拒绝；跨页精确旧Run/report不回退task latest。
 
 视觉由主会话操作浏览器取得，本执行会话逐图查看：final-main/unread/read-detail/mobile/mobile-page2。已读从1→0、未读筛选为空由主会话实际点击验证。mobile为390px iframe，不是实体触摸设备；graph截图是早期同图结构checkpoint。线上仅只读调查，无稳定按钮断连复现，不能用此测试证明线上偶发断连已修复。
+
+2026-10-18用户授权后已部署aliyun-vps。线上283文件与两页面hash匹配，workflowView/历史三个步骤引用和记录保全通过。验收不写报告阅读事实，详情见docs/validation/dashboard-feedback-20261018.json。

@@ -1,0 +1,133 @@
+{
+  "target": "aliyun-vps",
+  "entry": "https://izbp11roeflhmn04yssxm4z.tail435ecd.ts.net:10000/",
+  "developmentExecutor": "GPT-6.1-Sol High",
+  "git": {
+    "remote": "https://github.com/Player-MINEPIG/dsh-orchestration.git",
+    "branch": "codex/dashboard-feedback",
+    "deployedCommit": "68ef21e47b522fe2b00c758897865f12d5daa002",
+    "pushVerifiedBeforeCutover": true
+  },
+  "package": {
+    "name": "@dsh-task/task-system",
+    "version": "0.2.24",
+    "archiveSha256": "9f2f25d53e88c012989c812a6d352686cd61a13068f1eb56164a5c3232501b5f",
+    "installedFilesMatched": 283
+  },
+  "times": {
+    "stoppedAt": "2026-10-18T06:27:48.056693+00:00",
+    "activatedAt": "2026-10-18T06:27:49.696244+00:00",
+    "startRequestedAt": "2026-10-18T06:27:49.754035+00:00",
+    "rpcVerifiedAt": "2026-10-18T06:28:58.374Z",
+    "stateVerifiedAt": "2026-10-18T06:29:40.773910+00:00",
+    "note": "Stop/start request timestamps do not measure time until readiness."
+  },
+  "service": {
+    "name": "dsh-production-web.service",
+    "pid": 1412890,
+    "activeState": "active",
+    "subState": "running",
+    "automaticRestarts": 0,
+    "runtime": "0.2.1-rc.2",
+    "runtimeChanged": false,
+    "proxyChanged": false
+  },
+  "preflight": {
+    "sessions": 19,
+    "runningSessions": 0,
+    "localTaskQueue": 0,
+    "truncated": false,
+    "activeQueuedRunningOrUncertainRuns": 0,
+    "activeAttempts": 0,
+    "projectTurns": 0,
+    "remoteDispatchAndOutbound": 0,
+    "programDispatchesAcknowledged": 13,
+    "codexEnabled": false,
+    "codexDatabaseExisted": false,
+    "codexProcesses": 0
+  },
+  "backup": {
+    "directory": "/opt/dsh-production/releases/dashboard-feedback-68ef21e/backup",
+    "profile": true,
+    "sqliteFiles": [
+      "tasks.sqlite",
+      "tasks.sqlite.results.sqlite",
+      "tasks.sqlite.program-executions",
+      "remote-execution.sqlite"
+    ],
+    "onlineBackupQuickCheck": "ok",
+    "stoppedDatabaseCopy": "backup/stopped",
+    "sessionFiles": 38,
+    "systemdDefinitionAndDropins": true,
+    "rollbackScript": "/opt/dsh-production/releases/dashboard-feedback-68ef21e/rollback.py",
+    "rollbackRestoresDatabases": false,
+    "originalProfile": "/root/.dsh/profiles/web.dashboard-68ef21e-before"
+  },
+  "verification": {
+    "httpsStatus": 200,
+    "workflowViewSummaryOmitsOutputs": true,
+    "historicalRunIsNotLatest": true,
+    "exactHistoricalSteps": 3,
+    "historicalSelectedOutputComplete": true,
+    "servedProjectPageSha256": "11f101627efd16679e2ee0f6c33a2a21cbccd8300617a33feafba60498276375",
+    "servedWorkflowPageSha256": "729e648eec0b0590228913826a82cfa189ab986dcf4bad38006a7fcd60bbe87e",
+    "reportReadingVersionFields": true,
+    "readingRowsWrittenByAcceptance": 0,
+    "presentationRowsWrittenByAcceptance": 0,
+    "entityCounts": {
+      "attempt": 91,
+      "report": 92,
+      "run": 99,
+      "schedule": 4,
+      "task": 62
+    },
+    "businessEntitiesUnchanged": [
+      "task",
+      "run",
+      "attempt",
+      "report",
+      "schedule",
+      "occurrence",
+      "template"
+    ],
+    "planningTablesUnchanged": [
+      "workflow_definitions",
+      "workflow_runs",
+      "workflow_task_bindings",
+      "workflow_adoptions",
+      "pr_projects",
+      "wb_projects",
+      "wb_backlogs",
+      "wb_backlog_tasks",
+      "execution_directory_settings",
+      "execution_directory_bindings"
+    ],
+    "originalSessionFilesUnchanged": 38,
+    "profileConfigUnchanged": true,
+    "otherPluginFilesUnchanged": true,
+    "postCutoverWarningsOrErrors": 0,
+    "gui": {
+      "passed": true,
+      "normalSidebarWithoutFailedPluginBanner": true,
+      "mainUserDeliveries": 2,
+      "needsAttention": 1,
+      "completed": 1,
+      "pendingUser": 0,
+      "completedUnreadFilterWorks": true,
+      "deliveryUnreadReports": 9,
+      "historicalChildIssues": 17,
+      "internalChildrenNotFlattened": true,
+      "reportsOpenedForAcceptance": false,
+      "pagination": "Insufficient live rows; covered by local tests and synthetic UI evidence."
+    },
+    "finalReadRows": 0,
+    "finalPresentationRows": 0,
+    "finalVerifiedAt": "2026-10-18T06:33:29.872207+00:00"
+  },
+  "limits": [
+    "No real task execution or report-reading/acceptance writes were used as production tests.",
+    "Initial plugin loading was slow before deployment and remains an observed baseline.",
+    "The occasional production disconnect is not root-caused or declared fixed.",
+    "MBP and PC_AU were not deployed in this release."
+  ]
+}

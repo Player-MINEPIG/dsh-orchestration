@@ -1,6 +1,8 @@
 # 任务看板反馈：本地交付记录
 
-2026-10-18；执行 GPT-6.1-Sol / High。实际工作树：`/Users/pmp/.codex/worktrees/dashboard-feedback/dsh-orchestration`，基于 db9e2d1（task-system 0.2.24）。已获授权作本地提交用于整合；**没有推送、部署、生产数据修改或服务重启**。原始 dirty 工作树保留。
+2026-10-18；执行 GPT-6.1-Sol / High。实际工作树：`/Users/pmp/.codex/worktrees/dashboard-feedback/dsh-orchestration`，基于 db9e2d1（task-system 0.2.24）。最初完成本地提交后，用户进一步授权先推送再部署。`68ef21e`已推送并于2026-10-18 UTC06:27部署到aliyun-vps。部署前备份，空闲切换并重启原服务；业务验收与阅读事实未改。原始 dirty 工作树保留。
+
+当前部署回执见 [部署记录](../../../docs/validation/dashboard-feedback-20261018.md) 及同名JSON。生产主列表、未读筛选和历史提示的只读浏览器验收通过，截图在evidence/dashboard-feedback-production-deployed.png；未打开真实报告，最终阅读与呈现表仍为0行。
 
 ## 当前决定与结果
 
@@ -36,7 +38,7 @@
 
 ## 定位历史（已解决前置）
 
-初始 cwd 位于 feature/multi-project-workbench / ece6897，旧0.2.0 dashboard并有用户改动，未拿它凑功能。匹配源码在干净 /private/tmp/dsh-rc2-upgrade 的 db9e2d1；主会话随后创建并附加当前专用树。早期“目录/4/5/9待确认”“不提交”已被后续授权与上述决定取代；不部署、不推送仍有效。
+初始 cwd 位于 feature/multi-project-workbench / ece6897，旧0.2.0 dashboard并有用户改动，未拿它凑功能。匹配源码在干净 /private/tmp/dsh-rc2-upgrade 的 db9e2d1；主会话随后创建并附加当前专用树。早期“目录/4/5/9待确认”“不提交”已被后续授权与上述决定取代；用户随后明确授权先push再部署，此限制已解除；其他设备不在本次部署范围。
 
 ## 票据
 
