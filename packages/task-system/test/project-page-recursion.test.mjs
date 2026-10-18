@@ -62,7 +62,7 @@ test('Tailscale HTTP without randomUUID loads and preserves cryptographic comman
 
 test('source aggregation task without a run never presents a pending executor selection',async()=>{
  const p=page(),data=structuredClone(snapshot);data.tasks=[row('source-stage',{observationOnly:true,node:'待选择执行端',run:'待创建',runId:null})];data.runs=[];data.attempts=[];
- await p.answer({value:data});assert.match(p.content(),/来源执行（仅观察） · 来源未记录执行端/);assert.doesNotMatch(p.content(),/待选择执行端/);
+ await p.answer({value:data});assert.match(p.content(),/来源任务/);assert.match(p.content(),/未记录/);assert.doesNotMatch(p.content(),/待选择执行端/);
  await p.action('project','p');assert.doesNotMatch(p.content(),/待选择执行端|执行记录待创建|等待执行结果|结果返回后关联到任务/);assert.match(p.content(),/来源未记录执行/);assert.match(p.content(),/来源未记录产物/);assert.doesNotMatch(p.content(),/graph-state">等待开始/);assert.match(p.content(),/data-kind="执行" data-status="observed"/);assert.match(p.content(),/data-kind="产物" data-status="observed"/);
 });
 

@@ -607,3 +607,20 @@ test('task center presentation is reversible metadata and never erases a histori
   const {ProjectRuntime}=await import('../dist/project-runtime.js'),reopened=new ProjectRuntime(h.ctx,l,'local','planner');assert.equal(reopened.snapshot().tasks.find(t=>t.id===child.taskId).showInCoordinator,false);assert.equal(reopened.snapshot().tasks.find(t=>t.id===f.task.taskId).childAttention.length,1);assert.equal(l.getRun(r.runId).reviewStatus,'pending_user');
  }finally{await h.dispose();}
 });
+
+test('HTML report presentation loads by exact version without growing snapshots or changing read facts',async(t)=>{
+ const h=await createNativeHarness({config:{role:'planner'}});
+ try{
+  h.ledger.registerNode('html-worker',worker);const {task,lease}=fixtureRun(h,'html-report');const html='<h1>Exact HTML</h1><p>'+'x'.repeat(300000)+'</p>';
+  h.ledger.submit('html-result',{...lease,outcome:'success',summary:'Rendered report',report:{title:'HTML',body:'Text alternative',data:{presentation:{mediaType:'text/html',body:html},privateField:'not projected'}}});
+  const runtime=h.ctx.taskSystem.projects,view=runtime.snapshot(),report=view.reports.find(r=>r.taskId===task.taskId&&r.kind==='result');assert.equal(report.hasHtmlPresentation,true);assert.equal('presentation' in report,false);assert.equal(JSON.stringify(view).includes(html),false);assert.equal(JSON.stringify(view).includes('not projected'),false);
+  const bytes=Buffer.byteLength(JSON.stringify(view)),full=runtime.reportPresentation({reportId:report.id,contentVersion:report.contentVersion});assert.equal(full.presentation.body,html);assert.equal(full.runId,lease.runId);assert.equal(full.taskId,task.taskId);assert.deepEqual(Object.keys(full.presentation).sort(),['body','mediaType']);assert.equal(runtime.snapshot().reports.find(r=>r.id===report.id).unread,true);
+  const other=h.ledger.appendReport('html-other',{taskId:task.taskId,runId:lease.runId,kind:'result',title:'Other',body:'Other body',data:{presentation:{mediaType:'text/html',body:'<h1>Another report</h1>'}}}).value;
+  assert.throws(()=>runtime.reportPresentation({reportId:other.reportId,contentVersion:report.contentVersion}),/Report changed/);assert.throws(()=>runtime.reportPresentation({reportId:'missing',contentVersion:report.contentVersion}),error=>error.code==='NOT_FOUND');
+  runtime.readReport({commandId:'read-html-v1',reportId:report.id,contentVersion:report.contentVersion});const db=h.ledger.managementDatabase(),row=db.prepare("select data from entities where kind='report' and id=?").get(report.id),changed=JSON.parse(row.data);changed.data.presentation.body='<h1>Changed HTML, same text</h1>';db.prepare("update entities set data=? where kind='report' and id=?").run(JSON.stringify(changed),report.id);
+  const next=runtime.snapshot().reports.find(r=>r.id===report.id);assert.notEqual(next.contentVersion,report.contentVersion);assert.equal(next.unread,true);assert.throws(()=>runtime.reportPresentation({reportId:report.id,contentVersion:report.contentVersion}),/Report changed/);
+  assert.ok(bytes<50000,'300KB HTML does not enter the default snapshot');
+  const previousShape={...view,reports:view.reports.map(({hasHtmlPresentation,...report})=>report)};
+  t.diagnostic(JSON.stringify({sample:'one 300KB HTML report, same UTF8 uncompressed JSON',previousSnapshotBytes:Buffer.byteLength(JSON.stringify(previousShape)),currentSnapshotBytes:bytes,onDemandBytes:Buffer.byteLength(JSON.stringify(full)),defaultContainsHtml:false}));
+ }finally{await h.dispose();}
+});

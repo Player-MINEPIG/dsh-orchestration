@@ -3345,7 +3345,7 @@ window.__ModuleLoader__.load({
     const openPlugins = (ctx) => openSettingsSection(ctx, "plugins");
     const openModels = (ctx) => openSettingsSection(ctx, "models");
     const projectMethods = [
-      "workflowView", "setTaskPresentation", "readProjectReport",
+      "workflowView", "setTaskPresentation", "readProjectReport", "getProjectReportPresentation",
       "workflowPage", "workflowSnapshot", "saveWorkflow", "startWorkflow", "retryWorkflowStep", "cancelWorkflow", "configureWorkflowTask", "adoptWorkflow", "createProjectTask", "runProjectTask",
       "sessionTasks",
       "projectSettings",

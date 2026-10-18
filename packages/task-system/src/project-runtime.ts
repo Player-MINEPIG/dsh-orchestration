@@ -25,7 +25,13 @@ import type { ExecutionRoute, Json, Role, Report } from "./contracts.js";
 
 const digest = (v: unknown) =>
   createHash("sha256").update(canonical(v)).digest("hex");
-const reportReadingVersion = (report: Report) => digest({title:report.title,body:report.body,revision:report.revision,artifactIds:report.artifactIds});
+const reportHtmlPresentation = (report: Report) => {
+  const data=report.data;
+  if(!data||typeof data!=="object"||Array.isArray(data))return null;
+  const presentation=data.presentation;
+  return presentation&&typeof presentation==="object"&&!Array.isArray(presentation)&&presentation.mediaType==="text/html"&&typeof presentation.body==="string"&&presentation.body.length<=2_000_000?{mediaType:"text/html" as const,body:presentation.body}:null;
+};
+const reportReadingVersion = (report: Report) => {const presentation=reportHtmlPresentation(report);return digest({title:report.title,body:report.body,revision:report.revision,artifactIds:report.artifactIds,...(presentation?{presentation}:{})});};
 const now = () => new Date().toISOString();
 const text = (v: unknown, limit: number) => {
   if (typeof v !== "string" || !v.trim() || v.length > limit)
@@ -1508,6 +1514,13 @@ export class ProjectRuntime {
       return {taskId:input.taskId,visibility:input.visibility};
     });
   }
+  reportPresentation(input:{reportId:string;contentVersion:string}) {
+    if(this.role==="executor")throw new TaskError("FORBIDDEN","Report preview unavailable");
+    const report=this.ledger.getReport(input.reportId);
+    if(report.kind!=="result")throw new TaskError("NOT_FOUND","Result report not found");
+    if(reportReadingVersion(report)!==input.contentVersion)throw new TaskError("CONFLICT","Report changed; refresh before reading");
+    return {reportId:report.reportId,taskId:report.taskId,runId:report.runId??null,contentVersion:input.contentVersion,presentation:reportHtmlPresentation(report)};
+  }
   readReport(input:{commandId:string;reportId:string;contentVersion:string}) {
     this.authorize();
     return this.ledger.managementCommand(input.commandId,"report-read",input,()=>{
@@ -2008,6 +2021,7 @@ export class ProjectRuntime {
       reports: data.reports.map((r) => ({
         id: r.reportId,
         ...reportReadings.get(r.reportId),
+        hasHtmlPresentation:!!reportHtmlPresentation(r),
         kind: r.kind,
         taskId: r.taskId,
         runId: r.runId,

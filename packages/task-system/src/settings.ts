@@ -340,6 +340,7 @@ export function hasTaskConfigOverride(patches: readonly unknown[]): boolean {
 const projectInputs = {
   workflowView:z.object({workflowRunId:z.string().min(1).max(200).nullable()}).strict(),
   setTaskPresentation:z.object({commandId:z.string().min(1).max(200),taskId:z.string().min(1).max(200),visibility:z.enum(["primary","execution"])}).strict(),
+  getProjectReportPresentation:z.object({reportId:z.string().min(1).max(200),contentVersion:z.string().regex(/^[a-f0-9]{64}$/)}).strict(),
   readProjectReport:z.object({commandId:z.string().min(1).max(200),reportId:z.string().min(1).max(200),contentVersion:z.string().regex(/^[a-f0-9]{64}$/)}).strict(),
   configureWorkflowTask: ConfigureWorkflowTask,
   adoptWorkflow: AdoptWorkflow,
@@ -671,6 +672,7 @@ export class TaskPluginSettings extends TypertRemoteService {
     );
   }
   async setTaskPresentation(input:unknown){return this.projectOperation(()=>this.projects().setTaskPresentation(projectInputs.setTaskPresentation.parse(input)));}
+  async getProjectReportPresentation(input:unknown){return this.projectOperation(()=>this.projects().reportPresentation(projectInputs.getProjectReportPresentation.parse(input)));}
   async readProjectReport(input:unknown){return this.projectOperation(()=>this.projects().readReport(projectInputs.readProjectReport.parse(input)));}
   async setReportRetryLimit(input:unknown){return this.projectOperation(()=>this.projects().setReportRetryLimit(projectInputs.setReportRetryLimit.parse(input)));}
   async actOnProjectTask(input: unknown) {
