@@ -664,3 +664,45 @@ test("stage detail edits update graph and navigation while retaining concrete wo
   assert.match(e.element("step-list").innerHTML, /设备 mbp/);
   assert.throws(() => e.validate(e.state.draft), /工作区/);
 });
+
+
+test("node overview and internal steps are separate labelled navigation sections", () => {
+  const e = editor(); e.selectNode({ kind: "stage", id: "a" });
+  const html = e.element("step-list").innerHTML;
+  const overview = html.slice(html.indexOf('class="node-overview"'), html.indexOf('class="internal-steps"'));
+  const internal = html.slice(html.indexOf('class="internal-steps"'));
+  assert.match(overview, /节点概览/); assert.match(overview, /data-stage-detail="a"/);
+  assert.doesNotMatch(overview, /data-step=/);
+  assert.match(internal, /内部步骤/); assert.match(internal, /data-step="a"/);
+  assert.doesNotMatch(internal, /data-stage-detail=/);
+  e.selectNode({ kind: "step", id: "a" });
+  assert.match(e.element("step-detail").innerHTML, /步骤设置/);
+  e.selectNode({ kind: "stage", id: "a" });
+  assert.equal(e.state.stepId, ""); assert.match(e.element("step-detail").innerHTML, /节点信息/);
+});
+
+test("step result prioritizes the report before process and associations while technical data starts collapsed", () => {
+  const e = editor(); const full = runSummary(e, "historic");
+  full.steps[0].output = { presentation: { mediaType: "text/html", body: "<h1>Core report</h1>" }, value: 42 };
+  e.state.runId = "historic"; e.loadedRuns.set("historic", full); e.state.snapshot.runs = [full];
+  e.selectNode({ kind: "step", id: "a" });
+  const html = e.element("step-detail").innerHTML;
+  assert.deepEqual(Array.from(html.matchAll(/data-result-section="([^"]+)"/g), match => match[1]), ["result", "process", "associations", "provenance"]);
+  assert.ok(html.indexOf("Core report") < html.indexOf('data-result-section="process"'));
+  const technical = html.slice(html.indexOf('data-result-section="provenance"'));
+  assert.doesNotMatch(technical, /<details open/);
+  assert.match(technical, /原始输出数据/); assert.match(technical, /historic-step-run/); assert.match(technical, /historic-report/);
+  assert.match(html, /sandbox=""/); assert.match(html, /referrerpolicy="no-referrer"/);
+  assert.match(html, /id="show-task"/); assert.match(html, /id="open-task-execution"/);
+});
+
+test("unavailable associations are omitted without hiding the result or inventing supplementary content", () => {
+  const e = editor(); const full = runSummary(e, "pending");
+  full.steps = [{ stepId: "a", nodeId: "vps", state: "pending", attemptCount: 0, summary: "Waiting for executor" }];
+  e.state.runId = "pending"; e.loadedRuns.set("pending", full); e.state.snapshot.runs = [full];
+  e.selectNode({ kind: "step", id: "a" });
+  const html = e.element("step-detail").innerHTML;
+  assert.match(html, /Waiting for executor/); assert.match(html, /data-result-section="process"/);
+  assert.doesNotMatch(html, /data-result-section="associations"|补充内容/);
+  assert.match(html, /尚未产生输出/);
+});

@@ -503,19 +503,17 @@
     if (!steps.some((step) => step.stepId === state.stepId)) state.stepId = "";
     const stage = def.stages.find(row => row.stageId === state.stageId);
     $("device-heading").textContent = selectedStep() ? `${selectedStep().title} · 步骤详情` : `${stage?.title || "节点"} · 阶段详情`;
-    $("step-list").innerHTML =
-      (stage ? `<button type="button" class="step ${!state.stepId ? "active" : ""}" data-stage-detail="${esc(stage.stageId)}"><strong>${esc(stage.title)}</strong><span class="muted">设备 ${esc(stage.nodeId)} · ${steps.length} 个步骤</span></button>` : "") + steps
-        .map((step) => {
-          const view = run()?.steps.find((row) => row.stepId === step.stepId);
-          const upstream = step.dependsOn
-            .map((dep) => {
-              const row = def.steps.find((s) => s.stepId === dep);
-              return row ? `${row.nodeId} / ${row.title}` : dep;
-            })
-            .join("、");
-          return `<button type="button" class="step ${step.stepId === state.stepId ? "active" : ""}" data-step="${esc(step.stepId)}"><span class="step-title"><strong>${esc(step.title || "未命名步骤")}</strong><span class="badge">${kindName(step.execution.kind)}</span></span><span class="muted">${upstream ? `← ${esc(upstream)}` : "起始步骤"}</span>${view ? badge(view.state) : ""}</button>`;
-        })
-        .join("") || '<p class="empty">此设备还没有步骤。</p>';
+    const items = steps.map((step) => {
+      const view = run()?.steps.find((row) => row.stepId === step.stepId);
+      const upstream = step.dependsOn.map(dep => {
+        const row = def.steps.find(candidate => candidate.stepId === dep);
+        return row ? `${row.nodeId} / ${row.title}` : dep;
+      }).join("、");
+      return `<button type="button" class="step ${step.stepId === state.stepId ? "active" : ""}" data-step="${esc(step.stepId)}"><span class="step-title"><strong>${esc(step.title || "未命名步骤")}</strong><span class="badge">${kindName(step.execution.kind)}</span></span><span class="muted">${upstream ? `← ${esc(upstream)}` : "起始步骤"}</span>${view ? badge(view.state) : ""}</button>`;
+    }).join("");
+    $("step-list").innerHTML = `<section class="node-overview" aria-labelledby="node-overview-heading"><h3 id="node-overview-heading" class="detail-section-title">节点概览</h3>${stage
+      ? `<button type="button" class="step ${!state.stepId ? "active" : ""}" data-stage-detail="${esc(stage.stageId)}"><strong>${esc(stage.title)}</strong><span class="muted">设备 ${esc(stage.nodeId)} · ${steps.length} 个步骤</span></button>`
+      : '<p class="muted">选择一个设备阶段查看节点信息。</p>'}</section><section class="internal-steps" aria-labelledby="internal-steps-heading"><h3 id="internal-steps-heading" class="detail-section-title">内部步骤 <span class="badge">${steps.length}</span></h3><div class="steps">${items || '<p class="muted">此节点还没有步骤。</p>'}</div></section>`;
   }
   function renderBindings(step) {
     const rows = Object.entries(step.inputs);
@@ -569,7 +567,7 @@
     const connection = state.connection;
     const source = connection ? def.steps.filter(step => step.stageId === connection.fromStageId) : [];
     const destination = connection ? def.steps.filter(step => step.stageId === connection.toStageId) : [];
-    $("step-detail").innerHTML = `<h3>${esc(stage.title)}</h3>${readOnly
+    $("step-detail").innerHTML = `<h3 class="detail-section-title">节点信息</h3>${readOnly
       ? `<p>执行设备 ${esc(stage.nodeId)} · ${steps.length} 个内部步骤</p><p class="hint">本次执行固定使用版本 ${esc(run().definitionRevision)}。阶段与连线只读，选择左侧步骤查看本次结果。</p>`
       : `<div class="fields"><label>阶段名称<input id="stage-title" value="${esc(stage.title)}"></label><label>执行设备<select id="stage-node">${state.snapshot.nodes.map(row => option(row.nodeId, row.nodeId, stage.nodeId)).join("")}${!state.snapshot.nodes.some(row => row.nodeId === stage.nodeId) ? option(stage.nodeId, stage.nodeId, stage.nodeId) : ""}</select></label></div><p class="muted">选择左侧步骤可设置执行方式、前序调用和输入映射。</p>`}
       <div class="row">${!state.focusStage ? '<button type="button" id="enter-stage">查看内部步骤图</button>' : ''}${!readOnly ? '<button type="button" id="remove-stage" class="danger">删除阶段</button>' : ''}</div>
@@ -593,7 +591,7 @@
     const models = capabilities?.models || [];
     const selectedModel = JSON.stringify([e.provider, e.model]);
     $("step-detail").innerHTML =
-      `<div class="fields"><div><label for="step-title">步骤名称</label><input id="step-title" value="${esc(step.title)}"></div><div><label for="step-kind">执行方式</label><select id="step-kind">${option("unbound", "待选执行方式", e.kind)}${option("program", "程序", e.kind)}${option("agent", "Agent", e.kind)}</select></div>${e.kind !== "unbound" ? `<div class="span-all"><label for="step-workspace">执行工作区</label><select id="step-workspace">${workspaceOptions(step.nodeId, step.workspaceId)}</select></div>` : ""}</div>${e.kind === "unbound" ? `<p class="hint">此步骤描述计划中的工作，尚未选择执行方式。可以保存设计。执行前请选择执行方式（Agent 或程序），并指定工作区。Agent 可以根据自然语言工作要求执行。</p>` : e.kind === "program" ? `<label for="step-program">已登记的程序与版本</label><select id="step-program">${programOptions(step)}</select><p class="hint">${programsFor(step.nodeId).length ? "程序入口由该设备的插件登记。工作流只引用入口与版本。" : "此设备没有公布可用程序。请先在设备上安装并登记业务程序，恢复连接后刷新。"}</p>` : `<label for="step-model">模型</label><select id="step-model">${option("", models.length ? "选择模型" : "此设备未公布模型", selectedModel)}${models.map((row) => option(JSON.stringify([row.provider, row.model]), `${row.provider} / ${row.model}`, selectedModel)).join("")}${e.model && !models.some((row) => row.provider === e.provider && row.model === e.model) ? option(selectedModel, `${e.provider} / ${e.model} · 当前不可用`, selectedModel) : ""}</select><label for="step-effort">推理档位</label><select id="step-effort">${option("", "模型默认", e.reasoningEffort || "")}${(models.find((row) => row.provider === e.provider && row.model === e.model)?.reasoningEfforts || []).map((value) => option(value, value, e.reasoningEffort)).join("")}</select><label for="step-input-exposure">输入提供方式</label><select id="step-input-exposure">${option("inline", "直接提供给 Agent", e.inputExposure || "inline")}${option("tools", "通过工具按需读取", e.inputExposure || "inline")}</select><p class="muted">大量来源数据可由工具分页读取。选择此方式前，需要为 Agent 配置可读取本次工作流输入的工具。</p><label for="step-instructions">Agent 执行要求</label><textarea id="step-instructions">${esc(e.instructions)}</textarea><label for="step-tools">允许使用的工具（每行一个）</label><textarea id="step-tools">${esc(e.allowedTools.join("\n"))}</textarea>`}<label for="step-retries">${e.kind === "unbound" ? "选择执行方式后可配置重试" : e.kind === "agent" ? "Agent 自动重试次数" : "程序步骤仅支持手动重试"}</label><input id="step-retries" type="number" min="0" max="5" value="${step.maxRetries}"${e.kind !== "agent" ? " disabled" : ""}><h3 style="margin-top:20px">等待哪些步骤完成</h3><div id="dependencies">${
+      `<h3 class="detail-section-title">步骤设置</h3><div class="fields"><div><label for="step-title">步骤名称</label><input id="step-title" value="${esc(step.title)}"></div><div><label for="step-kind">执行方式</label><select id="step-kind">${option("unbound", "待选执行方式", e.kind)}${option("program", "程序", e.kind)}${option("agent", "Agent", e.kind)}</select></div>${e.kind !== "unbound" ? `<div class="span-all"><label for="step-workspace">执行工作区</label><select id="step-workspace">${workspaceOptions(step.nodeId, step.workspaceId)}</select></div>` : ""}</div>${e.kind === "unbound" ? `<p class="hint">此步骤描述计划中的工作，尚未选择执行方式。可以保存设计。执行前请选择执行方式（Agent 或程序），并指定工作区。Agent 可以根据自然语言工作要求执行。</p>` : e.kind === "program" ? `<label for="step-program">已登记的程序与版本</label><select id="step-program">${programOptions(step)}</select><p class="hint">${programsFor(step.nodeId).length ? "程序入口由该设备的插件登记。工作流只引用入口与版本。" : "此设备没有公布可用程序。请先在设备上安装并登记业务程序，恢复连接后刷新。"}</p>` : `<label for="step-model">模型</label><select id="step-model">${option("", models.length ? "选择模型" : "此设备未公布模型", selectedModel)}${models.map((row) => option(JSON.stringify([row.provider, row.model]), `${row.provider} / ${row.model}`, selectedModel)).join("")}${e.model && !models.some((row) => row.provider === e.provider && row.model === e.model) ? option(selectedModel, `${e.provider} / ${e.model} · 当前不可用`, selectedModel) : ""}</select><label for="step-effort">推理档位</label><select id="step-effort">${option("", "模型默认", e.reasoningEffort || "")}${(models.find((row) => row.provider === e.provider && row.model === e.model)?.reasoningEfforts || []).map((value) => option(value, value, e.reasoningEffort)).join("")}</select><label for="step-input-exposure">输入提供方式</label><select id="step-input-exposure">${option("inline", "直接提供给 Agent", e.inputExposure || "inline")}${option("tools", "通过工具按需读取", e.inputExposure || "inline")}</select><p class="muted">大量来源数据可由工具分页读取。选择此方式前，需要为 Agent 配置可读取本次工作流输入的工具。</p><label for="step-instructions">Agent 执行要求</label><textarea id="step-instructions">${esc(e.instructions)}</textarea><label for="step-tools">允许使用的工具（每行一个）</label><textarea id="step-tools">${esc(e.allowedTools.join("\n"))}</textarea>`}<label for="step-retries">${e.kind === "unbound" ? "选择执行方式后可配置重试" : e.kind === "agent" ? "Agent 自动重试次数" : "程序步骤仅支持手动重试"}</label><input id="step-retries" type="number" min="0" max="5" value="${step.maxRetries}"${e.kind !== "agent" ? " disabled" : ""}><h3 style="margin-top:20px">等待哪些步骤完成</h3><div id="dependencies">${
         definition()
           .steps.filter((row) => row.stepId !== step.stepId)
           .map(
@@ -630,9 +628,14 @@
       run().state !== "cancelled" &&
       (["failed", "cancelled"].includes(view.state) ||
         (view.state === "blocked" && !!view.runId));
+    const associations = `${view.taskId ? '<button type="button" id="show-task">查看本次任务执行</button>' : ""}${view.taskId && view.runId && view.reportId ? '<button type="button" id="open-task-execution">打开本次任务报告</button>' : ""}`;
     $("step-detail").innerHTML =
-      `<h3>${esc(step.title)}</h3><div class="row">${badge(view.state)}<span class="muted">尝试 ${view.attemptCount} 次</span></div>${view.reason ? `<p class="hint">${esc(view.reason)}</p>` : ""}<p style="margin-top:12px">${esc(view.summary || "尚无结果摘要")}</p><div class="row">${canRetry ? '<button type="button" id="retry-step">重试此步骤</button>' : ""}${view.taskId ? '<button type="button" id="show-task">查看本次任务执行</button>' : ""}${view.taskId && view.runId && view.reportId ? '<button type="button" id="open-task-execution">打开本次任务报告</button>' : ""}</div>${htmlPreview(view.output)}<details${view.output?.presentation?.mediaType === "text/html" ? "" : " open"}><summary>输出数据</summary><pre>${esc(view.output === undefined ? "尚未产生输出" : JSON.stringify(view.output, null, 2))}</pre></details><details><summary>执行记录</summary><pre>${esc(JSON.stringify({ nodeId: view.nodeId, taskId: view.taskId, runId: view.runId, reportId: view.reportId, sessionId: view.sessionId }, null, 2))}</pre></details><details><summary>本次执行固定输入与映射</summary><pre>${esc(JSON.stringify({ parameters: run().input, bindings: step.inputs }, null, 2))}</pre></details><details><summary>历次执行回执（${dispatches.length}）</summary><pre>${esc(JSON.stringify(dispatches, null, 2))}</pre></details><div id="task-record"></div>`;
+      `<section class="workflow-detail-section" data-result-section="result"><h3 class="detail-section-title">结果</h3><p>${esc(view.summary || "尚无结果摘要")}</p>${htmlPreview(view.output)}</section>
+      <section class="workflow-detail-section" data-result-section="process"><h3 class="detail-section-title">过程</h3><div class="row">${badge(view.state)}<span class="muted">尝试 ${view.attemptCount} 次</span></div>${view.reason ? `<p class="hint">${esc(view.reason)}</p>` : ""}${canRetry ? '<button type="button" id="retry-step">重试此步骤</button>' : ""}</section>
+      ${associations ? `<section class="workflow-detail-section" data-result-section="associations"><h3 class="detail-section-title">关联</h3><div class="row">${associations}</div></section>` : ""}
+      <section class="workflow-detail-section" data-result-section="provenance"><h3 class="detail-section-title">溯源与技术细节</h3><details><summary>执行记录</summary><pre>${esc(JSON.stringify({ workflowRunId: run().workflowRunId, definitionRevision: run().definitionRevision, nodeId: view.nodeId, taskId: view.taskId, runId: view.runId, reportId: view.reportId, sessionId: view.sessionId }, null, 2))}</pre></details><details><summary>本次执行固定输入与映射</summary><pre>${esc(JSON.stringify({ parameters: run().input, bindings: step.inputs }, null, 2))}</pre></details><details><summary>历次执行回执（${dispatches.length}）</summary><pre>${esc(JSON.stringify(dispatches, null, 2))}</pre></details><details><summary>原始输出数据</summary><pre>${esc(view.output === undefined ? "尚未产生输出" : JSON.stringify(view.output, null, 2))}</pre></details><div id="task-record"></div></section>`;
   }
+
   function fullRender() {
     const visible = !!definition();
     $("welcome").classList.toggle("hidden", visible);
