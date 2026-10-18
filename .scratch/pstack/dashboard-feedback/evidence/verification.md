@@ -18,3 +18,5 @@
 ## 第三轮修订（0.2.26）
 
 整合workflow模块f447709与项目页详情重排。构建通过，完整649项648pass/0fail/1既有平台skip。最终恢复提示与select右间距文案调整后再build+67页/递归测试通过。root真实UI验证Task/Run/项目/390px模块层次、按钮间距与workflow分区；执行会话查看截图。真实Chrome旧页同已读报告失败且全局snapshot也gateway/internal；单次刷新后同报告HTML恢复，读取状态未新增。官方SDK动态取当前connection，故不加入猜测性remount；底层断线触发条件未定位。预览保留安全错误分类及恢复提示，原Run/version重试有回归。
+
+项目结果摘要补正后的最终构建/完整套件：650 tests /649 pass /0 fail /1 skip，日志dashboard-revision3-final-suite.log；68项页/递归用例通过，精确report、最多5、内部过滤和零读副作用覆盖。
