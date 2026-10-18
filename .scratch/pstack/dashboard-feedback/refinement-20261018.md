@@ -17,3 +17,9 @@
 ## 发行身份修正
 
 首次0.2.24候选安装被283文件哈希验证拦截，9个变更文件仍是上一版本。包与manifest自身一致，候选为独立普通目录，pnpm hoisted同名同版本报告Already up to date/added0。未进入备份或切换，生产未改。改用task-system 0.2.25区分发行，npm生成对应lock；核对所有依赖version/resolved/integrity及依赖关系未变，只有本插件版本变，其他差异为npm生成的依赖分类元数据。重新build与644测试643pass/1skip/0fail通过。
+
+## 当前上线状态
+
+`b63fadd`已push后部署，task-system 0.2.25；UTC09:26切换，283安装文件、两页面哈希、精确历史与按需HTML只读接口通过。配置、业务记录和阅读事实保留。详见[部署回执](../../../docs/validation/dashboard-refinement-20261018.md)。
+
+生产浏览器卡片与工作流只读补证通过，执行会话已查看截图。只读快照说明、切换定义后点VPS更新详情、重复表单消失均确认；未保存或执行，也未打开真实报告。09:32:13Z保全复核read/presentation仍0，业务与配置哈希保持。

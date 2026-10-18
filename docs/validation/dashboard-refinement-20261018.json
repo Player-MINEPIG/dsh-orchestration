@@ -1,0 +1,213 @@
+{
+  "target": "aliyun-vps",
+  "entry": "https://izbp11roeflhmn04yssxm4z.tail435ecd.ts.net:10000/",
+  "developmentExecutor": "GPT-6.1-Sol High",
+  "git": {
+    "remote": "https://github.com/Player-MINEPIG/dsh-orchestration.git",
+    "branch": "codex/dashboard-feedback",
+    "deployedCommit": "b63fadd49dd4151b2aec133c6105076e1392ceec",
+    "pushVerifiedBeforeCutover": true
+  },
+  "package": {
+    "name": "@dsh-task/task-system",
+    "version": "0.2.25",
+    "archiveSha256": "b65dbd4bd40268de58b5dfeea399bf7375d7fd2fa8c6630b51ca83c5fe217d8b",
+    "installedFilesMatched": 283
+  },
+  "times": {
+    "stoppedAt": "2026-10-18T09:26:06.065574+00:00",
+    "activatedAt": "2026-10-18T09:26:07.534500+00:00",
+    "serviceStartRequestedAt": "2026-10-18T09:26:07.554442+00:00"
+  },
+  "preflight": {
+    "sessions": 19,
+    "runningSessions": 0,
+    "localTaskQueue": 0,
+    "truncated": false,
+    "activeQueuedRunningOrUncertainRuns": 0,
+    "activeAttempts": 0,
+    "projectTurns": 0,
+    "remoteDispatchAndOutbound": 0,
+    "programDispatchesAcknowledged": 13,
+    "codexEnabled": false,
+    "codexDatabaseExisted": false,
+    "codexProcesses": 0
+  },
+  "backup": {
+    "directory": "/opt/dsh-production/releases/dashboard-feedback-b63fadd/backup",
+    "completedAt": "2026-10-18T09:25:34.834981+00:00",
+    "sqliteFiles": [
+      "tasks.sqlite",
+      "tasks.sqlite.results.sqlite",
+      "tasks.sqlite.program-executions",
+      "remote-execution.sqlite"
+    ],
+    "onlineBackupQuickCheck": "ok",
+    "stoppedDatabaseCopy": "backup/stopped",
+    "profile": true,
+    "sessionFiles": 38,
+    "systemdDefinitionAndDropins": true,
+    "rollbackScript": "/opt/dsh-production/releases/dashboard-feedback-b63fadd/rollback.py",
+    "rollbackRestoresDatabases": false,
+    "previousProfile": "/root/.dsh/profiles/web.dashboard-b63fadd-before"
+  },
+  "stateVerification": {
+    "verifiedAt": "2026-10-18T09:32:13.968164+00:00",
+    "packageVersion": "0.2.25",
+    "sourceCommit": "b63fadd49dd4151b2aec133c6105076e1392ceec",
+    "packageFilesMatched": 283,
+    "businessEntitiesUnchanged": [
+      "task",
+      "run",
+      "attempt",
+      "report",
+      "schedule",
+      "occurrence",
+      "template"
+    ],
+    "planningTablesUnchanged": [
+      "workflow_definitions",
+      "workflow_runs",
+      "workflow_task_bindings",
+      "workflow_adoptions",
+      "pr_projects",
+      "wb_projects",
+      "wb_backlogs",
+      "wb_backlog_tasks",
+      "execution_directory_settings",
+      "execution_directory_bindings",
+      "pr_report_reads",
+      "pr_task_presentation"
+    ],
+    "originalSessionFilesUnchanged": 38,
+    "profileConfigUnchanged": true,
+    "proxyUnchanged": true,
+    "readingRows": 0,
+    "presentationRows": 0,
+    "entityCounts": [
+      [
+        "attempt",
+        91
+      ],
+      [
+        "report",
+        92
+      ],
+      [
+        "run",
+        99
+      ],
+      [
+        "schedule",
+        4
+      ],
+      [
+        "task",
+        62
+      ]
+    ],
+    "service": "MainPID=1419804\nNRestarts=0\nExecMainStartTimestamp=Sun 2026-10-18 17:26:07 CST\nActiveState=active\nSubState=running",
+    "otherPluginFilesUnchanged": true
+  },
+  "rpcVerification": {
+    "htmlPreview": {
+      "exactIdentity": true,
+      "bodyChars": 10093,
+      "defaultContainsBody": false
+    },
+    "verifiedAt": "2026-10-18T09:27:00.703Z",
+    "queueCount": 0,
+    "runningSessions": 0,
+    "sessions": 19,
+    "taskCount": 62,
+    "coordinatorTasks": 5,
+    "reportCount": 92,
+    "reportReadingFields": true,
+    "workflowRuns": 9,
+    "summaryHasNoOutputs": true,
+    "servedProjectPageSha256": "dfabd956610e7809a4c2a441eb0cef1a7081f3d905f95af4264d792ed281f9eb",
+    "servedWorkflowPageSha256": "40820ef62907c8c75c8801852db4b8a98fa7ea59d05fdd2d32171cbf49d2caf1",
+    "history": {
+      "workflowRunId": "4c1171d5-f9d3-4627-a2f7-91821cc018b7",
+      "definitionRevision": 1,
+      "exactSteps": 3,
+      "selectedFullOutput": true,
+      "latestDifferent": true
+    }
+  },
+  "httpsStatus": 200,
+  "service": {
+    "name": "dsh-production-web.service",
+    "pid": 1419804,
+    "automaticRestarts": 0,
+    "activeState": "active",
+    "subState": "running",
+    "runtime": "0.2.1-rc.2",
+    "runtimeChanged": false,
+    "proxyChanged": false,
+    "postCutoverJournal": {
+      "lines": 7,
+      "errorLines": 0,
+      "warningMatchingLines": 2,
+      "classification": "One Node SQLite ExperimentalWarning plus its trace-warning hint; no task-plugin error."
+    }
+  },
+  "localValidation": {
+    "build": "passed",
+    "tests": 644,
+    "passed": 643,
+    "failed": 0,
+    "skipped": 1,
+    "skip": "Existing macOS 127.0.0.2 loopback alias test; verifier rejection behavior remains covered.",
+    "defaultHtmlSample": {
+      "encoding": "UTF8 uncompressed JSON",
+      "htmlChars": 300000,
+      "previousDefaultBytes": 3514,
+      "currentDefaultBytes": 3541,
+      "onDemandBytes": 300307,
+      "defaultContainsHtmlBody": false
+    }
+  },
+  "candidateIntegrityGate": {
+    "sameVersionCandidate": "603f259 / 0.2.24",
+    "mismatchedFiles": 9,
+    "productionCutoverPrevented": true,
+    "resolution": "Distinct 0.2.25 identity; all 283 installed files then matched."
+  },
+  "gui": {
+    "status": "passed",
+    "projectAboveTaskTitle": true,
+    "compactTaskType": true,
+    "recordedSingleDeviceName": "PC_AU",
+    "recordedMultipleDeviceLabel": "多个",
+    "durationShown": "6小时33分钟",
+    "durationHasSeconds": false,
+    "reportsOpenedForAcceptance": false,
+    "mainScreenshot": "evidence/dashboard-refinement-production.png",
+    "readonlyLegendVerified": true,
+    "editableStageSelectionVerified": true,
+    "duplicateBelowGraphFormsRemoved": true,
+    "editedSavedOrExecuted": false,
+    "workflowScreenshots": [
+      "evidence/dashboard-refinement-production-readonly.png",
+      "evidence/dashboard-refinement-production-node-details.png"
+    ]
+  },
+  "limits": [
+    "Only aliyun-vps task-system plugin deployed; no MBP/PC_AU update.",
+    "No real task execution, report-reading, acceptance or presentation writes used for production acceptance.",
+    "VPS task/project/workflow support HTML; executor protocol retains existing Markdown capability.",
+    "Initial slow loading predates deployment; occasional disconnect remains undiagnosed."
+  ],
+  "finalReadingVerification": {
+    "verifiedAt": "2026-10-18T09:34:02.595117+00:00",
+    "pr_report_reads": {
+      "rows": 0,
+      "unchanged": true
+    },
+    "pr_task_presentation": {
+      "rows": 0,
+      "unchanged": true
+    }
+  }
+}

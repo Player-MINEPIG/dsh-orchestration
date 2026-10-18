@@ -1,12 +1,12 @@
 # 任务看板反馈：本地交付记录
 
-2026-10-18；执行 GPT-6.1-Sol / High。实际工作树：`/Users/pmp/.codex/worktrees/dashboard-feedback/dsh-orchestration`，基于 db9e2d1（task-system 0.2.24）。最初完成本地提交后，用户进一步授权先推送再部署。`68ef21e`已推送并于2026-10-18 UTC06:27部署到aliyun-vps。部署前备份，空闲切换并重启原服务；业务验收与阅读事实未改。原始 dirty 工作树保留。
+2026-10-18；执行 GPT-6.1-Sol / High。实际工作树：`/Users/pmp/.codex/worktrees/dashboard-feedback/dsh-orchestration`，基于 db9e2d1（task-system 0.2.24）。最初完成本地提交后，用户进一步授权先推送再部署。首轮`68ef21e`已推送并于UTC06:27部署；第二轮`b63fadd`随后先push再于UTC09:26部署aliyun-vps，当前task-system为0.2.25。部署前备份，空闲切换并重启原服务；业务验收与阅读事实未改。原始 dirty 工作树保留。
 
-当前部署回执见 [部署记录](../../../docs/validation/dashboard-feedback-20261018.md) 及同名JSON。生产主列表、未读筛选和历史提示的只读浏览器验收通过，截图在evidence/dashboard-feedback-production-deployed.png；未打开真实报告，最终阅读与呈现表仍为0行。
+当前部署回执见 [第二轮部署记录](../../../docs/validation/dashboard-refinement-20261018.md) 及同名JSON；[首轮记录](../../../docs/validation/dashboard-feedback-20261018.md)保留为历史。生产主列表、未读筛选和历史提示的只读浏览器验收通过，截图在evidence/dashboard-feedback-production-deployed.png；未打开真实报告，最终阅读与呈现表仍为0行。
 
 ## 当前第二轮修订
 
-新反馈的卡片/节点交互/HTML按需预览正在本地整合复核。见 [第二轮记录](refinement-20261018.md)，本轮尚未推送或部署。下文68ef21e部署记录是上一轮已上线基线。
+新反馈的卡片、节点交互及HTML按需预览已完成构建、644项测试与本地视觉验收。`b63fadd`已先push再于UTC09:26部署aliyun-vps，版本0.2.25，线上哈希与只读RPC通过；见[本轮部署回执](../../../docs/validation/dashboard-refinement-20261018.md)及[修订记录](refinement-20261018.md)。下文68ef21e是上一轮历史基线，当前代码以本轮为准。
 
 ## 当前决定与结果
 

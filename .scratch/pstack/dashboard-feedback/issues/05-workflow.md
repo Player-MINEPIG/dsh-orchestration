@@ -10,4 +10,4 @@ Blocked by: None（本地增量）；线上偶发断连根因仍未定位。Stat
 
 ## 2026-10-18 第二轮修订
 
-workflow_execution独占workflow-ui/page/editor tests，修执行快照只读提示、当前定义节点点击与拖拽判定、图下重复表单转选中节点详情；dashboard_execution负责卡片、项目详情与HTML按需读取、最终整合。基线da5cd12。未经主会话复核不提前push/deploy。
+workflow_execution独占workflow-ui/page/editor tests，修执行快照只读提示、当前定义节点点击与拖拽判定、图下重复表单转选中节点详情；dashboard_execution负责卡片、项目详情与HTML按需读取、最终整合。基线da5cd12；cd5b626整合模块，完整644项测试及主会话复核通过，b63fadd已先push再部署0.2.25。

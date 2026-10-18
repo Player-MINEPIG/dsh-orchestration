@@ -10,3 +10,7 @@
 视觉由主会话操作浏览器取得，本执行会话逐图查看：final-main/unread/read-detail/mobile/mobile-page2。已读从1→0、未读筛选为空由主会话实际点击验证。mobile为390px iframe，不是实体触摸设备；graph截图是早期同图结构checkpoint。线上仅只读调查，无稳定按钮断连复现，不能用此测试证明线上偶发断连已修复。
 
 2026-10-18用户授权后已部署aliyun-vps。线上283文件与两页面hash匹配，workflowView/历史三个步骤引用和记录保全通过。验收不写报告阅读事实，详情见docs/validation/dashboard-feedback-20261018.json。
+
+## 第二轮修订最终验证
+
+0.2.25构建通过；完整套件644 tests / 643 pass / 0 fail / 1 skip，原因同上。日志dashboard-refinement-release-{build,suite}.log。本轮新增卡片分钟、真实设备、lazy HTML、精确artifact、错版本拒绝及可见读取行为；工作流节点点击/拖动与详情整合有真实Chrome补证。线上只读发布证据见docs/validation/dashboard-refinement-20261018.json。
