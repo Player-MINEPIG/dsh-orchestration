@@ -1429,6 +1429,9 @@ export class TaskLedger {
     return changed;
   }
 
+  getReport(reportId: string) {
+    return this.need<Report>("report", reportId);
+  }
   getTask(taskId: string) {
     return this.need<Task>("task", taskId);
   }
@@ -3737,7 +3740,7 @@ export class TaskLedger {
       latest.state === "succeeded" &&
       (!latest.intentSnapshot?.intentRevision ||
         latest.intentSnapshot.intentRevision === task.intentRevision)
-        ? latest.route?.backend && latest.reviewStatus !== "accepted" ? "waiting" : "completed"
+        ? ["pending_user", "rejected"].includes(latest.reviewStatus ?? "") ? "waiting" : "completed"
         : latest.state === "failed"
           ? "failed"
           : "waiting";
@@ -3810,7 +3813,7 @@ export class TaskLedger {
           kind: "result",
         })
       : undefined;
-    if (input.outcome === "partial" || (input.outcome === "success" && run.route?.backend)) run.reviewStatus = "pending_user";
+    if (input.outcome === "partial") run.reviewStatus = "pending_user";
     run.state = (
       {
         success: "succeeded",
@@ -4475,8 +4478,8 @@ export class TaskLedger {
     return this.command(commandId, "reviewRun", input, () => {
       const run = this.getRun(input.runId);
       this.assertTaskActionVersion(run.taskId, input.expectedActionVersion);
-      if (run.reviewStatus !== "pending_user")
-        fail("CONFLICT", "Run is not awaiting review");
+      if (run.reviewStatus !== "pending_user" && !(run.state === "succeeded" && run.reviewStatus === undefined))
+        fail("CONFLICT", "Run has no result available for review");
       if (!["accepted", "rejected"].includes(input.decision))
         fail("INVALID", "Invalid review");
       run.reviewStatus = input.decision;

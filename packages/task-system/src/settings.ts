@@ -338,6 +338,9 @@ export function hasTaskConfigOverride(patches: readonly unknown[]): boolean {
 }
 
 const projectInputs = {
+  workflowView:z.object({workflowRunId:z.string().min(1).max(200).nullable()}).strict(),
+  setTaskPresentation:z.object({commandId:z.string().min(1).max(200),taskId:z.string().min(1).max(200),visibility:z.enum(["primary","execution"])}).strict(),
+  readProjectReport:z.object({commandId:z.string().min(1).max(200),reportId:z.string().min(1).max(200),contentVersion:z.string().regex(/^[a-f0-9]{64}$/)}).strict(),
   configureWorkflowTask: ConfigureWorkflowTask,
   adoptWorkflow: AdoptWorkflow,
   createProjectTask: z.object({commandId:z.string().min(1).max(200),projectId:z.string().min(1),title:z.string().trim().min(1).max(500),description:z.string().trim().min(1).max(20000),routeId:z.string().min(1),start:z.boolean()}).strict(),
@@ -494,6 +497,17 @@ export class TaskPluginSettings extends TypertRemoteService {
   async adoptWorkflow(input:unknown) { return this.projectOperation(()=>this.workflowService().adopt(projectInputs.adoptWorkflow.parse(input))); }
   async createProjectTask(input:unknown) { return this.projectOperation(()=>this.projects().createDirectTask(projectInputs.createProjectTask.parse(input))); }
   async runProjectTask(input:unknown) { return this.projectOperation(()=>this.projects().runDirectTask(projectInputs.runProjectTask.parse(input))); }
+  async workflowView(input:unknown) {
+    const {workflowRunId}=projectInputs.workflowView.parse(input);
+    return this.projectOperation(()=>{
+      const service=this.workflowService(),snapshot=service.snapshot();
+      const runs=workflowRunId&&!snapshot.runs.some(run=>run.workflowRunId===workflowRunId||run.runId===workflowRunId)?[...snapshot.runs,service.getRunView(workflowRunId)]:snapshot.runs;
+      return {...snapshot,runs:runs.map(run=>{
+        if(workflowRunId&&(run.workflowRunId===workflowRunId||run.runId===workflowRunId))return run;
+        return {...run,input:{},dispatches:[],steps:run.steps.map(({output,summary,...step})=>({...step,...(typeof summary==="string"?{summary:summary.slice(0,400)}:{})}))};
+      })};
+    });
+  }
   async workflowSnapshot() { return this.projectOperation(() => this.workflowService().snapshot()); }
   async saveWorkflow(input: unknown) { return this.projectOperation(() => this.workflowService().save(input)); }
   async startWorkflow(input: unknown) { return this.projectOperation(() => this.workflowService().start(input)); }
@@ -525,7 +539,7 @@ export class TaskPluginSettings extends TypertRemoteService {
       if (error instanceof TaskError)
         throw new RemoteError("task/project", "Project operation rejected", {
           reason: error.code,
-          ...(error.code === "WORKFLOW_SCOPE" ? {detail:error.message} : {}),
+          ...(["WORKFLOW_SCOPE","WORKFLOW_UNBOUND"].includes(error.code) ? {detail:error.message} : {}),
         });
       throw error;
     }
@@ -656,6 +670,8 @@ export class TaskPluginSettings extends TypertRemoteService {
       ),
     );
   }
+  async setTaskPresentation(input:unknown){return this.projectOperation(()=>this.projects().setTaskPresentation(projectInputs.setTaskPresentation.parse(input)));}
+  async readProjectReport(input:unknown){return this.projectOperation(()=>this.projects().readReport(projectInputs.readProjectReport.parse(input)));}
   async setReportRetryLimit(input:unknown){return this.projectOperation(()=>this.projects().setReportRetryLimit(projectInputs.setReportRetryLimit.parse(input)));}
   async actOnProjectTask(input: unknown) {
     return this.projectOperation(

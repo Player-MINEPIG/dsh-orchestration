@@ -21,10 +21,11 @@ import { Workbench } from "./workbench.js";
 import { WorkspaceManager } from "./workspaces.js";
 import { ScheduledPlans } from "./scheduled-plans.js";
 import type { TaskPlanner, PlanningInput } from "./planning.js";
-import type { ExecutionRoute, Json, Role } from "./contracts.js";
+import type { ExecutionRoute, Json, Role, Report } from "./contracts.js";
 
 const digest = (v: unknown) =>
   createHash("sha256").update(canonical(v)).digest("hex");
+const reportReadingVersion = (report: Report) => digest({title:report.title,body:report.body,revision:report.revision,artifactIds:report.artifactIds});
 const now = () => new Date().toISOString();
 const text = (v: unknown, limit: number) => {
   if (typeof v !== "string" || !v.trim() || v.length > limit)
@@ -101,6 +102,8 @@ export class ProjectRuntime {
     ledger.projectSnapshot = (nodeId) => this.snapshotForNode(nodeId) as unknown as import("./contracts.js").Json;
     this.db
       .exec(`CREATE TABLE IF NOT EXISTS pr_settings(id INTEGER PRIMARY KEY CHECK(id=1),root TEXT,revision INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS pr_task_presentation(task TEXT PRIMARY KEY,visibility TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS pr_report_reads(report TEXT NOT NULL,version TEXT NOT NULL,read_at TEXT NOT NULL,PRIMARY KEY(report,version));
       CREATE TABLE IF NOT EXISTS pr_task_routes(task TEXT PRIMARY KEY,route TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS pr_models(owner TEXT PRIMARY KEY,selection TEXT,revision INTEGER NOT NULL);
       INSERT OR IGNORE INTO pr_settings VALUES(1,NULL,0);
@@ -1496,6 +1499,25 @@ export class ProjectRuntime {
       expectedActionVersion: input.expectedVersion,
     });
   }
+  setTaskPresentation(input:{commandId:string;taskId:string;visibility:"primary"|"execution"}) {
+    this.authorize();
+    return this.ledger.managementCommand(input.commandId,"task-presentation",input,()=>{
+      this.ledger.getTask(input.taskId);
+      if(!["primary","execution"].includes(input.visibility))throw new TaskError("INVALID","Unknown task presentation");
+      this.db.prepare("INSERT INTO pr_task_presentation(task,visibility) VALUES(?,?) ON CONFLICT(task) DO UPDATE SET visibility=excluded.visibility").run(input.taskId,input.visibility);
+      return {taskId:input.taskId,visibility:input.visibility};
+    });
+  }
+  readReport(input:{commandId:string;reportId:string;contentVersion:string}) {
+    this.authorize();
+    return this.ledger.managementCommand(input.commandId,"report-read",input,()=>{
+      const report=this.ledger.getReport(input.reportId);
+      if(!report||report.kind!=="result")throw new TaskError("NOT_FOUND","Result report not found");
+      if(reportReadingVersion(report)!==input.contentVersion)throw new TaskError("CONFLICT","Report changed; read the current version before marking it read");
+      this.db.prepare("INSERT OR IGNORE INTO pr_report_reads(report,version,read_at) VALUES(?,?,?)").run(report.reportId,input.contentVersion,now());
+      return {reportId:report.reportId,contentVersion:input.contentVersion};
+    });
+  }
   setReportRetryLimit(input:{commandId:string;taskId:string;expectedRevision:number;maxRetries:number}) {
     this.authorize();
     return this.ledger.updateTask(input.commandId,{taskId:input.taskId,expectedRevision:input.expectedRevision,maxResultRetries:input.maxRetries});
@@ -1570,6 +1592,12 @@ export class ProjectRuntime {
   snapshot() {
     const wb = this.workbench.snapshot(),
       data = this.ledger.snapshot();
+    const presentation=new Map(this.db.prepare("SELECT task,visibility FROM pr_task_presentation").all().map(row=>[String(row.task),String(row.visibility)]));
+    const readReports=new Map(this.db.prepare("SELECT report,version,read_at FROM pr_report_reads").all().map(row=>[JSON.stringify([row.report,row.version]),String(row.read_at)]));
+    const reading=(report:Report)=>{const contentVersion=reportReadingVersion(report),readAt=readReports.get(JSON.stringify([report.reportId,contentVersion]))??null;return {contentVersion,readAt,unread:report.kind==="result"&&!readAt};};
+    const reportReadings=new Map(data.reports.map(report=>[report.reportId,reading(report)]));
+    const unreadByTask=new Map<string,number>();
+    for(const report of data.reports)if(reportReadings.get(report.reportId)?.unread)unreadByTask.set(report.taskId,(unreadByTask.get(report.taskId)??0)+1);
     const projectCollaborations = this.collaboration?.collaborationSummaries() ?? [];
     const runtimes = new Map(
       (
@@ -1731,6 +1759,7 @@ export class ProjectRuntime {
                             : "queued";
       return {
         id: t.taskId,
+        showInCoordinator:presentation.get(t.taskId)==="primary"||presentation.get(t.taskId)!=="execution"&&!t.parentTaskId&&!(run?.configuration&&typeof run.configuration==="object"&&!Array.isArray(run.configuration)&&run.configuration.workflow),
         kind: t.kind,
         parentTaskId: t.parentTaskId ?? null,
         parentRunId: t.parentRunId ?? null,
@@ -1745,6 +1774,7 @@ export class ProjectRuntime {
         revision:t.revision??1,
         workflowBinding:(()=>{const binding=workflowBindings.find(binding=>binding.taskId===t.taskId);return binding?{taskId:binding.taskId,projectId:binding.projectId,workflowId:binding.workflowId,revision:binding.revision}:null;})(),
         canRunDirect:!!this.db.prepare("SELECT task FROM pr_task_routes WHERE task=?").get(t.taskId),
+        unreadResultCount:unreadByTask.get(t.taskId)??0,
         maxResultRetries:t.policy?.maxResultRetries??2,
         resultRetry:run?this.ledger.resultRetryInfo(run.runId):null,
         executionStartedAt: run?.executionStartedAt ?? null,
@@ -1891,6 +1921,22 @@ export class ProjectRuntime {
         reviewStatus: run?.reviewStatus || null,
       };
     });
+    const taskById=new Map(data.tasks.map(task=>[task.taskId,task])),runById=new Map(data.runs.map(run=>[run.runId,run]));
+    const projectedTasks=new Map(tasks.map(task=>[task.id,task]));
+    const attentionByRoot=new Map<string,{taskId:string;runId:string|null;parentRunId:string|null;parentCreatedAt:string|null;state:string;node:string;summary:string}[]>();
+    for(const run of data.runs){
+      const task=projectedTasks.get(run.taskId);
+      if(!task||task.showInCoordinator||!task.parentTaskId||run.reviewStatus==="accepted")continue;
+      if(run.reviewStatus!=="pending_user"&&run.reviewStatus!=="rejected"&&!(run.runId===task.runId&&task.status==="error"))continue;
+      // A newer successful Run does not resolve an older Run's source gap.
+      if(run.runId===task.runId&&task.status==="handled")continue;
+      let ancestor=taskById.get(task.parentTaskId);const seen=new Set<string>();
+      while(ancestor?.parentTaskId&&!seen.has(ancestor.taskId)){seen.add(ancestor.taskId);ancestor=taskById.get(ancestor.parentTaskId);}
+      if(!ancestor)continue;
+      const parentRunId=run.parentRunId??task.parentRunId,parent=parentRunId?runById.get(parentRunId):undefined,rows=attentionByRoot.get(ancestor.taskId)??[];
+      rows.push({taskId:task.id,runId:run.runId,parentRunId:parentRunId??null,parentCreatedAt:parent?.createdAt??null,state:run.state,node:run.route?.nodeId??task.node,summary:run.reviewStatus==="rejected"?"审核未通过":run.state==="partial"?"部分完成 · 详见本次报告":run.state==="failed"?"执行失败":run.state==="uncertain"?"结果待核实":run.state==="blocked"?"执行受阻":"结果需核对"});
+      attentionByRoot.set(ancestor.taskId,rows);
+    }
     // Explicit public views only. Never expose Run.configuration or provider credentials.
     return {
       settings: this.settings(),
@@ -1908,7 +1954,7 @@ export class ProjectRuntime {
       })),
       attempts: (data.attempts ?? []).map(a=>({attemptId:a.attemptId,taskId:a.taskId,runId:a.runId,nodeId:a.nodeId,fence:a.fence,state:a.state,sessionId:a.sessionId,executionId:a.executionId})),
       projects,
-      tasks,
+      tasks:tasks.map(task=>({...task,childAttention:attentionByRoot.get(task.id)??[]})),
       nodes: this.ledger.nodeStatuses().map((n) => ({
         nodeId: n.nodeId,
         state: n.state,
@@ -1961,6 +2007,7 @@ export class ProjectRuntime {
       }; }),
       reports: data.reports.map((r) => ({
         id: r.reportId,
+        ...reportReadings.get(r.reportId),
         kind: r.kind,
         taskId: r.taskId,
         runId: r.runId,
@@ -2028,7 +2075,7 @@ export class ProjectRuntime {
     while(changed){changed=false;for(const t of raw.tasks)if(t.parentTaskId&&ids.has(t.parentTaskId)&&!ids.has(t.taskId)){ids.add(t.taskId);changed=true;}}
     // Ancestors supply context, without granting visibility into unrelated sibling branches.
     for(const taskId of [...ids]){let t=raw.tasks.find(t=>t.taskId===taskId);const seen=new Set<string>();while(t?.parentTaskId&&!seen.has(t.parentTaskId)){seen.add(t.parentTaskId);ids.add(t.parentTaskId);t=raw.tasks.find(x=>x.taskId===t!.parentTaskId);}}
-    const tasks=all.tasks.filter(t=>ids.has(t.id)).map(t=>({...t,canHandle:false,canConfirm:false,canComplete:false,canRequestMaterials:false,canCancel:false,canRetry:false,canRestore:false,canReconcile:false,canRequestStatus:false}));
+    const tasks=all.tasks.filter(t=>ids.has(t.id)).map(t=>({...t,childAttention:t.childAttention.filter(row=>ids.has(row.taskId)),canHandle:false,canConfirm:false,canComplete:false,canRequestMaterials:false,canCancel:false,canRetry:false,canRestore:false,canReconcile:false,canRequestStatus:false}));
     for(const t of tasks)if(t.project!=="unassigned")projectIds.add(t.project);
     const runs=all.runs.filter(r=>ids.has(r.taskId)),runIds=new Set(runs.map(r=>r.id));
     return {...all,settings:{enabled:false},projects:all.projects.filter(p=>projectIds.has(p.id)).map(p=>({...p,canChat:false,sessionId:null})),tasks,runs,

@@ -1,3 +1,4 @@
+import { Script } from "node:vm";
 import { createRequire } from "node:module";
 import { copyFileSync, readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -21,10 +22,13 @@ const page = readFileSync(
   new URL("../packages/task-system/src/project-page.html", import.meta.url),
   "utf8",
 );
-writeFileSync(
-  new URL("../packages/task-system/dist/project-page.html", import.meta.url),
-  page.replace("/*__TASK_MARKDOWN__*/", () => markdownBrowser),
-);
+const projectHtml = page.replace("/*__TASK_MARKDOWN__*/", () => markdownBrowser);
+function validateInlineScripts(html, label) {
+  for (const match of html.matchAll(/<script>([\s\S]*?)<\/script>/g))
+    new Script(match[1], { filename: label });
+}
+validateInlineScripts(projectHtml, "project-page.html");
+writeFileSync(new URL("../packages/task-system/dist/project-page.html", import.meta.url), projectHtml);
 
 // Ship the session-scoped skill with the plugin; no global harness files are written.
 copyFileSync(
@@ -35,4 +39,6 @@ copyFileSync(
 const workflowPage = readFileSync(new URL("../packages/task-system/src/workflow-page.html", import.meta.url), "utf8");
 const workflowClient = readFileSync(new URL("../packages/task-system/src/workflow-ui.js", import.meta.url), "utf8").replace(/<\/script/gi, "<\\/script");
 if (!workflowPage.includes("/*__WORKFLOW_UI__*/")) throw new Error("Workflow editor script placeholder is missing");
-writeFileSync(new URL("../packages/task-system/dist/workflow-page.html", import.meta.url), workflowPage.replace("/*__WORKFLOW_UI__*/", () => workflowClient));
+const workflowHtml = workflowPage.replace("/*__WORKFLOW_UI__*/", () => workflowClient);
+validateInlineScripts(workflowHtml, "workflow-page.html");
+writeFileSync(new URL("../packages/task-system/dist/workflow-page.html", import.meta.url), workflowHtml);

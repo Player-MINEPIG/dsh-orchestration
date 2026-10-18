@@ -16,10 +16,10 @@ function page({insecureContext=false}={}) {
 
 const project={id:'p',title:'Source project',description:'Project scope',goal:'Deliver',session:0,messages:[],canChat:false};
 const row=(id,extra={})=>({id,project:'p',title:id,description:'Task',status:'review',run:'r-'+id,runId:'r-'+id,runState:'succeeded',nativeState:'waiting',report:'Result',recommendation:[],candidateChecks:[],...extra});
-const snapshot={projects:[project],tasks:[row('parent'),row('child',{parentTaskId:'parent',parentRunId:'r-parent',delegationDisplay:'task'}),row('tiny',{parentTaskId:'parent',parentRunId:'r-parent',delegationDisplay:{mode:'step',reason:'small-execution'}}),row('old',{parentTaskId:'parent'})],settings:{root:null,revision:0},runs:[{id:'r-parent',taskId:'parent',state:'succeeded',outcome:'partial'},{id:'r-child',taskId:'child',parentRunId:'r-parent',state:'succeeded',model:'gpt-6-luna',reasoningEffort:'low',executionDriver:'codex',actualModel:'gpt-6-luna',actualReasoningEffort:'low',productThreadId:'verified-product-thread',sessionIds:['official-thread']},{id:'r-tiny',taskId:'tiny',parentRunId:'r-parent',state:'succeeded'},{id:'r-old',taskId:'old',state:'succeeded'}],attempts:[{attemptId:'attempt-child',runId:'r-child',nodeId:'mbp',fence:3,state:'settled',sessionId:'official-thread',executionId:'execution-child'}],nodes:[],projectRegistrations:[]};
+const snapshot={projects:[project],tasks:[row('parent'),row('child',{parentTaskId:'parent',parentRunId:'r-parent',delegationDisplay:'task'}),row('tiny',{parentTaskId:'parent',parentRunId:'r-parent',delegationDisplay:{mode:'step',reason:'small-execution'}}),row('old',{parentTaskId:'parent'})],settings:{root:null,revision:0},runs:[{id:'r-parent',taskId:'parent',state:'succeeded',outcome:'partial',reviewStatus:'pending_user'},{id:'r-child',taskId:'child',parentRunId:'r-parent',state:'succeeded',model:'gpt-6-luna',reasoningEffort:'low',executionDriver:'codex',actualModel:'gpt-6-luna',actualReasoningEffort:'low',productThreadId:'verified-product-thread',sessionIds:['official-thread']},{id:'r-tiny',taskId:'tiny',parentRunId:'r-parent',state:'succeeded'},{id:'r-old',taskId:'old',state:'succeeded'}],attempts:[{attemptId:'attempt-child',runId:'r-child',nodeId:'mbp',fence:3,state:'settled',sessionId:'official-thread',executionId:'execution-child'}],nodes:[],projectRegistrations:[]};
 test('existing plugin panel folds internal steps and preserves exact parent Run, Attempt and official session evidence',async()=>{
  const p=page();await p.answer({value:structuredClone(snapshot)});
- assert.doesNotMatch(p.content(),/data-id="tiny"/);assert.match(p.content(),/data-id="child"/);
+ assert.doesNotMatch(p.content(),/data-id="tiny"|data-id="child"/);assert.match(p.content(),/data-id="parent"/);
  await p.action('task','parent');const html=p.overlay();
  assert.match(html,/内部小步骤（1）/);assert.match(html,/data-recursive-task="tiny"/);assert.match(html,/父 Run r-parent/);assert.match(html,/Attempt attempt-child/);assert.match(html,/official-thread/);assert.match(html,/计划模型 gpt-6-luna low/);assert.match(html,/运行时已确认：gpt-6-luna · low/);assert.match(html,/产品线程：verified-product-thread/);assert.match(html,/部分交付 · 待验收/);assert.match(html,/组织关联 · 未记录父 Run（1）/);
  assert.doesNotMatch(html,/<details class="recursive-steps" open/);
@@ -90,6 +90,7 @@ test('recursive activity cards navigate to exact executions in task and project 
  assert.match(p.overlay(),/data-action="schedule-run" data-id="r-child"/);
  await p.action('task','child');assert.match(p.overlay(),/aria-label="child"/);assert.doesNotMatch(p.overlay(),/<h3>子任务协作<\/h3>/);
  await p.action('close');assert.match(p.overlay(),/aria-label="parent"/);await p.action('close');
+ await p.action('project','p');assert.doesNotMatch(p.content(),/<h3>子任务协作<\/h3>/);
  const tree=vm.runInContext("projectRecursion('p')",p.context);
  assert.match(tree,/data-action="schedule-run" data-id="r-parent"/);assert.match(tree,/data-action="schedule-run" data-id="r-child"/);
 });

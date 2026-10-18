@@ -457,7 +457,7 @@ test("a failed detail refresh preserves the last exact output and can be retried
   const failing = e.refresh(); answer(e, e.requests.at(-1), undefined, "Connection unavailable"); await failing;
   assert.equal(e.state.snapshot, before);
   assert.match(e.element("step-detail").innerHTML, /Known precise result/);
-  assert.match(e.element("connection").textContent, /刷新重试/);
+  assert.match(e.element("connection").textContent, /可重试/);
   const retry = e.refresh({ force: true });
   const updated = { ...full, steps: [{ ...full.steps[0], output: { value: "Refreshed precise result" } }] };
   answer(e, e.requests.at(-1), { ...e.state.snapshot, runs: [updated] }); await retry;

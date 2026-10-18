@@ -3345,6 +3345,7 @@ window.__ModuleLoader__.load({
     const openPlugins = (ctx) => openSettingsSection(ctx, "plugins");
     const openModels = (ctx) => openSettingsSection(ctx, "models");
     const projectMethods = [
+      "workflowView", "setTaskPresentation", "readProjectReport",
       "workflowPage", "workflowSnapshot", "saveWorkflow", "startWorkflow", "retryWorkflowStep", "cancelWorkflow", "configureWorkflowTask", "adoptWorkflow", "createProjectTask", "runProjectTask",
       "sessionTasks",
       "projectSettings",
@@ -3531,7 +3532,7 @@ window.__ModuleLoader__.load({
               {
                 channel: "dsh-project-runtime",
                 id,
-                error: code === "WORKFLOW_SCOPE" ? "任务权限未覆盖工作流所需范围，请由项目所有者核对授权："+(failure.details?.detail||"缺少设备、工作区或工具授权") : messages[code] || (/^projectDirectory/.test(method) && error?.message) || (/workflow/i.test(method) && error?.message) || "无法读取或操作项目服务，请检查连接后重试。",
+                error: code === "WORKFLOW_UNBOUND" ? "执行前请选择执行方式（Agent 或程序）并绑定工作区："+(failure.details?.detail||"存在未绑定步骤") : code === "WORKFLOW_SCOPE" ? "任务权限未覆盖工作流所需范围，请由项目所有者核对授权："+(failure.details?.detail||"缺少设备、工作区或工具授权") : messages[code] || (/^projectDirectory/.test(method) && error?.message) || (/workflow/i.test(method) && error?.message) || "无法读取或操作项目服务，请检查连接后重试。",
                 errorCode: code,
                 errorDetails: /^projectDirectory/.test(method) ? failure?.details : undefined,
               },

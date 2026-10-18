@@ -105,8 +105,8 @@ function operator(runtime,taskId,action,commandId=action+'-'+taskId) {
  const t=runtime.snapshot().tasks.find(t=>t.id===taskId);
  return {commandId,taskId,action,expectedVersion:t.actionVersion,runId:t.runId,confirmationRevision:t.confirmationRevision};
 }
-function fixtureRun(h,key) {
- const task=h.ledger.createTask('task-'+key,{title:key}).value;
+function fixtureRun(h,key,policy) {
+ const task=h.ledger.createTask('task-'+key,{title:key,...(policy?{policy}:{})}).value;
  const run=h.ledger.createRun('run-'+key,{taskId:task.taskId,route:{nodeId:'worker',provider:'worker-model',model:'small',reasoningEffort:'off',requiredCapabilities:[]}}).value;
  const a=h.ledger.claim('claim-'+key,{runId:run.runId,nodeId:'worker',ttlMs:10000}).value.attempt;const lease={runId:a.runId,attemptId:a.attemptId,nodeId:a.nodeId,fence:a.fence};
  return {task,run,lease};
@@ -561,5 +561,49 @@ test('project creation accepts an available per-project model with no global def
   assert.equal((await runtime.modelCatalog()).defaultSelection,null);
   assert.equal(h.adapter.requests.length,0);
   await assert.rejects(runtime.create({...selected,selection:{provider:'test-offline',model:'other'}}),error=>error.code==='CONFLICT');
+ }finally{await h.dispose();}
+});
+
+
+test('report reading persists by report content version independently of generation and acceptance',async()=>{
+ const h=await createNativeHarness({config:{role:'planner'}});
+ try{
+  h.ledger.registerNode('reading-worker',worker);const {task,lease}=fixtureRun(h,'reading');h.ledger.submit('reading-result',{...lease,outcome:'success',summary:'Report generated',report:{title:'Daily report',body:'First visible body'}});
+  const runtime=h.ctx.taskSystem.projects,first=runtime.snapshot().reports.find(r=>r.taskId===task.taskId&&r.kind==='result');
+  assert.equal(first.unread,true);assert.equal(runtime.snapshot().tasks.find(t=>t.id===task.taskId).status,'done');
+  const input={commandId:'read-exact',reportId:first.id,contentVersion:first.contentVersion};runtime.readReport(input);runtime.readReport(input);
+  assert.equal(runtime.snapshot().reports.find(r=>r.id===first.id).unread,false);assert.equal(h.ledger.getRun(lease.runId).reviewStatus,undefined);assert.equal(h.ledger.getTask(task.taskId).confirmation?.approved,undefined);
+  const other=h.ledger.appendReport('later-result',{taskId:task.taskId,runId:lease.runId,kind:'result',title:'Supplement',body:'Additional source'}).value;
+  assert.equal(runtime.snapshot().reports.find(r=>r.id===other.reportId).unread,true);
+  const extra=runtime.snapshot().reports.find(r=>r.id===other.reportId);runtime.readReport({commandId:'read-extra',reportId:extra.id,contentVersion:extra.contentVersion});
+  const db=h.ledger.managementDatabase(),row=db.prepare("SELECT data FROM entities WHERE kind='report' AND id=?").get(first.id),changed=JSON.parse(row.data);changed.body='Revised visible body';db.prepare("UPDATE entities SET data=? WHERE kind='report' AND id=?").run(JSON.stringify(changed),first.id);
+  assert.equal(runtime.snapshot().reports.find(r=>r.id===first.id).unread,true);
+  assert.throws(()=>runtime.readReport({...input,commandId:'read-stale'}),/Report changed/);
+  const {ProjectRuntime}=await import('../dist/project-runtime.js'),reopened=new ProjectRuntime(h.ctx,h.ledger,'local','planner');assert.equal(reopened.snapshot().reports.find(r=>r.id===other.reportId).unread,false);assert.equal(reopened.snapshot().reports.find(r=>r.id===first.id).unread,true);
+ }finally{await h.dispose();}
+});
+
+
+test('task center presentation is reversible metadata and never erases a historical child issue or executor tree',async()=>{
+ const h=await createNativeHarness({config:{role:'planner'}});
+ try{
+  h.ledger.registerNode('presentation-worker',{...worker,maxConcurrent:3});const f=fixtureRun(h,'parent-presentation',{settlementQuietMs:0}),l=h.ledger;
+  const child=l.createTask('child-presentation',{title:'Local source',parentTaskId:f.task.taskId,parentRunId:f.run.runId}).value;
+  const r=l.createRun('child-presentation-run',{taskId:child.taskId,parentRunId:f.run.runId,route:{nodeId:'worker',provider:'worker-model',model:'small',reasoningEffort:'off',requiredCapabilities:[]}}).value;
+  const claim=l.claim('child-presentation-claim',{runId:r.runId,nodeId:'worker',ttlMs:10000}).value.attempt;
+  l.submit('child-presentation-result',{runId:r.runId,attemptId:claim.attemptId,nodeId:'worker',fence:claim.fence,outcome:'partial',summary:'Source gap',report:{title:'Partial source',body:'Some data missing'}});
+  const failed=l.createRun('child-presentation-failed',{taskId:child.taskId,parentRunId:f.run.runId,route:r.route}).value;
+  const failedClaim=l.claim('child-presentation-failed-claim',{runId:failed.runId,nodeId:'worker',ttlMs:10000}).value.attempt;
+  l.submit('child-presentation-failed-result',{runId:failed.runId,attemptId:failedClaim.attemptId,nodeId:'worker',fence:failedClaim.fence,outcome:'failure',summary:'Temporary failure'});
+  const later=l.createRun('child-presentation-later',{taskId:child.taskId,parentRunId:f.run.runId,route:r.route}).value;
+  const laterClaim=l.claim('child-presentation-later-claim',{runId:later.runId,nodeId:'worker',ttlMs:10000}).value.attempt;
+  l.submit('child-presentation-later-result',{runId:later.runId,attemptId:laterClaim.attemptId,nodeId:'worker',fence:laterClaim.fence,outcome:'success',summary:'A newer result',report:{title:'New result',body:'Different execution succeeded'}});
+  l.submit('parent-presentation-result',{...f.lease,outcome:'success',summary:'Later overall delivery',report:{title:'Parent report',body:'Delivered with stated source gap'}});
+  const runtime=h.ctx.taskSystem.projects;let v=runtime.snapshot(),parent=v.tasks.find(t=>t.id===f.task.taskId),c=v.tasks.find(t=>t.id===child.taskId);
+  assert.equal(parent.status,'done');assert.equal(parent.showInCoordinator,true);assert.equal(c.showInCoordinator,false);assert.equal(parent.childAttention[0].parentRunId,f.run.runId);assert.equal(parent.childAttention[0].runId,r.runId);
+  v=runtime.snapshot();assert.equal(v.tasks.find(t=>t.id===child.taskId).status,'done');assert.deepEqual(v.tasks.find(t=>t.id===f.task.taskId).childAttention.map(row=>row.runId),[r.runId]);
+  const before=l.getRun(r.runId);runtime.setTaskPresentation({commandId:'promote-delivery',taskId:child.taskId,visibility:'primary'});assert.equal(runtime.snapshot().tasks.find(t=>t.id===child.taskId).showInCoordinator,true);assert.deepEqual(l.getRun(r.runId),before);
+  runtime.setTaskPresentation({commandId:'fold-delivery',taskId:child.taskId,visibility:'execution'});assert.equal(runtime.snapshotForNode('worker').tasks.some(t=>t.id===child.taskId),true);
+  const {ProjectRuntime}=await import('../dist/project-runtime.js'),reopened=new ProjectRuntime(h.ctx,l,'local','planner');assert.equal(reopened.snapshot().tasks.find(t=>t.id===child.taskId).showInCoordinator,false);assert.equal(reopened.snapshot().tasks.find(t=>t.id===f.task.taskId).childAttention.length,1);assert.equal(l.getRun(r.runId).reviewStatus,'pending_user');
  }finally{await h.dispose();}
 });

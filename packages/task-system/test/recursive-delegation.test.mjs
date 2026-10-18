@@ -256,7 +256,7 @@ test("central ledger pins parent execution, inherits backend grants, retains ste
   );
 });
 
-test("official execution success stays awaiting review; rejection and rework keep prior parent run identity", (t) => {
+test("official success completes without mandatory human review; voluntary rejection preserves prior run identity", (t) => {
   const dir = mkdtempSync(join(tmpdir(), "official-review-"));
   const l = TaskLedger.open(join(dir, "tasks.sqlite"), {
     role: "both",
@@ -302,9 +302,9 @@ test("official execution success stays awaiting review; rejection and rework kee
     summary: "Execution done",
     report: { title: "Analysis", body: "Fixture official analysis" },
   }).value;
-  assert.equal(settled.reviewStatus, "pending_user");
+  assert.equal(settled.reviewStatus, undefined);
   assert.equal(settled.state, "succeeded");
-  assert.equal(l.getTask(task.taskId).state, "waiting");
+  assert.equal(l.getTask(task.taskId).state, "completed");
   l.reviewRun("reject", {
     runId: run.runId,
     decision: "rejected",
@@ -314,6 +314,7 @@ test("official execution success stays awaiting review; rejection and rework kee
   const next = l.createRun("rework", { taskId: task.taskId, route }).value;
   assert.notEqual(next.runId, run.runId);
   assert.equal(l.getRun(run.runId).reviewStatus, "rejected");
+  assert.throws(()=>l.reviewRun("overwrite-terminal-review",{runId:run.runId,decision:"accepted",reason:"Should retain prior decision"}),/no result available for review/);
   assert.equal(l.history(task.taskId).runs.length, 2);
 });
 

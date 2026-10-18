@@ -492,3 +492,89 @@ test('new project opens with no directory and remains actionable after a model c
  const p=page();await p.answer({value:snapshot});const pending=p.action('create');await p.answer({error:'目录暂不可用'});await pending;
  assert.match(p.overlay(),/选择目录/);assert.match(p.overlay(),/刷新模型目录/);assert.match(p.overlay(),/目录暂不可用/);assert.match(p.overlay(),/模型设置/);
 });
+
+
+test('board columns page five tasks independently and clamp after refreshed counts shrink',async()=>{
+ const p=page(),rows=['done','review'].flatMap(status=>Array.from({length:12},(_,i)=>({id:status+'-'+i,project:'unassigned',title:status+' task '+i,status,node:'VPS'})));
+ await p.answer({value:{...snapshot,tasks:rows}});
+ const column=status=>p.content().split('<section class="kanban-col" aria-label="'+({done:'已完成',review:'待确认'}[status])+'">')[1].split('</section>')[0];
+ assert.equal((column('done').match(/class="task-inline board-card"/g)||[]).length,5);
+ assert.match(column('done'),/done task 0/);assert.doesNotMatch(column('done'),/done task 5/);assert.match(column('done'),/<span>12<\/span>/);
+ await p.action('board-page',JSON.stringify({status:'done',delta:1}));assert.match(column('done'),/done task 5/);assert.match(column('review'),/review task 0/);
+ await p.action('board-page',JSON.stringify({status:'review',delta:1}));await p.action('board-page',JSON.stringify({status:'done',delta:1}));
+ assert.match(column('done'),/3 \/ 3/);assert.match(column('review'),/2 \/ 3/);
+ let pending=p.startPoll();await p.answer({value:{...snapshot,tasks:rows.filter(t=>t.status==='review'||t.id==='done-0')}});await pending;
+ assert.match(column('done'),/done task 0/);assert.doesNotMatch(column('done'),/board-pagination/);assert.match(column('review'),/2 \/ 3/);
+ await p.action('filter','review');assert.doesNotMatch(p.content(),/aria-label="已完成"/);assert.match(column('review'),/2 \/ 3/);
+});
+
+test('project relationship graph stays expanded through updates and is independent of task detail disclosures',async()=>{
+ const p=page(),project={id:'p',title:'Project',goal:'Goal',workspace:'/projects/p',session:1,canChat:true,messages:[]},data={...snapshot,projects:[project],tasks:[{id:'t',project:'p',title:'Task',status:'done',node:'VPS'}]};
+ await p.answer({value:data});await p.action('project','p');
+ const key=vm.runInContext("disclosureKey('project-graph','p')",p.context);
+ p.documentEvents.toggle({target:{matches:()=>true,dataset:{detailState:key},open:true}});
+ let pending=p.startPoll();await p.answer({value:{...data,tasks:[{...data.tasks[0],title:'Task updated'}]}});await pending;
+ assert.match(p.content(),/<details class="panel" data-detail-state="[^"]+" open><summary>任务与产物关系/);
+ await p.action('task','t');pending=p.startPoll();await p.answer({value:data});await pending;assert.match(p.content(),/<details class="panel"[^>]*open><summary>任务与产物关系/);await p.action('close');assert.match(p.content(),/<details class="panel" data-detail-state="[^"]+" open><summary>任务与产物关系/);
+ p.documentEvents.toggle({target:{matches:()=>true,dataset:{detailState:key},open:false}});await p.action('project','p');assert.doesNotMatch(p.content(),/<details class="panel"[^>]*open><summary>任务与产物关系/);
+});
+
+test('relationship graph offers reachable first and last nodes for a large task history',async()=>{
+ const p=page(),project={id:'p',title:'Large project',goal:'Goal',session:1,messages:[]};
+ await p.answer({value:{...snapshot,projects:[project],tasks:Array.from({length:150},(_,i)=>({id:'t'+i,project:'p',title:'Task '+i,status:'done',node:'VPS',artifact:'Result '+i}))}});
+ await p.action('project','p');assert.match(p.content(),/data-action="graph-scroll" data-id="end"/);assert.match(p.content(),/aria-label="产物：Result 149"/);
+ const stage={scrollWidth:1180,scrollHeight:23800,scrollLeft:0,scrollTop:0,focus(){this.focused=true;}};
+ vm.runInContext('document.querySelector',p.context);p.context.graphTestStage=stage;vm.runInContext("document.querySelector=selector=>selector==='.graph-stage'?graphTestStage:null",p.context);
+ await p.action('graph-scroll','end');assert.equal(stage.scrollTop,23800);assert.equal(stage.scrollLeft,1180);assert.equal(stage.focused,true);
+ await p.action('graph-scroll','start');assert.equal(stage.scrollTop,0);assert.equal(stage.scrollLeft,0);
+});
+
+
+test('only a visible rendered report records its exact version; hidden history and later runs stay unread',async()=>{
+ const p=page(),t={id:'reading-task',project:'unassigned',title:'Report',status:'done',runId:'latest',reportId:'new',report:'Current body',unreadResultCount:2},reports=[{id:'old',taskId:t.id,runId:'earlier',kind:'result',body:'Old body',contentVersion:'a'.repeat(64),unread:true},{id:'new',taskId:t.id,runId:'latest',kind:'result',body:'Current body',contentVersion:'b'.repeat(64),unread:true}];
+ await p.answer({value:{...snapshot,tasks:[t],reports,runs:[{id:'earlier',taskId:t.id,state:'succeeded'},{id:'latest',taskId:t.id,state:'succeeded'}]}});
+ assert.equal(p.requests.length,0,'listing summaries never marks reading');await p.action('task',t.id);assert.equal(p.requests.length,0,'rendering alone without visibility never marks reading');assert.match(p.overlay(),/data-readable-report="new"/);assert.doesNotMatch(p.overlay(),/data-readable-report="old"/);
+ let observed;const body={dataset:{readableReport:'new',contentVersion:'b'.repeat(64)},closest:()=>null};p.context.IntersectionObserver=class{constructor(callback){observed=callback;}observe(){}unobserve(){}disconnect(){}};p.context.readingTestBody=body;vm.runInContext("document.querySelectorAll=()=>[readingTestBody];observeReportReading()",p.context);
+ observed([{target:body,isIntersecting:false}]);assert.equal(p.requests.length,0);
+ observed([{target:body,isIntersecting:true}]);assert.equal(p.requests[0].method,'readProjectReport');assert.equal(p.requests[0].input.reportId,'new');assert.equal(p.requests[0].input.contentVersion,'b'.repeat(64));
+ await p.answer({error:'offline'});assert.match(p.elements.get('toast').textContent,/阅读状态未保存/);assert.equal(vm.runInContext("state.records.reports.find(r=>r.id==='new').unread",p.context),true);
+ observed([{target:body,isIntersecting:true}]);assert.equal(p.requests.length,0,'failed automatic save waits for intentional retry');
+ const pending=p.action('report-read','new');await p.answer({value:{}});await pending;
+ assert.equal(vm.runInContext("state.records.reports.find(r=>r.id==='new').unread",p.context),false);assert.equal(vm.runInContext("state.records.reports.find(r=>r.id==='old').unread",p.context),true);assert.equal(vm.runInContext('state.tasks[0].unreadResultCount',p.context),1);
+ assert.equal(p.requests.length,0,'reading does not issue approval or acceptance');
+});
+
+
+
+
+test('coordinator defaults to root deliveries, preserves exact child attention and full records, and supports reversible presentation exceptions',async()=>{
+ const p=page(),child={id:'child-delivery',parentTaskId:'root',project:'unassigned',title:'Child delivery',status:'review',runId:'child-run',showInCoordinator:false,unreadResultCount:1},root={id:'root',project:'unassigned',title:'User delivery',status:'done',showInCoordinator:true,unreadResultCount:1,childAttention:[{taskId:child.id,runId:'child-run',parentRunId:'old-parent',parentCreatedAt:'2026-10-14T23:00:00Z',state:'partial',node:'PC_AU',summary:'来源缺口'}]},internal={id:'tiny',parentTaskId:'root',project:'unassigned',title:'Internal step',delegationDisplay:'step',status:'done',showInCoordinator:false};
+ const data={...snapshot,tasks:[root,child,internal],runs:[{id:'child-run',taskId:child.id,parentRunId:'old-parent',state:'partial',reviewStatus:'pending_user',createdAt:'2026-10-14T23:00:10Z'}]};
+ await p.answer({value:data});assert.match(p.content(),/User delivery/);assert.doesNotMatch(p.content(),/data-action="task" data-id="child-delivery"/);assert.match(p.content(),/历史派发中有 1 项/);assert.match(p.content(),/已完成未读 <span>1/);
+ await p.action('task','root');assert.match(p.overlay(),/历史派发中有 1 项需核对/);assert.match(p.overlay(),/2026\/10\/15/);assert.match(p.overlay(),/data-action="schedule-run" data-id="child-run"/);
+ await p.action('fullpanel');await p.action('panel-tab','tasks');assert.match(p.content(),/Child delivery/);assert.match(p.content(),/Internal step/);
+ await p.action('task',child.id);assert.match(p.overlay(),/在主列表显示/);const pending=p.action('task-presentation',child.id);assert.equal(p.requests[0].method,'setTaskPresentation');assert.equal(p.requests[0].input.visibility,'primary');await p.answer({value:{}});await p.answer({value:{...data,tasks:[root,{...child,showInCoordinator:true},internal]}});await pending;
+ await p.action('close');await p.action('home');assert.match(p.content(),/Child delivery/);assert.doesNotMatch(p.content(),/Internal step/);
+ const executor=page();await executor.answer({value:{...data,viewContext:{role:'executor',nodeId:'PC_AU'}}});assert.match(executor.content(),/Child delivery/);await executor.action('task',child.id);assert.doesNotMatch(executor.overlay(),/data-action="task-presentation"/);
+});
+
+
+test('workflow transport projects unused historical output without changing selected-run evidence or role scope',async()=>{
+ const output={body:'x'.repeat(600000)},makeRun=id=>({workflowRunId:id,runId:'root-'+id,taskId:'task-'+id,definitionRevision:3,definition:{steps:[{stepId:'step',title:'Historical'}]},input:{source:output},dispatches:[{stepId:'step',runId:'child-'+id,taskId:'child-task-'+id}],steps:[{stepId:'step',state:'succeeded',runId:'child-'+id,taskId:'child-task-'+id,reportId:'report-'+id,output,summary:'s'.repeat(800)}]}),snapshot={definitions:[],runs:[makeRun('old'),makeRun('new')],nodes:[],workspaces:[],models:[],programs:[],taskBindings:[]},api=service({config:{role:'planner'},workflows:{snapshot:()=>snapshot,getRunView:id=>{if(id==='outside-window')return makeRun('outside-window');throw new TaskError('NOT_FOUND','Workflow execution not found');}}});
+ const summary=await api.workflowView({workflowRunId:null}),full=await api.workflowView({workflowRunId:'root-old'});
+ assert.equal('output' in summary.runs[0].steps[0],false);assert.deepEqual(summary.runs[0].input,{});assert.deepEqual(summary.runs[0].dispatches,[]);assert.equal(summary.runs[0].steps[0].summary.length,400);assert.equal(summary.runs[0].steps[0].reportId,'report-old');assert.deepEqual(full.runs[0],snapshot.runs[0]);assert.equal('output' in full.runs[1].steps[0],false);await assert.rejects(api.workflowView({workflowRunId:'not-visible'}),error=>error.details.reason==='NOT_FOUND');const outside=await api.workflowView({workflowRunId:'outside-window'});assert.equal(outside.runs.length,3);assert.equal(outside.runs[2].steps[0].output.body.length,600000);assert.equal('output' in snapshot.runs[0].steps[0],true);
+ const before=Buffer.byteLength(JSON.stringify(snapshot)),after=Buffer.byteLength(JSON.stringify(summary));assert.ok(before>2000000);assert.ok(after<2000);assert.ok(Buffer.byteLength(JSON.stringify(full))>1000000,'selected output remains complete');
+ await assert.rejects(service({config:{role:'executor'},workflows:{snapshot:()=>{throw Error('must not query');}}}).workflowView({workflowRunId:'old'}),error=>error.details.reason==='PLANNER_REQUIRED');
+});
+
+
+test('successful execution labels do not invent a mandatory acceptance requirement',()=>{
+ const p=page();assert.equal(vm.runInContext("runResultLabel({state:'succeeded'})",p.context),'执行完成');assert.equal(vm.runInContext("runResultLabel({state:'succeeded',reviewStatus:'pending_user'})",p.context),'执行完成 · 待验收');assert.equal(vm.runInContext("runResultLabel({state:'partial',reviewStatus:'pending_user'})",p.context),'部分交付 · 待验收');assert.equal(vm.runInContext("runResultLabel({state:'succeeded',reviewStatus:'accepted'})",p.context),'已验收');
+});
+
+test('workflow return opens the exact historical task Run and report rather than the Task latest',async()=>{
+ const p=page(),pr={id:'p',title:'Project',goal:'Goal',messages:[],session:1};p.context.window.__DSH_PROJECT_CONTEXT__={projectId:'p',workflowId:'flow',taskId:'child',runId:'old-run',reportId:'old-report'};
+ await p.answer({value:{...snapshot,projects:[pr],tasks:[{id:'child',project:'p',title:'Child',status:'done',runId:'new-run',reportId:'new-report',report:'Wrong latest body'}],runs:[{id:'old-run',taskId:'child',state:'succeeded',createdAt:'2026-10-14T00:00:00Z'},{id:'new-run',taskId:'child',state:'succeeded',createdAt:'2026-10-17T00:00:00Z'}],reports:[{id:'old-report',runId:'old-run',taskId:'child',kind:'result',body:'Pinned historical body'},{id:'new-report',runId:'new-run',taskId:'child',kind:'result',body:'Wrong latest body'}]}});
+ assert.match(p.overlay(),/Pinned historical body/);assert.doesNotMatch(p.overlay(),/Wrong latest body/);assert.equal(vm.runInContext('state.overlay.id',p.context),'old-run');assert.equal(vm.runInContext('state.overlay.reportId',p.context),'old-report');
+ vm.runInContext("state.overlay.reportId='new-report';renderOverlay()",p.context);assert.match(p.overlay(),/报告不可用/);assert.doesNotMatch(p.overlay(),/Wrong latest body/);
+});

@@ -733,7 +733,7 @@
       }
     } catch (error) {
       if (!current()) return;
-      $("connection").textContent = "连接中断，当前保留最近已载入数据。点击刷新重试";
+      $("connection").textContent = "暂时无法刷新；保留最近已载入数据，可重试";
       $("error").textContent = error.message;
     } finally {
       if (sequence === refreshSequence) refreshing = false;
