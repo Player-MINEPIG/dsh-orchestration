@@ -240,6 +240,7 @@ export interface ReportInput {
 /** One authority owns this transactional ledger. Never execute an external effect inside a transaction. */
 export class TaskLedger {
   workflowRunAdmission?: (run: Run, invocation: {workflowId: string; input: Json}) => void;
+  workflowExecutionPreflight?: (workflowId: string) => void;
   workflowTaskConfiguration?: (input: unknown) => import('./workflow-contracts.js').WorkflowTaskBinding;
   workflowOptions?: () => {id: string; title: string; projectId: string}[];
   workflowTaskBound?: (taskId: string) => boolean;

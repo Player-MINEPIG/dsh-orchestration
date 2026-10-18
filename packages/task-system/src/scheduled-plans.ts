@@ -184,6 +184,12 @@ export class ScheduledPlans {
         throw new TaskError("INVALID", "Invalid time zone");
       }
     }
+    if (!prior && input.execution) {
+      const preflight = this.ledger.workflowExecutionPreflight;
+      if (!preflight || !this.ledger.workflowTaskConfiguration)
+        throw new TaskError("UNAVAILABLE", "Workflow runtime unavailable");
+      preflight(input.execution.workflowId);
+    }
     const id = hash(command),
       [hour, minute] =
         input.cadence.mode === "daily" ? input.cadence.time.split(":") : [];
