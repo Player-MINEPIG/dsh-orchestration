@@ -1,6 +1,6 @@
 # 看板反馈第二轮修订
 
-基线da5cd12，执行GPT-6.1-Sol High。当前本地已实现并验证，等工作流模块整合与主会话复核；复核前不推送、不部署。原dirty cwd源文件继续保留。
+基线da5cd12，执行GPT-6.1-Sol High。已完成整合与主会话复核。代码6ce7e07、cd5b626，整合构建与644项完整套件通过，643pass/1平台skip/0fail。随后收紧候选设备不作实际设备兜底，并按先push后部署继续。原dirty cwd源文件继续保留。
 
 - 卡片时长按天、小时、分钟显示，省略零单位，不足1分钟明示；详情仍有秒。项目在任务标题上，未读独立，左下类型简写与真实执行记录的设备集合，右下时长。单个设备显示记录名，多个显示“多个”，无数据“未记录”。
 - 工作流执行快照提示只读，可选节点、平移和缩放。当前定义点击节点与拖动分开，图及内部步骤可选。重复阶段表单与调用列表移到选中节点详情，保留修改阶段、执行设备、步骤、调用与输入映射能力。workflow_execution独占workflow-ui/page/editor tests。
@@ -11,3 +11,5 @@
 验证checkpoint：98项局部测试通过，包含55页面、33runtime及递归用例。新版数据相同的单份300KB HTML样本，旧默认JSON投影3514B，新默认3541B，仅新增27B标记；按需返回300307B。均UTF8未压缩JSON，不是时延测试。错ID/版本拒绝，不回退latest；只获取内容不读，iframe可见前不读；HTML变化即使正文不变也产生新版本。
 
 主会话操作合成预览4342，本执行会话view_image验收：evidence/dashboard-revision-cards.png、card-mobile.png、html-task.png、html-project.png。卡片深色和390px iframe无重叠，任务与项目两个入口的蓝底HTML可见。工作流三张workflow-node截图证明选中详情/步骤及只读提示，真实Chrome节点点击与拖动验证由workflow_execution执行。390px不等同实体触摸测试。
+
+工作流模块b347003已整合为cd5b626，真实Chrome验证已由执行会话复核截图。后续部署状态见本轮上线回执。
