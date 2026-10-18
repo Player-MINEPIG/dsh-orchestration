@@ -128,8 +128,53 @@
     },
     "PC_AU": {
       "initialTaskPlugin": "0.2.23",
-      "updateState": "awaiting existing remote chat access authorization",
-      "reason": "SSH unavailable; explicit authorization to message existing remote chat not yet received; no remote change performed."
+      "updateState": "ready-awaiting-Tavern-approval",
+      "actualRuntime": "0.2.0-rc.2",
+      "actualTaskPlugin": "0.2.23",
+      "processId": 1000692,
+      "proxyProcessId": 30752,
+      "remoteChatAuthorizationReceived": true,
+      "productionSwitchPerformed": false,
+      "productionConfigurationChanged": false,
+      "fullBackupCompleted": true,
+      "idleVerification": {
+        "sessions": 45,
+        "allSessionInputsIdle": true,
+        "taskExecutionIdle": true,
+        "localCodexIdle": true,
+        "remoteDispatchIdle": true
+      },
+      "artifacts": {
+        "taskSystemVersion": "0.2.24",
+        "taskSystemSha256": "bb156bb01afd9661ec29ce94a8bf31feb746ada8e52f0d3c8bc95b80e4513bd2",
+        "downloadedBytesMatchVerifiedRelease": true
+      },
+      "isolatedVerification": {
+        "runtime": "0.2.1-rc.2",
+        "taskSystem": "0.2.24",
+        "realLoaderPassed": true,
+        "taskSettingsLoaded": true,
+        "nativeProjectTaskPageLoaded": true,
+        "offlineAgentLoopExecutionSettleDisposePassed": true,
+        "externalModelInferencePerformed": false,
+        "testHostRelayAndTabCleaned": true
+      },
+      "blockingCondition": {
+        "existingPlugin": "pmp-dsh-tavern@3.0.2",
+        "reason": "Existing enabled Tavern is incompatible with rc2; its official 3.0.4 release is available, but production upgrade requires the pending explicit user decision.",
+        "approvalState": "awaiting human choice: upgrade Tavern 3.0.4 or retain current PC runtime",
+        "automaticApprovalReview": "Rejected the coordinating agent adding a Tavern production upgrade instruction because the original request did not explicitly cover upgrading this separate plugin.",
+        "prohibitedWorkarounds": [
+          "disable Tavern",
+          "compatibility exemption",
+          "switch DSH with functionality loss"
+        ]
+      },
+      "evidence": {
+        "remoteVerification": "D:/AI/deepseek-harness/codex/pc-au-dsh-021rc2-20261018/verification.json",
+        "remoteScreenshot": "D:/AI/deepseek-harness/codex/pc-au-dsh-021rc2-20261018/isolation-task-settings.png",
+        "provenance": "Remote execution chat reported these results; original files remain on PC_AU and were not recreated on MBP."
+      }
     }
   },
   "hotReload": {
@@ -169,5 +214,5 @@
   "pendingHosts": [
     "PC_AU"
   ],
-  "checkedAt": "2026-10-17T18:51:34.406786+00:00"
+  "checkedAt": "2026-10-18T02:27:08.598009+00:00"
 }

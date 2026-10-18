@@ -1,6 +1,6 @@
 {
   "ok": true,
-  "checkedAt": "2026-10-17T18:51:50.096925+00:00",
+  "checkedAt": "2026-10-18T02:27:08.598479+00:00",
   "baseCommit": "076def057dbaf45bb721d598a994031ff8a205ec",
   "runtimeVersion": "0.2.1-rc.2",
   "nodeVersion": "26.5.1",
@@ -152,6 +152,7 @@
   "postDeployment": {
     "MBP": "verified-complete; official UI HMR without process restart",
     "aliyun-vps": "verified-complete; minimal runtime switch and rc2 settings proxy compatibility",
-    "PC_AU": "pending explicit authorization to message existing remote execution chat"
-  }
+    "PC_AU": "ready-awaiting-Tavern-approval; actual production remains DSH 0.2.0-rc.2/task-system 0.2.23. Full backup and idle checks complete; isolated rc2/task 0.2.24 Loader, Settings/project UI, offline AgentLoop execution/settle/dispose passed without external model calls. Enabled Tavern 3.0.2 blocks production switch pending explicit approval for 3.0.4."
+  },
+  "pcEvidence": "D:/AI/deepseek-harness/codex/pc-au-dsh-021rc2-20261018/verification.json (original remote evidence; not recreated locally)"
 }
