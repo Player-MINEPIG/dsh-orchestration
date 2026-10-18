@@ -1077,7 +1077,7 @@
           dispatches: (run().dispatches || []).filter(row => row.stepId === view.stepId && row.runId === view.runId),
         };
         $("task-record").innerHTML =
-          `<details open><summary>本次任务执行 · ${esc(view.runId || "尚未派发")}</summary><p class="muted">固定为所选工作流运行中的步骤回执。</p><pre>${esc(JSON.stringify(execution, null, 2))}</pre></details>`;
+          `<details open><summary>本次任务执行 · ${esc(view.runId || "尚无执行记录")}</summary><p class="muted">固定为所选工作流运行中的步骤回执。</p><pre>${esc(JSON.stringify(execution, null, 2))}</pre></details>`;
       }
     } catch (error) {
       notice(error.message);

@@ -60,7 +60,7 @@ export function projectRegistrationToWorkbench(
       p.revision,
       projectId,
       title,
-      "来源快照的任务分组，不代表中央已派发或验收",
+      "来源快照中的任务分组，不代表中央已安排执行或完成验收",
     );
     db.prepare("DELETE FROM wb_backlog_tasks WHERE backlog_id=?").run(
       backlogId,

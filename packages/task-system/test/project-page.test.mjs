@@ -60,22 +60,22 @@ test('project theme changes keep task data and pending requests, and ignore mess
 test('legacy task detail exposes temporary conversation and visible disabled retry reasons, returning to the original task filter',async()=>{
  const p=page(),task={id:'legacy-task',project:'unassigned',title:'Legacy task',description:'Existing task',status:'error',nativeState:'waiting',canRetry:true,run:'old-run',runState:'failed',recommendation:[],candidateChecks:[]};
  await p.answer({value:{...snapshot,tasks:[task]}});await p.action('filter','error');await p.action('task',task.id);
- assert.match(p.overlay(),/临时任务对话/);assert.match(p.overlay(),/重新尝试派发/);
+ assert.match(p.overlay(),/临时任务对话/);assert.match(p.overlay(),/重新执行/);
  const open=p.action('task-chat',task.id);assert.equal(p.requests[0].method,'taskConversation');assert.equal(p.requests[0].input.taskId,task.id);
  await p.answer({value:{taskId:task.id,projectId:null,workspace:'/planner/temporary-tasks/task-1',generation:1,messages:[],turns:[],sessions:[]}});await open;
  assert.match(p.content(),/临时任务规划/);assert.match(p.content(),/返回上一位置/);assert.doesNotMatch(p.content(),/整理并继续/);
  await p.action('home');assert.equal(vm.runInContext('state.filter',p.context),'error');assert.equal(vm.runInContext('state.view',p.context),'hub');
  vm.runInContext("state.tasks[0].canRetry=false;state.tasks[0].retryDisabledReason='执行结果不确定，请先核实执行端'",p.context);await p.action('task',task.id);
- assert.match(p.overlay(),/重新尝试派发/);assert.match(p.overlay(),/disabled aria-disabled="true"/);assert.match(p.overlay(),/执行结果不确定/);
+ assert.match(p.overlay(),/重新执行/);assert.match(p.overlay(),/disabled aria-disabled="true"/);assert.match(p.overlay(),/执行结果不确定/);
 });
 
 
 test('retry confirmation cannot submit twice while candidate evaluation is pending and retains a recoverable error',async()=>{
  const p=page(),task={id:'legacy-task',project:'unassigned',title:'Legacy',status:'error',canRetry:true,actionVersion:'version',runId:'old-run',confirmationRevision:1};
  await p.answer({value:{...snapshot,tasks:[task]}});await p.action('task-retry',task.id);
- const pending=p.action('task-action-confirm');assert.equal(p.requests.length,1);assert.equal(p.requests[0].method,'actOnProjectTask');assert.match(p.overlay(),/正在检查派发条件/);
+ const pending=p.action('task-action-confirm');assert.equal(p.requests.length,1);assert.equal(p.requests[0].method,'actOnProjectTask');assert.match(p.overlay(),/正在检查执行条件/);
  await p.action('task-action-confirm');assert.equal(p.requests.length,1);
- await p.answer({error:'候选配置已变化',errorCode:'STALE_DECISION'});await pending;assert.match(p.overlay(),/>确认<\/button>/);assert.doesNotMatch(p.overlay(),/正在检查派发条件/);
+ await p.answer({error:'候选配置已变化',errorCode:'STALE_DECISION'});await pending;assert.match(p.overlay(),/>确认<\/button>/);assert.doesNotMatch(p.overlay(),/正在检查执行条件/);
 });
 
 
@@ -270,7 +270,7 @@ test('review, approval and running tasks expose cancellation without a misleadin
   if(props.reviewStatus)assert.match(p.overlay(),/审核通过[\s\S]*审核不通过/);
   if(props.confirmationPending)assert.match(p.overlay(),/批准执行/);
   await p.action('task-cancel',task.id);
-  assert.match(p.overlay(),/取消此任务并停止后续派发/);
+  assert.match(p.overlay(),/取消此任务并停止后续执行/);
   assert.doesNotMatch(p.overlay(),/已完成，/);
   await p.action('close');assert.match(p.overlay(),/aria-label="Decision"/);
   assert.equal(p.requests.length,0,'opening and closing confirmation must not submit a decision');
@@ -289,7 +289,7 @@ test('review decisions preserve their distinct accept and reject commands',async
 test('cancelled task explains why redispatch is disabled and executor cannot cancel',async()=>{
  const p=page(),task={id:'cancelled',project:'unassigned',title:'Cancelled',status:'cancelled',nativeState:'cancelled',canRetry:false};
  await p.answer({value:{...snapshot,tasks:[task]}});await p.action('task',task.id);
- assert.match(p.overlay(),/已取消的任务不支持直接重新派发/);
+ assert.match(p.overlay(),/已取消的任务不支持直接重新执行/);
  assert.match(p.overlay(),/data-action="task-retry"[^>]*disabled/);
  const readonly=page();await readonly.answer({value:{...snapshot,tasks:[{...task,status:'review',canCancel:true}],viewContext:{role:'executor',scope:'node',nodeId:'mbp'}}});
  await readonly.action('task',task.id);assert.doesNotMatch(readonly.overlay(),/data-action="task-cancel"/);
@@ -329,8 +329,8 @@ test('plain task details separate requirements, saved context and history; machi
  const r={id:uuid,taskId:t.id,state:'succeeded',createdAt:t.executionStartedAt,inputSnapshot:{description:'Saved execution requirements',project:{title:'Project',goal:'Deliver a useful result'},notes:[{id:'note-id',title:'User reference',body:'Useful supplied context'}]}};
  await p.answer({value:{...snapshot,projects:[{id:'p',title:'Project',goal:'Deliver',messages:[]}],tasks:[t],runs:[r],reports:[{id:t.reportId,runId:uuid,taskId:t.id,kind:'result',body:t.report}]}});await p.action('task',t.id);const html=p.overlay(),visible=expandedContentOnly(html);
  for(const title of ['执行进度','执行报告','执行历史','关联'])assert.ok(visible.includes(title),title);
- for(const title of ['任务要求','本次执行输入','项目上下文'])assert.ok(html.includes(title),title);
- assert.doesNotMatch(visible,/Current task requirements|Saved execution requirements|Useful supplied context/);assert.match(html,/Current task requirements/);assert.match(html,/Saved execution requirements/);assert.match(html,/Useful supplied context/);assert.doesNotMatch(visible,/子任务协作|点击“请求运行状态”|data-action="task-status"/);
+ for(const title of ['任务要求'])assert.ok(html.includes(title),title);
+ assert.doesNotMatch(visible,/Current task requirements|Saved execution requirements|Useful supplied context/);assert.match(html,/Current task requirements/);assert.doesNotMatch(html,/Saved execution requirements|Useful supplied context/);assert.doesNotMatch(visible,/子任务协作|点击“请求运行状态”|data-action="task-status"/);
  // Check rendered text, excluding identifier-bearing navigation attributes.
  const text=visible.replace(/<[^>]+>/g,'');assert.doesNotMatch(text,/e4408886|scheduled-task-long-id|report-secret-long-id/);assert.match(html,/e4408886/);assert.match(visible,/class="link-card activity-card" data-action="schedule-run"/);assert.match(visible,/class="link-arrow" aria-hidden="true"/);
  await p.action('schedule-run',uuid);assert.match(p.overlay(),/本次执行结果/);assert.match(p.overlay(),/Saved execution requirements/);assert.doesNotMatch(expandedContentOnly(p.overlay()).replace(/<[^>]+>/g,''),/e4408886/);
@@ -391,16 +391,16 @@ test('a completed review action keeps the task return route without replaying th
 test('requirements are collapsed and identical execution snapshots are not duplicated; results come first',async()=>{
  const p=page(),t={id:'same',project:'unassigned',title:'Daily',description:'A very long instruction',status:'error',runId:'r',runState:'uncertain',report:'执行回执：Native result rejected: SCHEMA_VALIDATION'};
  await p.answer({value:{...snapshot,tasks:[t],runs:[{id:'r',taskId:'same',state:'uncertain',settlementSummary:'Native result rejected: SCHEMA_VALIDATION',inputSnapshot:{description:t.description}}]}});await p.action('task','same');const html=p.overlay();
- assert.equal((html.match(/A very long instruction/g)||[]).length,1);assert.match(html,/与当前任务要求一致，不重复展示/);assert.ok(html.indexOf('执行报告')<html.indexOf('任务要求'));assert.doesNotMatch(expandedContentOnly(html),/A very long instruction|SCHEMA_VALIDATION/);assert.match(expandedContentOnly(html),/结果提交未通过校验/);
+ assert.equal((html.match(/A very long instruction/g)||[]).length,1);assert.doesNotMatch(html,/本次执行输入/);assert.ok(html.indexOf('执行报告')<html.indexOf('任务要求'));assert.doesNotMatch(expandedContentOnly(html),/A very long instruction|SCHEMA_VALIDATION/);assert.match(expandedContentOnly(html),/结果提交未通过校验/);await p.action('schedule-run','r');assert.match(p.overlay(),/与当前任务要求一致，不重复展示/);
 });
 test('related execution cards combine task and run with consistent project, status, node and parent linkage',async()=>{
  const p=page(),root={id:'root',title:'Daily',project:'p',status:'error',runId:'r',runState:'uncertain'},child={id:'child',title:'PC collector',description:'Long child instructions',project:'unassigned',parentTaskId:'root',parentRunId:'r',status:'error',runId:'cr',node:'PC_AU'};
  await p.answer({value:{...snapshot,projects:[{id:'p',title:'Reports',goal:'Daily'}],tasks:[root,child],runs:[{id:'r',taskId:'root',state:'uncertain',node:'MBP'},{id:'cr',taskId:'child',parentRunId:'r',state:'uncertain',node:'PC_AU'}]}});await p.action('task','root');assert.doesNotMatch(p.overlay(),/data-recursive-task=/);await p.action('schedule-run','r');const html=p.overlay(),tree=html.slice(html.indexOf('<section class="panel recursive-tree">'));
- assert.equal((tree.match(/<strong>PC collector<\/strong>/g)||[]).length,1);assert.match(tree,/本次执行派发的子任务/);assert.match(tree,/Reports/);assert.match(tree,/独立任务/);assert.match(tree,/结果待核实/);assert.match(tree,/执行端：PC_AU/);assert.doesNotMatch(tree,/Long child instructions/);
+ assert.equal((tree.match(/<strong>PC collector<\/strong>/g)||[]).length,1);assert.match(tree,/本次执行的子任务/);assert.match(tree,/Reports/);assert.match(tree,/独立任务/);assert.match(tree,/结果待核实/);assert.match(tree,/执行端：PC_AU/);assert.doesNotMatch(tree,/Long child instructions/);
 });
 test('diagnostic materials remain visibly unaccepted and never replace a validated run report',async()=>{
  const p=page(),t={id:'d',title:'Daily',project:'unassigned',status:'error',runId:'r',runState:'uncertain'};
- await p.answer({value:{...snapshot,tasks:[t],runs:[{id:'r',taskId:'d',state:'uncertain',diagnosticReport:{id:'diag',body:'Saved 24 summaries; child rejected'},settlementSummary:'Native result rejected: SCHEMA_VALIDATION'}]}});await p.action('task','d');assert.match(p.overlay(),/结果提交未通过校验/);assert.match(p.overlay(),/Saved 24 summaries/);await p.action('schedule-run','r');assert.match(p.overlay(),/Saved 24 summaries/);
+ await p.answer({value:{...snapshot,tasks:[t],runs:[{id:'r',taskId:'d',state:'uncertain',diagnosticReport:{id:'diag',body:'Saved 24 summaries; child rejected'},settlementSummary:'Native result rejected: SCHEMA_VALIDATION'}]}});await p.action('task','d');assert.match(p.overlay(),/结果提交未通过校验/);assert.doesNotMatch(p.overlay(),/Saved 24 summaries/);await p.action('schedule-run','r');assert.match(p.overlay(),/Saved 24 summaries/);
  vm.runInContext("state.records.reports=[{id:'good',kind:'result',runId:'r',body:'Accepted report'}]",p.context);await p.action('schedule-run','r');assert.match(p.overlay(),/Accepted report/);assert.doesNotMatch(p.overlay().split('data-detail-group="process"')[0],/Saved 24 summaries/);
 });
 
@@ -412,7 +412,7 @@ test('report retry settings save once with task revision and remain read-only on
  const pending=p.action('report-retry-save');assert.equal(p.requests[0].method,'setReportRetryLimit');assert.equal(p.requests[0].input.expectedRevision,7);assert.equal(p.requests[0].input.maxRetries,0);
  await p.action('report-retry-save');assert.equal(p.requests.length,1);
  await p.answer({value:{}});await p.answer({value:{...snapshot,tasks:[{...t,maxResultRetries:0,revision:8}]}});await pending;
- assert.match(p.overlay(),/自动重新派发最多 0 次/);
+ assert.match(p.overlay(),/自动重新执行最多 0 次/);
  const executor=service({config:{role:'executor'}});await assert.rejects(executor.setReportRetryLimit({commandId:'x',taskId:t.id,expectedRevision:7,maxRetries:2}),error=>error.details.reason==='PLANNER_REQUIRED');
 });
 
@@ -442,7 +442,7 @@ test('history is bounded, keeps selected page through polling, and never renders
 });
 
 test('accepted partial results have their own section and filter while retaining delivery gaps',async()=>{
- const p=page(),task={id:'accepted-daily',project:'unassigned',title:'Accepted daily',status:'accepted',stateLabel:'已验收',reviewStatus:'accepted',runState:'partial',runId:'accepted-run',report:'Partial delivery; PC_AU source unavailable'};
+ const p=page(),task={id:'accepted-daily',project:'unassigned',title:'Accepted daily',status:'accepted',stateLabel:'已验收',reviewStatus:'accepted',runState:'partial',runId:'accepted-run',reportId:'accepted-report',report:'Partial delivery; PC_AU source unavailable'};
  await p.answer({value:{...snapshot,tasks:[task],runs:[{id:'accepted-run',taskId:task.id,state:'partial',reviewStatus:'accepted'}],reports:[{id:'accepted-report',taskId:task.id,runId:'accepted-run',kind:'result',body:task.report}]}});
  assert.match(p.content(),/data-status="accepted"><span>已验收<\/span><span>1<\/span>/);
  assert.match(p.content(),/data-status="error"><span>需处理<\/span><span>0<\/span>/);
@@ -550,8 +550,8 @@ test('only a visible rendered report records its exact version; hidden history a
 test('coordinator defaults to root deliveries, preserves exact child attention and full records, and supports reversible presentation exceptions',async()=>{
  const p=page(),child={id:'child-delivery',parentTaskId:'root',project:'unassigned',title:'Child delivery',status:'review',runId:'child-run',showInCoordinator:false,unreadResultCount:1},root={id:'root',project:'unassigned',title:'User delivery',status:'done',showInCoordinator:true,unreadResultCount:1,childAttention:[{taskId:child.id,runId:'child-run',parentRunId:'old-parent',parentCreatedAt:'2026-10-14T23:00:00Z',state:'partial',node:'PC_AU',summary:'来源缺口'}]},internal={id:'tiny',parentTaskId:'root',project:'unassigned',title:'Internal step',delegationDisplay:'step',status:'done',showInCoordinator:false};
  const data={...snapshot,tasks:[root,child,internal],runs:[{id:'child-run',taskId:child.id,parentRunId:'old-parent',state:'partial',reviewStatus:'pending_user',createdAt:'2026-10-14T23:00:10Z'}]};
- await p.answer({value:data});assert.match(p.content(),/User delivery/);assert.doesNotMatch(p.content(),/data-action="task" data-id="child-delivery"/);assert.match(p.content(),/历史派发中有 1 项/);assert.match(p.content(),/已完成未读 <span>1/);
- await p.action('task','root');assert.match(p.overlay(),/历史派发待核对/);assert.match(p.overlay(),/2026\/10\/15/);assert.match(p.overlay(),/data-action="schedule-run" data-id="old-parent"/);assert.doesNotMatch(p.overlay(),/data-id="child-run"/);
+ await p.answer({value:data});assert.match(p.content(),/User delivery/);assert.doesNotMatch(p.content(),/data-action="task" data-id="child-delivery"/);assert.match(p.content(),/历史执行中有 1 项/);assert.match(p.content(),/已完成未读 <span>1/);
+ await p.action('task','root');assert.match(p.overlay(),/历史执行待核对/);await p.action('attention-open','root');assert.match(p.overlay(),/2026\/10\/15/);assert.match(p.overlay(),/data-action="schedule-run" data-id="old-parent"/);assert.doesNotMatch(p.overlay(),/data-id="child-run"/);
  await p.action('fullpanel');await p.action('panel-tab','tasks');assert.match(p.content(),/Child delivery/);assert.match(p.content(),/Internal step/);
  await p.action('task',child.id);assert.match(p.overlay(),/在主列表显示/);const pending=p.action('task-presentation',child.id);assert.equal(p.requests[0].method,'setTaskPresentation');assert.equal(p.requests[0].input.visibility,'primary');await p.answer({value:{}});await p.answer({value:{...data,tasks:[root,{...child,showInCoordinator:true},internal]}});await pending;
  await p.action('close');await p.action('home');assert.match(p.content(),/Child delivery/);assert.doesNotMatch(p.content(),/Internal step/);
@@ -606,10 +606,10 @@ test('project artifact nodes retain the exact report and Run when the Task lates
 });
 
 
-test('detail modules follow result-process-related-technical-supplement order and keep child records in exact Run details',async()=>{
+test('task modules keep visible history in provenance and retain Run materials only in exact Run details',async()=>{
  const p=page(),t={id:'root',project:'unassigned',title:'Root',status:'error',runId:'parent-run',report:'Formal result',reportId:'result',description:'Requirements',canRunDirect:true},child={id:'child',project:'unassigned',title:'Child activity',parentTaskId:t.id,parentRunId:'parent-run',runId:'child-run',status:'error'};
  await p.answer({value:{...snapshot,tasks:[t,child],runs:[{id:'parent-run',taskId:t.id,state:'partial',diagnosticReport:{id:'diag',body:'Detailed diagnosis'},inputSnapshot:{description:t.description,notes:[{id:'note',body:'Supplemental note'}]}},{id:'child-run',taskId:child.id,parentRunId:'parent-run',state:'partial'}],reports:[{id:'result',taskId:t.id,runId:'parent-run',kind:'result',body:t.report}]}});
- await p.action('task',t.id);let html=p.overlay(),last=-1;for(const group of ['result','process','related','technical','supplement']){const index=html.indexOf('data-detail-group="'+group+'"');assert.ok(index>last,group);last=index;}assert.doesNotMatch(html,/data-recursive-task=/);assert.match(html,/data-action="direct-task-run"/);assert.match(html,/data-action="report-retry-settings"/);assert.match(html,/Supplemental note/);assert.doesNotMatch(html.split('data-detail-group="process"')[0],/Detailed diagnosis/);
+ await p.action('task',t.id);let html=p.overlay(),last=-1;for(const group of ['result','process','related','technical']){const index=html.indexOf('data-detail-group="'+group+'"');assert.ok(index>last,group);last=index;}assert.doesNotMatch(html,/data-recursive-task=/);assert.match(html,/data-action="direct-task-run"/);assert.match(html,/data-action="report-retry-settings"/);assert.doesNotMatch(html,/Supplemental note|Detailed diagnosis/);assert.doesNotMatch(html.split('data-detail-group="process"')[0],/Detailed diagnosis/);
  await p.action('schedule-run','parent-run');html=p.overlay();assert.match(html,/data-recursive-task="child"/);assert.match(html,/Detailed diagnosis/);assert.match(html,/Supplemental note/);
 });
 
@@ -628,4 +628,40 @@ test('project results show at most five exact delivery reports before process an
  await p.answer({value:{...snapshot,projects:[project],tasks:[root,internal,promoted],runs,reports}});await p.action('project','p');const html=p.content(),results=html.split('data-detail-group="result"')[1].split('data-detail-group="process"')[0];assert.match(html,/项目概览/);assert.ok(html.indexOf('Project objective')<html.indexOf('data-detail-group="result"'));assert.equal((results.match(/data-action="report"/g)||[]).length,5);assert.match(results,/Independent delivery/);assert.doesNotMatch(results,/Internal child|Supplemental only|<iframe|data-readable-report/);assert.match(results,/&quot;runId&quot;:&quot;r6&quot;,&quot;reportId&quot;:&quot;report6&quot;/);assert.equal(p.requests.length,0);
  vm.runInContext("state.tasks[0].runId='different-latest'",p.context);await p.action('report',JSON.stringify({taskId:'root',runId:'r6',reportId:'report6'}));assert.match(p.overlay(),/Summary 6/);assert.doesNotMatch(p.overlay(),/Summary 0/);assert.equal(p.requests.length,0);
  const empty=page();await empty.answer({value:{...snapshot,projects:[project],tasks:[internal],runs:[runs[7]],reports:[reports[7]]}});await empty.action('project','p');assert.match(empty.content(),/尚无交付结果/);
+});
+
+test('historical attention paginates exact parent Runs, preserves pages during poll and overlay redraw, and clamps shrinking groups',async()=>{
+ const p=page(),root={id:'attention-root',project:'unassigned',title:'Root',status:'done',runId:'latest',childAttention:[]},other={id:'another-root',project:'unassigned',title:'Another task',status:'queued'};
+ const parents=Array.from({length:12},(_,i)=>({id:'parent-'+i,taskId:root.id,state:'partial',createdAt:'2026-10-'+String(i+1).padStart(2,'0')+'T00:00:00Z'}));
+ const children=Array.from({length:14},(_,i)=>({id:'child-run-'+i,taskId:'child',state:'partial',parentRunId:'parent-'+(i<12?i:0)}));
+ root.childAttention=children.map((r,i)=>({taskId:'child',runId:r.id,parentRunId:r.parentRunId,parentCreatedAt:parents.find(parent=>parent.id===r.parentRunId).createdAt,summary:'Exact issue '+i}));
+ const data={...snapshot,tasks:[root,other,{id:'child',project:'unassigned',parentTaskId:root.id,title:'Internal child',status:'review'}],runs:[...parents,{id:'latest',taskId:root.id,state:'succeeded'},...children]},section=()=>p.overlay().match(/<section class="detail-section child-attention">([\s\S]*?)<\/section>/)?.[1]||'',changePage=(delta)=>p.action('attention-page',JSON.stringify({taskId:root.id,delta}));
+ await p.answer({value:structuredClone(data)});await p.action('task',root.id);assert.equal(section(),'');await p.action('attention-open',root.id);let html=section();assert.match(html,/涉及 12 次执行，共 14 项/);assert.equal((html.match(/data-action="schedule-run"/g)||[]).length,5);assert.match(html,/1 \/ 3/);assert.match(html,/data-id="parent-11"/);assert.doesNotMatch(html,/data-id="parent-6"|data-id="child-run/);
+ await changePage(1);assert.match(section(),/2 \/ 3/);assert.match(section(),/data-id="parent-6"/);assert.doesNotMatch(section(),/data-id="parent-11"/);
+ let pending=p.startPoll();await p.answer({value:structuredClone(data)});await pending;await p.action('detail-fullscreen');assert.match(section(),/2 \/ 3/);
+ await p.action('schedule-run','parent-6');assert.match(p.overlay(),/data-run-id="parent-6"/);assert.match(p.overlay(),/Exact issue 6/);assert.doesNotMatch(p.overlay(),/Exact issue 7|data-run-id="latest"/);await p.action('close');assert.match(section(),/2 \/ 3/);
+ await p.action('task',other.id);assert.doesNotMatch(p.overlay(),/attention-pagination/);await p.action('close');assert.match(section(),/2 \/ 3/);
+ await changePage(1);assert.match(section(),/3 \/ 3/);assert.equal((section().match(/data-action="schedule-run"/g)||[]).length,2);assert.match(section(),/3 项待核对/);assert.match(section(),/data-action="attention-page"[^>]+delta&quot;:1[^>]+disabled/);
+ const shrink=structuredClone(data);shrink.tasks[0].childAttention=shrink.tasks[0].childAttention.filter(row=>Number(row.parentRunId.split('-')[1])<6);pending=p.startPoll();await p.answer({value:shrink});await pending;assert.match(section(),/2 \/ 2/);assert.equal((section().match(/data-action="schedule-run"/g)||[]).length,1);assert.match(section(),/data-id="parent-0"/);
+ shrink.tasks[0].childAttention=[];pending=p.startPoll();await p.answer({value:shrink});await pending;assert.equal(section(),'');pending=p.startPoll();await p.answer({value:structuredClone(data)});await pending;assert.match(section(),/1 \/ 3/);assert.equal(p.requests.length,0);
+});
+
+test('attention keeps missing-parent hints and complete records access without inventing a group or extra paginator',async()=>{
+ const p=page(),root={id:'unknown-parent',project:'unassigned',title:'Root',status:'done',childAttention:[{taskId:'child',runId:'child-run',parentRunId:null,summary:'Unknown original parent'}]};await p.answer({value:{...snapshot,tasks:[root,{id:'child',project:'unassigned',parentTaskId:root.id,title:'Unbound child record',status:'review'}]}});await p.action('task',root.id);await p.action('attention-open',root.id);assert.match(p.overlay(),/1 项未记录所属执行/);assert.match(p.overlay(),/data-action="fullpanel"/);assert.doesNotMatch(p.overlay(),/attention-pagination|data-action="attention-page"|data-id="child-run"/);await p.action('fullpanel');assert.equal(vm.runInContext('state.view',p.context),'fullpanel');await p.action('panel-tab','tasks');assert.match(p.content(),/Unbound child record/);await p.action('nav-back');assert.match(p.overlay(),/1 项未记录所属执行/);
+ const groups=Array.from({length:5},(_,i)=>({parentRunId:'r'+i,taskId:'child',runId:'c'+i,parentCreatedAt:'2026-10-18T00:00:00Z'}));const pending=p.startPoll();await p.answer({value:{...snapshot,tasks:[{...root,childAttention:groups}]}});await pending;assert.doesNotMatch(p.overlay(),/attention-pagination/);assert.match(p.overlay(),/部分所属执行记录未包含在当前视图/);assert.match(p.overlay(),/data-action="fullpanel"/);assert.match(p.overlay(),/data-action="schedule-run" data-id="r0"/);assert.equal(p.requests.length,0);
+});
+
+test('owned UI wording uses execution language while inbox remains waiting rather than running',async()=>{
+ for(const name of ['project-page.html','settings-client.js','workflow-ui.js','workflow-page.html'])assert.doesNotMatch(readFileSync(new URL('../src/'+name,import.meta.url),'utf8'),/派发|执行执行/);
+ const p=page();await p.answer({value:{...snapshot,tasks:[{id:'waiting',project:'unassigned',title:'Queued request',status:'queued',stateLabel:'等待执行端接收',dispatchState:'inbox'}]}});assert.match(p.content(),/等待执行端接收/);await p.action('task','waiting');assert.match(p.overlay(),/等待可接单的执行端/);assert.doesNotMatch(p.overlay(),/>执行中</);assert.match(p.overlay(),/重新执行/);assert.match(p.overlay(),/执行请求状态/);
+});
+
+
+test('result attention entry selects visible provenance history, preserves both filters and uses accessible size icons',async()=>{
+ const p=page(),t={id:'root',project:'unassigned',title:'Root',status:'done',runId:'r7',report:'Latest formal result',reportId:'report7',childAttention:[{parentRunId:'r0',taskId:'child',runId:'cr',summary:'Old exact gap'}]},runs=Array.from({length:8},(_,i)=>({id:'r'+i,taskId:t.id,state:'succeeded',createdAt:'2026-10-18T0'+i+':00:00Z'})),reports=runs.map((r,i)=>({id:'report'+i,taskId:t.id,runId:r.id,kind:'result',body:i===7?t.report:'Hidden old report '+i}));
+ await p.answer({value:{...snapshot,tasks:[t],runs,reports}});await p.action('task',t.id);let html=p.overlay(),result=html.split('data-detail-group="result"')[1].split('data-detail-group="process"')[0],process=html.split('data-detail-group="process"')[1].split('data-detail-group="related"')[0],tech=html.split('data-detail-group="technical"')[1];
+ assert.match(result,/Latest formal result|data-action="report-open"/);assert.match(result,/data-action="attention-open"/);assert.doesNotMatch(result,/data-action="schedule-run" data-id="r0"/);assert.doesNotMatch(process,/执行历史|历史执行待核对|Hidden old report/);assert.match(tech,/执行历史/);assert.doesNotMatch(tech,/Hidden old report/);assert.ok(tech.indexOf('执行历史')<tech.indexOf('<details'));assert.match(html,/<button class="icon-btn" data-action="detail-fullscreen" title="放大" aria-label="放大详情"><svg/);
+ let scrolled=0;p.context.document.querySelectorAll=()=>[{dataset:{historyTask:t.id},scrollIntoView:()=>scrolled++}];await p.action('attention-open',t.id);assert.equal(scrolled,1);assert.match(p.overlay(),/data-action="history-filter"[^>]+filter&quot;:&quot;attention&quot;[^>]+aria-pressed="true"/);assert.match(p.overlay(),/data-action="schedule-run" data-id="r0"/);
+ await p.action('history-filter',JSON.stringify({taskId:t.id,filter:'all'}));await p.action('history-older',t.id);assert.match(p.overlay(),/当前第 2 \/ 2 页/);await p.action('attention-open',t.id);await p.action('history-filter',JSON.stringify({taskId:t.id,filter:'all'}));assert.match(p.overlay(),/当前第 2 \/ 2 页/);await p.action('detail-fullscreen');assert.match(p.overlay(),/title="缩小" aria-label="缩小详情"/);
+ await p.action('schedule-run','r0');assert.match(p.overlay(),/Hidden old report 0/);assert.doesNotMatch(p.overlay(),/Latest formal result/);
 });

@@ -55,7 +55,7 @@ test('a project message uses real native dispatch tools and persists offline que
     assert.equal(h.ledger.managementDatabase().prepare('SELECT generation FROM pr_dispatch').get().generation,1);
     h.ledger.recordNodeHeartbeat('worker-paused',{nodeId:'worker',runtimeReady:false,activeExecutions:0});
     h.ledger.managementDatabase().prepare("UPDATE pr_dispatch SET updated='2000-01-01T00:00:00Z'").run();
-    runtime.tick();assert.equal(h.ledger.getRun(runtime.snapshot().runs[0].id).state,'cancelled');assert.equal(runtime.snapshot().tasks[0].nativeState,'inbox');assert.equal(runtime.snapshot().tasks[0].stateLabel,'待派发');
+    runtime.tick();assert.equal(h.ledger.getRun(runtime.snapshot().runs[0].id).state,'cancelled');assert.equal(runtime.snapshot().tasks[0].nativeState,'inbox');assert.equal(runtime.snapshot().tasks[0].stateLabel,'等待执行端接收');
     const replanId='project-message:replan-message';
     h.adapter.script.push({name:'task_plan',args:{action:'propose',requestId:replanId,title:'Replan',description:'Replan the same pending task'}},{name:'task_plan',args:{action:'apply',requestId:replanId}},'已更新候选');
     runtime.send({projectId,commandId:'replan-message',text:'重新规划尚未领取的同一任务'});assert.equal((await settle(h,'replan-message')).state,'completed');
@@ -192,7 +192,7 @@ test('continue dispatch reuses a safe project recommendation, queues offline and
   assert.equal(runtime.snapshot().tasks[0].canRetry,true);
   h.ledger.recordNodeHeartbeat('pause',{nodeId:'worker',runtimeReady:false,activeExecutions:0});
   const input=operator(runtime,run.taskId,'retry');await runtime.actOnTask(input);await runtime.actOnTask(input);
-  assert.equal(h.ledger.snapshot().runs.length,1);assert.equal(runtime.snapshot().tasks[0].stateLabel,'待派发');
+  assert.equal(h.ledger.snapshot().runs.length,1);assert.equal(runtime.snapshot().tasks[0].stateLabel,'等待执行端接收');
   h.ledger.recordNodeHeartbeat('back',{nodeId:'worker',runtimeReady:true,activeExecutions:0});runtime.tick();runtime.tick();
   const rows=h.ledger.snapshot().runs;assert.equal(rows.length,2);assert.equal(rows[0].state,'failed');assert.notEqual(rows[0].runId,rows[1].runId);assert.equal(rows[1].taskId,rows[0].taskId);
   assert.equal(runtime.snapshot().tasks[0].canRetry,false);await assert.rejects(runtime.actOnTask({...input,commandId:'unsafe-retry'}),/changed/);
@@ -216,7 +216,7 @@ test('legacy unassigned tasks have isolated durable planning sessions and safe r
   assert.match((await runtime.taskConversation(one.task.taskId)).messages.at(-1).text,/重新尝试/);assert.equal((await runtime.taskConversation(two.task.taskId)).messages.length,0);assert.equal(h.ledger.snapshot().tasks.length,2);
   assert.deepEqual(h.adapter.requests[0].tools.map(t=>t.name).sort(),['task_children','task_history','task_nodes','task_plan','task_query'].sort());
   const input=operator(runtime,one.task.taskId,'retry','legacy-retry');await runtime.actOnTask(input);await runtime.actOnTask(input);
-  let row=runtime.snapshot().tasks.find(t=>t.id===one.task.taskId);assert.equal(row.stateLabel,'待派发');assert.equal(row.status,'queued');assert.equal(row.project,'unassigned');assert.equal(row.recommendation[0].reasoningEffort,'off');assert.equal(h.ledger.snapshot().runs.length,2);assert.equal(h.ledger.getRun(one.run.runId).state,'failed');assert.equal(h.ledger.snapshot().reports.filter(r=>r.kind==='result').length,2);
+  let row=runtime.snapshot().tasks.find(t=>t.id===one.task.taskId);assert.equal(row.stateLabel,'等待执行端接收');assert.equal(row.status,'queued');assert.equal(row.project,'unassigned');assert.equal(row.recommendation[0].reasoningEffort,'off');assert.equal(h.ledger.snapshot().runs.length,2);assert.equal(h.ledger.getRun(one.run.runId).state,'failed');assert.equal(h.ledger.snapshot().reports.filter(r=>r.kind==='result').length,2);
   assert.throws(()=>runtime.assertDecisionScope(b.sessionId,'task-retry:legacy-retry'),/another temporary task/);
   h.ledger.recordNodeHeartbeat('online',{nodeId:'worker',runtimeReady:true,activeExecutions:0});runtime.tick();runtime.tick();assert.equal(h.ledger.snapshot().runs.length,3);assert.equal(h.ledger.snapshot().tasks.length,2);
   assert.equal(h.ledger.getRun(one.run.runId).state,'failed');assert.equal(runtime.snapshot().tasks.find(t=>t.id===one.task.taskId).canRetry,false);
@@ -230,7 +230,7 @@ test('temporary conversation applies to the host-owned inbox task and cannot byp
   const task=h.ledger.createTask('inbox-temporary',{title:'Temporary',description:'Compute externally'}).value;
   const conversation=await runtime.taskConversation(task.taskId),command='temporary-plan',requestId='project-message:'+command;
   h.adapter.script.push({name:'task_plan',args:{action:'propose',requestId,title:'Calculate',description:'Compute externally'}},{name:'task_plan',args:{action:'apply',requestId}},'已排队');
-  runtime.sendTask({taskId:task.taskId,commandId:command,text:'安排这个任务'});assert.equal((await settle(h,command)).state,'completed');assert.equal(h.ledger.snapshot().tasks.length,1);assert.equal(runtime.snapshot().tasks[0].stateLabel,'待派发');assert.equal(runtime.snapshot().tasks[0].recommendation[0].nodeId,'worker');
+  runtime.sendTask({taskId:task.taskId,commandId:command,text:'安排这个任务'});assert.equal((await settle(h,command)).state,'completed');assert.equal(h.ledger.snapshot().tasks.length,1);assert.equal(runtime.snapshot().tasks[0].stateLabel,'等待执行端接收');assert.equal(runtime.snapshot().tasks[0].recommendation[0].nodeId,'worker');
   assert.equal(h.ledger.getDecision(requestId).proposal.attachTaskId,task.taskId);
   h.ledger.recordNodeHeartbeat('up',{nodeId:'worker',runtimeReady:true,activeExecutions:0});runtime.tick();const run=h.ledger.snapshot().runs[0],a=h.ledger.claim('claim-temp',{runId:run.runId,nodeId:'worker',ttlMs:10000}).value.attempt;
   h.ledger.submit('temp-failed',{runId:a.runId,attemptId:a.attemptId,nodeId:a.nodeId,fence:a.fence,outcome:'failure',summary:'Failed'});
@@ -256,7 +256,7 @@ test('retry without a decision dependency preserves the original route and queue
  try{
   const runtime=h.ctx.taskSystem.projects;h.ledger.registerNode('node',worker);const f=fixtureRun(h,'no-catalog-choice');h.ledger.submit('failed-default',{...f.lease,outcome:'failure',summary:'Failed'});
   await runtime.actOnTask(operator(runtime,f.task.taskId,'retry'));
-  assert.equal(h.ledger.snapshot().runs.length,1);assert.equal(runtime.snapshot().tasks[0].stateLabel,'待派发');assert.deepEqual(runtime.snapshot().tasks[0].recommendation,[f.run.route]);assert.equal(h.ledger.getDecision('task-retry:retry-'+f.task.taskId).receipt.kind,'deterministic-planning-v1');assert.equal(h.ctx.taskSystem.native,undefined);
+  assert.equal(h.ledger.snapshot().runs.length,1);assert.equal(runtime.snapshot().tasks[0].stateLabel,'等待执行端接收');assert.deepEqual(runtime.snapshot().tasks[0].recommendation,[f.run.route]);assert.equal(h.ledger.getDecision('task-retry:retry-'+f.task.taskId).receipt.kind,'deterministic-planning-v1');assert.equal(h.ctx.taskSystem.native,undefined);
  }finally{await h.dispose();}
 });
 

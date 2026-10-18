@@ -33,7 +33,7 @@ test('retried child runs stay under their exact parent execution and task top on
 });
 test('executor sees central scoped progress in original panel and never offers local management actions',async()=>{
  const p=page();await p.answer({value:{...structuredClone(snapshot),viewContext:{role:'executor',scope:'node',nodeId:'mbp',observedAt:'2026-10-12T00:00:00Z',coordinatorUrl:'http://100.123.230.75:4000/#tasks'}}});
- assert.match(p.content(),/本机协作进度/);assert.match(p.content(),/mbp 相关任务与递归派发 · 只读/);assert.match(p.content(),/http:\/\/100.123.230.75:4000\/#tasks/);
+ assert.match(p.content(),/本机协作进度/);assert.match(p.content(),/mbp 相关任务与子任务执行 · 只读/);assert.match(p.content(),/http:\/\/100.123.230.75:4000\/#tasks/);
  await p.action('task','parent');assert.doesNotMatch(p.overlay(),/data-action="task-(retry|chat|accept|manual)"/);
  await p.action('task-retry','parent');assert.equal(p.requests.length,0);
  const pending=p.startPoll();await p.answer({error:'中央连接中断',errorCode:'gateway/disconnected'});await pending;assert.match(p.content(),/保留上次/);assert.match(p.content(),/中央连接中断/);
