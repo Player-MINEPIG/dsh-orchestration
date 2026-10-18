@@ -96,7 +96,9 @@
     clearTimeout(notice.timer);
     notice.timer = setTimeout(() => ($("notice").textContent = ""), 7000);
   }
+  const loadedRuns = new Map();
   const run = () =>
+    loadedRuns.get(state.runId) ||
     state.snapshot?.runs.find((row) => row.workflowRunId === state.runId);
   const definition = () => (run() ? normalized(run().definition) : state.draft);
   const selectedStep = () =>
@@ -599,6 +601,10 @@
     const step = selectedStep(),
       view = run()?.steps.find((row) => row.stepId === step?.stepId);
     if (!step || !view) return;
+    if (!loadedRuns.has(run().workflowRunId)) {
+      $("step-detail").innerHTML = `<h3>${esc(step.title)}</h3>${badge(view.state)}<p class="hint">正在加载本次执行详情。连接失败时可点击刷新重试。</p>`;
+      return;
+    }
     const dispatches = (run().dispatches || []).filter(
       (row) => row.stepId === step.stepId,
     );
@@ -607,7 +613,7 @@
       (["failed", "cancelled"].includes(view.state) ||
         (view.state === "blocked" && !!view.runId));
     $("step-detail").innerHTML =
-      `<h3>${esc(step.title)}</h3><div class="row">${badge(view.state)}<span class="muted">尝试 ${view.attemptCount} 次</span></div>${view.reason ? `<p class="hint">${esc(view.reason)}</p>` : ""}<p style="margin-top:12px">${esc(view.summary || "尚无结果摘要")}</p><div class="row">${canRetry ? '<button type="button" id="retry-step">重试此步骤</button>' : ""}${view.taskId ? '<button type="button" id="show-task">查看本次任务执行</button>' : ""}</div>${htmlPreview(view.output)}<details${view.output?.presentation?.mediaType === "text/html" ? "" : " open"}><summary>输出数据</summary><pre>${esc(view.output === undefined ? "尚未产生输出" : JSON.stringify(view.output, null, 2))}</pre></details><details><summary>执行记录</summary><pre>${esc(JSON.stringify({ nodeId: view.nodeId, taskId: view.taskId, runId: view.runId, reportId: view.reportId, sessionId: view.sessionId }, null, 2))}</pre></details><details><summary>本次执行固定输入与映射</summary><pre>${esc(JSON.stringify({ parameters: run().input, bindings: step.inputs }, null, 2))}</pre></details><details><summary>历次执行回执（${dispatches.length}）</summary><pre>${esc(JSON.stringify(dispatches, null, 2))}</pre></details><div id="task-record"></div>`;
+      `<h3>${esc(step.title)}</h3><div class="row">${badge(view.state)}<span class="muted">尝试 ${view.attemptCount} 次</span></div>${view.reason ? `<p class="hint">${esc(view.reason)}</p>` : ""}<p style="margin-top:12px">${esc(view.summary || "尚无结果摘要")}</p><div class="row">${canRetry ? '<button type="button" id="retry-step">重试此步骤</button>' : ""}${view.taskId ? '<button type="button" id="show-task">查看本次任务执行</button>' : ""}${view.taskId && view.runId && view.reportId ? '<button type="button" id="open-task-execution">打开本次任务报告</button>' : ""}</div>${htmlPreview(view.output)}<details${view.output?.presentation?.mediaType === "text/html" ? "" : " open"}><summary>输出数据</summary><pre>${esc(view.output === undefined ? "尚未产生输出" : JSON.stringify(view.output, null, 2))}</pre></details><details><summary>执行记录</summary><pre>${esc(JSON.stringify({ nodeId: view.nodeId, taskId: view.taskId, runId: view.runId, reportId: view.reportId, sessionId: view.sessionId }, null, 2))}</pre></details><details><summary>本次执行固定输入与映射</summary><pre>${esc(JSON.stringify({ parameters: run().input, bindings: step.inputs }, null, 2))}</pre></details><details><summary>历次执行回执（${dispatches.length}）</summary><pre>${esc(JSON.stringify(dispatches, null, 2))}</pre></details><div id="task-record"></div>`;
   }
   function fullRender() {
     const visible = !!definition();
@@ -645,11 +651,21 @@
     fit();
   }
   let refreshing = false;
-  async function refresh() {
-    if (refreshing || gesture) return;
+  let refreshSequence = 0;
+  const viewSelection = () => state.runId || (!state.draft ? context.runId : null) || null;
+  async function refresh({ force = false } = {}) {
+    if ((!force && refreshing) || gesture) return;
+    const sequence = ++refreshSequence;
+    const workflowRunId = viewSelection();
+    const current = () => sequence === refreshSequence && workflowRunId === viewSelection();
     refreshing = true;
     try {
-      const snapshot = await api("workflowSnapshot");
+      const snapshot = await api("workflowView", { workflowRunId });
+      if (!current()) return;
+      if (workflowRunId) {
+        const detail = snapshot.runs.find(row => row.workflowRunId === workflowRunId || row.runId === workflowRunId);
+        if (detail) loadedRuns.set(detail.workflowRunId, detail);
+      }
       state.snapshot = snapshot;
       $("connection").textContent = `已更新 ${new Date().toLocaleTimeString()}`;
       $("error").textContent = "";
@@ -680,11 +696,11 @@
         );
         if (binding)
           $("workflow-input").value = JSON.stringify(binding.input, null, 2);
-        if (
-          context.stageId &&
-          definition().stages.some((stage) => stage.stageId === context.stageId)
-        ) {
-          state.stageId = context.stageId;
+        const selectedStep = definition().steps.find(step => step.stepId === context.stepId);
+        const selectedStageId = selectedStep?.stageId || context.stageId;
+        if (definition().stages.some(stage => stage.stageId === selectedStageId)) {
+          state.stageId = selectedStageId;
+          state.stepId = selectedStep?.stepId || "";
           state.focusStage = true;
           graph();
           stepList();
@@ -703,9 +719,10 @@
       stepList();
       renderHeading();
       if (run()) {
-        const resultKey = JSON.stringify(
-          run().steps.find((row) => row.stepId === state.stepId),
-        );
+        const resultKey = JSON.stringify({
+          workflowRunId: run().workflowRunId,
+          step: run().steps.find((row) => row.stepId === state.stepId),
+        });
         if (refresh.resultKey !== resultKey) {
           const top = window.scrollY;
           renderStepResult();
@@ -714,10 +731,11 @@
         }
       }
     } catch (error) {
-      $("connection").textContent = "连接中断";
+      if (!current()) return;
+      $("connection").textContent = "连接中断，点击刷新重试";
       $("error").textContent = error.message;
     } finally {
-      refreshing = false;
+      if (sequence === refreshSequence) refreshing = false;
     }
   }
   function validate(def) {
@@ -1002,6 +1020,20 @@
         step.inputs[`input${index}`] = { kind: "workflow-input", path: [] };
         setDirty();
         renderStepEditor();
+      } else if (action === "open-task-execution") {
+        const execution = run();
+        const view = execution?.steps.find(row => row.stepId === state.stepId);
+        if (!view?.taskId || !view.runId || !view.reportId)
+          throw Error("本步骤尚无可打开的执行报告");
+        await api("closeWorkflow", {
+          projectId: context.projectId,
+          workflowId: execution.workflowId,
+          workflowRunId: execution.workflowRunId,
+          taskId: view.taskId,
+          runId: view.runId,
+          reportId: view.reportId,
+          stepId: view.stepId,
+        });
       } else if (action === "show-task") {
         const view = run().steps.find((row) => row.stepId === state.stepId);
         const execution = {
@@ -1057,7 +1089,7 @@
       return;
     }
     if (target.id === "refresh") {
-      refresh();
+      refresh({ force: true });
       return;
     }
     if (target.id) act(target.id);
@@ -1082,7 +1114,7 @@
       state.stepId = "";
       fullRender();
       fit();
-      return;
+      return refresh({ force: true });
     }
     if (run() || !state.draft) return;
     const step = selectedStep();
