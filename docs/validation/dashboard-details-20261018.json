@@ -1,0 +1,245 @@
+{
+  "target": "aliyun-vps",
+  "entry": "https://izbp11roeflhmn04yssxm4z.tail435ecd.ts.net:10000/",
+  "developmentExecutor": "GPT-6.1-Sol High",
+  "git": {
+    "remote": "https://github.com/Player-MINEPIG/dsh-orchestration.git",
+    "branch": "codex/dashboard-feedback",
+    "deployedCommit": "56b3bc5b7d7356bf904da320f75a9fa276c37436",
+    "pushVerifiedBeforeCutover": true
+  },
+  "package": {
+    "name": "@dsh-task/task-system",
+    "version": "0.2.26",
+    "archiveSha256": "7cb0f3653f133f1f74db9ae639bc15be18e2f3708609b0ad86a46aaa2eee2b8d",
+    "installedFilesMatched": 283
+  },
+  "times": {
+    "stoppedAt": "2026-10-18T10:22:06.629392+00:00",
+    "activatedAt": "2026-10-18T10:22:08.155912+00:00",
+    "serviceStartRequestedAt": "2026-10-18T10:22:08.175795+00:00"
+  },
+  "backup": {
+    "preparedAt": "2026-10-18T10:21:37.980884+00:00",
+    "otherPluginsUnchanged": true,
+    "path": "/opt/dsh-production/releases/dashboard-feedback-56b3bc5/backup",
+    "sqliteFiles": [
+      "tasks.sqlite",
+      "tasks.sqlite.results.sqlite",
+      "tasks.sqlite.program-executions",
+      "remote-execution.sqlite"
+    ],
+    "onlineQuickCheck": "ok",
+    "stoppedDatabaseCopy": "backup/stopped",
+    "sessions": 38,
+    "systemdDefinitionAndDropins": true,
+    "previousProfile": "/root/.dsh/profiles/web.dashboard-56b3bc5-before",
+    "rollbackScript": "/opt/dsh-production/releases/dashboard-feedback-56b3bc5/rollback.py",
+    "rollbackRestoresDatabases": false
+  },
+  "preflight": {
+    "sampledAt": "2026-10-18T10:21:27.403656+00:00",
+    "sessions": 19,
+    "runningSessions": 0,
+    "queueCount": 0,
+    "queueTruncated": false,
+    "activeRunOrAttemptGroups": [],
+    "activeProjectTurns": 0,
+    "codexDatabaseExists": false,
+    "codexQueuedOrRunning": 0,
+    "codexProcesses": 0,
+    "codexOverrideMentioned": false,
+    "remoteCounts": {
+      "dispatches": 0,
+      "outbound": 0
+    },
+    "programTableCounts": {
+      "peer_sequences": 0,
+      "nonces": 0,
+      "commands": 0,
+      "dispatches": 13,
+      "outbound": 0,
+      "metadata": 1
+    },
+    "readRows": 1,
+    "presentationRows": 1
+  },
+  "candidate": {
+    "stage": "candidate-verified",
+    "filesMatched": 283,
+    "activePackageUnchanged": true
+  },
+  "stateVerification": {
+    "verifiedAt": "2026-10-18T10:22:45.269653+00:00",
+    "packageVersion": "0.2.26",
+    "sourceCommit": "56b3bc5b7d7356bf904da320f75a9fa276c37436",
+    "packageFilesMatched": 283,
+    "businessEntitiesUnchanged": [
+      "task",
+      "run",
+      "attempt",
+      "report",
+      "schedule",
+      "occurrence",
+      "template"
+    ],
+    "planningTablesUnchanged": [
+      "workflow_definitions",
+      "workflow_runs",
+      "workflow_task_bindings",
+      "workflow_adoptions",
+      "pr_projects",
+      "wb_projects",
+      "wb_backlogs",
+      "wb_backlog_tasks",
+      "execution_directory_settings",
+      "execution_directory_bindings",
+      "pr_report_reads",
+      "pr_task_presentation"
+    ],
+    "originalSessionFilesUnchanged": 38,
+    "profileConfigUnchanged": true,
+    "proxyUnchanged": true,
+    "readingRows": 1,
+    "presentationRows": 1,
+    "entityCounts": [
+      [
+        "attempt",
+        91
+      ],
+      [
+        "report",
+        92
+      ],
+      [
+        "run",
+        99
+      ],
+      [
+        "schedule",
+        4
+      ],
+      [
+        "task",
+        62
+      ]
+    ],
+    "service": "MainPID=1424211\nNRestarts=0\nExecMainStartTimestamp=Sun 2026-10-18 18:22:08 CST\nActiveState=active\nSubState=running",
+    "otherPluginFilesUnchanged": true
+  },
+  "rpcVerification": {
+    "htmlPreview": {
+      "exactIdentity": true,
+      "bodyChars": 10093,
+      "defaultContainsBody": false
+    },
+    "verifiedAt": "2026-10-18T10:22:44.727Z",
+    "queueCount": 0,
+    "runningSessions": 0,
+    "sessions": 19,
+    "taskCount": 62,
+    "coordinatorTasks": 5,
+    "reportCount": 92,
+    "reportReadingFields": true,
+    "workflowRuns": 9,
+    "summaryHasNoOutputs": true,
+    "servedProjectPageSha256": "c6f81da953ac23de20484c3573ebbea469b9a0c4e40491e1c88a67e38dd3ff88",
+    "servedWorkflowPageSha256": "357f910906293aafeb71a49bbfb1582021bc5ead674647a27e285babc5e323b6",
+    "history": {
+      "workflowRunId": "4c1171d5-f9d3-4627-a2f7-91821cc018b7",
+      "definitionRevision": 1,
+      "exactSteps": 3,
+      "selectedFullOutput": true,
+      "latestDifferent": true
+    }
+  },
+  "httpsStatus": 200,
+  "service": {
+    "name": "dsh-production-web.service",
+    "pid": 1424211,
+    "automaticRestarts": 0,
+    "activeState": "active",
+    "subState": "running",
+    "runtime": "0.2.1-rc.2",
+    "runtimeChanged": false,
+    "proxyChanged": false,
+    "journal": {
+      "lines": 7,
+      "warningMatchingLines": 2,
+      "errorMatchingLines": 0,
+      "sqliteExperimentalWarning": true
+    }
+  },
+  "localValidation": {
+    "build": "passed",
+    "tests": 650,
+    "passed": 649,
+    "failed": 0,
+    "skipped": 1,
+    "skip": "Existing macOS 127.0.0.2 loopback alias test; verifier rejection behavior remains covered.",
+    "projectResults": "At most five exact delivery report summary cards; no internal child reports, HTML body fetch or reading writes."
+  },
+  "stagingIncident": {
+    "release": "dashboard-feedback-5d1185d",
+    "exitCode": 127,
+    "reason": "Official plugin CLI could not find pnpm on PATH before package management started.",
+    "productionChanged": false,
+    "backupOrCutoverOccurred": false,
+    "differentFromPreviousReleaseCacheIncident": true,
+    "resolution": "Repository-declared pnpm 11.7.0 installed with ignore-scripts only in the final release tools directory; no global tool install or system upgrade.",
+    "oldCandidateUsedForCutover": false
+  },
+  "htmlIncident": {
+    "userReport": "Existing read daily report, execution 27, 2026-10-18 10:00 local UI time.",
+    "observed": "Old Chrome tab had both report-preview failure and projectSnapshot gateway/internal with stale data; a new IAB tab rendered the same report.",
+    "recovery": "After preserving failure evidence, one reload of the original Chrome tab restored projectSnapshot and the same already-read HTML report, while still on 0.2.25.",
+    "sdkFinding": "Mount registers local fiber descriptors; each invocation reads the current connection. No evidence supports plugin remount as a correction.",
+    "change": "Keep a safe classified preview error, timeout/conflict/service-unavailable recovery hints and explicit exact-report retry.",
+    "rootCauseResolved": false,
+    "noSpeculativeRemountOrCapabilityNegotiation": true
+  },
+  "gui": {
+    "status": "passed",
+    "existingUserChromeTabUpdated": true,
+    "normalSidebarWithoutFailedPluginBanner": true,
+    "cardDuration": "0 d 06:33:07",
+    "multipleDevicesLabel": "多个执行端",
+    "taskDetailOrder": [
+      "result",
+      "process",
+      "related",
+      "technical",
+      "supplement"
+    ],
+    "childTreeAbsentAtTaskTop": true,
+    "projectResultSummaries": 5,
+    "projectResultsBeforeProcess": true,
+    "exactExistingReadReportExecution": 27,
+    "htmlActuallyRenderedInUserBrowser": true,
+    "unreadReportsOpened": false,
+    "userTabLeftOnReadHtmlReport": true,
+    "screenshots": [
+      "evidence/dashboard-revision3-production-cards.png",
+      "evidence/dashboard-revision3-production-html.png",
+      "evidence/dashboard-revision3-production-project.png"
+    ]
+  },
+  "limits": [
+    "Only VPS task-system plugin deployed; MBP/PC_AU and runtime untouched.",
+    "No real task execution, acceptance or presentation mutation used as tests.",
+    "Slow initial loading and underlying intermittent connection fault remain undiagnosed.",
+    "390px iframe evidence is responsive-layout validation, not a physical mobile touch test."
+  ],
+  "finalReadingVerification": {
+    "verifiedAt": "2026-10-18T10:28:07.168669+00:00",
+    "pr_report_reads": {
+      "rows": 1,
+      "unchanged": true
+    },
+    "pr_task_presentation": {
+      "rows": 1,
+      "unchanged": true
+    },
+    "service": "MainPID=1424211\nNRestarts=0\nActiveState=active\nSubState=running"
+  }
+}
