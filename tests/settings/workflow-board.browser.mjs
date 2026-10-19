@@ -50,7 +50,7 @@ const definition = {
         provider: "codex",
         model: "gpt-6-luna",
         instructions: "按工作内容汇总",
-        allowedTools: ["task_settle"],
+        allowedTools: ["task_submit_result"],
         reasoningEffort: "high",
       },
       maxRetries: 2,

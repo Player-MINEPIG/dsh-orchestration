@@ -6,7 +6,7 @@ import { createNativeHarness } from '../../../tests/dsh/native-harness.mjs';
 import { ExecutorWorker, RecoveryStore, nativeExecutionAdapter } from '../dist/remote/api.js';
 
 for (const transport of ['local', 'remote']) test(`${transport} delegated sessions retain isolated cwd and history without creating sidebar workspaces`, async () => {
-  const h = await createNativeHarness({config:{projectAgentOptions:{provider:'test-offline',model:'script'}},script:[1,2].map(i=>({name:'task_settle',args:{outcome:'success',summary:`Child ${i}`,reportTitle:`Child ${i}`,reportBody:`Retained child evidence ${i}`}}))});
+  const h = await createNativeHarness({config:{projectAgentOptions:{provider:'test-offline',model:'script'}},script:[1,2].map(i=>({name:'task_submit_result',args:{outcome:'success',summary:`Child ${i}`,reportTitle:`Child ${i}`,reportBody:`Retained child evidence ${i}`}}))});
   let worker, store;
   try {
     const l=h.ledger, runtime=h.ctx.taskSystem.projects, registered=new Map();

@@ -86,7 +86,7 @@ test("an existing native session resumes its recorded preset when PTC is unavail
       sessionId,
     });
     h.adapter.script.push({
-      name: "task_settle",
+      name: "task_submit_result",
       args: { outcome: "success", summary: "Recorded native session resumed" },
     });
     const result = await h.ctx.taskSystem.native.resume({
@@ -96,7 +96,7 @@ test("an existing native session resumes its recorded preset when PTC is unavail
     assert.equal(result.run.state, "succeeded");
     assert.equal(result.sessionId, sessionId);
     assert.ok(
-      h.adapter.requests[0].tools.some((tool) => tool.name === "task_settle"),
+      h.adapter.requests[0].tools.some((tool) => tool.name === "task_submit_result"),
     );
     assert.ok(
       !h.adapter.requests[0].tools.some((tool) => tool.name === "run_code"),

@@ -2,6 +2,7 @@ import type { Context } from "@deepseek-ai/cordis";
 import type { Agent, AgentHandle } from "@deepseek-ai/dsh-agent";
 import { foldRequestHeader, SessionId } from "@deepseek-ai/dsh-session";
 import { createUserMessage, ReasoningEffortId } from "@deepseek-ai/dsh-llm";
+import type { SessionEvent } from "@deepseek-ai/dsh-session";
 import type { DispatchOrigin, Json } from "./contracts.js";
 import type { SessionMessage } from "./remote/ports.js";
 
@@ -20,6 +21,17 @@ export function containsTaskReturn(events: readonly unknown[], eventId: string):
     return false;
   };
   return events.some(matches);
+}
+
+export function taskReturnCompleted(events:readonly SessionEvent[],eventId:string):boolean {
+  let currentTurn:number | undefined;
+  let resultTurn:number | undefined;
+  for(const event of events) {
+    if(event.type==="turn/start")currentTurn=event.data.turn;
+    if(event.type==="user/message" && event.data.source.kind==="dsh-task-result" && event.data.source.eventId===eventId)resultTurn=currentTurn;
+    if(event.type==="turn/end" && resultTurn!==undefined && event.data.turn===resultTurn && event.data.reason.kind==="completed")return true;
+  }
+  return false;
 }
 
 export interface OriginContinuationAdapter {
@@ -44,14 +56,16 @@ export class TaskReturnDelivery {
     }
     return binding;
   }
+  private readonly lifetime=new AbortController();
   private readonly sessions = new Map<string, Promise<string>>();
   private readonly handles = new Set<AgentHandle>();
-  constructor(private readonly ctx: Context) {}
-  async deliver(message: SessionMessage): Promise<string> {
+  constructor(private ctx: Context) {}
+  bindContext(ctx:Context){this.ctx=ctx;}
+  async deliver(message: SessionMessage, signal?:AbortSignal): Promise<string> {
     const origin = message.completion?.origin;
     if (!origin || origin.kind !== "session" || origin.sessionId !== message.sessionId || origin.nodeId !== message.nodeId) throw new Error("Invalid task return binding");
     const previous = this.sessions.get(message.sessionId) ?? Promise.resolve("");
-    const delivery = previous.catch(() => "").then(() => this.send(message, origin));
+    const delivery = previous.catch(() => "").then(() => this.send(message, origin,signal));
     this.sessions.set(message.sessionId, delivery);
     try { return await delivery; }
     finally { if (this.sessions.get(message.sessionId) === delivery) this.sessions.delete(message.sessionId); }
@@ -60,10 +74,10 @@ export class TaskReturnDelivery {
     const handle = await this.ctx.sessionPersistence.open(SessionId(sessionId), "read");
     try { return (await handle.read()).events; } finally { await handle.close(); }
   }
-  private async send(message: SessionMessage, origin: Extract<DispatchOrigin, {kind:"session"}>): Promise<string> {
+  private async send(message: SessionMessage, origin: Extract<DispatchOrigin, {kind:"session"}>, signal?:AbortSignal): Promise<string> {
     const eventId = message.completion!.eventId;
     const events=await this.read(origin.sessionId);
-    if (containsTaskReturn(events, eventId)) return "Task result durably queued for the original session's next turn";
+    if (taskReturnCompleted(events,eventId)) return "Task result processed in the original session";
     let agent = this.ctx.agents.get(SessionId(origin.sessionId));
     let handle: AgentHandle | undefined;
     if (!agent) {
@@ -93,7 +107,7 @@ export class TaskReturnDelivery {
           if(tools.some(tool=>!available.has(tool)))throw new Error("Original session tools unavailable; retained for retry");
           ctx.tools.restrict({allow:tools});
           if (origin.parentLease) {
-            ctx.tools.guard(exec => ["task_settle", "task_report"].includes(exec.name) ? "The original task lease expired; this result continuation does not grant a lease" : undefined);
+            ctx.tools.guard(exec => exec.name.startsWith("task_") ? "The original task lease expired; this result continuation does not grant a lease" : undefined);
             ctx.systemPrompt.section({name:"task-result-continuation",order:110,interpolate:false,text:()=>"这是原会话接收的子任务结果续接。历史执行租约未恢复，不得使用历史租约结算或重做任务。核对中央报告后完成本次汇总；如需新执行，通过统一派发工具获得新授权。"});
           }
         },
@@ -102,22 +116,42 @@ export class TaskReturnDelivery {
       agent = handle.agent;
     }
     try {
-    if (origin.cwd && agent.session.header.cwd !== origin.cwd) throw new Error("Original session workspace changed");
-    await this.ctx.sessions.flush(agent.session);
-    if (containsTaskReturn(await this.read(origin.sessionId), eventId)) return "Task result durably queued for the original session's next turn";
-    agent.followup(createUserMessage({source:{kind:"dsh-task-result",eventId,taskId:message.taskId},content:[{type:"text",text:message.text}]}));
-    await this.ctx.sessions.flush(agent.session);
-    if (handle) {
-      const owned = handle;
-      void agent.whenIdle().then(() => owned.dispose()).finally(() => this.handles.delete(owned)).catch(error=>this.ctx.logger.warn("task result continuation stopped: %s", error));
-    }
-    return "Task result durably queued for the original session's next turn";
-    } catch(error) {
-      if(handle) {this.handles.delete(handle);await handle.dispose();}
-      throw error;
+      if (origin.cwd && agent.session.header.cwd !== origin.cwd) throw new Error("Original session workspace changed");
+      await this.ctx.sessions.flush(agent.session);
+      const current=await this.read(origin.sessionId);
+      if(!taskReturnCompleted(current,eventId)) {
+        const pending=[...agent.inbox.nextTurn,...agent.inbox.nextStep].find(input=>input.source.kind==="dsh-task-result" && input.source.eventId===eventId);
+        if(pending) {
+          if(agent.status==="idle") {
+            agent.inbox.remove(pending.id);
+            agent.followup(pending);
+          }
+        } else {
+          const consumed=current.some(event=>event.type==="user/message" && event.data.source.kind==="dsh-task-result" && event.data.source.eventId===eventId);
+          agent.followup(createUserMessage({source:{kind:"dsh-task-result",eventId,taskId:message.taskId},content:[{type:"text",text:consumed ? `继续处理已在原会话持久化的任务结果事件 ${eventId}。上轮在完成前中断；核对已完成的工具结果与中央账本，继续未完成的汇总，避免重复提交或重跑任务。` : message.text}]}));
+        }
+        await this.ctx.sessions.flush(agent.session);
+        const abort=signal ? AbortSignal.any([signal,this.lifetime.signal]) : this.lifetime.signal;
+        abort.throwIfAborted();
+        let onAbort:(()=>void) | undefined;
+        try {
+          await Promise.race([agent.whenIdle(),new Promise<never>((_resolve,reject)=>{
+            onAbort=()=>reject(abort.reason);
+            abort.addEventListener("abort",onAbort,{once:true});
+          })]);
+        } finally {
+          if(onAbort)abort.removeEventListener("abort",onAbort);
+        }
+        await this.ctx.sessions.flush(agent.session);
+        if(!taskReturnCompleted(await this.read(origin.sessionId),eventId))throw new Error("Task result continuation interrupted; retained for retry");
+      }
+      return "Task result processed in the original session";
+    } finally {
+      if(handle){this.handles.delete(handle);await handle.dispose();}
     }
   }
   async dispose() {
+    this.lifetime.abort(new Error("Task return delivery stopping"));
     await Promise.allSettled([...this.sessions.values()]);
     await Promise.allSettled([...this.handles].map(handle => handle.dispose()));
     this.handles.clear();

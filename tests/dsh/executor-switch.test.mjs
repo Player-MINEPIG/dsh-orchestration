@@ -14,7 +14,7 @@ async function until(check) {
 
 test('executor switch: paused diagnostic, automatic heartbeat/task reception, immediate offline and safe restart across two actual DSH hosts', {timeout:30000},async()=>{
  const planner=await createNativeHarness({config:{role:'planner',nodeId:'planner'}});
- const worker=await createNativeHarness({config:{role:'executor',nodeId:'worker'},script:[{name:'task_settle',args:{outcome:'success',summary:'9 + 6 = 15',reportTitle:'Switch acceptance',reportBody:'15'}}]});
+ const worker=await createNativeHarness({config:{role:'executor',nodeId:'worker'},script:[{name:'task_submit_result',args:{outcome:'success',summary:'9 + 6 = 15',reportTitle:'Switch acceptance',reportBody:'15'}}]});
  let gatewayFiber,workerFiber;
  try {
   const portServer=http.createServer();await new Promise(resolve=>portServer.listen(0,'127.0.0.1',resolve));const port=portServer.address().port;await new Promise(resolve=>portServer.close(resolve));

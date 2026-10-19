@@ -129,9 +129,9 @@ test('existing native session keeps uncertainty when the configured provider is 
   } finally { await previous?.dispose(); await h.dispose(); }
 });
 
-test('model task_settle cannot attach trusted pre-dispatch evidence or bypass its report contract', async () => {
+test('model task_submit_result cannot attach trusted pre-dispatch evidence or bypass its report contract', async () => {
   const route = { provider: 'test-offline', model: 'script' };
-  const h = await createNativeHarness({ script: [{ name: 'task_settle', args: { outcome: 'blocked', summary: NATIVE_PROVIDER_UNAVAILABLE_SUMMARY, preDispatchFailure: { kind: 'native-provider-unavailable-v1', code: 'NO_ADAPTER', ...route } } }] });
+  const h = await createNativeHarness({ script: [{ name: 'task_submit_result', args: { outcome: 'blocked', summary: NATIVE_PROVIDER_UNAVAILABLE_SUMMARY, preDispatchFailure: { kind: 'native-provider-unavailable-v1', code: 'NO_ADAPTER', ...route } } }] });
   try {
     const { task, run } = seed(h.ledger, 'local', h.dir, route);
     const claim = h.ledger.claim('claim', { runId: run.runId, nodeId: 'local', ttlMs: 10000 }).value;

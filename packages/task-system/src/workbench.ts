@@ -261,6 +261,11 @@ export class Workbench {
     return this.ledger.effectivePriority(taskId);
   }
 
+  linkDispatcherTask(backlogId:string,taskId:string) {
+    this.ledger.assertManagementWritable();
+    if(!this.db.isTransaction)fail("FORBIDDEN","Dispatcher linking requires the ledger transaction");
+    return this.relation("link_backlog_task",{backlogId,taskId});
+  }
   manage(
     commandId: string,
     operation: string,

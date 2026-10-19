@@ -67,13 +67,13 @@ async function until(predicate, timeoutMs = 2000) {
 
 test('actual Loader + AgentLoop commits only the owned causal result and retains reports after unload', async () => {
   const h = await harness({ script: [
-    { name: 'task_settle', args: { outcome: 'success', summary: 'Work verified', reportTitle: 'Result', reportBody: 'Explicit structured result from owned attempt' } },
+    { name: 'task_submit_result', args: { outcome: 'success', summary: 'Work verified', reportTitle: 'Result', reportBody: 'Explicit structured result from owned attempt' } },
     'Finished',
   ] });
   const { task, run, claim } = seed(h);
   const result = await h.ctx.taskSystem.native.execute(claim);
   assert.equal(result.submitted, true);
-  assert.equal(h.adapter.requests.length, 1, 'task_settle concludes the native turn');
+  assert.equal(h.adapter.requests.length, 1, 'task_submit_result concludes the native turn');
   assert.equal(result.run.state, 'succeeded');
   assert.equal(h.ledger.getTask(task.taskId).state, 'completed');
   assert.equal(h.ledger.getAttempt(claim.attempt.attemptId).sessionId, result.sessionId);
@@ -88,7 +88,7 @@ test('actual Loader + AgentLoop commits only the owned causal result and retains
   await recovered.dispose();
 });
 
-test('assistant completion text and idle become uncertain without task_settle', async () => {
+test('assistant completion text and idle become uncertain without task_submit_result', async () => {
   const h = await harness({ config: { safeRetry: { maxRetries: 2, baseDelayMs: 100, maxDelayMs: 200 } }, script: ['Successfully completed everything'] });
   try {
     const { task, claim } = seed(h);
@@ -185,8 +185,8 @@ test('native terminal observation ignores foreign sessions and clears prior erro
   } finally { await foreign?.dispose(); await h.dispose(); }
 });
 
-test('causal task_settle takes precedence over a later native terminal error', async () => {
-  const h = await harness({ script: [{ name: 'task_settle', args: { outcome: 'success', summary: 'Verified causal result', reportBody: 'Explicit task outcome remains authoritative.' } }] });
+test('causal task_submit_result takes precedence over a later native terminal error', async () => {
+  const h = await harness({ script: [{ name: 'task_submit_result', args: { outcome: 'success', summary: 'Verified causal result', reportBody: 'Explicit task outcome remains authoritative.' } }] });
   const terminalCodes = [];
   h.ctx.on('session/event', (_session, event) => { if (event.type === 'turn/end') terminalCodes.push(event.data.reason.error?.code); });
   try {
@@ -225,7 +225,7 @@ test('native transient retry requires live zero-tool evidence and resumes the ex
   assert.ok(!JSON.stringify(first.ledger.snapshot()).includes('Synthetic provider diagnostic'));
   const startedAt = result.run.executionStartedAt;
   await first.dispose();
-  const second = await harness({ dir: first.dir, config: { ...config, keepAlive: true, maintenanceIntervalMs: 100 }, script: [{ name: 'task_settle', args: { outcome: 'success', summary: 'Recovered without repeating any tool effects' } }] });
+  const second = await harness({ dir: first.dir, config: { ...config, keepAlive: true, maintenanceIntervalMs: 100 }, script: [{ name: 'task_submit_result', args: { outcome: 'success', summary: 'Recovered without repeating any tool effects' } }] });
   try {
     await until(() => second.ledger.getRun(claim.run.runId).state === 'succeeded');
     const history = second.ledger.history(task.taskId);
@@ -306,7 +306,7 @@ test('native local heartbeat reports capability readiness without provider probe
 });
 
 test('independent native providers cannot execute the same leased attempt twice', async () => {
-  const h = await harness({ script: [{ name: 'task_settle', args: { outcome: 'success', summary: 'One durable execution owner' } }] });
+  const h = await harness({ script: [{ name: 'task_submit_result', args: { outcome: 'success', summary: 'One durable execution owner' } }] });
   const { NativeExecutionProvider } = await import(pluginUrl);
   const duplicate = new NativeExecutionProvider(h.ctx, h.ctx.taskSystem);
   try {
@@ -332,7 +332,7 @@ test('unowned tool calls cannot submit results and planner role blocks execution
   } finally { await h.dispose(); }
   const execution = await harness();
   try {
-    const denied = await tool(execution.ctx, 'task_settle', { outcome: 'success', summary: 'forged success' });
+    const denied = await tool(execution.ctx, 'task_submit_result', { outcome: 'success', summary: 'forged success' });
     assert.equal(denied.isError, true);
   } finally { await execution.dispose(); }
 });
@@ -378,7 +378,7 @@ test('native resume restores the exact persisted session bound to an unexpired a
   await first.ctx.sessions.flush(handle.agent.session);
   await handle.dispose();
   await first.dispose();
-  const resumed = await harness({ dir: first.dir, script: [{ name: 'task_settle', args: { outcome: 'success', summary: 'Reconciled existing session' } }] });
+  const resumed = await harness({ dir: first.dir, script: [{ name: 'task_submit_result', args: { outcome: 'success', summary: 'Reconciled existing session' } }] });
   try {
     const result = await resumed.ctx.taskSystem.native.resume({ task: resumed.ledger.getTask(claim.task.taskId), run: resumed.ledger.getRun(ref.runId), attempt: resumed.ledger.getAttempt(ref.attemptId) });
     assert.equal(result.sessionId, sessionId);
@@ -417,7 +417,7 @@ test('durable cancellation is acknowledged after the native agent actually stops
 });
 
 test('configured timer admits a scheduled slot and native autoExecute commits explicit output', async () => {
-  const h = await harness({ config: { keepAlive: true, maintenanceIntervalMs: 100, autoExecute: true, maxConcurrent: 1 }, script: [{ name: 'task_settle', args: { outcome: 'success', summary: 'Scheduled custom report done', reportBody: 'A reusable configured task type ran through real DSH.', reportData: { itemsVerified: 3 }, reportSchemaId: 'custom-report-v1' } }] });
+  const h = await harness({ config: { keepAlive: true, maintenanceIntervalMs: 100, autoExecute: true, maxConcurrent: 1 }, script: [{ name: 'task_submit_result', args: { outcome: 'success', summary: 'Scheduled custom report done', reportBody: 'A reusable configured task type ran through real DSH.', reportData: { itemsVerified: 3 }, reportSchemaId: 'custom-report-v1' } }] });
   try {
     h.ledger.registerNode('scheduled-node', { nodeId: 'local', roles: ['both'], capabilities: [], models: [{ provider: 'test-offline', model: 'script', reasoningEfforts: [] }], workspaceIds: [], enabled: true, lastSeenAt: new Date().toISOString() });
     h.ledger.updateTemplate('scheduled-template', { templateId: 'custom-report', version: 1, name: 'Custom report', description: 'A configured report type', inputSchema: { type: 'object' }, defaults: {}, resultContract: { type: 'object', required: ['report'], properties: { report: { type: 'object', required: ['data', 'schemaId'], properties: { data: { type: 'object', required: ['itemsVerified'], properties: { itemsVerified: { type: 'integer', minimum: 1 } } }, schemaId: { const: 'custom-report-v1' } } } } } });
@@ -458,7 +458,7 @@ test('automatic native dispatch obeys maxConcurrent and leaves the next run queu
 });
 
 test('native confirmation gate cannot be bypassed by model task creation and blocks effects until trusted approval', async () => {
-  const h = await harness({ config: { requireConfirmation: true, autoExecute: true }, script: [{ name: 'task_settle', args: { outcome: 'success', summary: 'Ran after operator approval' } }] });
+  const h = await harness({ config: { requireConfirmation: true, autoExecute: true }, script: [{ name: 'task_submit_result', args: { outcome: 'success', summary: 'Ran after operator approval' } }] });
   try {
     h.ledger.registerNode('approval-node', { nodeId: 'local', roles: ['both'], capabilities: [], models: [{ provider: 'test-offline', model: 'script', reasoningEfforts: [] }], workspaceIds: [], enabled: true, lastSeenAt: new Date().toISOString() });
     const created = await tool(h.ctx, 'task_create', { commandId: 'approval-task', title: 'Gated task', requiresConfirmation: false, priorityOverride: 'high' });
@@ -482,7 +482,7 @@ test('native confirmation gate cannot be bypassed by model task creation and blo
 });
 
 test('native results enqueue only operator-configured reporting destinations and honor narrative policy', async () => {
-  const h = await harness({ config: { reportDestinations: ['offline-authorized-destination'] }, script: ['summary', 'none', 'escalate'].map(mode => ({ name: 'task_settle', args: { outcome: 'success', summary: `Finished ${mode}`, reportBody: `Authoritative report for ${mode}` } })) });
+  const h = await harness({ config: { reportDestinations: ['offline-authorized-destination'] }, script: ['summary', 'none', 'escalate'].map(mode => ({ name: 'task_submit_result', args: { outcome: 'success', summary: `Finished ${mode}`, reportBody: `Authoritative report for ${mode}` } })) });
   try {
     h.ledger.registerNode('reporting-node', { nodeId: 'local', roles: ['both'], capabilities: [], models: [{ provider: 'test-offline', model: 'script', reasoningEfforts: [] }], workspaceIds: [], enabled: true, lastSeenAt: new Date().toISOString() });
     for (const reporting of ['summary', 'none', 'escalate']) {
@@ -535,7 +535,7 @@ test('native curation is reversible, preserves history, and remains forbidden to
 });
 
 test('malformed structured native result records retryable failure and bounded diagnostic without raw data', async () => {
-  const h = await harness({ script: [{ name: 'task_settle', args: { outcome: 'success', summary: 'Claimed success', reportData: { wrongField: 'sensitive-provider-detail' }, reportSchemaId: 'strict-v1' } }] });
+  const h = await harness({ script: [{ name: 'task_submit_result', args: { outcome: 'success', summary: 'Claimed success', reportData: { wrongField: 'sensitive-provider-detail' }, reportSchemaId: 'strict-v1' } }] });
   try {
     h.ledger.registerNode('strict-node', { nodeId: 'local', roles: ['both'], capabilities: [], models: [{ provider: 'test-offline', model: 'script', reasoningEfforts: [] }], workspaceIds: [], enabled: true, lastSeenAt: new Date().toISOString() });
     const template = { templateId: 'strict', version: 1, name: 'Strict structured result', description: '', inputSchema: { type: 'object' }, defaults: {}, resultContract: { type: 'object', required: ['report'], properties: { report: { type: 'object', required: ['data'], properties: { data: { type: 'object', required: ['itemsVerified'], properties: { itemsVerified: { type: 'integer' } } } } } } } };
@@ -559,7 +559,7 @@ test('malformed structured native result records retryable failure and bounded d
 });
 
 test('missing required report is rejected before ending the attempt and can be corrected in place', async () => {
-  const h = await harness({ script: [{ name: 'task_settle', args: { outcome: 'partial', summary: 'Still processing evidence' } }, options => { const error = options.messages.findLast(m => m.role === 'tool'); assert.equal(error.isError, true); assert.match(JSON.stringify(error.content), /This attempt remains active/); return { name: 'task_settle', args: { outcome: 'success', summary: 'Full report prepared', reportData: { itemsVerified: 44 }, reportSchemaId: 'strict-v1' } }; }] });
+  const h = await harness({ script: [{ name: 'task_submit_result', args: { outcome: 'partial', summary: 'Still processing evidence' } }, options => { const error = options.messages.findLast(m => m.role === 'tool'); assert.equal(error.isError, true); assert.match(JSON.stringify(error.content), /This attempt remains active/); return { name: 'task_submit_result', args: { outcome: 'success', summary: 'Full report prepared', reportData: { itemsVerified: 44 }, reportSchemaId: 'strict-v1' } }; }] });
   try {
     h.ledger.registerNode('strict-node', { nodeId: 'local', roles: ['both'], capabilities: [], models: [{ provider: 'test-offline', model: 'script', reasoningEfforts: [] }], workspaceIds: [], enabled: true, lastSeenAt: new Date().toISOString() });
     const template = { templateId: 'strict', version: 1, name: 'Strict structured result', description: '', inputSchema: { type: 'object' }, defaults: {}, resultContract: { type: 'object', required: ['report'], properties: { report: { type: 'object', required: ['data'], properties: { data: { type: 'object', required: ['itemsVerified'], properties: { itemsVerified: { type: 'integer' } } } } } } } };
@@ -581,7 +581,7 @@ test('missing required report is rejected before ending the attempt and can be c
 });
 
 test('trusted semantic validation rejects shape-valid native success with retry feedback', async () => {
-  const h = await harness({ script: [{ name: 'task_settle', args: { outcome: 'success', summary: 'Claimed all items verified', reportData: { items: ['one'], count: 2 } } }] });
+  const h = await harness({ script: [{ name: 'task_submit_result', args: { outcome: 'success', summary: 'Claimed all items verified', reportData: { items: ['one'], count: 2 } } }] });
   let checked = 0;
   try {
     h.ledger.registerNode('semantic-node', { nodeId: 'local', roles: ['both'], capabilities: [], models: [{ provider: 'test-offline', model: 'script', reasoningEfforts: [] }], workspaceIds: [], enabled: true, lastSeenAt: new Date().toISOString() });
@@ -606,7 +606,7 @@ test('trusted semantic validation rejects shape-valid native success with retry 
 });
 
 test('maintained legacy task-pack mounts through real Loader and missing validator after unload fails closed', async () => {
-  const errorResult = { name: 'task_settle', args: { outcome: 'blocked', summary: 'Source evidence unavailable', reportTitle: 'Report blocked', reportBody: 'Offline fixture has no source evidence.', reportSchemaId: 'legacy_task_pack_error.v1', reportData: { errors: ['Offline fixture has no source evidence.'] } } };
+  const errorResult = { name: 'task_submit_result', args: { outcome: 'blocked', summary: 'Source evidence unavailable', reportTitle: 'Report blocked', reportBody: 'Offline fixture has no source evidence.', reportSchemaId: 'legacy_task_pack_error.v1', reportData: { errors: ['Offline fixture has no source evidence.'] } } };
   const h = await harness({ script: [errorResult, errorResult] });
   try {
     const { createLegacyTemplates } = await import('../../examples/legacy-task-pack/index.mjs');
@@ -641,7 +641,7 @@ test('maintained legacy task-pack mounts through real Loader and missing validat
   } finally { await h.dispose(); }
 });
 
-test('actual native legacy preparation creates a bound artifact then task_settle commits after quiescence', async () => {
+test('actual native legacy preparation creates a bound artifact then task_submit_result commits after quiescence', async () => {
   const h = await harness({ config: { executionTools: ['legacy_report_prepare'], trustedUnconfinedTools: true } });
   try {
     const { createLegacyTemplates } = await import('../../examples/legacy-task-pack/index.mjs');
@@ -663,7 +663,7 @@ test('actual native legacy preparation creates a bound artifact then task_settle
         assert.equal(h.ledger.getRun(run.runId).state, 'running', 'prepare must not settle inside a running agent');
         assert.equal(h.ledger.history(task.taskId).reports.length, 0);
         assert.equal(prepared.report.artifactIds.length, 1);
-        return { name: 'task_settle', args: { outcome: 'success', summary: prepared.summary, reportTitle: prepared.report.title, reportBody: prepared.report.body, reportData: prepared.report.data, reportSchemaId: prepared.report.schemaId, reportArtifactIds: prepared.report.artifactIds } };
+        return { name: 'task_submit_result', args: { outcome: 'success', summary: prepared.summary, reportTitle: prepared.report.title, reportBody: prepared.report.body, reportData: prepared.report.data, reportSchemaId: prepared.report.schemaId, reportArtifactIds: prepared.report.artifactIds } };
       },
     );
     const claim = h.ledger.claim('native-legacy-claim', { runId: run.runId, nodeId: 'local', ttlMs: 10000 }).value;
@@ -703,7 +703,7 @@ test('actual native configured readers bind source evidence to one attempt befor
       { name: 'legacy_sources_read', args: { sourceIds: ['unapproved-source'] } },
       options => { assert.equal(options.messages.findLast(message => message.role === 'tool').isError, true); return { name: 'legacy_sources_read', args: { sourceIds: ['synthetic-source'] } }; },
       options => { const source = toolValue(options); sourceReceiptId = source.sourceReceiptId; assert.equal(source.sources[0].sourceId, 'synthetic-source'); assert.ok(source.sources[0].data.game); return { name: 'legacy_report_prepare', args: { commandId: 'prepare-reader-game', kind: 'game_daily', input: { sourceReceiptId, sourceId: 'synthetic-source' } } }; },
-      options => { const prepared = toolValue(options); assert.deepEqual(prepared.report.artifactIds, []); return { name: 'task_settle', args: { outcome: 'success', summary: prepared.summary, reportTitle: prepared.report.title, reportBody: prepared.report.body, reportData: prepared.report.data, reportSchemaId: prepared.report.schemaId } }; },
+      options => { const prepared = toolValue(options); assert.deepEqual(prepared.report.artifactIds, []); return { name: 'task_submit_result', args: { outcome: 'success', summary: prepared.summary, reportTitle: prepared.report.title, reportBody: prepared.report.body, reportData: prepared.report.data, reportSchemaId: prepared.report.schemaId } }; },
     );
     const first = make('first');
     assert.equal((await h.ctx.taskSystem.native.execute(first)).run.state, 'succeeded');
@@ -712,7 +712,7 @@ test('actual native configured readers bind source evidence to one attempt befor
     assert.equal(report.data.payload.report_meta.device_id, 'synthetic-node');
     h.adapter.script.push(
       { name: 'legacy_report_prepare', args: { commandId: 'forbidden-old-source-receipt', kind: 'game_daily', input: { sourceReceiptId, sourceId: 'synthetic-source' } } },
-      options => { assert.equal(options.messages.findLast(message => message.role === 'tool').isError, true); return { name: 'task_settle', args: { outcome: 'blocked', summary: 'Cannot reuse another attempt source receipt', reportSchemaId: 'legacy_task_pack_error.v1', reportData: { errors: ['Fresh source capture required for this attempt.'] } } }; },
+      options => { assert.equal(options.messages.findLast(message => message.role === 'tool').isError, true); return { name: 'task_submit_result', args: { outcome: 'blocked', summary: 'Cannot reuse another attempt source receipt', reportSchemaId: 'legacy_task_pack_error.v1', reportData: { errors: ['Fresh source capture required for this attempt.'] } } }; },
     );
     const second = make('second');
     assert.equal((await h.ctx.taskSystem.native.execute(second)).run.state, 'blocked');
@@ -721,7 +721,7 @@ test('actual native configured readers bind source evidence to one attempt befor
 });
 
 test('task tool policy remains enforced but legacy runtime budgets never stop an active task', async () => {
-  const h = await harness({ config: { executionTools: ['fixture_work'] }, script: [{ name: 'fixture_work', args: {} }, { name: 'task_settle', args: { outcome: 'success', summary: 'Forbidden capability was denied' } }] });
+  const h = await harness({ config: { executionTools: ['fixture_work'] }, script: [{ name: 'fixture_work', args: {} }, { name: 'task_submit_result', args: { outcome: 'success', summary: 'Forbidden capability was denied' } }] });
   let effects = 0;
   h.ctx.tools.register(defineTool({ name: 'fixture_work', description: 'Test-only observable effect', parameters: {}, output: { schema: { type: 'json' }, render: (_, value) => [{ type: 'text', text: JSON.stringify(value) }] }, execute: async () => { effects++; return true; } }));
   try {
@@ -769,9 +769,9 @@ test('owned query/history/report tools cannot read or alter another task', async
       { name: 'task_query', args: {} },
       { name: 'task_history', args: { taskId: other.taskId } },
       { name: 'task_report', args: { commandId: 'cross-task', taskId: other.taskId, title: 'forged', body: 'wrong task' } },
-      { name: 'task_settle', args: { outcome: 'success', summary: 'Forbidden foreign artifact', reportArtifactIds: ['foreign-artifact'] } },
-      { name: 'task_settle', args: { outcome: 'success', summary: 'Forbidden oversized artifact list', reportArtifactIds: Array.from({ length: 33 }, (_, index) => `artifact-${index}`) } },
-      { name: 'task_settle', args: { outcome: 'success', summary: 'Scope isolation verified' } },
+      { name: 'task_submit_result', args: { outcome: 'success', summary: 'Forbidden foreign artifact', reportArtifactIds: ['foreign-artifact'] } },
+      { name: 'task_submit_result', args: { outcome: 'success', summary: 'Forbidden oversized artifact list', reportArtifactIds: Array.from({ length: 33 }, (_, index) => `artifact-${index}`) } },
+      { name: 'task_submit_result', args: { outcome: 'success', summary: 'Scope isolation verified' } },
     );
     const { claim } = seed(h);
     await h.ctx.taskSystem.native.execute(claim);
@@ -781,7 +781,7 @@ test('owned query/history/report tools cannot read or alter another task', async
 });
 
 test('native observer captures human session output as a candidate and never dispatches observed work', async () => {
-  const h = await harness({ config: { observationEnabled: true }, script: ['Human-visible work result', { name: 'task_settle', args: { outcome: 'success', summary: 'Owned result' } }] });
+  const h = await harness({ config: { observationEnabled: true }, script: ['Human-visible work result', { name: 'task_submit_result', args: { outcome: 'success', summary: 'Owned result' } }] });
   try {
     const handle = await h.ctx.agents.create({ sessionId: SessionId('observed-human-session'), meta: { cwd: h.dir }, agentOptions: { provider: 'test-offline', model: 'script' } });
     handle.agent.followup(createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'Summarize this human request' }] }));
@@ -864,7 +864,7 @@ test('explicit delegation tools create only descendants, inherit policy, and exp
     const waiting = await tool(h.ctx, 'task_wait', { taskId: task.taskId, quietMs: 0, timeoutMs: 0 }, agent);
     assert.equal(waiting.value.settled, false);
     assert.deepEqual(waiting.value.pendingRunIds, [childRun.value.value.run.runId]);
-    const premature = await tool(h.ctx, 'task_settle', { outcome: 'success', summary: 'Too early' }, agent);
+    const premature = await tool(h.ctx, 'task_submit_result', { outcome: 'success', summary: 'Too early' }, agent);
     assert.equal(premature.isError, true);
     h.ledger.cancel('cancel-child', { taskId: child.taskId, reason: 'Complete fixture by explicit cancellation' });
     const reviewed = await tool(h.ctx, 'task_history', { taskId: child.taskId }, agent);
@@ -886,7 +886,7 @@ test('resume continues a live lease even after its legacy runtime budget', async
   await initial.ctx.sessions.flush(handle.agent.session);
   await handle.dispose(); await initial.dispose();
   await until(() => Date.now() - Date.parse(claim.attempt.createdAt) > 110);
-  const h = await harness({ dir: initial.dir, script: [{name: 'task_settle', args: {outcome: 'success', summary: 'Continued beyond old budget'}}] });
+  const h = await harness({ dir: initial.dir, script: [{name: 'task_submit_result', args: {outcome: 'success', summary: 'Continued beyond old budget'}}] });
   try {
     const restoredClaim = { task: h.ledger.getTask(claim.task.taskId), run: h.ledger.getRun(ref.runId), attempt: h.ledger.getAttempt(ref.attemptId) };
     const result = await h.ctx.taskSystem.native.resume(restoredClaim);
@@ -1113,7 +1113,7 @@ async function mountApprovalFixture(h, options = {}) {
 const approvalOutcome = options => {
   const message = options.messages.findLast(message => message.role === 'tool');
   const data = message.isError ? { executed: false } : JSON.parse(message.content.filter(block => block.type === 'text').map(block => block.text).join('\n'));
-  return { name: 'task_settle', args: { outcome: data.executed ? 'success' : 'blocked', summary: data.executed ? 'Reviewed fixture effect completed' : 'Fixture effect was not authorized' } };
+  return { name: 'task_submit_result', args: { outcome: data.executed ? 'success' : 'blocked', summary: data.executed ? 'Reviewed fixture effect completed' : 'Fixture effect was not authorized' } };
 };
 
 test('public native approval hook holds the exact call and applies trusted allow-once or deny without a model approval tool', async () => {
@@ -1192,7 +1192,7 @@ test('standard native file tools cannot read or mutate authority database, SQLit
 test('quiescent native terminal journal survives authority SQLite lock and host restart without another model invocation', { timeout: 15000 }, async () => {
   const { DatabaseSync } = await import('node:sqlite');
   const dir = join(scratch, 'native-terminal-recovery');
-  let h = await harness({ dir, config: { leaseTtlMs: 1000 }, script: [{ name: 'task_settle', args: { outcome: 'success', summary: 'Known terminal result before authority outage', reportTitle: 'Durable native report', reportBody: 'This exact owned result survived the independent authority lock.' } }] });
+  let h = await harness({ dir, config: { leaseTtlMs: 1000 }, script: [{ name: 'task_submit_result', args: { outcome: 'success', summary: 'Known terminal result before authority outage', reportTitle: 'Durable native report', reportBody: 'This exact owned result survived the independent authority lock.' } }] });
   let lock;
   try {
     const { task, run, claim } = seed(h);
@@ -1246,7 +1246,7 @@ test('actual native daily work summary derives turn shares from configured Codex
     h.adapter.script.push(
       { name: 'legacy_sources_read', args: { sourceIds: ['synthetic-source'] } },
       options => { const source = toolValue(options); return { name: 'legacy_report_prepare', args: { commandId: 'native-daily-work-prepare', kind: 'daily_work_summary', input: { sourceReceiptId: source.sourceReceiptId, sourceId: 'synthetic-source', language: 'en', semantic: { turns: refs.map(source_ref => ({ source_ref, status: 'completed' })), groups: [{ group_id: 'fixture-project', title: 'Verified fixture work', importance: 50, turn_refs: refs, accomplishments: ['Verified the Codex fixture outcome', 'Confirmed the Hermes fixture outcome'] }], attention: [] } } } }; },
-      options => { const prepared = toolValue(options); assert.equal(h.ledger.history(task.taskId).reports.length, 0); assert.deepEqual(prepared.report.artifactIds, []); return { name: 'task_settle', args: { outcome: 'success', summary: prepared.summary, reportTitle: prepared.report.title, reportBody: prepared.report.body, reportData: prepared.report.data, reportSchemaId: prepared.report.schemaId } }; },
+      options => { const prepared = toolValue(options); assert.equal(h.ledger.history(task.taskId).reports.length, 0); assert.deepEqual(prepared.report.artifactIds, []); return { name: 'task_submit_result', args: { outcome: 'success', summary: prepared.summary, reportTitle: prepared.report.title, reportBody: prepared.report.body, reportData: prepared.report.data, reportSchemaId: prepared.report.schemaId } }; },
     );
     const claim = h.ledger.claim('native-daily-work-claim', { runId: run.runId, nodeId: 'local', ttlMs: 10000 }).value;
     const result = await h.ctx.taskSystem.native.execute(claim);
@@ -1293,7 +1293,7 @@ test('reviewed completed native tools continue the same session across two resta
     await h.dispose();
     h = await harness({ dir, config, script: [writeA,
       options => { const msg = options.messages.findLast(message => message.role === 'tool'); assert.equal(msg.isError, true); assert.match(JSON.stringify(msg.content), /already completed/); return writeB; },
-      options => { const msg = options.messages.findLast(message => message.role === 'tool'); assert.equal(msg.isError, true); assert.match(JSON.stringify(msg.content), /already completed/); return { name: 'task_settle', args: { outcome: 'success', summary: 'Continued from two persisted writes without repeating either' } }; },
+      options => { const msg = options.messages.findLast(message => message.role === 'tool'); assert.equal(msg.isError, true); assert.match(JSON.stringify(msg.content), /already completed/); return { name: 'task_submit_result', args: { outcome: 'success', summary: 'Continued from two persisted writes without repeating either' } }; },
     ] }); await mountFiles(h);
     while (Date.now() < Date.parse(second.run.retry.notBefore)) await new Promise(resolve => setTimeout(resolve, 5));
     const thirdClaim = h.ledger.claim('continuation-claim-3', { runId: run.runId, nodeId: 'local', ttlMs: 10000 }).value;

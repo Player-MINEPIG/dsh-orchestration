@@ -495,7 +495,7 @@ export type ExecutionResult = Pick<
 > & { retryWitness?: SafeRetryWitness; retryAllowed?: boolean };
 /** Host-owned implementation. Must enforce declared capabilities and await abort quiescence. */
 export interface ExecutionProvider {
-  sendTaskReturn?(message: SessionMessage): Promise<string>;
+  sendTaskReturn?(message: SessionMessage, signal?:AbortSignal): Promise<string>;
   sendSessionMessage?(
     message: SessionMessage,
     record: import("./store.js").DispatchRecord,

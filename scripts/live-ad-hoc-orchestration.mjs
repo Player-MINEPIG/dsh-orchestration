@@ -51,7 +51,7 @@ async function run(ctx,config,signal) {
         return undefined;
       });
     }});
-    handle.agent.followup(createUserMessage({source:{kind:'user'},content:[{type:'text',text:`这是一个新的独立任务，请优先安排合适的执行端完成：计算${config.expression??'37+58'}，用不到100字的中文提交结果报告，报告包含验收标记 ${marker}。只调用 task_settle 提交 outcome=success、summary、reportTitle 和 reportBody，不使用文件、shell、消息或子任务工具。请你自行选择执行端和执行模型；我没有指定它们。`}]}));
+    handle.agent.followup(createUserMessage({source:{kind:'user'},content:[{type:'text',text:`这是一个新的独立任务，请优先安排合适的执行端完成：计算${config.expression??'37+58'}，用不到100字的中文提交结果报告，报告包含验收标记 ${marker}。只调用 task_submit_result 提交 outcome=success、summary、reportTitle 和 reportBody，不使用文件、shell、消息或子任务工具。请你自行选择执行端和执行模型；我没有指定它们。`}]}));
     await handle.agent.whenIdle();await ctx.sessions.flush(handle.agent.session);combined.throwIfAborted();
     const record=ledger.getDecision(requestId),applied=ledger.commandReceipt(`apply-decision:${requestId}`);
     result.planning=record;result.conversationSteps=steps;save();

@@ -4,7 +4,7 @@ import { createNativeHarness } from '../../../tests/dsh/native-harness.mjs'
 
 // Completely scripted provider; no external model, network, keys or profile edits.
 for (const kind of ['ad_hoc', 'scheduled']) test(`native ${kind} session lifetime follows task versus scheduled occurrence`,async()=>{
-  const h=await createNativeHarness({script:[{name:'task_settle',args:{outcome:'success',summary:'first fixture'}},{name:'task_settle',args:{outcome:'success',summary:'second fixture'}}]})
+  const h=await createNativeHarness({script:[{name:'task_submit_result',args:{outcome:'success',summary:'first fixture'}},{name:'task_submit_result',args:{outcome:'success',summary:'second fixture'}}]})
   try {
     const l=h.ledger
     l.registerWorkspace('workspace',{workspaceId:'default',nodeId:'local',path:h.dir,label:'fixture',state:'ready',createdAt:new Date().toISOString()})
@@ -44,7 +44,7 @@ test('native decision wait renews the lease before evaluating and still finishes
   const {DecisionEngine,StructuredModelProvider}=await import('./legacy-model-fixture.mjs')
   const provider=new StructuredModelProvider('ordinary',[{model:'judge',version:'fixture',reasoningEfforts:[]}],{complete:async()=>{await new Promise(resolve=>setTimeout(resolve,1200));return {output:{answers:{session:{type:'choice',choice:'new'},workspace:{type:'choice',choice:'default'}}},modelVersion:'fixture'}}})
   const decisions=new DecisionEngine([provider],{defaultProvider:'ordinary',maxAttempts:1,timeoutMs:3000})
-  const h=await createNativeHarness({config:{leaseTtlMs:1000,executionTimeoutMs:4000,sessionDecisionEnabled:true},script:[{name:'task_settle',args:{outcome:'success',summary:'fixture after delayed decision'}}]})
+  const h=await createNativeHarness({config:{leaseTtlMs:1000,executionTimeoutMs:4000,sessionDecisionEnabled:true},script:[{name:'task_submit_result',args:{outcome:'success',summary:'fixture after delayed decision'}}]})
   h.ctx.provide('decisionModels',decisions)
   try {
     const l=h.ledger;l.registerWorkspace('workspace',{workspaceId:'default',nodeId:'local',path:h.dir,label:'fixture',state:'ready',createdAt:new Date().toISOString()})
@@ -59,8 +59,8 @@ test('native decision wait renews the lease before evaluating and still finishes
 })
 
 for (const recover of [false, true]) test(`report rejection resumes one session with two retry budget; recover=${recover}`,async()=>{
- const rejected={name:'task_settle',args:{outcome:'success',summary:'Original work remains in the session',reportBody:'Unique saved output',reportData:{wrong:true}}};
- const accepted={name:'task_settle',args:{outcome:'success',summary:'Corrected',reportData:{verified:true}}};
+ const rejected={name:'task_submit_result',args:{outcome:'success',summary:'Original work remains in the session',reportBody:'Unique saved output',reportData:{wrong:true}}};
+ const accepted={name:'task_submit_result',args:{outcome:'success',summary:'Corrected',reportData:{verified:true}}};
  const h=await createNativeHarness({script:[rejected,recover?accepted:rejected,rejected]});
  try {
   const l=h.ledger,runtime=h.ctx.taskSystem.projects;
@@ -102,7 +102,7 @@ for (const recover of [false, true]) test(`report rejection resumes one session 
  test('local executor creates registered project workspaces under the selected parent and retains them after changes',async()=>{
   const {mkdirSync}=await import('node:fs'),{join}=await import('node:path');
   const {Workbench}=await import('../dist/workbench.js');
-  const h=await createNativeHarness({config:{projectAgentOptions:{provider:'test-offline',model:'script'}},script:[{name:'task_settle',args:{outcome:'success',summary:'first'}},{name:'task_settle',args:{outcome:'success',summary:'second'}}]});
+  const h=await createNativeHarness({config:{projectAgentOptions:{provider:'test-offline',model:'script'}},script:[{name:'task_submit_result',args:{outcome:'success',summary:'first'}},{name:'task_submit_result',args:{outcome:'success',summary:'second'}}]});
   try {
     const l=h.ledger,runtime=h.ctx.taskSystem.projects,dirs=h.ctx.taskSystem.executionDirectories,wb=new Workbench(l);
     const root=join(h.dir,'executor'),later=join(h.dir,'later');mkdirSync(root);mkdirSync(later);dirs.save({root,expectedRevision:0});

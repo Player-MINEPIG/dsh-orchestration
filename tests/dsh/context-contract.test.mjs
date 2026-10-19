@@ -42,7 +42,7 @@ for (const valid of [true, false]) {
   test(`signed remote claim carries fixed context to real native ${valid ? 'validated success' : 'fail-closed contract validation'}`, { timeout: 20000 }, async () => {
     const h = await createNativeHarness({ config: { role: 'executor', nodeId: 'worker' }, script: [options => {
       assertPrompt(options);
-      return { name: 'task_settle', args: { outcome: 'success', summary: 'Fixed contract execution', reportBody: 'Actual native execution result', reportData: valid ? { pinned: 1 } : { wrongField: true } } };
+      return { name: 'task_submit_result', args: { outcome: 'success', summary: 'Fixed contract execution', reportBody: 'Actual native execution result', reportData: valid ? { pinned: 1 } : { wrongField: true } } };
     }] });
     const ledger = TaskLedger.open(join(h.dir, 'coordinator.sqlite'), { role: 'planner', nodeId: 'planner' });
     const stores = ['server', 'client', 'worker'].map(name => new RecoveryStore(join(h.dir, `${name}.sqlite`)));
@@ -86,7 +86,7 @@ for (const valid of [true, false]) {
 test('local native refresh ignores forged context and uses the fixed intent snapshot', { timeout: 20000 }, async () => {
   const h = await createNativeHarness({ script: [options => {
     assertPrompt(options);
-    return { name: 'task_settle', args: { outcome: 'success', summary: 'Authoritative local context used', reportData: { pinned: 1 } } };
+    return { name: 'task_submit_result', args: { outcome: 'success', summary: 'Authoritative local context used', reportData: { pinned: 1 } } };
   }] });
   try {
     const { run } = configure(h.ledger, 'local', h.dir);

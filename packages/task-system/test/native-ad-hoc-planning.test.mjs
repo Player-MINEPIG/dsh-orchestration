@@ -63,7 +63,7 @@ test('a native user message exposes orchestration tools and applies an executor/
     const task=h.ledger.createTask('owned-task',{title:'Owned workload',policy:{settlementQuietMs:0}}).value
     const run=h.ledger.createRun('owned-run',{taskId:task.taskId,route:{nodeId:'local',provider:'test-offline',model:'script',requiredCapabilities:[]}}).value
     const claim=h.ledger.claim('owned-claim',{runId:run.runId,nodeId:'local',ttlMs:10000}).value
-    h.adapter.script.push({name:'task_nodes',args:{}},{name:'task_settle',args:{outcome:'success',summary:'Done'}})
+    h.adapter.script.push({name:'task_nodes',args:{}},{name:'task_submit_result',args:{outcome:'success',summary:'Done'}})
     assert.equal((await h.ctx.taskSystem.native.execute(claim)).run.state,'succeeded')
     assert.doesNotMatch(JSON.stringify(h.adapter.requests.at(-1).messages.filter(row=>row.role==='system')),/You coordinate work across registered execution nodes/,'owned execution must not inherit the conversation dispatch preference')
     assert.doesNotMatch(JSON.stringify(h.adapter.requests.at(-1).messages),/fast-worker|quality-worker|worker-provider/,'owned task_nodes keeps catalog disclosure scoped to the assigned node')
@@ -79,7 +79,7 @@ test('planner role exposes dispatch tools to its conversation model and hides wo
     await handle.agent.whenIdle()
     const names=h.adapter.requests[0].tools.map(tool=>tool.name)
     for(const name of ['task_nodes','task_plan','task_dispatch','task_query','task_history','task_wait']) assert.ok(names.includes(name),name)
-    for(const name of ['task_settle','task_delegate','task_run','task_children','codex_delegate']) assert.ok(!names.includes(name),name)
+    for(const name of ['task_submit_result','task_delegate','task_run','task_children','codex_delegate']) assert.ok(!names.includes(name),name)
     assert.match(JSON.stringify(h.adapter.requests[0].messages.filter(row=>row.role==='system')),/prefer dispatching to a suitable executor/)
   } finally {await handle?.dispose();await h.dispose()}
 })

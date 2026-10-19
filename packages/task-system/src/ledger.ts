@@ -343,6 +343,7 @@ export class TaskLedger {
       if(origin?.kind!=="session" || origin.nodeId!==input.nodeId || origin.sessionId!==input.sessionId)fail("FORBIDDEN","Only the session that created this draft can coordinate it");
       if(this.dispatcherForSession(input.nodeId,input.sessionId))fail("CONFLICT","This session already coordinates an active task");
       if(this.list<Run>("run",task.taskId).length || !["ready","waiting"].includes(task.state))fail("CONFLICT","Dispatcher registration requires a new unexecuted draft");
+      new Workbench(this).linkDispatcherTask(`pr:${input.projectId}`,task.taskId);
       const run=this.newRun({taskId:input.taskId});
       run.coordinatorSession={nodeId:input.nodeId,sessionId:input.sessionId};run.state="running";
       run.dispatchOrigin={kind:"system",nodeId:input.nodeId};
@@ -796,6 +797,13 @@ export class TaskLedger {
     };
     this.put("sessionMessage",eventId,message,run.taskId,message.state);
   }
+  originPendingRuns(nodeId:string,sessionId:string) {
+    return this.list<Run>("run").filter(run=>run.dispatchOrigin?.kind==="session" && run.dispatchOrigin.nodeId===nodeId && run.dispatchOrigin.sessionId===sessionId).flatMap(run=>{
+      const messages=this.sessionMessages(run.taskId).filter(message=>message.completion?.runId===run.runId);
+      const pending=!TERMINAL.has(run.state) || messages.some(message=>message.state!=="completed");
+      return pending ? [{taskId:run.taskId,runId:run.runId,state:run.state,...(messages.at(-1)?{deliveryState:messages.at(-1)!.state}:{})}] : [];
+    });
+  }
   recordTaskReturnFailure(messageId: string, code: string) {
     const message=this.getSessionMessage(messageId);
     if(!message.completion || message.state!=="queued")return;
@@ -810,6 +818,7 @@ export class TaskLedger {
     return this.command(commandId,"retryTaskReturn",{messageId},()=>{
       const message=this.getSessionMessage(messageId);
       if(!message.completion)fail("INVALID","Not a task result return");
+      if(message.state==="completed")return message;
       message.state="queued";delete message.reply;delete message.nextAttemptAt;message.updatedAt=this.now();
       this.put("sessionMessage",messageId,message,message.taskId,message.state);
       return message;
@@ -2165,6 +2174,9 @@ export class TaskLedger {
   ): Run {
     input = structuredClone(input);
     const task = this.getTask(input.taskId);
+    const caller=this.dispatchOrigins.getStore();
+    const coordinator=caller?.kind==="session" ? this.dispatcherForSession(caller.nodeId,caller.sessionId) : undefined;
+    if(coordinator && (task.taskId===coordinator.taskId || !this.descendants(coordinator.taskId).some(child=>child.taskId===task.taskId)))fail("FORBIDDEN","Coordinator may dispatch only its descendant tasks");
     const projectId = this.projectForTask(task.taskId);
     const projectWorkspace = projectId ? this.projectWorkspaceConstraint(projectId) : undefined;
     if (projectWorkspace && ((input.route?.workspaceId && input.route.workspaceId !== projectWorkspace) || (task.workspaceId && task.workspaceId !== projectWorkspace)))
@@ -3767,7 +3779,7 @@ export class TaskLedger {
     } | null;
     if (config?.workflow && ["success", "partial"].includes(input.outcome) &&
       (!input.report || input.report.data === undefined))
-      fail("RESULT_VALIDATION", "Workflow step requires structured report.data for success or partial; submit reportData through task_settle.");
+      fail("RESULT_VALIDATION", "Workflow step requires structured report.data for success or partial; submit reportData through task_submit_result.");
     let template: Template | undefined;
     if (config?.templateRef) {
       template =

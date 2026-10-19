@@ -173,8 +173,8 @@ export function seed({db, templateJson, node, provider, model, workspace, reason
     workbench.manage(cmd('project-workspace'), 'link_project_workspace', {projectId: planned.projectId, workspaceId: workspace, isDefault: true});
     const note = ledger.appendReport(cmd('note'), {reportId: `${prefix}:note`, taskId: planned.taskId, kind: 'note',
       title: '隔离互联验收要求', body: [
-        '这是原 VPS 二游日常任务的独立数据库验收。保持原 producer 定义和 manual_json_fallback=false；不得编造脚本、日志、报告或成功。实际缺失或权限不足时，通过原生 task_settle 如实提交失败及已有证据；不要改变计划或发送通知。',
-        '如果原生 Agent 已实际运行并观察到缺失，请在 task_settle 的 reportTitle/reportBody 中仅记录真实失败及已有证据；不要填写或伪造 game_daily_report.v1 游戏结果 data。根本未启动模型时保留宿主的系统事件，不补造 Agent 报告。',
+        '这是原 VPS 二游日常任务的独立数据库验收。保持原 producer 定义和 manual_json_fallback=false；不得编造脚本、日志、报告或成功。实际缺失或权限不足时，通过原生 task_submit_result 如实提交失败及已有证据；不要改变计划或发送通知。',
+        '如果原生 Agent 已实际运行并观察到缺失，请在 task_submit_result 的 reportTitle/reportBody 中仅记录真实失败及已有证据；不要填写或伪造 game_daily_report.v1 游戏结果 data。根本未启动模型时保留宿主的系统事件，不补造 Agent 报告。',
         'Template.defaults 保留原软件配置，不是本次 Run.input；执行 route 只使用本次显式授权的真实 MBP 节点/模型/workspace。不要用原设备/原模型声明覆盖它。',
         ...(template.defaults.report_producer ? [`原 producer 定义：${JSON.stringify(template.defaults.report_producer)}；PC_AU_HERMES_HOME 未在本次导出中解析，不得猜成 MBP 路径；未指定业务日期时不得编造 --date。`] : []),
         ...(template.defaults.sourceExecutionRoute ? [`历史软件路由（不是本次执行授权）：${JSON.stringify(template.defaults.sourceExecutionRoute)}`] : []),

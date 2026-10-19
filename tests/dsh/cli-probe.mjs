@@ -52,7 +52,7 @@ export async function apply(ctx) {
         const prepared = JSON.parse(response.content.filter(block => block.type === 'text').map(block => block.text).join('\n'));
         assert.equal(ledger.getRun(run.runId).state, 'running');
         assert.equal(ledger.history(task.taskId).reports.length, 0);
-        return { name: 'task_settle', args: { outcome: 'success', summary: prepared.summary, reportTitle: prepared.report.title, reportBody: prepared.report.body, reportData: prepared.report.data, reportSchemaId: prepared.report.schemaId, reportArtifactIds: prepared.report.artifactIds } };
+        return { name: 'task_submit_result', args: { outcome: 'success', summary: prepared.summary, reportTitle: prepared.report.title, reportBody: prepared.report.body, reportData: prepared.report.data, reportSchemaId: prepared.report.schemaId, reportArtifactIds: prepared.report.artifactIds } };
       },
     ]);
     ctx.llm.registerAdapter(['cli-offline'], adapter);
@@ -82,7 +82,7 @@ export async function apply(ctx) {
         const response = options.messages.findLast(message => message.role === 'tool');
         assert.equal(response?.isError, false, JSON.stringify(response?.content));
         const result = JSON.parse(response.content.filter(block => block.type === 'text').map(block => block.text).join('\n'));
-        return { name: 'task_settle', args: { outcome: result.outcome, summary: result.summary, reportTitle: result.report.title, reportBody: result.report.body, reportData: result.report.data, reportSchemaId: result.report.schemaId } };
+        return { name: 'task_submit_result', args: { outcome: result.outcome, summary: result.summary, reportTitle: result.report.title, reportBody: result.report.body, reportData: result.report.data, reportSchemaId: result.report.schemaId } };
       },
     ]);
     ctx.llm.registerAdapter(['cli-activity'], activityAdapter);

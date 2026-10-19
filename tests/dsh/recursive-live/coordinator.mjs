@@ -109,22 +109,22 @@ const seeds = [
   [
     "ordinary",
     "普通 MBP DSH 实际产物",
-    "Write ordinary-analysis.txt in the assigned workspace with three concrete acceptance criteria for recursive task delegation (identity, permissions, quiescence). Then task_settle success with a report containing those criteria.",
+    "Write ordinary-analysis.txt in the assigned workspace with three concrete acceptance criteria for recursive task delegation (identity, permissions, quiescence). Then task_submit_result success with a report containing those criteria.",
   ],
   [
     "independent",
     "独立 Codex 分析交付",
-    `Use task_dispatch exactly once, with title "独立 Codex 风险分析", description "Return a markdown review with three concrete lease/fence risks and mitigations; no tools needed", route ${JSON.stringify(codex)}, display {"requested":"task","complexity":"independent"}. Then task_settle partial with report summarizing that execution is dispatched and final user acceptance is pending. Do not pretend child has completed.`,
+    `Use task_dispatch exactly once, with title "独立 Codex 风险分析", description "Return a markdown review with three concrete lease/fence risks and mitigations; no tools needed", route ${JSON.stringify(codex)}, display {"requested":"task","complexity":"independent"}. Then task_submit_result partial with report summarizing that execution is dispatched and final user acceptance is pending. Do not pretend child has completed.`,
   ],
   [
     "step",
     "Codex 小步骤",
-    `Use task_dispatch exactly once, title "小步骤：核查验收边界", description "Return a three-row table distinguishing execution completion, director acceptance and user acceptance; no tools needed", route ${JSON.stringify(codex)}, display {"requested":"step","complexity":"small"}. Then task_settle partial with a report explaining delegated pending review. Do not create extra tasks.`,
+    `Use task_dispatch exactly once, title "小步骤：核查验收边界", description "Return a three-row table distinguishing execution completion, director acceptance and user acceptance; no tools needed", route ${JSON.stringify(codex)}, display {"requested":"step","complexity":"small"}. Then task_submit_result partial with a report explaining delegated pending review. Do not create extra tasks.`,
   ],
   [
     "recursive",
     "DSH → DSH → Codex 下一级",
-    `Use task_dispatch exactly once to create a DSH child with title "下一级 DSH 协调", route ${JSON.stringify(route)}, display {"requested":"task"}, description: 'Use task_dispatch exactly once with title 下一级Codex验证, description Return a concise Chinese checklist for safe result recovery, route ${JSON.stringify(codex)}, display {"requested":"step"}. Then task_settle partial with an honest summary of delegated pending review.' Then task_settle partial with a report.`,
+    `Use task_dispatch exactly once to create a DSH child with title "下一级 DSH 协调", route ${JSON.stringify(route)}, display {"requested":"task"}, description: 'Use task_dispatch exactly once with title 下一级Codex验证, description Return a concise Chinese checklist for safe result recovery, route ${JSON.stringify(codex)}, display {"requested":"step"}. Then task_submit_result partial with an honest summary of delegated pending review.' Then task_submit_result partial with a report.`,
   ],
   [
     "cancel",

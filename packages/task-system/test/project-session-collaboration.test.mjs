@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { TaskLedger, TaskError } from '../dist/ledger.js';
 import { SessionCollaboration, collaborationAuthority } from '../dist/project-collaboration/session.js';
-const agent = (id='session-one', cwd='/tmp/collaboration') => ({id, session:{header:{cwd}}});
+const agent = (id='session-one', cwd='/tmp/collaboration') => ({id, session:{header:{cwd},requestHeader:()=>undefined},options:{provider:"fixture",model:"fixture"},ctx:{get:()=>undefined,tools:{schemas:()=>[]}}});
 test('binding persists in same SQLite, only acknowledged activation injects bundled skill; leave and cwd/owned guards', async () => {
  const dir=mkdtempSync(join(tmpdir(),'session-binding-')), file=join(dir,'ledger.sqlite');
  let ledger=TaskLedger.open(file), calls=[];

@@ -32,7 +32,7 @@ async function run(ctx, config, signal) {
     require(decision.proposal.executor?.id === 'mbp-executor' && decision.proposal.modelRoute?.provider === 'deepseek-official' && decision.proposal.modelRoute?.model === 'deepseek-flash', 'PLANNING_BAD_ROUTE');
     result.checks.push('real VPS TaskPlanner decision answered and accepted under operator policy');
     result.stage='createTask';save();
-    const task = ledger.createTask('live-20261006-create', {taskId:'live-20261006-report', title:'双端真实报告与会话连续性验收', description:'Follow this run configuration. Produce a concise report. Use only task_settle with outcome success, summary, reportTitle, reportBody. No filesystem, shell, delegation or messaging. For a follow-up run reuse previous Task conversation facts.', workspaceId:'acceptance', policy:{allowedNodeIds:['mbp-executor'],allowedWorkspaceIds:['acceptance'],allowedTools:[],maxRuntimeMs:45000,maxSafeRetries:0,settlementQuietMs:0,maxChildren:0,maxDescendants:0}}).value;
+    const task = ledger.createTask('live-20261006-create', {taskId:'live-20261006-report', title:'双端真实报告与会话连续性验收', description:'Follow this run configuration. Produce a concise report. Use only task_submit_result with outcome success, summary, reportTitle, reportBody. No filesystem, shell, delegation or messaging. For a follow-up run reuse previous Task conversation facts.', workspaceId:'acceptance', policy:{allowedNodeIds:['mbp-executor'],allowedWorkspaceIds:['acceptance'],allowedTools:[],maxRuntimeMs:45000,maxSafeRetries:0,settlementQuietMs:0,maxChildren:0,maxDescendants:0}}).value;
     result.taskId = task.taskId;
     const route = {nodeId:'mbp-executor',provider:'deepseek-official',model:'deepseek-flash',reasoningEffort:'off',requiredCapabilities:['acceptance'],workspaceId:'acceptance'};
     const wait = async runId => {
@@ -47,8 +47,8 @@ async function run(ctx, config, signal) {
     };
     for (const phase of [1,2]) {
       const configuration = phase === 1
-        ? {phase, instructions:'Write a report under 180 Chinese characters. Explain that task completion, report validity, and receipt ACK are distinct. Compute 19+23. Store the exact private conversation marker ORCH-20261006-CEDAR-42 in reportBody for a later follow-up. Call task_settle with outcome success and the report. Do not call other tools.'}
-        : {phase, instructions:'From the prior run in this same Task conversation, recall the exact marker and arithmetic result. Do not use task history tools. Include both in a report under 100 Chinese characters, then call task_settle with outcome success. The marker is intentionally not repeated in this run configuration.'};
+        ? {phase, instructions:'Write a report under 180 Chinese characters. Explain that task completion, report validity, and receipt ACK are distinct. Compute 19+23. Store the exact private conversation marker ORCH-20261006-CEDAR-42 in reportBody for a later follow-up. Call task_submit_result with outcome success and the report. Do not call other tools.'}
+        : {phase, instructions:'From the prior run in this same Task conversation, recall the exact marker and arithmetic result. Do not use task history tools. Include both in a report under 100 Chinese characters, then call task_submit_result with outcome success. The marker is intentionally not repeated in this run configuration.'};
       result.stage=`createRun-${phase}`;save();
       const queued = ledger.createRun(`live-20261006-run-${phase}`,{runId:`live-20261006-run-${phase}`,taskId:task.taskId,route,configuration:{input:configuration,reporting:'summary'}}).value;
       result.runs.push({phase,runId:queued.runId,state:queued.state});save();

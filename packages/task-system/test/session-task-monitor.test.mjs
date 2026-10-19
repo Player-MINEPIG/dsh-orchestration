@@ -27,6 +27,7 @@ test('dispatch receipts include plan apply, project, direct runs and delegation;
   assert.deepEqual(dispatchedTaskIds([
     ...receipt('task_plan', {value:{task:{taskId:'proposed'}}}, {action:'propose'}),
     ...receipt('task_plan', {value:{task:{taskId:'planned'}}}, {action:'apply'}),
+    ...receipt('task_dispatch',{value:{taskId:'new-dispatch'}}),
     ...receipt('task_query', {taskId:'unrelated'}),
     ...receipt('project_dispatch', {taskId:'project'}),
     ...receipt('project_dispatch', {taskId:'project'}, {}, false, 'replay'),
@@ -35,7 +36,7 @@ test('dispatch receipts include plan apply, project, direct runs and delegation;
     ...receipt('task_delegate', {taskId:'failed'}, {}, true),
     ...receipt('task_delegate', {taskId:'local-codex-example',localOnly:true}),
     {type:'tool/result',data:{message:{toolCallId:'unknown',content:[{type:'text',text:'{"taskId":"injected"}'}]}}},
-  ]), ['planned','project','run','child']);
+  ]), ['planned','new-dispatch','project','run','child']);
 });
 
 test('index skips fork-inherited history, invalidates on changes, caches only IDs and always closes read handles', async () => {
@@ -55,7 +56,7 @@ test('index skips fork-inherited history, invalidates on changes, caches only ID
 
 test('durable operations isolate sessions even when they share a project, retain pending ACKs and survive paused mode', async () => {
   const ledger=TaskLedger.open(':memory:');
-  const agent=id=>({id,session:{header:{cwd:process.cwd()}}});
+  const agent=id=>({id,session:{header:{cwd:process.cwd()},requestHeader:()=>undefined},options:{provider:"fixture",model:"fixture"},ctx:{get:()=>undefined,tools:{schemas:()=>[]}}});
   const service=new SessionCollaboration(ledger,'local',async (_node,_id,input)=>{
     if(input.action==='activate')return {confirmed:true,projectId:'shared'};
     if(input.title==='pending')throw Error('offline');

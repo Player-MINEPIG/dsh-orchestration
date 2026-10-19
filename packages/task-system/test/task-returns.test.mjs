@@ -11,6 +11,8 @@ function fixture(t) {
  const dir=mkdtempSync(join(tmpdir(),'task-returns-')), file=join(dir,'ledger.sqlite');
  let l=TaskLedger.open(file,{role:'both',nodeId:'central'});
  l.registerNode('node',{nodeId:'worker',roles:['executor'],enabled:true,capabilities:[],models:[{provider:'offline',model:'script'}],workspaceIds:['ws'],maxConcurrent:4});
+ const request=l.executionModels.request('catalog',{nodeId:'worker'}).catalog.request;
+ l.completeExecutionModels('catalog-result',{nodeId:'worker',requestId:request.requestId,generation:request.generation,result:{state:'success',complete:true,observedAt:Date.now(),models:[{provider:'offline',model:'script'}]}});
  l.registerWorkspace('workspace',{workspaceId:'ws',nodeId:'worker',path:dir,state:'ready'});
  t.after(()=>{l.close();rmSync(dir,{recursive:true,force:true});});
  return {get l(){return l;},reopen(){l.close();l=TaskLedger.open(file,{role:'both',nodeId:'central'});}};

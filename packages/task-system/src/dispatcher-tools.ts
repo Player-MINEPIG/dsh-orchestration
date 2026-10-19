@@ -2,7 +2,6 @@ import type { Context } from "@deepseek-ai/cordis";
 import type { Agent } from "@deepseek-ai/dsh-agent";
 import { defineTool } from "@deepseek-ai/dsh-tools";
 import { realpathSync } from "node:fs";
-import { Workbench } from "./workbench.js";
 import { TaskError } from "./ledger.js";
 import type { TaskSystemService } from "./dsh-plugin.js";
 import type { Json } from "./contracts.js";
@@ -18,7 +17,7 @@ export function mountDispatcherTools(ctx:Context,service:TaskSystemService) {
    const cwd=agent.session.header.cwd;if(!cwd)throw new TaskError("FORBIDDEN","Current session has no workspace");
    return {nodeId:service.config.nodeId,sessionId:String(agent.id),cwd:realpathSync(cwd)};
  };
- const projects=()=>db.prepare("SELECT id,title,goal,cwd,state FROM pr_projects WHERE state='ready'").all();
+ const projects=()=>db.prepare("SELECT 1 FROM sqlite_master WHERE name='pr_projects'").get() ? db.prepare("SELECT id,title,goal,cwd,state FROM pr_projects WHERE state='ready'").all() : [];
  ctx.tools.register(defineTool({name:"project_list",description:"List existing managed projects that a coordinator can select. Creating a project remains a separate action in the project page.",parameters:{},output,execute:async(_args,exec)=>{
    identity(exec.agent);return json(projects());
  }}));
@@ -41,7 +40,6 @@ export function mountDispatcherTools(ctx:Context,service:TaskSystemService) {
    if(!project || project.cwd!==who.cwd)throw new TaskError("FORBIDDEN","Select this session's project using project_bind_session first");
    const task=ledger.getTask(args.taskId),origin=task.dispatchOrigin;
    if(origin?.kind!=="session" || origin.sessionId!==who.sessionId || origin.nodeId!==who.nodeId)throw new TaskError("FORBIDDEN","Only the creator can coordinate this draft");
-   new Workbench(ledger).manage(`dispatcher-link:${args.commandId}`,"link_backlog_task",{backlogId:`pr:${String(project.project)}`,taskId:task.taskId});
    return json(ledger.bindDispatcher(args.commandId,{...who,taskId:task.taskId,projectId:String(project.project)}));
  }}));
  ctx.tools.register(defineTool({name:"task_retry_return",description:"Retry delivery of an existing task result to its original session. This never starts or repeats task execution.",parameters:{commandId:{type:"string",required:true},messageId:{type:"string",required:true}},output,execute:async(args,exec)=>{

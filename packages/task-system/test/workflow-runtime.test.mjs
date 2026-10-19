@@ -562,7 +562,7 @@ test("workflow Agent route keeps native execution and structured input", async (
     script: [
       { name: "workflow_input_read", args: { path: ["collection"] } },
       {
-        name: "task_settle",
+        name: "task_submit_result",
         args: {
           outcome: "success",
           summary: "Semantic result",
@@ -618,9 +618,9 @@ test("workflow Agent route keeps native execution and structured input", async (
             provider: "test-offline",
             model: "script",
             instructions:
-              "Summarize input and submit structured reportData via task_settle.",
+              "Summarize input and submit structured reportData via task_submit_result.",
             inputExposure: "tools",
-            allowedTools: ["task_settle", "workflow_input_read"],
+            allowedTools: ["task_submit_result", "workflow_input_read"],
           },
           maxRetries: 0,
         },
@@ -846,7 +846,7 @@ test("Agent failure retries are bounded while unknown outcomes never retry", asy
         provider: "test",
         model: "model",
         instructions: "Summarize",
-        allowedTools: ["task_settle"],
+        allowedTools: ["task_submit_result"],
       },
       maxRetries: 2,
     };
@@ -892,11 +892,11 @@ test("native Agent retry reuses its task session and receives only the failure d
   const h = await createNativeHarness({
     script: [
       {
-        name: "task_settle",
+        name: "task_submit_result",
         args: { outcome: "success", summary: "Forgot structured output" },
       },
       {
-        name: "task_settle",
+        name: "task_submit_result",
         args: {
           outcome: "success",
           summary: "Corrected",
@@ -952,7 +952,7 @@ test("native Agent retry reuses its task session and receives only the failure d
             provider: "test-offline",
             model: "script",
             instructions: "Submit the task result.",
-            allowedTools: ["task_settle"],
+            allowedTools: ["task_submit_result"],
           },
           maxRetries: 1,
         },
@@ -991,7 +991,7 @@ test("native Agent retry reuses its task session and receives only the failure d
     assert.deepEqual(claim.run.configuration.workflow.retry, {
       previousRunId: first.runId,
       reason:
-        "Workflow step requires structured report.data for success or partial; submit reportData through task_settle.",
+        "Workflow step requires structured report.data for success or partial; submit reportData through task_submit_result.",
     });
     await service.native.execute(claim);
     service.workflows.tick();
@@ -1333,7 +1333,7 @@ test('workflow maintenance preserves whole-Task cancellation while single-Run ca
 test('restricted existing Task scope rejects configuration and adoption before changing schedules or history',async()=>{
   const f=fixture();try{
     f.register('mbp','collect',()=>({summary:'Collected',data:{}}));
-    const digest={...programStep('digest','vps','unused',['collect']),execution:{kind:'agent',provider:'test',model:'model',instructions:'Digest',allowedTools:['task_settle','digest_read'],inputExposure:'tools'}};
+    const digest={...programStep('digest','vps','unused',['collect']),execution:{kind:'agent',provider:'test',model:'model',instructions:'Digest',allowedTools:['task_submit_result','digest_read'],inputExposure:'tools'}};
     const saved=save(f,definition([programStep('collect','mbp','collect'),digest]));
     const task=f.ledger.createTask(id(),{taskId:'restricted-daily',title:'Existing daily',kind:'scheduled',requiresConfirmation:false,policy:{allowedNodeIds:['mbp'],allowedWorkspaceIds:['mbp-ws'],allowedTools:['old-source-read'],allowedBackends:[]}}).value;
     const wb=new Workbench(f.ledger);wb.manage(id(),'create_backlog',{backlogId:'restricted-backlog',projectId:'project',title:'Existing work',goal:'Daily'});wb.manage(id(),'link_backlog_task',{backlogId:'restricted-backlog',taskId:task.taskId});
@@ -1345,7 +1345,7 @@ test('restricted existing Task scope rejects configuration and adoption before c
     const db=f.ledger.managementDatabase(),history=structuredClone(f.ledger.history(task.taskId)),schedule=structuredClone(f.ledger.getSchedule(task.taskId));
     const definitionRow=()=>db.prepare('SELECT data,next_due FROM workflow_definitions WHERE id=?').get('daily');
     const initial=definitionRow();
-    const checkScope=error=>error.code==='WORKFLOW_SCOPE'&&/allowedNodeIds: vps/.test(error.message)&&/allowedWorkspaceIds: vps-ws/.test(error.message)&&/allowedTools: digest_read, task_settle, workflow_input_read/.test(error.message);
+    const checkScope=error=>error.code==='WORKFLOW_SCOPE'&&/allowedNodeIds: vps/.test(error.message)&&/allowedWorkspaceIds: vps-ws/.test(error.message)&&/allowedTools: digest_read, task_submit_result, workflow_input_read/.test(error.message);
     assert.throws(()=>f.runtime.configureTask({commandId:'restricted-configure',projectId:'project',taskId:task.taskId,workflowId:'daily',input:{}}),checkScope);
     assert.deepEqual(definitionRow(),initial);assert.deepEqual(f.ledger.getSchedule(task.taskId),schedule);assert.deepEqual(f.ledger.history(task.taskId),history);assert.equal(f.runtime.snapshot().taskBindings.length,0);
     const legacy={...saved,schedule:{enabled:true,cron:'0 7 * * *',timeZone:'Asia/Shanghai',dayOffset:-1}};delete legacy.projectId;
@@ -1354,7 +1354,7 @@ test('restricted existing Task scope rejects configuration and adoption before c
     assert.throws(()=>f.runtime.adopt(adoption),checkScope);
     assert.deepEqual(definitionRow(),beforeAdoption);assert.deepEqual(f.ledger.getSchedule(task.taskId),schedule);assert.deepEqual(f.ledger.history(task.taskId),history);assert.equal(f.runtime.snapshot().taskBindings.length,0);
     assert.equal(f.ledger.commandReceipt('restricted-adopt'),undefined);assert.equal(db.prepare('SELECT count(*) AS count FROM workflow_adoptions').get().count,0);
-    const priorPolicy=f.ledger.getTask(task.taskId).policy,nextPolicy={...priorPolicy,allowedNodeIds:['mbp','vps'],allowedWorkspaceIds:['mbp-ws','vps-ws'],allowedTools:['digest_read','task_settle','workflow_input_read'],allowedBackends:[]};
+    const priorPolicy=f.ledger.getTask(task.taskId).policy,nextPolicy={...priorPolicy,allowedNodeIds:['mbp','vps'],allowedWorkspaceIds:['mbp-ws','vps-ws'],allowedTools:['digest_read','task_submit_result','workflow_input_read'],allowedBackends:[]};
     f.ledger.managementCommand('explicit-minimal-workflow-grant','authorized-scope',{taskId:task.taskId,priorPolicy,nextPolicy},()=>{
       const stored=JSON.parse(db.prepare("SELECT data FROM entities WHERE kind='task' AND id=?").get(task.taskId).data);
       stored.policy=nextPolicy;db.prepare("UPDATE entities SET data=? WHERE kind='task' AND id=?").run(JSON.stringify(stored),task.taskId);
@@ -1376,7 +1376,7 @@ test('root admission rechecks scopes introduced by later workflow edits without 
     const wb=new Workbench(f.ledger);wb.manage(id(),'create_backlog',{backlogId:'scope-backlog',projectId:'project',title:'Scope',goal:'Test'});wb.manage(id(),'link_backlog_task',{backlogId:'scope-backlog',taskId:task.taskId});
     f.runtime.configureTask({commandId:id(),projectId:'project',taskId:task.taskId,workflowId:'daily',input:{}});
     const first=f.runtime.start({commandId:id(),taskId:task.taskId});f.runtime.tick();await f.worker('mbp').pollOnce();f.runtime.tick();
-    const digest={...programStep('digest','vps','unused',['collect']),stageId:'vps-digest',position:{x:0,y:0},execution:{kind:'agent',provider:'test',model:'model',instructions:'Digest',allowedTools:['task_settle'],inputExposure:'tools'}};
+    const digest={...programStep('digest','vps','unused',['collect']),stageId:'vps-digest',position:{x:0,y:0},execution:{kind:'agent',provider:'test',model:'model',instructions:'Digest',allowedTools:['task_submit_result'],inputExposure:'tools'}};
     f.runtime.save({commandId:id(),expectedRevision:1,definition:{...saved,stages:[...saved.stages,{stageId:'vps-digest',title:'VPS',nodeId:'vps',position:{x:400,y:0}}],calls:[{fromStepId:'collect',toStepId:'digest'}],steps:[...saved.steps,digest]}});
     assert.throws(()=>f.runtime.start({commandId:'scope-edited-start',taskId:task.taskId}),error=>error.code==='WORKFLOW_SCOPE'&&/workflow_input_read/.test(error.message)&&/allowedNodeIds: vps/.test(error.message));
     assert.equal(f.ledger.history(task.taskId).runs.length,1);assert.equal(f.runtime.snapshot().runs.length,1);assert.equal(f.ledger.commandReceipt('scope-edited-start'),undefined);

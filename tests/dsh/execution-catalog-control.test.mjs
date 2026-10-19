@@ -294,7 +294,7 @@ test(
             "local executor ledger has no scheduler policy",
           );
           return {
-            name: "task_settle",
+            name: "task_submit_result",
             args: {
               outcome: "success",
               summary:

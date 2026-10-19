@@ -255,14 +255,14 @@ test(
       await tools.write({file_path:"ptc.txt",content:"real PTC file"});
       const read = await tools.read({file_path:"ptc.txt"});
       if (!JSON.stringify(read).includes("real PTC file")) throw new Error("read verification failed");
-      await tools.task_settle({outcome:"success",summary:"PTC wrote and read the file"});
+      await tools.task_submit_result({outcome:"success",summary:"PTC wrote and read the file"});
     `);
       assert.equal(readFileSync(join(dir, "ptc.txt"), "utf8"), "real PTC file");
       await execute(
         `
       if ("write" in tools || "bash" in tools) throw new Error("task policy widened");
       await tools.read({file_path:"ptc.txt"});
-      await tools.task_settle({outcome:"success",summary:"Task policy retained"});
+      await tools.task_submit_result({outcome:"success",summary:"Task policy retained"});
     `,
         { allowedTools: ["read"] },
       );
@@ -277,7 +277,7 @@ test(
       catch (error) { denied = true; }
       if (!denied) throw new Error("host guard bypassed");
       await tools.read({file_path:"ptc.txt"});
-      await tools.task_settle({outcome:"success",summary:"Host guard retained"});
+      await tools.task_submit_result({outcome:"success",summary:"Host guard retained"});
     `);
       removeGuard();
       assert.equal(existsSync(join(dir, "denied.txt")), false);
@@ -285,7 +285,7 @@ test(
       await execute(`
       if ("write" in tools || "bash" in tools) throw new Error("host executionTools widened");
       await tools.read({file_path:"ptc.txt"});
-      await tools.task_settle({outcome:"success",summary:"Host tool list retained"});
+      await tools.task_submit_result({outcome:"success",summary:"Host tool list retained"});
     `);
       h.ctx.taskSystem.config.executionTools = null;
       const planner = TaskLedger.open(join(dir, "planner.sqlite"), {
@@ -402,7 +402,7 @@ test(
           name: "run_code",
           args: {
             description: "Settle the authenticated isolated task",
-            code: 'await tools.task_settle({outcome:"success",summary:"Authenticated paired executor ran real PTC"});',
+            code: 'await tools.task_submit_result({outcome:"success",summary:"Authenticated paired executor ran real PTC"});',
           },
         });
         worker = new ExecutorWorker({

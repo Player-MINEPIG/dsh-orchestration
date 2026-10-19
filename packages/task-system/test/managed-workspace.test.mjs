@@ -6,7 +6,7 @@ import {join} from 'node:path';
 import {createNativeHarness} from '../../../tests/dsh/native-harness.mjs';
 import {chooseExecutionSession} from '../dist/execution-session.js';
 import {acquireWorkspaceExecution} from '../dist/workspace-execution-lock.js';
-const settle={name:'task_settle',args:{outcome:'success',summary:'fixture completed'}};
+const settle={name:'task_submit_result',args:{outcome:'success',summary:'fixture completed'}};
 test('saved planning/execution roots support real native execution and JEV session choices with no default workspace',async()=>{
  const h=await createNativeHarness({config:{defaultWorkspaceId:undefined,sessionDecisionEnabled:true,projectAgentOptions:{provider:'test-offline',model:'script'}},script:[settle,settle,settle]});let asked=0;
  h.ctx.provide('decisionModels',{ask:async()=>{asked++;return{provider:'fixture',model:'fixture',answers:{session:{type:'choice',choice:'reuse-0'}}}}});

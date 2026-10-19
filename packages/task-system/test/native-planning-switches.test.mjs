@@ -15,7 +15,7 @@ for (const planningDecisionEnabled of [false,true]) for(const sessionDecisionEna
     return {output:{answers},modelVersion:'fixture'}
   }})
   const decisions=new DecisionEngine([decisionProvider],{defaultProvider:'ordinary',maxAttempts:1})
-  const h=await createNativeHarness({config:{planningDecisionEnabled,sessionDecisionEnabled},script:[{name:'task_settle',args:{outcome:'success',summary:'Fixture-only independent decisions'}}]})
+  const h=await createNativeHarness({config:{planningDecisionEnabled,sessionDecisionEnabled},script:[{name:'task_submit_result',args:{outcome:'success',summary:'Fixture-only independent decisions'}}]})
   h.ctx.provide('decisionModels',decisions)
   try {
     const l=h.ledger

@@ -5,7 +5,7 @@ const h = await createNativeHarness({
   config: {
     localNode: { models: [{ provider: 'test-offline', model: 'script', reasoningEfforts: [] }], capabilities: [], workspaceIds: [], enabled: true },
   },
-  script: [{ name: 'task_settle', args: { outcome: 'success', summary: 'Offline DSH native demonstration complete', reportTitle: 'Demonstration', reportBody: 'An actual DSH AgentLoop submitted this result through the scoped task tool.' } }],
+  script: [{ name: 'task_submit_result', args: { outcome: 'success', summary: 'Offline DSH native demonstration complete', reportTitle: 'Demonstration', reportBody: 'An actual DSH AgentLoop submitted this result through the scoped task tool.' } }],
 });
 try {
   const task = h.ledger.createTask('demo-task', { title: 'Native DSH task demonstration' }).value;

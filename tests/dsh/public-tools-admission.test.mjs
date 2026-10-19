@@ -2,19 +2,21 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {join} from 'node:path';
 import {ToolCallId} from '@deepseek-ai/dsh-llm';
+import {SessionId} from '@deepseek-ai/dsh-session';
 import {createNativeHarness} from './native-harness.mjs';
 let serial=0;
 function call(h,name,args,agent){return h.ctx.tools.execute({callId:ToolCallId(`public-admission-${serial++}`),name,arguments:args,signal:new AbortController().signal,...(agent?{agent}:{})});}
 function body(result){assert.equal(result.isError,false,JSON.stringify(result.error));return JSON.parse(result.content.filter(b=>b.type==='text').map(b=>b.text).join('\n'));}
 function catalog(l,nodeId,models){const pending=l.executionModels.request('request-'+serial++,{nodeId}).catalog.request;l.completeExecutionModels('complete-'+serial++,{nodeId,requestId:pending.requestId,generation:pending.generation,result:{state:'success',observedAt:Date.now(),complete:true,models}});return l.executionModels.view(nodeId);}
 test('external public task_dispatch applies a reviewed proposal and creates claimable temporary context without planner conversation metadata and real native session uses temporary-tasks',async()=>{
- const h=await createNativeHarness({script:[{name:'task_settle',args:{outcome:'success',summary:'external tool task complete'}}]});
+ const h=await createNativeHarness({script:[{name:'task_submit_result',args:{outcome:'success',summary:'external tool task complete'}}]});
  try{
   h.ctx.taskSystem.executionDirectories.save({root:h.dir,expectedRevision:0});
   const l=h.ledger;l.registerNode('register',{nodeId:'local',roles:['both'],capabilities:[],models:[{provider:'test-offline',model:'script',reasoningEfforts:[]}],workspaceIds:[],enabled:true});
   catalog(l,'local',[{provider:'test-offline',model:'script'}]);
   // Mimic the external console's authorized session: no ProjectRuntime task/project relation.
-  const agent={id:'dmc-external-tool-session'};
+  const parent=await h.ctx.agents.create({sessionId:SessionId('dmc-external-tool-session'),meta:{cwd:h.dir},agentOptions:{provider:'test-offline',model:'script'}});
+  const agent=parent.agent;
   assert.equal(h.ctx.taskSystem.projects.taskForSession(agent.id),undefined);
   const proposed=body(await call(h,'task_plan',{requestId:'external-task',title:'Inspect issue',description:'Perform the approved isolated issue analysis.',route:{nodeId:'local',provider:'test-offline',model:'script',requiredCapabilities:[]}},agent));
   assert.equal(proposed.routingStatus,'ready');
