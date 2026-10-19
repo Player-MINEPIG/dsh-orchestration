@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { ExecutionModels, ExecutionModelChoice, sameExecutionModel } from "./execution-models.js";
 import type { CompleteExecutionModels } from "./execution-models.js";
 import { pairedExecutorModels } from "./paired-executors.js";
@@ -39,6 +40,7 @@ import {
 } from "node:fs";
 import { dirname } from "node:path";
 import type {
+  DispatchOrigin,
   Artifact,
   Alert,
   ApprovalRequest,
@@ -217,6 +219,7 @@ export interface TaskInput {
   importance?: number;
   urgency?: number;
 }
+export interface DispatcherSession {nodeId:string;sessionId:string;taskId:string;runId:string;projectId:string;cwd:string}
 export interface RunInput {
   runId?: string;
   taskId: string;
@@ -323,6 +326,50 @@ export class TaskLedger {
   readonly role: Role;
   readonly nodeId: string;
   private readonly clock: () => number;
+  private readonly dispatchOrigins = new AsyncLocalStorage<DispatchOrigin>();
+  withDispatchOrigin<T>(origin: DispatchOrigin, operation: () => T): T {
+    return this.dispatchOrigins.run(structuredClone(origin), operation);
+  }
+  dispatcherForSession(nodeId:string,sessionId:string): DispatcherSession | undefined {
+    const binding=this.get<DispatcherSession>("dispatcherSession",hash([nodeId,sessionId]));
+    if(!binding)return;
+    const run=this.getRun(binding.runId);
+    return run.coordinatorSession?.sessionId===sessionId && run.state==="running" ? binding : undefined;
+  }
+  bindDispatcher(commandId:string,input:Omit<DispatcherSession,"runId">) {
+    this.planner();
+    return this.command(commandId,"bindDispatcher",input,()=>{
+      const task=this.getTask(input.taskId),origin=task.dispatchOrigin;
+      if(origin?.kind!=="session" || origin.nodeId!==input.nodeId || origin.sessionId!==input.sessionId)fail("FORBIDDEN","Only the session that created this draft can coordinate it");
+      if(this.dispatcherForSession(input.nodeId,input.sessionId))fail("CONFLICT","This session already coordinates an active task");
+      if(this.list<Run>("run",task.taskId).length || !["ready","waiting"].includes(task.state))fail("CONFLICT","Dispatcher registration requires a new unexecuted draft");
+      const run=this.newRun({taskId:input.taskId});
+      run.coordinatorSession={nodeId:input.nodeId,sessionId:input.sessionId};run.state="running";
+      run.dispatchOrigin={kind:"system",nodeId:input.nodeId};
+      this.saveRun(run);this.projectTaskState(task,run);
+      const binding={...input,runId:run.runId};
+      this.put("dispatcherSession",hash([input.nodeId,input.sessionId]),binding,input.taskId);
+      this.event("task.dispatcher_bound",{sessionId:input.sessionId,nodeId:input.nodeId,projectId:input.projectId},input.taskId,run.runId);
+      return binding;
+    });
+  }
+  submitDispatcherResult(commandId:string,input:{nodeId:string;sessionId:string;outcome:Outcome;summary:string;report?:{title:string;body:string;data?:Json;artifactIds?:string[]}}) {
+    this.planner();
+    return this.command(commandId,"submitDispatcherResult",input,()=>{
+      const binding=this.dispatcherForSession(input.nodeId,input.sessionId);
+      if(!binding)fail("FORBIDDEN","Current session has no active coordinator task");
+      const own=binding!,run=this.getRun(own.runId),task=this.getTask(own.taskId);
+      if(!["success","partial","failure","blocked","unknown"].includes(input.outcome))fail("INVALID","Invalid outcome");
+      text(input.summary,"summary",5000);
+      if(!this.allSettled(task.taskId,task.policy?.settlementQuietMs ?? 1000,run.runId).settled)fail("CHILDREN_PENDING","Read and settle child results before submitting the parent result");
+      const report=input.report ?? fail("RESULT_VALIDATION","Coordinator completion requires a final report");
+      this.report({...report,taskId:task.taskId,runId:run.runId,sessionId:own.sessionId,kind:"result"});
+      run.resultSummary=input.summary;run.state=({success:"succeeded",partial:"partial",failure:"failed",blocked:"blocked",unknown:"uncertain"} as const)[input.outcome];run.updatedAt=this.now();
+      this.saveRun(run);this.projectTaskState(task,run);this.lifecycleDelivery(task,run);
+      this.event("run.settled",{outcome:input.outcome,summary:input.summary,coordinatorSession:own.sessionId},task.taskId,run.runId);
+      return run;
+    });
+  }
   private readonly db: DatabaseSync;
   readonly executionModels: ExecutionModels;
   executionDirectoryReady?:()=>boolean;
@@ -732,6 +779,41 @@ export class TaskLedger {
       run.taskId,
       run.state,
     );
+    if (TERMINAL.has(run.state) && run.dispatchOrigin?.kind === "session") this.queueTaskReturn(run);
+  }
+  private queueTaskReturn(run: Run) {
+    const origin = run.dispatchOrigin;
+    if (origin?.kind !== "session") return;
+    const eventId = `task-result:${hash([run.runId, run.currentAttemptId ?? null, run.state])}`;
+    if (this.get("sessionMessage", eventId)) return;
+    const reports = this.list<Report>("report", run.taskId).filter(report=>report.runId===run.runId && report.kind!=="note");
+    const message: import("./remote/ports.js").SessionMessage = {
+      messageId:eventId, taskId:run.taskId,nodeId:origin.nodeId,sessionId:origin.sessionId,
+      workspaceId: origin.parentLease ? this.getRun(origin.parentLease.runId).route?.workspaceId ?? "origin-session" : "origin-session",
+      completion:{eventId,origin:structuredClone(origin),runId:run.runId},
+      text:`子任务已结算。请核对中央账本中的结果并继续原会话汇总。\n${JSON.stringify({taskId:run.taskId,runId:run.runId,state:run.state,reports:reports.map(report=>({reportId:report.reportId,title:report.title})),summary:run.resultSummary ?? reports.at(-1)?.body.slice(0,4000) ?? "本次没有结果报告，请查看 task_history。"})}\n此事件只交付结果，不授予或恢复任何旧执行租约；交付失败的重投不会重新执行任务。`,
+      createdAt:this.now(),updatedAt:this.now(),state:"queued",
+    };
+    this.put("sessionMessage",eventId,message,run.taskId,message.state);
+  }
+  recordTaskReturnFailure(messageId: string, code: string) {
+    const message=this.getSessionMessage(messageId);
+    if(!message.completion || message.state!=="queued")return;
+    message.deliveryAttempts=(message.deliveryAttempts ?? 0)+1;
+    message.lastDeliveryError=code.slice(0,200);
+    message.lastAttemptAt=this.now();
+    message.nextAttemptAt=new Date(this.clock()+Math.min(60000,1000*2**Math.min(message.deliveryAttempts,6))).toISOString();
+    this.put("sessionMessage",messageId,message,message.taskId,message.state);
+  }
+  retryTaskReturn(commandId: string, messageId: string) {
+    this.planner();
+    return this.command(commandId,"retryTaskReturn",{messageId},()=>{
+      const message=this.getSessionMessage(messageId);
+      if(!message.completion)fail("INVALID","Not a task result return");
+      message.state="queued";delete message.reply;delete message.nextAttemptAt;message.updatedAt=this.now();
+      this.put("sessionMessage",messageId,message,message.taskId,message.state);
+      return message;
+    });
   }
   private saveAttempt(attempt: Attempt) {
     this.put(
@@ -986,7 +1068,7 @@ export class TaskLedger {
     );
   }
   private lifecycleDelivery(task: Task, run?: Run) {
-    if (task.admissionState === "dismissed") return;
+    if (task.admissionState === "dismissed" || run?.dispatchOrigin?.kind === "session") return;
     for (const destination of this.options.lifecycleDestinations ?? []) {
       text(destination, "lifecycle destination", 500);
       const anchorKey = hash([task.taskId, destination]);
@@ -1475,6 +1557,9 @@ export class TaskLedger {
     return this.need<Schedule>("schedule", scheduleId);
   }
   private newTask(input: TaskInput): Task {
+    const caller=this.dispatchOrigins.getStore();
+    const coordinator=caller?.kind==="session" ? this.dispatcherForSession(caller.nodeId,caller.sessionId) : undefined;
+    if(coordinator && !input.parentTaskId)input={...input,parentTaskId:coordinator.taskId,parentRunId:coordinator.runId};
     const key = id(input.taskId ?? randomUUID());
     if (this.get("task", key)) fail("CONFLICT", "Task ID already exists");
     const parent = input.parentTaskId
@@ -1656,6 +1741,10 @@ export class TaskLedger {
       ...(parentRunId ? { parentRunId } : {}),
       ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
     };
+    const origin = this.dispatchOrigins.getStore();
+    if (origin) {
+      task.dispatchOrigin = structuredClone(origin);
+    }
     this.saveTask(task);
     this.event("task.created", { kind }, key);
     this.lifecycleDelivery(task);
@@ -2224,6 +2313,9 @@ export class TaskLedger {
       ...(input.occurrenceId ? { occurrenceId: input.occurrenceId } : {}),
     };
     if (this.isWorkflowInvocation(run) && run.route) fail('FORBIDDEN', 'Workflow roots cannot have an execution route');
+    const origin = this.dispatchOrigins.getStore() ?? this.get<DispatchOrigin>("pendingDispatchOrigin",task.taskId) ?? {kind:"system" as const, nodeId:this.options.nodeId ?? "system"};
+    run.dispatchOrigin = structuredClone(origin);
+    this.db.prepare("DELETE FROM entities WHERE kind='pendingDispatchOrigin' AND id=?").run(task.taskId);
     this.saveRun(run);
     if(input.executionModel)this.refreshDispatchEligibility(run.runId);
     if (this.isWorkflowInvocation(run)) {
@@ -2742,7 +2834,12 @@ export class TaskLedger {
     },
   ) {
     return this.command(commandId, "delegateTask", input, () => {
-      const { run: parentRun } = this.owned(input);
+      const { run: parentRun, attempt: parentAttempt } = this.owned(input);
+      const origin: DispatchOrigin = parentAttempt.sessionId ? {
+        kind:"session", nodeId:parentAttempt.nodeId, sessionId:parentAttempt.sessionId,
+        ...(parentRun.route ? {composition:{provider:parentRun.route.provider,model:parentRun.route.model,...(parentRun.route.reasoningEffort ? {reasoningEffort:parentRun.route.reasoningEffort} : {})}} : {}),
+        parentLease:{runId:input.runId,attemptId:input.attemptId,nodeId:input.nodeId,fence:input.fence,...(input.executionId ? {executionId:input.executionId} : {})},
+      } : {kind:"system",nodeId:input.nodeId};
       const display = delegationDisplay(input.display, this.options.delegationDefaultDisplay ?? "task");
       const task = this.newTask({
         title: input.title,
@@ -2762,6 +2859,9 @@ export class TaskLedger {
         executionModel:selected.executionModel,
         configuration: input.configuration,
       });
+      task.dispatchOrigin = origin;
+      run.dispatchOrigin = origin;
+      this.saveRun(run);
       task.delegationDisplay = display;
       this.saveTask(task);
       this.event(
@@ -3199,7 +3299,7 @@ export class TaskLedger {
     return this.list<import("./remote/ports.js").SessionMessage>(
       "sessionMessage",
     )
-      .filter((m) => m.nodeId === nodeId && m.state === "queued")
+      .filter((m) => m.nodeId === nodeId && m.state === "queued" && (!m.nextAttemptAt || m.nextAttemptAt<=this.now()))
       .slice(0, 4);
   }
   completeSessionMessage(
@@ -3216,6 +3316,10 @@ export class TaskLedger {
       if (!["completed", "failed", "uncertain"].includes(input.state))
         fail("INVALID", "Invalid message result");
       text(input.reply, "session reply", 12000);
+      if(message.completion && input.state==="failed" && message.state==="queued") {
+        this.recordTaskReturnFailure(message.messageId,input.reply);
+        return this.getSessionMessage(message.messageId);
+      }
       if (message.state !== "queued") {
         if (message.state !== input.state || message.reply !== input.reply)
           fail("CONFLICT", "Message already answered");
@@ -3855,6 +3959,7 @@ export class TaskLedger {
       } as const
     )[input.outcome];
     run.updatedAt = this.now();
+    run.resultSummary = input.summary;
     this.saveRun(run);
     attempt.state = input.outcome === "unknown" ? "uncertain" : "settled";
     attempt.updatedAt = this.now();
@@ -3874,6 +3979,7 @@ export class TaskLedger {
     if (
       narrative !== "none" &&
       task.admissionState !== "dismissed" &&
+      run.dispatchOrigin?.kind !== "session" &&
       (!task.parentTaskId || childNotification)
     ) {
       for (const destination of this.options.reportDestinations ?? []) {
@@ -4921,6 +5027,8 @@ export class TaskLedger {
           ? { data: { actor: originalInput.automaticResultRetry === true ? "scheduler:report-validation" : "operator:task-center", retryPrompt: originalInput.retryPrompt } } : {}),
       });
       if (input.deferExecution) {
+        const origin=this.dispatchOrigins.getStore();
+        if(origin)this.put("pendingDispatchOrigin",task.taskId,origin,task.taskId);
         if (
           typeof originalInput.projectId !== "string" &&
           originalInput.taskId !== task.taskId
@@ -5453,6 +5561,7 @@ export class TaskLedger {
   history(taskId: string) {
     return {
       task: this.getTask(taskId),
+      resultReturns: this.sessionMessages(taskId).filter(message=>message.completion),
       runs: this.list<Run>("run", taskId),
       reports: this.list<Report>("report", taskId),
       artifacts: this.list<Artifact>("artifact", taskId),

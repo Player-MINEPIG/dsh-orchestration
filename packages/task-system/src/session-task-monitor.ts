@@ -21,7 +21,7 @@ export function dispatchedTaskIds(events: readonly SessionEvent[]): string[] {
   for (const event of events) {
     if (event.type === "tool/call") {
       const { name, callId, arguments: args } = event.data;
-      if (!["project_dispatch", "task_plan", "task_run", "task_delegate"].includes(name)) continue;
+      if (!["task_dispatch", "project_dispatch", "task_plan", "task_run", "task_delegate"].includes(name)) continue;
       if (name === "task_plan") {
         try { if (JSON.parse(args).action !== "apply") continue; } catch { continue; }
       }

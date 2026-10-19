@@ -751,6 +751,11 @@ export class RemoteExecutionService extends Service {
         currentTaskSystem()?.native;
 
       const provider: ExecutionProvider = {
+        sendTaskReturn: async message => {
+          const native=currentNative();
+          insist(native?.sendTaskReturn,"TASK_RETURNS_UNSUPPORTED",503);
+          return native.sendTaskReturn(message);
+        },
         sendSessionMessage: async (...args) => {
           const native = currentNative();
           insist(

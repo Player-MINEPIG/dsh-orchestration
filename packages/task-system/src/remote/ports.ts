@@ -7,6 +7,11 @@ import type { Json, Role, PreDispatchFailure } from "./protocol.js";
 import type { Claim as CoreClaim, Run as CoreRun } from "../contracts.js";
 
 export interface SessionMessage {
+  deliveryAttempts?: number;
+  lastDeliveryError?: string;
+  lastAttemptAt?: string;
+  nextAttemptAt?: string;
+  completion?: {eventId: string; origin: import("../contracts.js").DispatchOrigin; runId: string};
   /** Ledger-owned link to an operator-opened materials request. */
   supplementFor?: string;
   messageId: string;
@@ -490,6 +495,7 @@ export type ExecutionResult = Pick<
 > & { retryWitness?: SafeRetryWitness; retryAllowed?: boolean };
 /** Host-owned implementation. Must enforce declared capabilities and await abort quiescence. */
 export interface ExecutionProvider {
+  sendTaskReturn?(message: SessionMessage): Promise<string>;
   sendSessionMessage?(
     message: SessionMessage,
     record: import("./store.js").DispatchRecord,

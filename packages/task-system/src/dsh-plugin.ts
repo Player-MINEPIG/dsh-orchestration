@@ -1,3 +1,5 @@
+import { mountDispatcherTools } from "./dispatcher-tools.js";
+import { TaskReturnDelivery } from "./task-returns.js";
 import { ExecutionModelChoice } from "./execution-models.js";
 import { resolveDeviceNodeId } from "./device-identity.js";
 import { acquireWorkspaceExecution } from "./workspace-execution-lock.js";
@@ -310,6 +312,7 @@ declare module "@deepseek-ai/cordis" {
 }
 declare module "@deepseek-ai/dsh-llm" {
   interface MessageSourceMap {
+    "dsh-task-result": { kind: "dsh-task-result"; eventId: string; taskId: string };
     "dsh-direct-message": {
       kind: "dsh-direct-message";
       messageId: string;
@@ -547,6 +550,7 @@ export class NativeExecutionProvider {
     };
   }
 
+  async sendTaskReturn(message: import("./remote/ports.js").SessionMessage) { return this.owner.taskReturns.deliver(message); }
   async sendSessionMessage(
     message: import("./remote/ports.js").SessionMessage,
     record: import("./remote/store.js").DispatchRecord,
@@ -2097,6 +2101,24 @@ export class NativeExecutionProvider {
 
 /** Trusted in-process entry point. The underlying ledger enforces roles too. */
 export class TaskSystemService extends Service {
+  registerOriginContinuation(adapter:import("./task-returns.js").OriginContinuationAdapter) {return this.taskReturns.register(adapter);}
+  readonly taskReturns: TaskReturnDelivery;
+  withDispatchOrigin<T>(agent: Agent | undefined, operation: () => T): T {
+    const selected = agent?.session.requestHeader()?.config;
+    const provider=selected?.provider ?? agent?.options.provider;
+    const model=selected?.model ?? agent?.options.model;
+    const effort=selected?.reasoningEffort ?? agent?.options.reasoningEffort;
+    const preset=agent ? agent.ctx.get("agentPresets")?.composedPreset(agent.ctx) ?? agent.session.header.agentPreset : undefined;
+    const continuation=agent ? this.taskReturns.capture(agent) : undefined;
+    const origin: import("./contracts.js").DispatchOrigin = agent ? {
+      ...(continuation?{continuation}:{}),
+      kind:"session",nodeId:this.config.nodeId,sessionId:String(agent.id),
+      ...(agent.session.header.cwd ? {cwd:agent.session.header.cwd} : {}),
+      ...(provider && model ? {composition:{provider,model,...(effort ? {reasoningEffort:String(effort)} : {}),tools:agent.ctx.tools.schemas(agent).map(tool=>tool.name),...(preset?{preset}:{})}} : {}),
+    } : {kind:"system",nodeId:this.config.nodeId};
+    return this.ledger.withDispatchOrigin(origin,operation);
+  }
+  private returnJob?: Promise<void>;
   readonly executionDirectories: ExecutionDirectories;
   readonly programs: ProgramRegistry;
   readonly workflows: WorkflowRuntime;
@@ -2127,6 +2149,7 @@ export class TaskSystemService extends Service {
     readonly results: NativeResultJournal,
   ) {
     super(ctx, "taskSystem");
+    this.taskReturns = new TaskReturnDelivery(ctx);
     this.executionDirectories = new ExecutionDirectories(ledger.managementDatabase());
     ledger.executionDirectoryReady=()=>{try{return !!this.executionDirectories.validatedRoot();}catch{return false;}};
     const inventory=new ExecutionModelInventory({llm:()=>this.ctx.get("llm"),nativeReady:()=>!!this.native,officialBackends:()=>this.config.officialBackends,officialAvailable:backend=>!!this.ctx.get("subagents")?.getProvider(backend),temporaryWorkspaceReady:()=>ledger.executionDirectoryReady?.()===true});
@@ -2204,6 +2227,8 @@ export class TaskSystemService extends Service {
     await this.localCatalogJob;
     await this.programWorker?.dispose();
     this.programStore?.close();
+    await this.returnJob;
+    await this.taskReturns.dispose();
     this.results.close();
     this.ledger.close();
     this.ledgerClosed = true;
@@ -2409,6 +2434,21 @@ export class TaskSystemService extends Service {
   tick(): void {
     if (!this.accepting) return;
     this.recoverResults();
+    if(!this.returnJob) {
+      const messages=this.ledger.pendingSessionMessages(this.config.nodeId).filter(message=>message.completion);
+      const job=(async()=>{
+        for(const message of messages) {
+          try {
+            const reply=await this.taskReturns.deliver(message);
+            this.ledger.completeSessionMessage(`task-return-ack:${message.messageId}`,{messageId:message.messageId,nodeId:this.config.nodeId,state:"completed",reply});
+          } catch(error) {
+            this.ledger.recordTaskReturnFailure(message.messageId,error instanceof Error ? error.message : "RETURN_UNAVAILABLE");
+            this.ctx.logger.warn("Task result return %s retained for retry: %s",message.messageId,error);
+          }
+        }
+      })().finally(()=>{if(this.returnJob===job)this.returnJob=undefined;});
+      this.returnJob=job;
+    }
     this.localHeartbeat();
     if(!this.configurationPaused && !this.localCatalogJob && this.ledger.executionModels.pending(this.config.nodeId).length) {
       const job=this.ledger.refreshNodeModels(this.config.nodeId).catch(error=>this.ctx.logger.warn("local model directory unavailable: %s",error)).finally(()=>{if(this.localCatalogJob===job)this.localCatalogJob=undefined;});
@@ -2947,6 +2987,8 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
     );
   }
 
+  if(config.role!=="executor")mountDispatcherTools(ctx,service);
+
   ctx.tools.register(
     defineTool({
       name: "task_query",
@@ -3117,7 +3159,7 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
           const bound = service.native?.scopeFor(exec.agent);
           if (bound?.external)
             throw new Error("external tasks must use scoped task_delegate");
-          return json(
+          return service.withDispatchOrigin(exec.agent,()=>json(
             ledger.createTask(args.commandId, {
               title: args.title,
               description: args.description,
@@ -3153,7 +3195,7 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
                 ? { policy: args.policy as unknown as TaskPolicy }
                 : {}),
             }),
-          );
+          ));
         },
       }),
     );

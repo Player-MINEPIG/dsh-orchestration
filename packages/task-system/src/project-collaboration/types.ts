@@ -4,6 +4,7 @@ export interface ProjectCollaborationInput {
   action: "activate" | "status" | "nodes" | "dispatch" | "update" | "submit";
   sessionId: string;
   cwd: string;
+  composition?: Extract<import("../contracts.js").DispatchOrigin,{kind:"session"}>["composition"];
   projectId?: string;
   title?: string;
   goal?: string;

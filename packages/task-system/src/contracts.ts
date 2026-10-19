@@ -53,7 +53,15 @@ export interface Source {
   observedAt: string;
   staleAfterMs: number;
 }
+export type DispatchOrigin = { kind: "system"; nodeId: string } | {
+  kind: "session"; nodeId: string; sessionId: string; cwd?: string;
+  composition?: {provider: string; model: string; reasoningEffort?: string; tools?: string[]; preset?: string};
+  /** Evidence only; delivery never reactivates this old lease. */
+  continuation?: {id:string;data:Json};
+  parentLease?: LeaseRef;
+};
 export interface Task {
+  dispatchOrigin?: DispatchOrigin;
   taskId: string;
   title: string;
   description: string;
@@ -142,6 +150,9 @@ export interface DispatchIssue {
   action: "refresh_catalog" | "choose_execution_model" | "repair_context" | "review_assignment";
 }
 export interface Run {
+  coordinatorSession?: {nodeId:string;sessionId:string};
+  resultSummary?: string;
+  dispatchOrigin?: DispatchOrigin;
   dispatchIssue?: DispatchIssue;
   executionModel?: {
     origin: "explicit" | "node_default" | "fallback";

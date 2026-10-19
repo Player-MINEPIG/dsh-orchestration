@@ -12,14 +12,23 @@ const fail = (code: string, message: string): never => { throw new TaskError(cod
 export function validateCollaborationInput(value: unknown): asserts value is ProjectCollaborationInput {
   if (!value || typeof value !== "object" || Array.isArray(value)) fail("INVALID", "Expected collaboration input");
   const p = value as Record<string, unknown>;
-  const keys = ["action", "sessionId", "cwd", "projectId", "title", "goal", "summary", "route", "description", "nodeId", "executionModel"];
+  const keys = ["action", "sessionId", "cwd", "projectId", "title", "goal", "summary", "route", "description", "nodeId", "executionModel", "composition"];
   if (Object.keys(p).some(k => !keys.includes(k)) || canonical(p).length > 64_000) fail("INVALID", "Unknown or oversized collaboration input");
   if (!["activate", "status", "nodes", "dispatch", "update", "submit"].includes(String(p.action))) fail("INVALID", "Unknown collaboration action");
-  for (const key of keys.filter(k => k !== "route" && k !== "executionModel")) {
+  for (const key of keys.filter(k => k !== "route" && k !== "executionModel" && k !== "composition")) {
     const v = p[key];
     if (v !== undefined && (typeof v !== "string" || v.length > (key === "description" || key === "summary" ? 20_000 : 4096) || v.includes("\0"))) fail("INVALID", `Invalid ${key}`);
   }
   if (typeof p.sessionId !== "string" || !p.sessionId.trim() || p.sessionId.length > 200 || typeof p.cwd !== "string" || !isAbsolute(p.cwd)) fail("INVALID", "A session and absolute working directory are required");
+  if(p.composition!==undefined) {
+    const c=p.composition;
+    if(!c || typeof c!=="object" || Array.isArray(c))fail("INVALID","Invalid origin composition");
+    const value=c as Record<string,unknown>;
+    if(Object.keys(value).some(key=>!["provider","model","reasoningEffort","tools","preset"].includes(key)))fail("INVALID","Unknown origin composition field");
+    for(const key of ["provider","model"])if(typeof value[key]!=="string" || !value[key] || String(value[key]).length>200)fail("INVALID","Invalid origin model binding");
+    for(const key of ["reasoningEffort","preset"])if(value[key]!==undefined && (typeof value[key]!=="string" || String(value[key]).length>200))fail("INVALID","Invalid origin composition field");
+    if(value.tools!==undefined && (!Array.isArray(value.tools) || value.tools.length>512 || value.tools.some(tool=>typeof tool!=="string" || tool.length>200)))fail("INVALID","Invalid origin tools");
+  }
   if(p.executionModel!==undefined && !ExecutionModelChoice.safeParse(p.executionModel).success)fail("INVALID","Invalid explicit workload model");
   if(p.route!==undefined && (p.nodeId!==undefined || p.executionModel!==undefined))fail("INVALID","Choose an explicit route or node and workload selection, not both");
   if (p.route !== undefined) {
@@ -49,7 +58,10 @@ export class ProjectCollaborationAuthority {
     return rows.map(r => JSON.parse(String(r.data)) as CollaborationSummary);
   }
   projectCollaborate(nodeId: string, commandId: string, input: ProjectCollaborationInput): Promise<Json> {
-    const run = this.queue.then(() => this.execute(nodeId, commandId, input));
+    const run = this.queue.then(() => {
+      validateCollaborationInput(input);
+      return input.action==="dispatch" ? this.ledger.withDispatchOrigin({kind:"session",nodeId,sessionId:input.sessionId,cwd:input.cwd,...(input.composition?{composition:input.composition}:{})},()=>this.execute(nodeId,commandId,input)) : this.execute(nodeId,commandId,input);
+    });
     this.queue = run.catch(() => {});
     return run;
   }

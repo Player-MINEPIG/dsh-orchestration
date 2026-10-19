@@ -9,6 +9,7 @@ import type {
 
 export interface NativeExecutionPort {
   readonly activeCount?: number;
+  sendTaskReturn?: NonNullable<ExecutionProvider["sendTaskReturn"]>;
   sendSessionMessage?: NonNullable<ExecutionProvider["sendSessionMessage"]>;
   executionStatus?(ref: LeaseRef): string;
   executeExternal(request: ExecutionRequest): Promise<ExecutionResult>;
@@ -42,6 +43,7 @@ export function nativeExecutionAdapter(
     );
   return {
     id: policy.provider,
+    sendTaskReturn: native.sendTaskReturn?.bind(native),
     sendSessionMessage: native.sendSessionMessage?.bind(native),
     capabilities,
     supports,

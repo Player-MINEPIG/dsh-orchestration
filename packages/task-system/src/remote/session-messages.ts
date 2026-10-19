@@ -49,6 +49,16 @@ export class SessionMessages {
   }
   private async deliver(message: SessionMessage, signal: AbortSignal) {
     const { store, ledger, provider, policy } = this.options;
+    if (message.completion) {
+      if (!provider.sendTaskReturn) return;
+      try {
+        const reply = await provider.sendTaskReturn(message);
+        await ledger.completeSessionMessage!(`task-return-ack:${message.messageId}`,{messageId:message.messageId,nodeId:policy.nodeId,state:"completed",reply});
+      } catch {
+        await ledger.completeSessionMessage!(`task-return-failure:${message.messageId}:${Date.now()}`,{messageId:message.messageId,nodeId:policy.nodeId,state:"failed",reply:"RETURN_UNAVAILABLE: original composition or session storage unavailable; retained for retry"});
+      }
+      return;
+    }
     let saved = store.sessionMessageState(message.messageId);
     if (saved?.state === "started") {
       saved = {

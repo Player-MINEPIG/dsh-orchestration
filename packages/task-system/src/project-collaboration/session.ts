@@ -10,6 +10,7 @@ export interface CollaborationInput {
   action: CollaborationAction;
   sessionId: string;
   cwd: string;
+  composition?: Extract<import("../contracts.js").DispatchOrigin,{kind:"session"}>["composition"];
   projectId?: string;
   title?: string;
   goal?: string;
@@ -157,7 +158,12 @@ export class SessionCollaboration {
     const readOnly = action === "status" || action === "nodes";
     if (!readOnly && (!requestId?.trim() || requestId.length > 160)) throw new TaskError("INVALID", "写入操作必须提供稳定的 requestId（1–160 字符），重试使用同一个 ID。");
     const commandId = `collaboration-${hash(`${identity.sessionId}:${action}:${readOnly ? callId : requestId}`)}`;
-    return this.send(commandId, { ...args, action, ...identity, projectId: binding.projectId });
+    const selected=agent!.session.requestHeader()?.config;
+    const provider=selected?.provider ?? agent!.options.provider,model=selected?.model ?? agent!.options.model;
+    const effort=selected?.reasoningEffort ?? agent!.options.reasoningEffort;
+    const preset=agent!.ctx.get("agentPresets")?.composedPreset(agent!.ctx) ?? agent!.session.header.agentPreset;
+    const composition=provider && model ? {provider,model,...(effort?{reasoningEffort:String(effort)}:{}),tools:agent!.ctx.tools.schemas(agent).map(tool=>tool.name),...(preset?{preset}:{})} : undefined;
+    return this.send(commandId, { ...args, action, ...identity, projectId: binding.projectId, ...(action==="dispatch" && composition ? {composition} : {}) });
   }
   prompt(agent?: Agent): string {
     if (!agent || this.owned(agent)) return "";
