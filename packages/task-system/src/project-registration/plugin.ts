@@ -85,8 +85,15 @@ export function apply(ctx: Context, config: Config) {
     );
     return { handled: true, value: JSON.parse(JSON.stringify(value)) };
   };
+  const nodes:NonNullable<typeof ctx.taskSystem.sessionProjectNodes>=async(agent,callId)=>{
+    const binding=agent ? collaboration.binding(agent) : undefined;
+    if(binding?.state!=="active")return {handled:false};
+    return {handled:true,value:JSON.parse(JSON.stringify(await collaboration.invoke(agent,"nodes",{},callId)))};
+  };
+  ctx.taskSystem.sessionProjectNodes=nodes;
   ctx.taskSystem.sessionProjectDispatch = dispatch;
   ctx.effect(() => () => {
+    if(ctx.taskSystem.sessionProjectNodes===nodes)ctx.taskSystem.sessionProjectNodes=undefined;
     if (ctx.taskSystem.sessionProjectDispatch === dispatch)
       ctx.taskSystem.sessionProjectDispatch = undefined;
   });
@@ -104,11 +111,10 @@ export function apply(ctx: Context, config: Config) {
   };
   for (const [toolName, action, description] of [
     ["project_status", "status", "Read the bound central project's actual tasks, runs and review state."],
-    ["project_nodes", "nodes", "Request executor model catalogs and read eligible node identities, node defaults, catalog freshness and explicit routes for the bound project. Pending or stale metadata is not evidence that a model was removed."],
     ["project_progress", "update", "Sync factual progress and evidence to the bound central project; each update has a stable requestId."],
     ["project_finish", "submit", "Submit completion evidence for central/user review; this does not approve the project."],
   ] as const) {
-    const parameters: Record<string, any> = action === "status" || action === "nodes" ? {} : {
+    const parameters: Record<string, any> = action === "status" ? {} : {
       requestId: { type: "string", required: true, description: "Stable operation ID; reuse with identical arguments on retries, including a new tool call." },
     };
     if (action === "update" || action === "submit") parameters.summary = { type: "string", required: true };

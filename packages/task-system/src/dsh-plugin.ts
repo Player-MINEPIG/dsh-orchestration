@@ -2130,6 +2130,7 @@ export class TaskSystemService extends Service {
   private programStore?: RecoveryStore;
 
   projects?: ProjectRuntime;
+  sessionProjectNodes?: (agent:Agent|undefined,callId:string)=>Promise<{handled:false}|{handled:true;value:Json}>;
   sessionProjectDispatch?: (
     agent: Agent | undefined,
     input: { commandId: string; title?: string; description?: string; route?: unknown; nodeId?: string; executionModel?: unknown; taskId?: string; requestId?: string; workspaceId?: string; configuration?: unknown },
@@ -2779,7 +2780,6 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
       "project_history_intake",
       "project_sync",
       "project_status",
-      "project_nodes",
       "project_progress",
       "project_finish",
     ]);
@@ -3114,6 +3114,10 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
       output,
       execute: async (_args, exec) => {
         const bound = service.native?.scopeFor(exec.agent);
+        if(!bound) {
+          const project=await service.sessionProjectNodes?.(exec.agent,String(exec.callId));
+          if(project?.handled)return project.value;
+        }
         if(bound?.external) {
           if(!bound.collaboration?.nodes)throw new TaskError("CATALOG_UNSUPPORTED","Coordinator does not provide this executor catalog view");
           return json((await bound.collaboration.nodes()).map(view=>({nodeId:view.nodeId,executionModels:view,models:view.catalog.positiveSnapshot?.models ?? view.catalog.snapshot?.models ?? [],runtimeHealth:"not-sampled-by-this-view"})));

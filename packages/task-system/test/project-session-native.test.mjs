@@ -109,7 +109,7 @@ test("official /project activates skill for this session only; real tools sync/s
     assert.equal(status.collaboration.binding.state,"active");
     const other=await h.ctx.agents.create({sessionId:SessionId("unrelated-session"),meta:{cwd:h.dir},agentOptions:{provider:"command-test",model:"unused"}});
     assert.equal(await section(other.agent),"");
-    for(const [name,args] of [["project_nodes",{}],["project_status",{}],["project_progress",{requestId:"stage-1",summary:"Prepared evidence and tests"}],["project_finish",{requestId:"finish-1",summary:"Completed evidence ready for user review"}]]) {
+    for(const [name,args] of [["task_nodes",{}],["project_status",{}],["project_progress",{requestId:"stage-1",summary:"Prepared evidence and tests"}],["project_finish",{requestId:"finish-1",summary:"Completed evidence ready for user review"}]]) {
       const result=await invokeTool(name,args,name); assert.equal(result.isError,false,JSON.stringify(result));
     }
     const nativeStatus=await invokeTool("project_status",{},"after-finish");

@@ -50,7 +50,7 @@ test('public task tool contract has one formal dispatch entry and proposal calls
  const h=await createNativeHarness();
  try{
   for(const name of ['task_dispatch','task_plan','task_create','task_repair_dispatch','codex_delegate','task_wait'])assert.ok(h.ctx.tools.get(name),name);
-  for(const name of ['task_run','task_delegate','task_children','project_dispatch','task_claim','task_execute','task_settle'])assert.equal(h.ctx.tools.get(name),undefined,name);
+  for(const name of ['task_run','task_delegate','task_children','project_dispatch','task_claim','task_execute','task_settle','project_nodes'])assert.equal(h.ctx.tools.get(name),undefined,name);
   const schema=h.ctx.tools.schemas().find(tool=>tool.name==='task_plan');assert.equal(schema.parameters.properties.action,undefined);
   const proposed=body(await call(h,'task_plan',{requestId:'review-only',title:'Review this work'}));
   assert.equal(proposed.routingStatus,'pending-route');assert.equal(h.ledger.snapshot().tasks.length,0);assert.equal(h.ledger.snapshot().runs.length,0);

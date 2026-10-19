@@ -115,7 +115,7 @@ export class ProjectCollaborationAuthority {
         const nodeId=input.route?.nodeId ?? input.nodeId ?? (!planner && candidates.length===1?candidates[0]?.nodeId:undefined);
         const selection=nodeId?this.ledger.selectExecutionModel(nodeId,input.route ?? input.executionModel):undefined;
         const route=input.route ?? (nodeId && selection?{nodeId,provider:selection.choice.provider,model:selection.choice.model,...(selection.choice.reasoningEffort?{reasoningEffort:selection.choice.reasoningEffort}:{}),...(selection.choice.backend?{backend:selection.choice.backend}:{}),requiredCapabilities:[]}:undefined);
-        if(!route && !planner)fail("EXECUTOR_REQUIRED","Choose an executor from project_nodes or configure central planning");
+        if(!route && !planner)fail("EXECUTOR_REQUIRED","Choose an executor from task_nodes or configure central planning");
         if(route)this.ledger.validateRoute(route,{admission:true,skipModel:true});
         if(route?.backend && !this.publicRoutes().some(candidate=>["nodeId","provider","model","reasoningEffort","backend"].every(key=>candidate[key as keyof ExecutionRoute]===route[key as keyof ExecutionRoute])))fail("BACKEND_UNAVAILABLE","Requested native backend is not advertised by an available execution host");
         const task = this.ledger.createTask(`${key}:task`, { taskId: `collab-task-${hash(key)}`, title: input.title!, description: input.description || input.title!, ...(route?.backend ? { policy: { allowedBackends: [route.backend] } } : {}), ...(route?.workspaceId ? { workspaceId: route.workspaceId } : {}) }).value;
