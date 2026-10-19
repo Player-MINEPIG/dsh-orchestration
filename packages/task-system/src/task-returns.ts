@@ -105,7 +105,8 @@ export class TaskReturnDelivery {
           if(!tools)throw new Error("Original session tool composition unavailable");
           const available=new Set(ctx.tools.schemas(resumed).map(tool=>tool.name));
           if(tools.some(tool=>!available.has(tool)))throw new Error("Original session tools unavailable; retained for retry");
-          ctx.tools.restrict({allow:tools});
+          const allowed=new Set(tools);
+          ctx.tools.guard(exec=>allowed.has(exec.name) ? undefined : "Tool is outside the original session capability mask");
           if (origin.parentLease) {
             ctx.tools.guard(exec => exec.name.startsWith("task_") ? "The original task lease expired; this result continuation does not grant a lease" : undefined);
             ctx.systemPrompt.section({name:"task-result-continuation",order:110,interpolate:false,text:()=>"这是原会话接收的子任务结果续接。历史执行租约未恢复，不得使用历史租约结算或重做任务。核对中央报告后完成本次汇总；如需新执行，通过统一派发工具获得新授权。"});

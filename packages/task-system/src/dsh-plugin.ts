@@ -2784,9 +2784,9 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
       "project_finish",
     ]);
     ctx.tools.guard((exec) =>
-      allowed.has(exec.name)
-        ? undefined
-        : "planner role denies workload execution",
+      exec.name.startsWith("task_") && !allowed.has(exec.name)
+        ? "planner role denies task workload execution"
+        : undefined,
     );
   }
 
