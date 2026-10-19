@@ -19,3 +19,11 @@ The physical AWS–MBP smoke also passes against the installed 0.2.40 packages. 
 Both production hosts run 0.2.40 from runtime source commit `4876564`, with the archive SHA-256 in `deployment.json`. Later commits contain documentation and validation artifacts only. DMC 0.1.1 runs on AWS; MBP had no DMC installation and receives no new DMC plugin. Default model policies, existing task business rows, directory settings, and DMC business rows are preserved. Current documentation uses `task_submit_result`; older names appear only in migration notes or immutable historical records.
 
 The default project parent is a fallback for future creation. An explicitly selected registered workspace outside that parent is accepted through its device workspace grant. A project owned by AWS can dispatch a child to MBP without transferring its AWS absolute path. The original WIP remains recoverable through stash commit `2b6330cecdba7eab3a1aab82f081686e2df85f3e`; main and origin/main contain the integrated release.
+
+Reproduce the focused integration run from the repository root after `npm run build`:
+
+```sh
+node --test packages/task-system/test/project-dispatch-model-policy.test.mjs packages/task-system/test/project-session-collaboration.test.mjs packages/task-system/test/project-session-native.test.mjs packages/task-system/test/project-workspace-selection.test.mjs packages/task-system/test/session-task-monitor.test.mjs packages/task-system/test/task-returns.test.mjs tests/dsh/context-contract.test.mjs tests/dsh/public-tools-admission.test.mjs tests/dsh/remote-native.test.mjs tests/dsh/task-return-coordinator.test.mjs
+```
+
+The DMC repository contains `test/integration/task-system-origin.mjs`. Set `DMC_DSH_ROOT` to its installed compatibility host and `TASK_SYSTEM_SOURCE` to this checkout, then run that file with `node --test`. The test covers first business submission and revision with real DSH/PTC execution. `scripts/validation/task-return-restart.mjs` and `task-return-listeners.mjs` preserve the targeted native recovery probes. Pass this checkout as the first argument to either native probe script.

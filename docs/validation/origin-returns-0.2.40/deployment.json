@@ -95,5 +95,31 @@
     "stashName": "preserve pre-latest checkout WIP 20261020 origin-return-tools-workspace",
     "trackedPatch": "/private/tmp/dsh-main-wip-20261020.patch",
     "untrackedArchive": "/private/tmp/dsh-main-untracked-20261020.tgz"
+  },
+  "physicalHostSmoke": {
+    "status": "passed",
+    "receipt": "physical-host-smoke.json",
+    "modelBoundary": "scripted external model; installed real DSH on physical AWS and MBP",
+    "publicToolPath": [
+      "project_list",
+      "project_bind_session",
+      "task_create",
+      "task_bind_dispatcher",
+      "task_dispatch",
+      "task_history",
+      "task_submit_result"
+    ],
+    "awsParentPendingWhileChildQueued": true,
+    "awsParentPendingWhileChildRunning": true,
+    "mbpControlledDelayMs": 4000,
+    "originalAwsSessionColdResumed": true,
+    "parentState": "succeeded",
+    "childState": "succeeded",
+    "outboxState": "completed",
+    "runs": 2,
+    "attempts": 1,
+    "resultEvents": 1,
+    "usesIsolatedSmokeProject": true,
+    "formalDshTavernCreated": false
   }
 }
