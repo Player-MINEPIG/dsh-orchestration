@@ -94,7 +94,7 @@ rows.push({
   config: taskConfig,
 });
 rows.push({ id: "task-system-settings", name: "@dsh-task/task-system" });
-rows.push({id:"task-remote-execution",name:"@dsh-task/task-system/remote",config:{role:"executor",nodeId:"fixture",paused:true,statePath:join(tmp,"remote.sqlite")}});
+
 writeFileSync(profile.patchPath, JSON.stringify([{ insert: rows }]));
 const root = join(dir, "cordis.yml");
 writeFileSync(root, "[]\n");
@@ -130,13 +130,20 @@ try {
     state: "ready",
     createdAt: new Date().toISOString(),
   });
+  const blank=await invoke("connectionSettings");assert.equal(blank.exists,false);
+  for(const role of ["executor","both"]){const roleSnapshot=await invoke("startup");await invoke("saveStartup",{input:{target:"task",expected:roleSnapshot.task.values,changes:{role}}});}
+  const draft={...blank.values,listenAddress:"127.0.0.1",listenPort:45678,serviceAudience:"fixture-audience",peers:[{address:"127.0.0.2",nodeId:"connection-only",role:"executor",audience:"fixture-audience",operations:["executorIdentity"],workspaces:[],capabilities:[]}],outbound:{endpoint:"http://127.0.0.3:45679/commands",audience:"scheduler",target:{address:"127.0.0.3",port:45679,localAddress:"127.0.0.2",allowHttp:true}}};
+  const created=await invoke("saveConnectionSettings",{input:{expected:blank.revision,value:draft}});assert.equal(created.exists,true);assert.equal(created.paused,true);assert.equal(created.values.listenerEnabled,false);assert.equal(ctx.get("remoteExecution").store,undefined);
+  assert.deepEqual(created.values.peers,draft.peers);assert.deepEqual(created.values.outbound,draft.outbound);assert.equal(ctx.get("taskSystem").ledger.nodeStatuses().some(n=>n.nodeId==="connection-only"),false);
+  await assert.rejects(invoke("saveConnectionSettings",{input:{expected:blank.revision,value:draft}}),/changed|conflict/i);
+  const changed=await invoke("saveConnectionSettings",{input:{expected:created.revision,value:{...created.values,listenPort:45680}}});assert.equal(changed.values.listenPort,45680);assert.equal(changed.paused,true);
+  pass("official Gateway creates paused connection config explicitly, persists both endpoint roles, refuses stale CAS and creates no execution grants or network store");
   const snapshot = await invoke("startup");
   assert.equal(snapshot.applies, "plugin-restart");
   assert.equal(snapshot.writable, true);
   assert.equal(snapshot.remote.values.paused,true);
   assert.equal(snapshot.task.entryId, "task-system");
   assert.deepEqual(Object.keys(snapshot.task.values).sort(), [
-    "defaultWorkspaceId",
     "nodeCapacities",
     "planningDecisionEnabled",
     "role",
@@ -170,18 +177,35 @@ try {
     expected: snapshot.task.values,
     changes: {
       role: "executor",
-      defaultWorkspaceId: workspace.workspaceId,
       planningDecisionEnabled: false,
       sessionDecisionEnabled: true,
     },
   };
+  const connectionEditor=ctx.get("configEditor"),connectionEntry=connectionEditor.entries().find(e=>e.options.id==="task-remote-execution");
+  const originalConnectionRole=connectionEntry.options.config.role;
+  const {createServer}=await import("node:net");const socket=createServer();await new Promise(done=>socket.listen(0,"127.0.0.1",done));const listenerPort=socket.address().port;await new Promise(done=>socket.close(done));
+  await connectionEditor.edit(connectionEntry,current=>({...current,paused:false,exposeHttp:true,coordinator:null,trustedNetwork:{...current.trustedNetwork,listen:{...current.trustedNetwork.listen,port:listenerPort}}}));
+  const beforeRoleBytes=readFileSync(profile.patchPath,"utf8"),beforeRoleService=ctx.get("taskSystem");
+  await assert.rejects(invoke("saveStartup",{input}),/conflict|role|listener|Pause/i);
+  assert.equal(readFileSync(profile.patchPath,"utf8"),beforeRoleBytes);assert.equal(ctx.get("taskSystem").config.role,"both");assert.equal(ctx.get("remoteExecution").settingsSnapshot().role,"both");
+  const activeSnapshot=await invoke("startup");await invoke("saveStartup",{input:{target:"remote",expected:activeSnapshot.remote.values,changes:{paused:true}}});
+  pass("top-level role preflight rejects executor plus active scheduler listener before writing, preserving both running services");
+  const oldRemote=ctx.get("remoteExecution"),combinedConnection=await invoke("connectionSettings");
   const result = await invoke("saveStartup", { input });
+  const combinedSave=await invoke("saveConnectionSettings",{input:{expected:combinedConnection.revision,value:{...combinedConnection.values,routePath:"/fixture-new-commands"}}});assert.equal(combinedSave.values.routePath,"/fixture-new-commands");
+  await assert.rejects(invoke("saveConnectionSettings",{input:{expected:combinedConnection.revision,value:{...combinedConnection.values,routePath:"/stale-commands"}}}),/conflict|changed/i);
+  pass("real RPC ordering saves role plus decision switches then a preexisting connection draft once; concurrent connection edits still conflict");
+  assert.notEqual(ctx.get("remoteExecution"),oldRemote);assert.equal(ctx.get("remoteExecution").settingsSnapshot().role,"executor");
+  assert.equal(ctx.get("configEditor").entries().find(e=>e.options.id==="task-remote-execution").options.config.role,originalConnectionRole);
+  await assert.rejects(invoke("saveStartup",{input:{target:"remote",expected:(await invoke("startup")).remote.values,changes:{role:"both"}}}));
+  const connectionView=await invoke("connectionSettings");assert.equal("role" in connectionView.values,false);await assert.rejects(invoke("saveConnectionSettings",{input:{expected:connectionView.revision,value:{...connectionView.values,role:"both"}}}));
+  pass("one task role drives dependent remote HMR and rejects independent connection role writes without migrating old profile values");
   assert.deepEqual(result, { saved: true, applies: "plugin-restart" });
   const updated = await invoke("startup");
   const service = ctx.get("taskSystem");
   assert.notEqual(service, originalService);
   assert.equal(service.config.role, "executor");
-  assert.equal(service.config.defaultWorkspaceId, workspace.workspaceId);
+  assert.equal(service.config.defaultWorkspaceId, undefined);
   assert.equal(service.config.planningDecisionEnabled, false);
   assert.equal(updated.task.values.planningDecisionEnabled, false);
   assert.equal(service.config.sessionDecisionEnabled, true);
@@ -189,12 +213,12 @@ try {
   assert.equal(service.config.autoExecute, false);
   assert.equal(service.ledger.schedulerIdentity(), identity);
   assert.equal(updated.task.values.role, "executor");
-  assert.equal(updated.task.values.defaultWorkspaceId, workspace.workspaceId);
+  assert.equal("defaultWorkspaceId" in updated.task.values,false);
   pass(
     "public Gateway save really restarts the plugin and read-after-save confirms role/workspace/decision values without model calls",
   );
   const persisted = readFileSync(profile.patchPath, "utf8");
-  assert.ok(persisted.includes(workspace.workspaceId));
+  assert.ok(persisted.includes("sessionDecisionEnabled"));
   await assert.rejects(
     invoke("saveStartup", {
       input: { ...input, changes: { role: "planner" } },
@@ -221,7 +245,8 @@ try {
   ctx = await start();
   peer = new Peer(ctx, { principal: { kind: "owner" } });
   const reopened = await invoke("startup");
-  assert.equal(reopened.task.values.defaultWorkspaceId, workspace.workspaceId);
+  assert.equal("defaultWorkspaceId" in reopened.task.values,false);
+  assert.equal((await invoke("connectionSettings")).values.listenPort,listenerPort);
   assert.equal(reopened.task.values.planningDecisionEnabled, false);
   assert.equal(reopened.task.values.sessionDecisionEnabled, true);
   assert.equal(ctx.get("taskSystem").ledger.schedulerIdentity(), identity);
@@ -231,7 +256,6 @@ try {
       expected: reopened.task.values,
       changes: {
         role: "both",
-        defaultWorkspaceId: null,
         planningDecisionEnabled: true,
         sessionDecisionEnabled: false,
       },
@@ -239,7 +263,7 @@ try {
   });
   assert.equal(restored.saved, true);
   const final = await invoke("startup");
-  assert.equal(final.task.values.defaultWorkspaceId, null);
+  assert.equal("defaultWorkspaceId" in final.task.values,false);
   assert.equal(final.task.values.role, "both");
   assert.equal(final.task.values.planningDecisionEnabled, true);
   assert.equal(final.task.values.sessionDecisionEnabled, false);

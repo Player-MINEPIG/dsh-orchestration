@@ -133,7 +133,22 @@ export interface ProjectExecutionContext {
     acceptanceCriteria: Criterion[];
   };
 }
+export interface DispatchIssue {
+  source?: "executor";
+  revision: string;
+  kind: "waiting" | "needs_action";
+  code: string;
+  message: string;
+  action: "refresh_catalog" | "choose_execution_model" | "repair_context" | "review_assignment";
+}
 export interface Run {
+  dispatchIssue?: DispatchIssue;
+  executionModel?: {
+    origin: "explicit" | "node_default" | "fallback";
+    policyRevision: string;
+    catalogRevision?: string;
+    original?: Pick<ExecutionRoute, "provider" | "model" | "reasoningEffort" | "backend">;
+  };
   resultValidationFailure?: import("./remote/protocol.js").ResultValidationFailure;
   runId: string;
   taskId: string;
@@ -298,6 +313,7 @@ export interface Template {
   resultValidator?: string;
 }
 export interface Schedule {
+  executionModel?: Run["executionModel"];
   execution?: {kind: "workflow"; workflowId: string};
   scheduleId: string;
   taskId: string;

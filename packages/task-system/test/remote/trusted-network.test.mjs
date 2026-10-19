@@ -374,9 +374,8 @@ test('trusted network service disposal awaits pending carrier startup and immedi
   const pending = new Promise(resolve => { completeStartup = resolve })
   try {
     await ctx.plugin({ name: 'trusted-startup-ledger',apply(ctx) { ctx.provide('taskSystem',{ ledger: { pendingRuns: () => [] } }) } }).await()
-    const fiber = ctx.plugin(plugin,{ role: 'planner',nodeId: 'planner',audience: 'planner',statePath: join(root,'recovery.sqlite'),authMode: 'trusted-network',trustedNetwork: policy(port),exposeHttp: false,routePath: '/commands' })
-    await fiber.await()
-    const service = ctx.get('remoteExecution')
+    const owned = new RecoveryStore(join(root,'recovery.sqlite'))
+    const service = new plugin.RemoteExecutionService(ctx,plugin.Config({ role: 'planner',nodeId: 'planner',audience: 'planner',statePath: join(root,'recovery.sqlite'),paused:true,pauseScope:'executor',authMode: 'trusted-network',trustedNetwork: policy(port),exposeHttp: true,routePath: '/commands' }),ctx.get('taskSystem').ledger,owned)
     const attaching = service.attachCarrier(pending)
     const disposal = service.dispose()
     assert.equal(service.dispose(),disposal,'concurrent callers must await the same disposal work')
@@ -392,7 +391,7 @@ test('trusted network service disposal awaits pending carrier startup and immedi
     assert.equal(await listen(rebind,port),port)
     await close(rebind)
     await assert.rejects(service.gateway.handle(body(),context(port)),/DRAINING/)
-    await fiber.dispose()
+    await service.dispose()
   } finally { completeStartup(carrier ?? { close: async () => {} }); await carrier?.close(); await ctx.fiber.dispose(); rmSync(root,{ recursive: true,force: true }) }
 })
 

@@ -3,7 +3,7 @@ import { isAbsolute, relative, sep } from 'node:path'
 import { identifier, insist } from './protocol.js'
 import type { Claim, ExecutionProvider, WorkerPolicy } from './ports.js'
 
-export async function authorizedWorkspace(claim: Claim, policy: WorkerPolicy, provider: ExecutionProvider): Promise<string> {
+export async function authorizedWorkspace(claim: Claim, policy: WorkerPolicy, provider: ExecutionProvider, managedRoot?:string|null): Promise<string> {
   insist(policy.role === 'executor' || policy.role === 'both', 'EXECUTOR_ROLE_REQUIRED', 403)
   insist(identifier(policy.nodeId) && claim.attempt.nodeId === policy.nodeId && claim.run.route?.nodeId === policy.nodeId, 'WRONG_EXECUTOR', 403)
   insist(claim.attempt.taskId === claim.task.taskId && claim.attempt.runId === claim.run.runId && claim.run.taskId === claim.task.taskId, 'CLAIM_IDENTITY_MISMATCH', 403)
@@ -17,6 +17,11 @@ export async function authorizedWorkspace(claim: Claim, policy: WorkerPolicy, pr
   // The execution backend may support several explicitly configured LLM vendors.
   // supports must enforce the exact provider/model/effort tuple; id is diagnostic.
   insist(provider.supports(route), 'PROVIDER_ROUTE_DENIED', 403)
+  if(!route.workspaceId && claim.run.projectContext && managedRoot) {
+    insist(!claim.run.workspaceConstraint && !claim.task.workspaceId && !taskPolicy?.allowedWorkspaceIds,"TASK_WORKSPACE_DENIED",403);
+    insist(isAbsolute(managedRoot),"MANAGED_WORKSPACE_ROOT_REQUIRED",403);
+    const root=await realpath(managedRoot);insist((await stat(root)).isDirectory(),"WORKSPACE_NOT_DIRECTORY");return root;
+  }
   insist(route.workspaceId && (!claim.task.workspaceId || claim.task.workspaceId === route.workspaceId), 'WORKSPACE_IDENTITY_MISMATCH', 403)
   const binding = policy.workspaces.find(w => w.workspaceId === route.workspaceId && w.nodeId === policy.nodeId)
   insist(binding && isAbsolute(binding.path) && isAbsolute(binding.allowedRoot), 'WORKSPACE_DENIED', 403)

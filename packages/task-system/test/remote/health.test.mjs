@@ -141,7 +141,7 @@ test('actual Cordis opt-in heartbeat reports native presence and actual executio
   own=f.ledger.nodeStatuses().find(n=>n.nodeId==='worker');assert.equal(own.runtimeReady,false);assert.equal(own.activeExecutions,0)
   assert.equal(service.heartbeatSnapshot().state,'acknowledged');
   // A ConfigEditor reload holds the admission guard while unloading the old instance.
-  service.beginConfigurationEdit();
+  await service.beginConfigurationEdit();
   await fiber.dispose();assert.equal(f.ledger.nodeStatuses().find(n=>n.nodeId==='worker').state,'unavailable');const stopped=sends;t.mock.timers.tick(60000);await immediate();assert.equal(sends,stopped)
   assert.equal(plugin.Config({}).coordinator??null,null)
   assert.equal(plugin.Config({coordinator:{endpoint:'https://fixture.invalid',audience:'planner',keyId:'fixture',privateKeyEnv:env}}).coordinator.heartbeatIntervalMs,0)

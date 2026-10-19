@@ -1,8 +1,12 @@
+import { ExecutionCatalogDelivery } from "../execution-models.js";
 import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import { dirname } from "node:path";
 import { closeSync, mkdirSync, openSync } from "node:fs";
-import { isTransientReceipt, TRANSIENT_RECEIPT_TTL_MS } from "../receipt-retention.js";
+import {
+  isTransientReceipt,
+  TRANSIENT_RECEIPT_TTL_MS,
+} from "../receipt-retention.js";
 import {
   byteLimit,
   canonical,
@@ -79,9 +83,16 @@ export class RecoveryStore {
     // explicitly classified observations receive an expiry.
     this.transaction(() => {
       for (const table of ["commands", "outbound"]) {
-        if (!this.db.prepare(`PRAGMA table_info(${table})`).all().some(row => row.name === "expires"))
+        if (
+          !this.db
+            .prepare(`PRAGMA table_info(${table})`)
+            .all()
+            .some((row) => row.name === "expires")
+        )
           this.db.exec(`ALTER TABLE ${table} ADD COLUMN expires INTEGER`);
-        this.db.exec(`CREATE INDEX IF NOT EXISTS ${table}_expiry ON ${table}(expires) WHERE expires IS NOT NULL`);
+        this.db.exec(
+          `CREATE INDEX IF NOT EXISTS ${table}_expiry ON ${table}(expires) WHERE expires IS NOT NULL`,
+        );
       }
     });
     // This is a nonsecret execution-owner identity, never an authentication key.
@@ -113,9 +124,65 @@ export class RecoveryStore {
       };
     });
   }
-  sessionMessageState(
-    id: string,
-  ):
+  networkPairings(): { address: string; nodeId: string }[] {
+    return this.db
+      .prepare("SELECT key,value FROM metadata WHERE key LIKE 'network-peer:%'")
+      .all()
+      .map((row) => ({
+        address: String(row.key).slice(13),
+        nodeId: String(row.value),
+      }));
+  }
+  bindNetworkPeer(address: string, nodeId: string): void {
+    this.transaction(() => {
+      const all = this.networkPairings(),
+        prior = all.find((row) => row.address === address);
+      insist(
+        !prior || prior.nodeId === nodeId,
+        "NETWORK_PEER_IDENTITY_CHANGED",
+        403,
+      );
+      insist(
+        !all.some((row) => row.nodeId === nodeId && row.address !== address),
+        "NETWORK_NODE_ALREADY_BOUND",
+        403,
+      );
+      this.db
+        .prepare("INSERT OR IGNORE INTO metadata(key,value) VALUES(?,?)")
+        .run(`network-peer:${address}`, nodeId);
+    });
+  }
+  retainNetworkPeers(addresses: readonly string[]): void {
+    for (const row of this.networkPairings())
+      if (!addresses.includes(row.address))
+        this.db
+          .prepare("DELETE FROM metadata WHERE key=?")
+          .run(`network-peer:${row.address}`);
+  }
+  catalogDelivery(nodeId: string): ExecutionCatalogDelivery | undefined {
+    const row = this.db
+      .prepare("SELECT value FROM metadata WHERE key=?")
+      .get(`catalog-delivery:${nodeId}`);
+    return row
+      ? ExecutionCatalogDelivery.parse(JSON.parse(String(row.value)))
+      : undefined;
+  }
+  saveCatalogDelivery(
+    nodeId: string,
+    delivery: ExecutionCatalogDelivery | undefined,
+  ): void {
+    const key = `catalog-delivery:${nodeId}`;
+    if (!delivery) {
+      this.db.prepare("DELETE FROM metadata WHERE key=?").run(key);
+      return;
+    }
+    this.db
+      .prepare(
+        "INSERT INTO metadata(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+      )
+      .run(key, JSON.stringify(delivery));
+  }
+  sessionMessageState(id: string):
     | {
         state: "started" | "result";
         result?: import("./ports.js").SessionMessageResult;
@@ -264,8 +331,18 @@ export class RecoveryStore {
             : {}),
         };
       this.db
-        .prepare("INSERT INTO commands(node,id,digest,state,expires) VALUES(?,?,?,?,?)")
-        .run(node, id, hash, "pending", isTransientReceipt(envelope.operation) ? now + TRANSIENT_RECEIPT_TTL_MS : null);
+        .prepare(
+          "INSERT INTO commands(node,id,digest,state,expires) VALUES(?,?,?,?,?)",
+        )
+        .run(
+          node,
+          id,
+          hash,
+          "pending",
+          isTransientReceipt(envelope.operation)
+            ? now + TRANSIENT_RECEIPT_TTL_MS
+            : null,
+        );
       return undefined;
     });
   }
@@ -340,9 +417,15 @@ export class RecoveryStore {
       return { commandId, state: "done", result: json };
     });
   }
-  receipt(node: string, commandId: string, now?: number): CommandReceipt | undefined {
+  receipt(
+    node: string,
+    commandId: string,
+    now?: number,
+  ): CommandReceipt | undefined {
     const row = this.db
-      .prepare("SELECT state,result FROM commands WHERE node=? AND id=? AND (? IS NULL OR expires IS NULL OR expires > ?)")
+      .prepare(
+        "SELECT state,result FROM commands WHERE node=? AND id=? AND (? IS NULL OR expires IS NULL OR expires > ?)",
+      )
       .get(node, commandId, now ?? null, now ?? null);
     return row
       ? {
@@ -423,16 +506,29 @@ export class RecoveryStore {
     });
   }
   saveOutbound(id: string, data: Json, now = Date.now()): void {
-    const operation = data && typeof data === "object" && !Array.isArray(data) ? data.operation : undefined;
+    const operation =
+      data && typeof data === "object" && !Array.isArray(data)
+        ? data.operation
+        : undefined;
     this.transaction(() => {
       this.db.prepare("DELETE FROM outbound WHERE expires <= ?").run(now);
-      this.db.prepare(
-        "INSERT INTO outbound(id,data,expires) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data,expires=excluded.expires",
-      ).run(id, canonical(data), isTransientReceipt(operation) ? now + TRANSIENT_RECEIPT_TTL_MS : null);
+      this.db
+        .prepare(
+          "INSERT INTO outbound(id,data,expires) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data,expires=excluded.expires",
+        )
+        .run(
+          id,
+          canonical(data),
+          isTransientReceipt(operation) ? now + TRANSIENT_RECEIPT_TTL_MS : null,
+        );
     });
   }
   outbound(id: string, now?: number): Json | undefined {
-    const row = this.db.prepare("SELECT data FROM outbound WHERE id=? AND (? IS NULL OR expires IS NULL OR expires > ?)").get(id, now ?? null, now ?? null);
+    const row = this.db
+      .prepare(
+        "SELECT data FROM outbound WHERE id=? AND (? IS NULL OR expires IS NULL OR expires > ?)",
+      )
+      .get(id, now ?? null, now ?? null);
     return row ? (JSON.parse(String(row.data)) as Json) : undefined;
   }
   pendingObservations(

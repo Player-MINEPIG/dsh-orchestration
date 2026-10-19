@@ -2,6 +2,7 @@ import type { Context } from "@deepseek-ai/cordis";
 import z from "@deepseek-ai/schemastery";
 import { defineTool } from "@deepseek-ai/dsh-tools";
 import { TaskError } from "../ledger.js";
+import { ExecutionModelChoice } from "../execution-models.js";
 import { validateRegistration } from "./protocol.js";
 import { sendRegistration } from "./service.js";
 import { registerProjectCommands } from "./commands.js";
@@ -64,8 +65,8 @@ export function apply(ctx: Context, config: Config) {
   };
   for (const [toolName, action, description] of [
     ["project_status", "status", "Read the bound central project's actual tasks, runs and review state."],
-    ["project_nodes", "nodes", "Read eligible execution nodes and routes for the bound project."],
-    ["project_dispatch", "dispatch", "Dispatch one authorized task under the bound project. Reuse requestId and identical arguments after an uncertain response."],
+    ["project_nodes", "nodes", "Request executor model catalogs and read eligible node identities, node defaults, catalog freshness and explicit routes for the bound project. Pending or stale metadata is not evidence that a model was removed."],
+    ["project_dispatch", "dispatch", "Dispatch one authorized task under the bound project. Omit executionModelJson to use the chosen node default; model choices belong to the workload, not the planning decision. Reuse requestId and identical arguments after an uncertain response."],
     ["project_progress", "update", "Sync factual progress and evidence to the bound central project; each update has a stable requestId."],
     ["project_finish", "submit", "Submit completion evidence for central/user review; this does not approve the project."],
   ] as const) {
@@ -75,7 +76,9 @@ export function apply(ctx: Context, config: Config) {
     if (action === "dispatch") Object.assign(parameters, {
       title: { type: "string", required: true },
       description: { type: "string", required: true },
-      routeJson: { type: "string", description: "Optional JSON string: copy one COMPLETE object from project_nodes.routes, preserving workspaceId, requiredCapabilities (including []), backend when returned, and all other returned route fields. Do not invent fields such as routeId or reconstruct a tuple from node metadata. If no complete eligible route exists, report the blocker. Omit only to request configured central routing." },
+      nodeId: {type:"string",description:"Optional executor identity from project_nodes. With no explicit workload choice, this node's configured default is used. Omit to let central planning choose the executor."},
+      executionModelJson:{type:"string",description:"Optional explicit workload selection from the user's context as JSON {provider,model,reasoningEffort?,backend?}. Omit to use the executor node default. A confirmed invalid explicit selection never falls back. Cannot be combined with routeJson."},
+      routeJson: { type: "string", description: "Optional explicit full assignment copied from project_nodes.routes, including nodeId, provider, model, requiredCapabilities and returned effort, backend or workspaceId. Use only for an explicit workload route. Ordinary project tasks use their execution directory automatically and need no caller-created workspace. Cannot be combined with nodeId or executionModelJson." },
     });
     if (action === "update" || action === "submit") parameters.summary = { type: "string", required: true };
     ctx.tools.register(defineTool({
@@ -84,11 +87,13 @@ export function apply(ctx: Context, config: Config) {
       parameters,
       output,
       execute: async (args, exec) => {
-        const input: { title?: string; description?: string; summary?: string; route?: unknown } = {};
+        const input: { title?: string; description?: string; summary?: string; route?: unknown; nodeId?:string; executionModel?:ExecutionModelChoice } = {};
         if (action === "dispatch") {
           input.title = args.title as string;
           input.description = args.description as string;
           if (args.routeJson) input.route = JSON.parse(args.routeJson as string);
+          if (args.nodeId)input.nodeId=String(args.nodeId);
+          if (args.executionModelJson)input.executionModel=ExecutionModelChoice.parse(JSON.parse(String(args.executionModelJson)));
         }
         if (action === "update" || action === "submit") input.summary = args.summary as string;
         return JSON.parse(JSON.stringify(await collaboration.invoke(exec.agent, action, input, String(exec.callId), args.requestId as string | undefined)));

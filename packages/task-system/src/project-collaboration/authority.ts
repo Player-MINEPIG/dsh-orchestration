@@ -5,20 +5,23 @@ import { Workbench } from "../workbench.js";
 import type { ExecutionRoute, Json } from "../contracts.js";
 import type { TaskPlanner } from "../planning.js";
 import type { CollaborationSummary, ProjectCollaborationInput } from "./types.js";
+import { ExecutionModelChoice } from "../execution-models.js";
 const hash = (value: unknown) => createHash("sha256").update(canonical(value)).digest("hex");
 const json = (value: unknown): Json => JSON.parse(JSON.stringify(value));
 const fail = (code: string, message: string): never => { throw new TaskError(code, message); };
 export function validateCollaborationInput(value: unknown): asserts value is ProjectCollaborationInput {
   if (!value || typeof value !== "object" || Array.isArray(value)) fail("INVALID", "Expected collaboration input");
   const p = value as Record<string, unknown>;
-  const keys = ["action", "sessionId", "cwd", "projectId", "title", "goal", "summary", "route", "description"];
+  const keys = ["action", "sessionId", "cwd", "projectId", "title", "goal", "summary", "route", "description", "nodeId", "executionModel"];
   if (Object.keys(p).some(k => !keys.includes(k)) || canonical(p).length > 64_000) fail("INVALID", "Unknown or oversized collaboration input");
   if (!["activate", "status", "nodes", "dispatch", "update", "submit"].includes(String(p.action))) fail("INVALID", "Unknown collaboration action");
-  for (const key of keys.filter(k => k !== "route")) {
+  for (const key of keys.filter(k => k !== "route" && k !== "executionModel")) {
     const v = p[key];
     if (v !== undefined && (typeof v !== "string" || v.length > (key === "description" || key === "summary" ? 20_000 : 4096) || v.includes("\0"))) fail("INVALID", `Invalid ${key}`);
   }
   if (typeof p.sessionId !== "string" || !p.sessionId.trim() || p.sessionId.length > 200 || typeof p.cwd !== "string" || !isAbsolute(p.cwd)) fail("INVALID", "A session and absolute working directory are required");
+  if(p.executionModel!==undefined && !ExecutionModelChoice.safeParse(p.executionModel).success)fail("INVALID","Invalid explicit workload model");
+  if(p.route!==undefined && (p.nodeId!==undefined || p.executionModel!==undefined))fail("INVALID","Choose an explicit route or node and workload selection, not both");
   if (p.route !== undefined) {
     if (!p.route || typeof p.route !== "object" || Array.isArray(p.route)) fail("INVALID", "Invalid route");
     const route = p.route as Record<string, unknown>;
@@ -84,39 +87,39 @@ export class ProjectCollaborationAuthority {
     if (binding && input.projectId && binding.projectId !== input.projectId) fail("FORBIDDEN", "Project differs from the session binding");
     let result: Json;
     if (input.action === "nodes") {
-      result = json({ confirmed: true, routes: this.publicRoutes(), nodes: this.ledger.nodeStatuses().map(n => this.ledger.getNode(n.nodeId)).filter(n => n.enabled && (n.roles.includes("executor") || n.roles.includes("both"))).map(n => ({ nodeId: n.nodeId, capabilities: n.capabilities, models: n.models.map(m => ({ provider: m.provider, model: m.model, reasoningEfforts: m.reasoningEfforts })), workspaceIds: n.workspaceIds, maxConcurrent: n.maxConcurrent })) });
+      const nodes=this.ledger.nodeStatuses().filter(status=>{const node=this.ledger.getNode(status.nodeId);return node.enabled && node.roles.some(role=>role==="executor"||role==="both");}).map(status=>{
+        const node=this.ledger.getNode(status.nodeId);
+        let view=this.ledger.executionModels.view(node.nodeId);
+        if(view.catalog.state!=="fresh")view=this.ledger.executionModels.request(`project-nodes:${hash([key,node.nodeId])}`,{nodeId:node.nodeId});
+        return {nodeId:node.nodeId,capabilities:node.capabilities,catalog:view.catalog,policy:view.policy,models:view.catalog.snapshot?.models ?? [],workspaceIds:node.workspaceIds,maxConcurrent:node.maxConcurrent,state:status.state};
+      });
+      result = json({ confirmed: true, routes: this.publicRoutes(), nodes });
     } else {
       const b = binding!;
       if (input.action === "dispatch") {
         if (!input.title?.trim()) fail("INVALID", "Dispatch requires a task title");
         const planner = typeof this.options.planner === "function" ? this.options.planner() : this.options.planner;
-        if (!input.route && !planner) fail("ROUTE_REQUIRED", "Configure the central planner or provide an explicit route");
-        if (input.route && !input.route.workspaceId) fail("WORKSPACE_REQUIRED", "Explicit dispatch routes must include a ready workspaceId from project_nodes.routes");
-        if (input.route) this.ledger.validateRoute(input.route);
-        if (input.route?.backend && !this.publicRoutes().some(route => ["nodeId", "provider", "model", "reasoningEffort", "backend"].every(key => route[key as keyof ExecutionRoute] === input.route![key as keyof ExecutionRoute]))) fail("BACKEND_UNAVAILABLE", "Requested native backend is not advertised by an available execution host");
-        const task = this.ledger.createTask(`${key}:task`, { taskId: `collab-task-${hash(key)}`, title: input.title!, description: input.description || input.title!, ...(input.route?.backend ? { policy: { allowedBackends: [input.route.backend] } } : {}), ...(input.route?.workspaceId ? { workspaceId: input.route.workspaceId } : {}) }).value;
+        const candidates=this.ledger.decisionCatalog().nodes.filter(node=>node.enabled&&node.roles.some(role=>role==="executor"||role==="both"));
+        const nodeId=input.route?.nodeId ?? input.nodeId ?? (!planner && candidates.length===1?candidates[0]?.nodeId:undefined);
+        const selection=nodeId?this.ledger.selectExecutionModel(nodeId,input.route ?? input.executionModel):undefined;
+        const route=input.route ?? (nodeId && selection?{nodeId,provider:selection.choice.provider,model:selection.choice.model,...(selection.choice.reasoningEffort?{reasoningEffort:selection.choice.reasoningEffort}:{}),...(selection.choice.backend?{backend:selection.choice.backend}:{}),requiredCapabilities:[]}:undefined);
+        if(!route && !planner)fail("EXECUTOR_REQUIRED","Choose an executor from project_nodes or configure central planning");
+        if(route)this.ledger.validateRoute(route,{admission:true,skipModel:true});
+        if(route?.backend && !this.publicRoutes().some(candidate=>["nodeId","provider","model","reasoningEffort","backend"].every(key=>candidate[key as keyof ExecutionRoute]===route[key as keyof ExecutionRoute])))fail("BACKEND_UNAVAILABLE","Requested native backend is not advertised by an available execution host");
+        const task = this.ledger.createTask(`${key}:task`, { taskId: `collab-task-${hash(key)}`, title: input.title!, description: input.description || input.title!, ...(route?.backend ? { policy: { allowedBackends: [route.backend] } } : {}), ...(route?.workspaceId ? { workspaceId: route.workspaceId } : {}) }).value;
         this.wb.manage(`${key}:link`, "link_backlog_task", { backlogId: b.backlogId, taskId: task.taskId });
         let dispatched: unknown;
         const needsConfirmation = task.confirmation?.required && task.confirmation.state !== "approved";
-        if (planner) {
-          const decision = await planner.plan({ requestId: `${key}:plan`, title: input.title!, description: input.description || input.title!, projectId: b.projectId, taskId: task.taskId, ...(input.route ? { route: input.route } : {}) });
+        if (planner && !input.nodeId) {
+          const decision = await planner.plan({ requestId: `${key}:plan`, title: input.title!, description: input.description || input.title!, projectId: b.projectId, taskId: task.taskId, ...(input.route ? { route: input.route } : {}),...(input.executionModel?{executionModel:input.executionModel}:{}) });
           if (decision.routingStatus !== "ready") {
             // Planning has not applied any execution. Preserve the audit record,
             // but do not leave an unstartable task blocking project submission.
             this.ledger.cancel(`${key}:unrouted`, { taskId: task.taskId, reason: "Central planner could not select an available execution route" });
             fail("ROUTE_REQUIRED", "Central planner could not select an available execution route; the unstarted task was cancelled");
           }
-          if (!input.route) {
-            const nodeId = (decision.proposal as { executor?: { id?: string } }).executor?.id;
-            const workspaceId = nodeId ? this.ledger.getNode(nodeId).defaultWorkspaceId : undefined;
-            const workspace = (this.ledger.snapshot().workspaces ?? []).find(w => w.workspaceId === workspaceId && w.nodeId === nodeId && w.state === "ready");
-            if (!workspace || !this.ledger.getNode(nodeId!).workspaceIds.includes(workspace.workspaceId)) {
-              this.ledger.cancel(`${key}:no-workspace`, { taskId: task.taskId, reason: "Planned executor has no ready default workspace" });
-              fail("WORKSPACE_REQUIRED", "Planned executor has no ready default workspace; use a complete route from project_nodes.routes. The unstarted task was cancelled");
-            }
-          }
           dispatched = planner.apply(`${key}:plan`, { deferExecution: Boolean(needsConfirmation) }).value;
-        } else dispatched = needsConfirmation ? { task, pendingConfirmation: true } : this.ledger.createRun(`${key}:run`, { taskId: task.taskId, route: input.route }).value;
+        } else dispatched = needsConfirmation ? { task, pendingConfirmation: true } : this.ledger.createRun(`${key}:run`, { taskId: task.taskId, route,...(selection?{executionModel:selection.executionModel}:{}) }).value;
         b.state = "active";
         b.updatedAt = this.ledger.managementNow();
         result = json({ confirmed: true, binding: b, projectId: b.projectId, taskId: task.taskId, pendingConfirmation: Boolean(needsConfirmation), dispatch: dispatched });
@@ -154,24 +157,16 @@ export class ProjectCollaborationAuthority {
   private publicRoutes(): ExecutionRoute[] {
     const routes: ExecutionRoute[] = [];
     for (const status of this.ledger.nodeStatuses()) {
-      if (status.state !== "online") continue;
-      const advertised = (status.providerStatus as { executionRoutes?: unknown[] } | undefined)?.executionRoutes;
-      if (!Array.isArray(advertised)) continue;
-      for (const raw of advertised.slice(0, 128)) {
-        if (!raw || typeof raw !== "object") continue;
-        const route = Object.fromEntries(Object.entries(raw).filter(([k]) => ["nodeId", "provider", "model", "backend", "reasoningEffort", "requiredCapabilities"].includes(k))) as unknown as ExecutionRoute;
-        try {
-          validateCollaborationInput({ action: "nodes", sessionId: "route-validation", cwd: "/", route });
-          if (route.nodeId !== status.nodeId) continue;
-          this.ledger.validateRoute(route);
-          const node = this.ledger.getNode(status.nodeId);
-          for (const workspace of (this.ledger.snapshot().workspaces ?? [])) {
-            if (workspace.nodeId !== status.nodeId || workspace.state !== "ready" || !node.workspaceIds.includes(workspace.workspaceId)) continue;
-            const executable = { ...route, workspaceId: workspace.workspaceId };
-            this.ledger.validateRoute(executable);
-            routes.push(executable);
-          }
-        } catch { /* Advertisements are evidence, never grants. */ }
+      const node=this.ledger.getNode(status.nodeId),view=this.ledger.executionModels.view(status.nodeId);
+      if(!node.enabled || !node.roles.some(role=>role==="executor"||role==="both") || !view.catalog.positiveSnapshot || view.catalog.positiveSnapshot.expiresAt<=Date.now())continue;
+      for(const choice of view.catalog.positiveSnapshot.models){
+        const {provider,model,reasoningEffort,backend}=choice;
+        const route:ExecutionRoute={nodeId:node.nodeId,provider,model,...(reasoningEffort?{reasoningEffort}:{}),...(backend?{backend}:{}),requiredCapabilities:[]};
+        const workspaces=(this.ledger.snapshot().workspaces ?? []).filter(workspace=>workspace.nodeId===node.nodeId&&workspace.state==="ready"&&node.workspaceIds.includes(workspace.workspaceId));
+        for(const workspace of [undefined,...workspaces]){
+          const executable={...route,...(workspace?{workspaceId:workspace.workspaceId}:{})};
+          try{this.ledger.validateRoute(executable,{admission:true});routes.push(executable);}catch{}
+        }
       }
     }
     return routes;
@@ -184,8 +179,8 @@ export class ProjectCollaborationAuthority {
     while (changed) { changed = false; for (const task of snapshot.tasks) if (task.parentTaskId && ids.has(task.parentTaskId) && !ids.has(task.taskId)) { ids.add(task.taskId); changed = true; } }
     return {
       project: wb.projects.find(p => p.projectId === binding.projectId),
-      tasks: snapshot.tasks.filter(t => ids.has(t.taskId)).map(t => ({ taskId: t.taskId, parentTaskId: t.parentTaskId, parentRunId: t.parentRunId, title: t.title, description: t.description, state: t.state, kind: t.kind, confirmation: t.confirmation, createdAt: t.createdAt, updatedAt: t.updatedAt })),
-      runs: snapshot.runs.filter(r => ids.has(r.taskId)).map(r => ({ runId: r.runId, taskId: r.taskId, parentRunId: r.parentRunId, state: r.state, reviewStatus: r.reviewStatus, route: r.route && { nodeId: r.route.nodeId, provider: r.route.provider, model: r.route.model, reasoningEffort: r.route.reasoningEffort, backend: r.route.backend }, createdAt: r.createdAt, updatedAt: r.updatedAt })),
+      tasks: snapshot.tasks.filter(t => ids.has(t.taskId)).map(t => ({ taskId: t.taskId, parentTaskId: t.parentTaskId, parentRunId: t.parentRunId, title: t.title, description: t.description, state: t.state, kind: t.kind, confirmation: t.confirmation, actionVersion:this.ledger.taskActionState(t.taskId).version, createdAt: t.createdAt, updatedAt: t.updatedAt })),
+      runs: snapshot.runs.filter(r => ids.has(r.taskId)).map(r => ({ runId: r.runId, taskId: r.taskId, parentRunId: r.parentRunId, state: r.state, reviewStatus: r.reviewStatus, dispatchIssue:r.dispatchIssue,executionModel:r.executionModel, route: r.route && { nodeId: r.route.nodeId, provider: r.route.provider, model: r.route.model, reasoningEffort: r.route.reasoningEffort, backend: r.route.backend }, createdAt: r.createdAt, updatedAt: r.updatedAt })),
       reports: snapshot.reports.filter(r => ids.has(r.taskId)).map(r => ({ reportId: r.reportId, taskId: r.taskId, runId: r.runId, kind: r.kind, title: r.title, body: r.body, artifactIds: r.artifactIds, createdAt: r.createdAt })),
       attempts: (snapshot.attempts ?? []).filter(a => ids.has(a.taskId)).map(a => ({ attemptId: a.attemptId, runId: a.runId, taskId: a.taskId, state: a.state, nodeId: a.nodeId })),
     };

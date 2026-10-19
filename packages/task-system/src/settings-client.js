@@ -3,6 +3,7 @@ window.__ModuleLoader__.load({
   id: "@dsh-task/task-system",
   factory(require) {
     const React = require("react");
+    const { createPortal } = require("react-dom");
     const {
       SettingsForm,
       SettingsFormModel,
@@ -57,7 +58,7 @@ window.__ModuleLoader__.load({
       connectionError_NOT_FOUND: "The service is reachable, but this task-protocol path was not found.",
       connectionError_CONNECTION_FAILED: "The response could not be verified as the scheduler task protocol.",
       connectionPortHint:
-        "Use the scheduler task-protocol address, not its WebUI address. This test uses the current draft without saving it.",
+        "The address, port and path must identify the scheduler task service. This test uses the current draft without saving it.",
       connectionError_NETWORK_TARGET_DENIED:
         "Address/port does not match the exact transport binding.",
       connectionError_REMOTE_REJECTED:
@@ -67,7 +68,8 @@ window.__ModuleLoader__.load({
       connectionError_CHECK_PAUSE_REQUIRED:
         "Pause remote execution before testing a changed destination.",
       startupError_STARTUP_TARGET_MISMATCH:
-        "Address/port does not match the trusted-network destination. Check advanced settings.",
+        "Address/port does not match the trusted-network destination. Check collaboration connections.",
+      startupError_STARTUP_ROLE_CONFLICT: "The role conflicts with existing executor registrations or connection settings. Pause the connection and check its listener, polling and heartbeat first.",
       startupError_STARTUP_BUSY:
         "Work or recovery is still active. Finish or reconcile it before saving.",
       startupError_STARTUP_CONFLICT:
@@ -107,12 +109,6 @@ window.__ModuleLoader__.load({
       decisionUnavailable:
         "The Jev plugin is not installed or has no editable entry.",
       decisionClose: "Close model settings",
-      simpleMode: "Simple",
-      advancedMode: "Advanced",
-      settingsMode: "Settings mode",
-      simpleHint:
-        "Choose your role, connection and default workspace. Advanced settings keep the same draft.",
-      openAdvanced: "Open advanced settings",
       decisionDependencyRequired: "Install and enable the dsh-jev-plugin decision plugin to use this feature. Refresh startup configuration after enabling it.",
       startupError_STARTUP_DECISION_REQUIRED: "Install and enable dsh-jev-plugin before enabling decisions.",
       schedulerDecisionTitle: "Scheduler · executor selection",
@@ -124,9 +120,9 @@ window.__ModuleLoader__.load({
       schedulerDecisionModelEntry: "Scheduler decision model settings",
       schedulerDecisionSetup:
         "Open Decision model settings. Both roles reuse the same configured model.",
-      executorDecisionTitle: "Executor · workspace and session",
+      executorDecisionTitle: "Executor · session selection",
       executorDecisionHint:
-        "After receiving a task, the executor selects its workspace and creates or reuses a Task session within the task's constraints.",
+        "The project or temporary-task rule fixes the directory. The decision selects a legal new or existing Task session.",
       executorDecisionInactive:
         "These execution settings are retained but inactive for the Scheduler role.",
       decisionModelEntry: "Executor decision model settings",
@@ -142,7 +138,7 @@ window.__ModuleLoader__.load({
       executorSetupStatus:
         "Executor registrations and permissions use the existing task-system plugin configuration. Review them in Plugins before remote dispatch.",
       connectionSetupStatus:
-        "Connection not ready. Obtain connection information from the scheduler, including audience, authentication/permissions and the exact target binding, then complete it in advanced settings or Plugins.",
+        "Connection not ready. Obtain connection information from the scheduler, including audience, authentication/permissions and the exact target binding, then complete it in collaboration connections or Plugins.",
       connectionUnconfirmed:
         "Connection configured; scheduler identity and permissions have not been confirmed here.",
       remotePausedStatus:
@@ -171,7 +167,7 @@ window.__ModuleLoader__.load({
       startupUnconfigured:
         "No scheduler connection is configured. This form can create a connection only with an existing trusted-network authentication mode and fixed internal node identity. Other authentication setup uses the official secure configuration flow; no keys or permissions are created here.",
       startupEndpointHint:
-        "For an existing trusted-network connection, the endpoint must match the exact target address and port. Connection changes are blocked while work is active, claimed or uncertain.",
+        "Saving generates the connection address from the fields above.",
       startupMigration: "Save and restart: enable Task session protocol",
       startupMigrationHint:
         "Upgrade only after this existing peer has been explicitly granted executorIdentity, sessionContext and selectTaskSession. This action does not grant those permissions.",
@@ -185,16 +181,14 @@ window.__ModuleLoader__.load({
       heartbeat_acknowledged: "Last heartbeat acknowledged by the scheduler; online status follows heartbeat expiry.",
       heartbeat_failed: "Heartbeat failed; executor is enabled but online status is not confirmed. Check the connection and refresh.",
       startupError_STARTUP_ROUTES_REQUIRED: "Configure authorized executor models and workspace routes before enabling the executor.",
-      paused: "Pause remote operation",
+      paused: "Pause executor connection",
       pausedHint:
-        "Save and restart with this on to keep connection settings loaded while remote requests, workers and polling are paused. Turn it off and save to resume with the configured connection and permissions.",
+        "Pause executor connections, polling and heartbeat. The scheduler listener is controlled separately.",
       startupLoaded: "Connection settings loaded",
       startupLoaderDisabled: "Plugin disabled",
       startupRemoteDisabled:
         "This connection configuration is not loaded for editing. Load it paused through the approved setup before saving here.",
       audience: "Scheduler audience",
-      targetAddress: "Trusted target address",
-      targetPort: "Trusted target port",
       targetLocalAddress: "Local connection address",
       discardDraft: "Discard draft",
       title: "Task system",
@@ -228,7 +222,7 @@ window.__ModuleLoader__.load({
         "This section shows effective startup settings. Role, workspace and existing connection changes use the separate startup form. Identity, database paths, tool permissions and credentials remain read only.",
       nodeId: "Internal node ID",
       schedulerId: "Scheduler ID",
-      executorId: "Assigned executor ID",
+      executorId: "Scheduler registration ID",
       identityTitle: "Scheduler-bound executor identity · read only",
       identityHint:
         "The scheduler assigns a stable executor ID to an already authorized peer. A connection to another scheduler has its own identity; this page does not edit IDs or grant access.",
@@ -237,20 +231,14 @@ window.__ModuleLoader__.load({
       roleExecutor: "Executor",
       roleBoth: "Scheduler and executor",
       workspaceTitle: "Executor · sessions and workspace",
-      defaultWorkspaceId: "Workspace ID · read only",
-      defaultWorkspace: "Default workspace",
       workspaceLayoutHint: "For new project tasks this is the authorized parent. Local project folders are created by scheduler and project ID; temporary tasks have their own folders. Existing sessions retain their directory.",
-      workspaceNone: "No default workspace selected",
-      workspaceLoading: "Reading this host's workspaces…",
       workspaceFailed:
         "Could not read this host's workspaces. Refresh to retry; your current selection and draft are retained.",
       workspaceEmpty:
         "No registered workspace is currently available for tasks on this host.",
       workspaceUnavailable:
         "Current selection is unavailable and retained. Choose another workspace or discard this change.",
-      workspaceUnavailableOption: "Current selection · unavailable",
       workspaceUnavailableSuffix: "unavailable",
-      workspaceRefresh: "Refresh workspaces",
       sessionDecisionEnabled: "Enable executor workspace/session decisions",
       workspaceHint:
         "The default workspace must already be registered locally. Saved changes apply to future tasks immediately. Without a valid decision, execution uses the default Task session and workspace policy.",
@@ -317,7 +305,7 @@ window.__ModuleLoader__.load({
       saveFailed:
         "The Host rejected the save: values may be invalid, stale, or overridden by a home/command-line config layer. Your edits are retained; check the deployment details and reload this page for current values.",
       savedHint:
-        "Edits are staged until Save. Leaving this page discards unsaved changes. Saved runtime settings persist in this profile and do not restart the task service.",
+        "Edits stay in the draft until Save. Switching pages preserves the draft. Saved runtime settings persist in this profile without restarting the task service.",
     };
     const zh = {
       decisionFormTitle: "决策模型配置",
@@ -339,12 +327,12 @@ window.__ModuleLoader__.load({
       connectionError_ECONNREFUSED: "端口拒绝连接，请核对任务协议端口和监听服务。",
       connectionError_EHOSTUNREACH: "无法到达调度端，请检查私有网络连接。",
       connectionError_ENETUNREACH: "私有网络当前不可用。",
-      connectionError_EADDRNOTAVAIL: "配置的本机来源地址当前不可用，请核对高级设置。",
+      connectionError_EADDRNOTAVAIL: "配置的本机来源地址当前不可用，请核对协作连接。",
       connectionError_OPERATION_DENIED: "调度端未允许此节点查询执行端身份。",
       connectionError_NOT_FOUND: "服务可达，但未找到任务协议接口路径。",
       connectionError_CONNECTION_FAILED: "未能把返回内容验证为调度端任务协议。",
       connectionPortHint:
-        "请填调度端任务协议地址，而不是 WebUI 地址。检验使用当前草稿，无需先保存。",
+        "地址、端口和路径应对应调度端任务服务；检验使用当前草稿，无需先保存。",
       connectionError_NETWORK_TARGET_DENIED: "地址或端口与精确连接绑定不一致。",
       connectionError_REMOTE_REJECTED:
         "服务已响应，但未接受任务协议；请检查端口和接口路径。",
@@ -352,8 +340,9 @@ window.__ModuleLoader__.load({
       connectionError_CHECK_PAUSE_REQUIRED:
         "请先暂停远程执行，再检验修改后的目标地址。",
       startupError_STARTUP_TARGET_MISMATCH:
-        "地址或端口与 trusted-network 目标绑定不一致，请核对高级设置。",
-      startupError_STARTUP_BUSY: "角色或连接变更需要重启；仍有执行或未确认记录阻止重启。容量、默认工作区、决策开关和并发等即时设置可另行保存。",
+        "地址或端口与 trusted-network 目标绑定不一致，请核对协作连接。",
+      startupError_STARTUP_ROLE_CONFLICT: "角色与现有执行登记或连接配置不兼容。请先停用连接，并核对监听、轮询和心跳设置。",
+      startupError_STARTUP_BUSY: "角色或连接变更需要重启；仍有执行或未确认记录阻止重启。容量、决策开关和并发等即时设置可另行保存。",
       startupError_STARTUP_CONFLICT:
         "配置已变化，请刷新核对后保存；草稿已保留。",
       startupError_STARTUP_OVERRIDE:
@@ -387,11 +376,6 @@ window.__ModuleLoader__.load({
       decisionReadFailed: "无法读取决策模型配置，请刷新重试。",
       decisionUnavailable: "Jev 插件未安装或没有可编辑条目。",
       decisionClose: "关闭模型配置",
-      simpleMode: "简单",
-      advancedMode: "高级",
-      settingsMode: "设置模式",
-      simpleHint: "选择本机角色、连接与默认工作区。高级设置沿用同一份草稿。",
-      openAdvanced: "打开高级设置",
       decisionDependencyRequired: "需要安装并启用 dsh-jev-plugin 决策插件后才能使用。启用后请刷新启动配置。",
       startupError_STARTUP_DECISION_REQUIRED: "请先安装并启用 dsh-jev-plugin 决策插件，再开启决策功能。",
       schedulerDecisionTitle: "调度端 · 选择执行者",
@@ -403,14 +387,14 @@ window.__ModuleLoader__.load({
       schedulerDecisionModelEntry: "选择调度端决策预设",
       schedulerDecisionSetup:
         "在本页分别选择调度端与执行端的决策预设；预设内容在独立“决策”设置中管理。",
-      executorDecisionTitle: "执行端 · 工作区与会话",
+      executorDecisionTitle: "执行端 · 会话选择",
       executorDecisionHint:
-        "任务派过来后，由执行端在任务约束内选择工作区，并新建或复用 Task 会话。",
+        "工作目录按项目或临时任务规则确定；决策只选择合法的 Task 会话，新建或复用。",
       executorDecisionInactive:
         "这些执行配置予以保留，但在“调度端”角色下不生效。",
       decisionModelEntry: "选择执行端决策预设",
       decisionModelStatus:
-        "使用本机选择的决策预设；没有有效决策时，采用默认 Task 会话与工作区策略。",
+        "使用本机选择的决策预设；没有有效决策时，按项目/临时目录规则确定工作区，并创建或复用合法会话。",
       decisionModelSetup:
         "点击“选择执行端决策预设”；此开关控制会话与工作区决策。",
       schedulerAddress: "调度端地址",
@@ -421,7 +405,7 @@ window.__ModuleLoader__.load({
       executorSetupStatus:
         "执行端注册与权限沿用已有 task-system 插件配置；安排远程执行前请在“插件”中确认。",
       connectionSetupStatus:
-        "连接尚未就绪。请向调度端获取连接信息（audience、认证／权限及目标绑定），再在高级设置或“插件”中补齐。",
+        "连接尚未就绪。请向调度端获取连接信息（audience、认证／权限及目标绑定），再在下方协作连接中补齐。",
       connectionUnconfirmed: "连接已配置；此处尚未确认调度端身份与权限。",
       remotePausedStatus: "执行端已关闭，不发送心跳、不接收任务；连接配置仍可编辑。",
       startupEditable: "角色、工作区与调度端连接",
@@ -446,7 +430,7 @@ window.__ModuleLoader__.load({
       startupUnconfigured:
         "尚未配置调度端连接。此表单仅可在已有 trusted-network 认证模式和固定内部节点身份的配置上建立连接；其他认证配置请使用官方安全配置流程。此页不创建密钥或授予权限。",
       startupEndpointHint:
-        "已有 trusted-network 连接的调度端地址须与精确目标地址和端口一致。存在运行中、已领取或状态未确认的工作时不能改变连接。",
+        "保存时会根据以上字段生成连接地址。",
       startupMigration: "保存并重启：启用 Task 会话协议",
       startupMigrationHint:
         "仅在此已有 peer 已获 executorIdentity、sessionContext、selectTaskSession 明确授权后升级。此操作不会授予这些权限。",
@@ -460,16 +444,14 @@ window.__ModuleLoader__.load({
       heartbeat_acknowledged: "最近一次心跳已获调度端确认；在线状态以心跳有效期为准。",
       heartbeat_failed: "心跳发送失败；执行端已启用，但尚未确认在线。请检验连接后刷新。",
       startupError_STARTUP_ROUTES_REQUIRED: "请先配置已授权的执行模型和工作区路线，再启用执行端。",
-      paused: "暂停远程运行",
+      paused: "暂停执行端连接",
       pausedHint:
-        "开启并保存重启后，连接配置保持加载，远程请求、执行器和轮询暂停。关闭并保存后，按已配置的连接与权限恢复运行。",
+        "暂停执行端连接、远程接单和心跳；调度端监听独立控制。",
       startupLoaded: "连接配置已加载",
       startupLoaderDisabled: "插件已停用",
       startupRemoteDisabled:
         "此连接配置尚未加载，当前不能编辑。请按已批准的配置流程以暂停状态加载，再在此保存。",
       audience: "调度端受众标识（audience）",
-      targetAddress: "已授权目标地址",
-      targetPort: "已授权目标端口",
       targetLocalAddress: "本机连接地址",
       discardDraft: "丢弃草稿",
       title: "任务系统",
@@ -503,7 +485,7 @@ window.__ModuleLoader__.load({
         "以下显示实际启动配置。角色、工作区和已有连接由下方常驻按钮统一保存；节点身份、数据库路径、工具授权和凭据仍为只读。",
       nodeId: "内部节点 ID",
       schedulerId: "调度端 ID",
-      executorId: "调度端分配的执行端 ID",
+      executorId: "调度端登记号",
       identityTitle: "调度端绑定的执行端身份 · 只读",
       identityHint:
         "调度端为已授权的执行端分配固定 ID。连接到不同调度端使用各自的身份；此页不编辑 ID，也不授予访问权限。",
@@ -512,20 +494,13 @@ window.__ModuleLoader__.load({
       roleExecutor: "执行端",
       roleBoth: "调度端和执行端",
       workspaceTitle: "执行端 · 会话与工作区",
-      defaultWorkspaceId: "工作区 ID · 只读",
-      defaultWorkspace: "默认工作区",
       workspaceLayoutHint: "新项目任务以此授权工作区为父目录，按调度端 ID／项目 ID 创建本地文件夹；临时任务使用独立目录。已有会话保留原目录。",
-      workspaceNone: "未指定默认工作区",
-      workspaceLoading: "正在读取本机工作区…",
       workspaceFailed:
         "未能读取本机工作区，请刷新重试；当前选择和草稿予以保留。",
-      workspaceEmpty: "本机尚无已登记且可用于任务的工作区。",
       workspaceUnavailable:
         "当前选择已不可用，仍予以保留。请选择其他工作区，或丢弃本次更改。",
-      workspaceUnavailableOption: "当前选择 · 不可用",
       workspaceUnavailableSuffix: "不可用",
-      workspaceRefresh: "刷新工作区",
-      sessionDecisionEnabled: "启用执行端工作区／会话决策",
+      sessionDecisionEnabled: "启用执行端会话决策",
       workspaceHint:
         "父目录保存后用于新建项目工作区；已有项目和任务会话保留原位置。没有有效决策时，按默认规则创建或复用任务会话。",
       decisionHint:
@@ -586,7 +561,7 @@ window.__ModuleLoader__.load({
       saveFailed:
         "保存被拒绝：值可能无效、已在别处更改，或被 Home／命令行 config 覆写。已保留你的编辑；请检查部署详情，重新进入本页可读取最新值。",
       savedHint:
-        "修改仅在点击保存后生效。离开页面会丢弃未保存修改；已保存的运行设置写入当前 profile，不会重启任务服务。",
+        "运行设置保存后即时生效，写入当前 profile；切换页面保留未保存草稿。",
     };
     function fieldSpec(field) {
       return {
@@ -897,7 +872,8 @@ window.__ModuleLoader__.load({
     const startupKeys = {
       task: [
         "role",
-        "defaultWorkspaceId",
+        "databasePath",
+        "nodeId",
         "nodeCapacities",
         "planningDecisionEnabled",
         "sessionDecisionEnabled",
@@ -914,14 +890,14 @@ window.__ModuleLoader__.load({
       ],
     };
     function parseStartupValues(value, target, partial = false) {
-      const keys = startupKeys[target];
+      const keys = startupKeys[target].filter(key=>!(partial && ((target==="remote" && key==="role") || key==="nodeId")));
       if (
         !keys ||
         !value ||
         typeof value !== "object" ||
         Array.isArray(value) ||
         Object.keys(value).some((key) => !keys.includes(key)) ||
-        (!partial && keys.some((key) => key !== "nodeCapacities" && !Object.hasOwn(value, key)))
+        (!partial && keys.some((key) => !["nodeCapacities","databasePath","nodeId"].includes(key) && !Object.hasOwn(value, key)))
       )
         throw new Error("Invalid startup values");
       for (const [key, entry] of Object.entries(value)) {
@@ -939,7 +915,7 @@ window.__ModuleLoader__.load({
             "paused",
           ].includes(key) &&
             typeof entry !== "boolean") ||
-          (["defaultWorkspaceId", "endpoint", "audience"].includes(key) &&
+          (["endpoint", "audience","databasePath","nodeId"].includes(key) &&
             entry !== null &&
             typeof entry !== "string") ||
           (key === "pollIntervalMs" &&
@@ -1060,19 +1036,19 @@ window.__ModuleLoader__.load({
         }),
       },
     };
-    const startupNeedsRestart = (target, changes) => Object.keys(changes).some(key => !(target === "task" ? ["nodeCapacities", "defaultWorkspaceId", "planningDecisionEnabled", "sessionDecisionEnabled"] : ["concurrency", "pollIntervalMs"]).includes(key));
+    const startupNeedsRestart = (target, changes) => Object.keys(changes).some(key => !(target === "task" ? ["nodeCapacities", "planningDecisionEnabled", "sessionDecisionEnabled"] : ["concurrency", "pollIntervalMs"]).includes(key));
     class SettingsSaveCoordinator {
       constructor() { this.items = new Map(); this.listeners = new Set(); this.saving = false; this.message = ""; }
       subscribe(fn) { this.listeners.add(fn); return () => this.listeners.delete(fn); }
       emit() { for (const fn of this.listeners) fn(); }
-      register(id, item) { this.items.set(id,item); this.emit(); return () => {this.items.delete(id);this.emit();}; }
+      register(id, item) { this.items.set(id,{...item,id}); this.emit(); return () => {this.items.delete(id);this.emit();}; }
       update(id, meta) { const row=this.items.get(id); if (!row || JSON.stringify(row.meta)===JSON.stringify(meta)) return; if (meta.dirty && !row.meta?.dirty && !this.saving) this.message=""; row.meta=meta; this.emit(); }
-      snapshot() { const dirty=[...this.items.values()].filter(row=>row.meta?.dirty); return {count:dirty.length,invalid:dirty.some(row=>row.meta.invalid),busy:this.saving || [...this.items.values()].some(row=>row.meta?.busy),restart:dirty.some(row=>row.meta.restart),message:this.message}; }
+      snapshot() { const dirty=[...this.items.values()].filter(row=>row.meta?.dirty); return {count:dirty.length,retained:[...this.items.values()].filter(row=>row.meta?.retainedDirty).length,invalid:dirty.some(row=>row.meta.invalid),busy:this.saving || [...this.items.values()].some(row=>row.meta?.busy),restart:dirty.some(row=>row.meta.restart),message:this.message}; }
       async saveAll() {
         const before=this.snapshot(); if (!before.count || before.invalid || before.busy) return false;
         this.saving=true;this.message="";this.emit();let saved=0;
-        const items=[...this.items.values()].filter(row=>row.meta?.dirty).sort((a,b)=>Number(a.meta.restart)-Number(b.meta.restart));
-        try { for (const row of items) { if (await row.save() !== true) {this.message=saved ? "部分设置已保存；未完成的草稿已保留。请查看错误提示。" : "未能保存，草稿已保留。请查看错误提示。";return false;} saved++; } this.message="设置已保存。";return true; }
+        const items=[...this.items.values()].filter(row=>row.meta?.dirty).sort((a,b)=>Number(a.meta.restart)-Number(b.meta.restart) || Number(b.id==="startup-task")-Number(a.id==="startup-task"));
+        try { for (const row of items) { if (await row.save() !== true) {this.message=saved ? "部分设置已保存；未完成的草稿已保留。请查看错误提示。" : "未能保存，草稿已保留。请查看错误提示。";return false;} saved++; } this.message=this.snapshot().retained?"所选角色设置已保存；隐藏角色草稿保留，尚未提交。":"设置已保存。";return true; }
         catch {this.message=saved ? "部分设置已保存；其余草稿已保留。" : "未能保存，草稿已保留。";return false;}
         finally {this.saving=false;this.emit();}
       }
@@ -1082,7 +1058,7 @@ window.__ModuleLoader__.load({
       if (!coordinator) return;
       const ref=React.useRef(participant);ref.current=participant;
       React.useEffect(()=>coordinator.register(id,{meta:participant.meta,save:()=>ref.current.save(),discard:()=>ref.current.discard()}),[coordinator,id]);
-      React.useEffect(()=>coordinator.update(id,participant.meta),[coordinator,id,participant.meta.dirty,participant.meta.invalid,participant.meta.busy,participant.meta.restart]);
+      React.useEffect(()=>coordinator.update(id,participant.meta),[coordinator,id,participant.meta.dirty,participant.meta.retainedDirty,participant.meta.invalid,participant.meta.busy,participant.meta.restart]);
     }
     const hintStyle = {
       color: "var(--dsw-alias-label-secondary, currentColor)",
@@ -1110,7 +1086,7 @@ window.__ModuleLoader__.load({
       const refresh = React.useCallback(() => {
         const current = ++generation.current;
         setState((old) => ({ ...old, loading: true, failed: false }));
-        Promise.resolve()
+        return Promise.resolve()
           .then(read)
           .then(
             (value) => {
@@ -1270,10 +1246,8 @@ window.__ModuleLoader__.load({
               state.value.role === "planner"
                 ? h("p", { style: hintStyle }, t("executorDecisionInactive"))
                 : null,
-              Object.hasOwn(state.value, "defaultWorkspaceId") &&
-                Object.hasOwn(state.value, "sessionDecisionEnabled")
+              Object.hasOwn(state.value, "sessionDecisionEnabled")
                 ? fields(state.value, [
-                    "defaultWorkspaceId",
                     "sessionDecisionEnabled",
                   ])
                 : h("p", { style: hintStyle }, t("settingsPending")),
@@ -1338,7 +1312,7 @@ window.__ModuleLoader__.load({
         ),
       );
     }
-    function QueueContents({ t, value, advanced = true }) {
+    function QueueContents({ t, value }) {
       const cellStyle = {
         textAlign: "left",
         padding: "8px 12px",
@@ -1351,7 +1325,7 @@ window.__ModuleLoader__.load({
         null,
         h(
           "p",
-          { style: hintStyle, hidden: !advanced },
+          { style: hintStyle },
           `${t("nodeId")}: ${value.nodeId} · ${t("queueSampledAt")}: ${value.sampledAt}`,
         ),
         value.items.length === 0
@@ -1377,7 +1351,8 @@ window.__ModuleLoader__.load({
                     ...[
                       "queueTask",
                       "queueState",
-                      ...(advanced ? ["sessionId", "workspaceId"] : []),
+                      "sessionId",
+                      "workspaceId",
                     ].map((key) =>
                       h("th", { key, scope: "col", style: cellStyle }, t(key)),
                     ),
@@ -1395,10 +1370,10 @@ window.__ModuleLoader__.load({
                         { style: cellStyle },
                         h("strong", null, item.title),
                         item.projectTitle ? h("div", { style: hintStyle }, item.projectTitle) : null,
-                        advanced && item.executionDirectory ? h("div", { style: { ...hintStyle, overflowWrap: "anywhere" } }, item.executionDirectory) : null,
+                        item.executionDirectory ? h("div", { style: { ...hintStyle, overflowWrap: "anywhere" } }, item.executionDirectory) : null,
                         h(
                           "div",
-                          { style: hintStyle, hidden: !advanced },
+                          { style: hintStyle },
                           `${item.taskId} / ${item.runId}`,
                         ),
                       ),
@@ -1423,12 +1398,12 @@ window.__ModuleLoader__.load({
                       ),
                       h(
                         "td",
-                        { style: cellStyle, hidden: !advanced },
+                        { style: cellStyle },
                         item.sessionId ?? t("none"),
                       ),
                       h(
                         "td",
-                        { style: cellStyle, hidden: !advanced },
+                        { style: cellStyle },
                         item.workspaceId ?? t("none"),
                       ),
                     ),
@@ -1441,7 +1416,7 @@ window.__ModuleLoader__.load({
           : null,
       );
     }
-    function LocalQueue({ t, readQueue, advanced = true }) {
+    function LocalQueue({ t, readQueue }) {
       const { state, refresh } = useReadSnapshot(readQueue);
       return h(
         "section",
@@ -1460,7 +1435,7 @@ window.__ModuleLoader__.load({
             )
           : null,
         state.value
-          ? h(QueueContents, { t, value: state.value, advanced })
+          ? h(QueueContents, { t, value: state.value })
           : null,
         h(
           Button,
@@ -1542,61 +1517,95 @@ window.__ModuleLoader__.load({
         return null;
       }
     }
-    function simpleEndpointDisplay(value) {
-      const url = connectionUrl(value);
-      return url && !url.username && !url.password && !url.search && !url.hash
-        ? url.origin
-        : value;
+    function outboundFields(endpoint, audience, target) {
+      const url = connectionUrl(endpoint);
+      return {
+        connectionProtocol: url?.protocol.slice(0, -1) ?? "http",
+        connectionAddress: url?.hostname.replace(/^\[|\]$/g, "") ?? "",
+        connectionPort: url ? (url.port || (url.protocol === "https:" ? "443" : "80")) : "",
+        connectionPath: url?.pathname ?? "/dsh-task/v1/commands",
+        audience: audience ?? "",
+        targetLocalAddress: target?.localAddress ?? "",
+      };
     }
-    function simpleEndpointInput(value, previous) {
-      const text = String(value).trim(),
-        url = connectionUrl(text);
-      if (text.endsWith(":")) return text;
-      if (
-        !url ||
-        url.username ||
-        url.password ||
-        url.search ||
-        url.hash ||
-        url.pathname !== "/"
-      )
-        return text;
-      const path = connectionUrl(previous)?.pathname ?? "/dsh-task/v1/commands";
-      return url.origin + path;
+    function connectionHost(value, literal = false) {
+      const text = String(value).trim().replace(/^\[|\]$/g, "");
+      if (!text || /[\\\s/@?#%]/.test(text)) return null;
+      if (/^\d+\.\d+\.\d+\.\d+$/.test(text)) {
+        return !["0.0.0.0","255.255.255.255"].includes(text) && text.split(".").every(part => String(Number(part)) === part && Number(part) <= 255) ? text : null;
+      }
+      if (!text.includes(":")) {
+        if (literal) return null;
+        try { const url = new URL(`https://${text}/`); return url.port ? null : url.hostname; } catch { return null; }
+      }
+      try {
+        const host = new URL(`http://[${text}]/`).hostname.slice(1,-1);
+        if (host.startsWith("::ffff:")) {
+          const parts = host.slice(7).split(":");
+          if (parts.length === 2) { const high = parseInt(parts[0],16), low = parseInt(parts[1],16); return `${high >>> 8}.${high & 255}.${low >>> 8}.${low & 255}`; }
+        }
+        return host === "::" ? null : host;
+      } catch { return null; }
+    }
+    function buildOutbound(fields, trusted) {
+      const address = connectionHost(fields.connectionAddress, trusted),
+        port = Number(fields.connectionPort), path = String(fields.connectionPath).trim(),
+        protocol = fields.connectionProtocol, audience = String(fields.audience).trim(),
+        localAddress = trusted ? connectionHost(fields.targetLocalAddress, true) : null;
+      const invalid = [];
+      if (!address) invalid.push("connectionAddress");
+      if (!/^\d+$/.test(String(fields.connectionPort)) || !Number.isSafeInteger(port) || port < 1 || port > 65535) invalid.push("connectionPort");
+      if (!path.startsWith("/") || /[?#\s]/.test(path)) invalid.push("connectionPath");
+      if (!["http","https"].includes(protocol) || (trusted && protocol !== "http")) invalid.push("connectionProtocol");
+      if (!audience) invalid.push("audience");
+      if (trusted && !localAddress) invalid.push("targetLocalAddress");
+      // Keep the explicit port, including :80; trusted transport checks raw authority.
+      const endpoint = `${protocol}://${address?.includes(":") ? `[${address}]` : address ?? ""}:${port}${path}`;
+      const url = connectionUrl(endpoint);
+      if (!url || url.pathname !== path || url.username || url.password || url.search || url.hash) invalid.push("connectionPath");
+      return {endpoint, audience, target:trusted ? {address,port,localAddress,allowHttp:true} : null, invalid};
+    }
+    function outboundMismatch(endpoint, target) {
+      const url = connectionUrl(endpoint);
+      return !!target && (!url || connectionHost(url.hostname) !== connectionHost(target.address) || Number(url.port || (url.protocol === "https:" ? 443 : 80)) !== target.port);
+    }
+    function OutboundConnectionFields({fields, edit, disabled, trusted, idPrefix, mismatch, originalTarget, onSynchronize}) {
+      const input = (key, label, numeric = false) => h("label",{className:"task-connection-field"},h("span",null,label),h("input",{id:`${idPrefix}-${key}`,style:controlStyle,value:fields[key] ?? "",inputMode:numeric?"numeric":undefined,disabled,onChange:event=>edit(key,event.target.value)}));
+      return h(React.Fragment,null,
+        h("div",{className:"task-connection-grid","data-outbound-address-fields":true},
+          input("connectionAddress","调度端地址 / IP"),input("connectionPort","调度端任务协议端口",true),
+          input("connectionPath","任务协议路径"),input("audience","调度端受众标识（audience）"),
+          !trusted || fields.connectionProtocol !== "http" ? h("label",{className:"task-connection-field"},h("span",null,"连接协议"),h("select",{id:`${idPrefix}-connectionProtocol`,style:controlStyle,value:fields.connectionProtocol,disabled,onChange:event=>edit("connectionProtocol",event.target.value)},h("option",{value:"https"},"HTTPS"),h("option",{value:"http"},trusted?"HTTP（可信网络）":"HTTP（仅已允许的回环连接）"))) : null),
+        trusted ? h("div",{"data-outbound-local-address":true},input("targetLocalAddress","本机外连来源地址")) : null,
+        mismatch ? h("div",{role:"note","data-outbound-mismatch":true},h("p",{style:hintStyle},`现有协议地址与目标绑定不一致。以上字段来自协议地址；原目标为 ${originalTarget?.address}:${originalTarget?.port}。原配置保持不变，编辑这组连接或点击同步后，保存会按以上地址统一绑定。`),h(Button,{variant:"outline",disabled,onClick:onSynchronize},"按当前地址同步")) : null);
     }
     function startupDraft(target, values) {
       return target === "task"
         ? {
             role: values.role,
-            defaultWorkspaceId: values.defaultWorkspaceId ?? "",
+            databasePath: values.databasePath ?? "",
             ...(values.nodeCapacities ? {nodeCapacities: values.nodeCapacities.map(node => ({nodeId: node.nodeId, maxConcurrent: String(node.maxConcurrent)}))} : {}),
             planningDecisionEnabled: values.planningDecisionEnabled,
             sessionDecisionEnabled: values.sessionDecisionEnabled,
           }
         : {
-            role: values.role,
             paused: values.paused,
             endpoint: values.endpoint ?? "",
             audience: values.audience ?? "",
             pollIntervalMs: String(values.pollIntervalMs),
             concurrency: String(values.concurrency),
-            ...(values.trustedNetworkTarget
-              ? {
-                  targetAddress: values.trustedNetworkTarget.address,
-                  targetPort: String(values.trustedNetworkTarget.port),
-                  targetLocalAddress: values.trustedNetworkTarget.localAddress,
-                }
-              : values.endpoint === null
-                ? { targetAddress: "", targetPort: "", targetLocalAddress: "" }
-                : {}),
+            ...outboundFields(values.endpoint, values.audience, values.trustedNetworkTarget),
+            connectionTouched: false,
           };
     }
-    function startupChanges(target, values, draft, migrate = false) {
+    function startupChanges(target, values, draft, migrate = false, role = values.role, authMode) {
+      let retainedDirty = false;
       const invalid = [],
-        next = { role: draft.role };
-      if (!["planner", "executor", "both"].includes(draft.role))
+        next = target==="task" ? { role: draft.role } : {};
+      if (target==="task" && !["planner", "executor", "both"].includes(draft.role))
         invalid.push("role");
       if (target === "task") {
+        if(role!=="executor" && values.databasePath!==undefined){next.databasePath=String(draft.databasePath).trim();if(!next.databasePath.startsWith("/") || next.databasePath.includes("\0"))invalid.push("databasePath");}
         if (values.nodeCapacities) {
           next.nodeCapacities = (draft.nodeCapacities ?? []).map(node => ({nodeId: node.nodeId, maxConcurrent: Number(node.maxConcurrent)}));
           if (next.nodeCapacities.length !== values.nodeCapacities.length ||
@@ -1604,8 +1613,6 @@ window.__ModuleLoader__.load({
                 !String(draft.nodeCapacities[i].maxConcurrent).trim() || !Number.isSafeInteger(node.maxConcurrent) || node.maxConcurrent < 1 || node.maxConcurrent > 32))
             invalid.push("nodeCapacities");
         }
-        next.defaultWorkspaceId =
-          String(draft.defaultWorkspaceId).trim() || null;
         for (const key of [
           "planningDecisionEnabled",
           "sessionDecisionEnabled",
@@ -1614,24 +1621,21 @@ window.__ModuleLoader__.load({
           if (typeof next[key] !== "boolean") invalid.push(key);
         }
       } else {
+        if(role!=="planner") {
         next.paused = draft.paused;
         if (typeof next.paused !== "boolean") invalid.push("paused");
-        next.endpoint = String(draft.endpoint).trim() || null;
-        next.audience = String(draft.audience).trim() || null;
-        if (values.trustedNetworkTarget || values.endpoint === null) {
-          const address = String(draft.targetAddress).trim(),
-            localAddress = String(draft.targetLocalAddress).trim(),
-            portText = String(draft.targetPort).trim();
-          next.trustedNetworkTarget =
-            !address && !localAddress && !portText
-              ? null
-              : {
-                  ...values.trustedNetworkTarget,
-                  address,
-                  port: Number(portText),
-                  localAddress,
-                  allowHttp: true,
-                };
+        const trusted = authMode ? authMode === "trusted-network" : !!values.trustedNetworkTarget || values.endpoint === null;
+        next.endpoint = values.endpoint;
+        next.audience = values.audience;
+        if (draft.connectionTouched) {
+          const connection = buildOutbound(draft, trusted);
+          if (draft.paused && connection.invalid.length) retainedDirty = true;
+          else {
+            invalid.push(...connection.invalid);
+            next.endpoint = connection.endpoint;
+            next.audience = connection.audience;
+            if (trusted) next.trustedNetworkTarget = connection.target;
+          }
         }
         const connectionChanged = [
           "endpoint",
@@ -1650,16 +1654,16 @@ window.__ModuleLoader__.load({
           )
             invalid.push("endpoint");
           if (!next.audience) invalid.push("audience");
-          if (values.trustedNetworkTarget || values.endpoint === null) {
-            const binding = next.trustedNetworkTarget;
-            if (!binding?.address) invalid.push("targetAddress");
+          if (trusted) {
+            const binding = next.trustedNetworkTarget ?? values.trustedNetworkTarget;
+            if (!binding?.address) invalid.push("connectionAddress");
             if (!binding?.localAddress) invalid.push("targetLocalAddress");
             if (
               !Number.isSafeInteger(binding?.port) ||
               binding.port < 1 ||
               binding.port > 65535
             )
-              invalid.push("targetPort");
+              invalid.push("connectionPort");
           }
         }
         for (const [key, min, max] of [
@@ -1679,9 +1683,10 @@ window.__ModuleLoader__.load({
               ? false
               : next[key] < min || next[key] > max)
           )
-            invalid.push(key);
+            { if(draft.paused){delete next[key];retainedDirty=true;}else invalid.push(key); }
         }
         if (migrate || draft.taskSessionsEnabled === true) next.taskSessionsEnabled = true;
+        }
       }
       const changes = Object.fromEntries(
         Object.entries(next).filter(
@@ -1689,123 +1694,12 @@ window.__ModuleLoader__.load({
             JSON.stringify(value) !== JSON.stringify(values[key]),
         ),
       );
-      return { changes, invalid, dirty: Object.keys(changes).length > 0 };
+      return { changes, invalid, retainedDirty, dirty: Object.keys(changes).length > 0 };
     }
-    function workspaceDirectoryState(row, state, selected) {
-      const value = state?.value;
-      const matches =
-        !!value &&
-        value.scope.entryId === row.entryId &&
-        (!row.workspaceScope ||
-          ["nodeId", "schedulerId"].every(
-            (key) => value.scope[key] === row.workspaceScope[key],
-          ));
-      const items = matches ? value.items : [];
-      const current = items.find((item) => item.workspaceId === selected);
-      return {
-        items,
-        ready: matches && !state.loading && !state.failed,
-        current,
-        unavailable: !!selected && (!current || !current.available),
-      };
-    }
-    function WorkspaceSelect({
-      t,
-      row,
-      directory,
-      refresh,
-      selected,
-      edit,
-      disabled,
-      advanced,
-      controlStyle,
-    }) {
-      const view = workspaceDirectoryState(row, directory, selected);
-      return h(
-        "div",
-        { "data-task-workspace-selector": true },
-        h(
-          "label",
-          { style: { display: "block", margin: "12px 0" } },
-          h(
-            "span",
-            { style: { display: "block", marginBottom: 6 } },
-            "路由默认工作区（高级）",
-          ),
-          h(
-            "select",
-            {
-              id: "task-startup-task-defaultWorkspaceId",
-              style: controlStyle,
-              value: selected,
-              disabled: disabled || !view.ready,
-              onChange: (event) =>
-                edit("defaultWorkspaceId", event.target.value),
-            },
-            h("option", { value: "" }, t("workspaceNone")),
-            selected && !view.current
-              ? h(
-                  "option",
-                  { value: selected, disabled: true },
-                  t("workspaceUnavailableOption"),
-                )
-              : null,
-            ...view.items.map((item) =>
-              h(
-                "option",
-                {
-                  key: item.workspaceId,
-                  value: item.workspaceId,
-                  disabled: !item.available,
-                },
-                `${item.title} · ${item.path}${item.available ? "" : ` · ${t("workspaceUnavailableSuffix")}`}`,
-              ),
-            ),
-          ),
-        ),
-        h("p", { style: hintStyle }, "仅用于任务路由与明确指定工作区的约束；项目目录使用上方选择的父目录。"),
-        directory?.loading
-          ? h("p", { role: "status", style: hintStyle }, t("workspaceLoading"))
-          : null,
-        directory?.failed ||
-          (directory?.value && !view.ready && !directory.loading)
-          ? h("p", { role: "alert", style: hintStyle }, t("workspaceFailed"))
-          : null,
-        view.ready && view.unavailable
-          ? h(
-              "p",
-              { role: "alert", style: hintStyle },
-              t("workspaceUnavailable"),
-            )
-          : null,
-        view.ready && !view.items.some((item) => item.available)
-          ? h("p", { style: hintStyle }, t("workspaceEmpty"))
-          : null,
-        h(
-          Button,
-          {
-            variant: "outline",
-            onClick: refresh,
-            disabled: !refresh || directory?.loading,
-          },
-          t("workspaceRefresh"),
-        ),
-        h(
-          "label",
-          { hidden: !advanced, style: { display: "block", margin: "12px 0" } },
-          h(
-            "span",
-            { style: { display: "block", marginBottom: 6 } },
-            t("defaultWorkspaceId"),
-          ),
-          h("input", {
-            id: "task-startup-task-workspaceId-readonly",
-            style: controlStyle,
-            readOnly: true,
-            value: selected,
-          }),
-        ),
-      );
+    function SettingsArea({ id, title, description, children }) {
+      return h("section", { id, "data-settings-area": true },
+        h("header", null, h("h2", null, title), description ? h("p", {style:hintStyle}, description) : null),
+        h("div", {"data-settings-area-body":true}, children));
     }
     function StartupRow({
       t,
@@ -1814,13 +1708,14 @@ window.__ModuleLoader__.load({
       writable,
       saveStartup,
       onSaved,
-      advanced = true,
       visible = true,
       onRoleChange,
       renderExecutionDirectory,
-      workspaceDirectory = { loading: true },
-      refreshWorkspaces,
-      openAdvanced,
+      renderProjectDirectory,
+      renderConnection,
+      connectionRole,
+      connectionAuthMode,
+      initialDraft,
       openPlugins,
       openDecisionModels,
       renderDecisionModels,
@@ -1828,28 +1723,27 @@ window.__ModuleLoader__.load({
       checkConnection,
       saveCoordinator,
     }) {
+      const [expected, setExpected] = React.useState(row.values);
       const [draft, setDraft] = React.useState(() =>
-        startupDraft(target, row.values),
+        ({...startupDraft(target, row.values),...initialDraft}),
       );
       const [status, setStatus] = React.useState({ saving: false });
-      const [endpointText, setEndpointText] = React.useState(() =>
-        simpleEndpointDisplay(row.values.endpoint ?? ""),
-      );
       const [connection, setConnection] = React.useState({ checking: false });
       const edit = (key, value) => {
-        if (key === "endpoint") setEndpointText(simpleEndpointDisplay(value));
         setConnection({ checking: false });
         if (key === "role") onRoleChange?.(value);
         setDraft((old) => ({
           ...old,
           [key]: value,
+          ...(target === "remote" && ["connectionAddress","connectionPort","connectionPath","connectionProtocol","audience","targetLocalAddress","connectionTouched"].includes(key) ? {connectionTouched:true} : {}),
           ...(target === "remote" &&
           row.values.endpoint === null &&
           [
-            "endpoint",
+            "connectionAddress",
+            "connectionPort",
+            "connectionPath",
+            "connectionProtocol",
             "audience",
-            "targetAddress",
-            "targetPort",
             "targetLocalAddress",
           ].includes(key)
             ? { pollIntervalMs: "0" }
@@ -1857,31 +1751,21 @@ window.__ModuleLoader__.load({
         }));
         setStatus({ saving: false });
       };
-      const parsed = startupChanges(target, row.values, draft);
-      const workspaceChanged =
-        target === "task" &&
-        Object.hasOwn(parsed.changes, "defaultWorkspaceId");
-      const directory =
-        target === "task"
-          ? workspaceDirectoryState(
-              row,
-              workspaceDirectory,
-              draft.defaultWorkspaceId,
-            )
-          : null;
-      const workspaceInvalid =
-        workspaceChanged &&
-        (!directory.ready ||
-          (draft.defaultWorkspaceId && directory.unavailable));
+      const currentRole=target==="task"?draft.role:(connectionRole ?? row.values.role);
+      const allParsed=startupChanges(target,expected,draft,false,"both",connectionAuthMode);
+      const parsed = startupChanges(target, expected, draft,false,currentRole,connectionAuthMode);
+      const hiddenDraft=parsed.retainedDirty || (target==="remote" && currentRole==="planner" && (Object.keys(allParsed.changes).length>0 || allParsed.retainedDirty)) || (target==="task" && currentRole==="executor" && Object.hasOwn(allParsed.changes,"databasePath"));
+      React.useEffect(()=>{if(!allParsed.dirty && !allParsed.retainedDirty){setExpected(row.values);setDraft(startupDraft(target,row.values));}},[row.values]);
+      const workspaceInvalid=false;
       const disabled =
         !writable ||
         status.saving ||
         connection.checking ||
         (target === "remote" && (!row.loaded || row.loaderDisabled));
-      const executor = draft.role === "executor" || draft.role === "both";
-      const planner = draft.role === "planner" || draft.role === "both";
+      const executor = currentRole === "executor" || currentRole === "both";
+      const planner = currentRole === "planner" || currentRole === "both";
       const save = async (migrate = false, selectedDraft = draft) => {
-        const update = startupChanges(target, row.values, selectedDraft, migrate);
+        const update = startupChanges(target, expected, selectedDraft, migrate,currentRole,connectionAuthMode);
         if (
           disabled ||
           workspaceInvalid ||
@@ -1893,10 +1777,13 @@ window.__ModuleLoader__.load({
         try {
           await saveStartup({
             target,
-            expected: row.values,
+            expected,
             changes: update.changes,
           });
-          await onSaved();
+          const current = await onSaved();
+          const savedValues=current?.[target]?.values ?? {...expected,...update.changes};
+          setExpected(savedValues);
+          if(target==="remote" && currentRole!=="planner" && selectedDraft.connectionTouched && !update.retainedDirty) setDraft(old=>({...old,...outboundFields(savedValues.endpoint,savedValues.audience,savedValues.trustedNetworkTarget),endpoint:savedValues.endpoint,connectionTouched:false}));
           setStatus({ saving: false, saved: true });
           return true;
         } catch (error) {
@@ -1912,20 +1799,19 @@ window.__ModuleLoader__.load({
         }
       };
 
-      const discardStartup = () => {setDraft(startupDraft(target,row.values));setEndpointText(simpleEndpointDisplay(row.values.endpoint ?? ""));setConnection({checking:false});onRoleChange?.(row.values.role);setStatus({saving:false});};
-      useSaveParticipant(saveCoordinator, `startup-${target}`, {meta:{dirty:parsed.dirty,invalid:workspaceInvalid || parsed.invalid.length>0 || !writable,busy:status.saving || connection.checking,restart:startupNeedsRestart(target,parsed.changes)},save:()=>save(),discard:discardStartup});
+      const discardStartup = () => {setExpected(row.values);setDraft(startupDraft(target,row.values));setConnection({checking:false});onRoleChange?.(row.values.role);setStatus({saving:false});};
+      useSaveParticipant(saveCoordinator, `startup-${target}`, {meta:{dirty:parsed.dirty,retainedDirty:hiddenDraft,invalid:workspaceInvalid || parsed.invalid.length>0 || !writable,busy:status.saving || connection.checking,restart:startupNeedsRestart(target,parsed.changes)},save:()=>save(),discard:discardStartup});
       const field = (key, label = key) =>
         h(
           "label",
           {
             key,
-            hidden: target === "remote" && !advanced && key !== "endpoint",
             style: { display: "block", margin: "12px 0" },
           },
           h(
             "span",
             { style: { display: "block", marginBottom: 6 } },
-            t(key === "endpoint" && !advanced ? "schedulerAddress" : label),
+            t(label),
           ),
           key === "role"
             ? h(
@@ -1948,13 +1834,9 @@ window.__ModuleLoader__.load({
             : h("input", {
                 id: `task-startup-${target}-${key}`,
                 style: controlStyle,
-                value:
-                  key === "endpoint" && !advanced ? endpointText : draft[key],
+                value: draft[key],
                 disabled:
                   disabled ||
-                  (target === "task" &&
-                    key === "defaultWorkspaceId" &&
-                    !executor) ||
                   (target === "remote" &&
                     row.values.endpoint === null &&
                     key === "pollIntervalMs"),
@@ -1962,218 +1844,21 @@ window.__ModuleLoader__.load({
                 inputMode: [
                   "pollIntervalMs",
                   "concurrency",
-                  "targetPort",
                 ].includes(key)
                   ? "numeric"
                   : undefined,
-                onChange: (event) => {
-                  const text = event.target.value;
-                  if (key === "endpoint" && !advanced) {
-                    edit(key, simpleEndpointInput(text, row.values.endpoint));
-                    setEndpointText(text);
-                    const url = connectionUrl(text);
-                    if (
-                      url &&
-                      !text.trim().endsWith(":") &&
-                      row.values.trustedNetworkTarget
-                    )
-                      setDraft((old) => ({
-                        ...old,
-                        targetAddress: url.hostname.replace(/^\[|\]$/g, ""),
-                        targetPort: String(
-                          Number(
-                            url.port || (url.protocol === "http:" ? 80 : 443),
-                          ),
-                        ),
-                      }));
-                  } else edit(key, text);
-                },
+                onChange: (event) => edit(key, event.target.value),
               }),
-          key === "audience" && advanced
-            ? h("p", { style: hintStyle }, t("audienceHint"))
-            : null,
         );
-      return h(
-        "section",
-        { "data-startup-target": target, hidden: !visible },
-        h(
-          "h4",
-          { style: headingStyle, hidden: target === "task" && !advanced },
-          t(
-            target === "task"
-              ? "startupTask"
-              : advanced
-                ? "startupRemote"
-                : "schedulerConnection",
-          ),
-        ),
-        target === "remote"
-          ? h(
-              React.Fragment,
-              null,
-              h(
-                "p",
-                { style: hintStyle, hidden: !advanced },
-                `${t("startupLoaded")}: ${t(row.loaded ? "yes" : "no")} · ${t("startupLoaderDisabled")}: ${t(row.loaderDisabled ? "yes" : "no")}`,
-              ),
-              !row.loaded || row.loaderDisabled
-                ? h(
-                    "p",
-                    { role: "note", style: hintStyle },
-                    t("startupRemoteDisabled"),
-                  )
-                : null,
-            )
-          : null,
-        field("role"),
-        target === "task" && planner ? h("div", {"data-task-node-capacities": true},
-          h("h4", {style: headingStyle}, t("nodeCapacityTitle")),
-          h("p", {style: hintStyle}, t("nodeCapacityHint")),
-          ...(draft.nodeCapacities ?? []).map((node, index) => h("div", {key:node.nodeId, style:{margin:"12px 0"}},
-            h("label", {htmlFor:`task-node-capacity-${index}`, style:{display:"block", marginBottom:6}}, `${node.nodeId} · ${t("nodeCapacity")}`),
-            h("input", {id:`task-node-capacity-${index}`, type:"number", min:1, max:32, step:1, style:controlStyle, value:node.maxConcurrent, disabled,
-              "aria-invalid": parsed.invalid.includes("nodeCapacities") || undefined,
-              onChange:event => edit("nodeCapacities", draft.nodeCapacities.map((value,i) => i === index ? {...value,maxConcurrent:event.target.value} : value))}))),
-          !draft.nodeCapacities?.length ? h("p", {style:hintStyle}, t("nodeCapacityEmpty")) : null) : null,
-        target === "task"
-          ? h(
-              React.Fragment,
-              null,
-              h(
-                "div",
-                { "data-task-scheduler-decision": true, hidden: !planner },
-                h("h4", { style: headingStyle }, t("schedulerDecisionTitle")),
-                h("p", { style: hintStyle }, t("schedulerDecisionHint")),
-                h(
-                  "label",
-                  {
-                    style: {
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                      gap: 20,
-                      margin: "12px 0",
-                    },
-                  },
-                  t("planningDecisionEnabled"),
-                  h(Switch, {
-                    label: t("planningDecisionEnabled"),
-                    checked: decisionAvailable && draft.planningDecisionEnabled,
-                    disabled: disabled || !planner || !decisionAvailable,
-                    onChange: (value) => edit("planningDecisionEnabled", value),
-                  }),
-                ),
-                !decisionAvailable ? h("p", {role:"note",style:hintStyle}, t("decisionDependencyRequired")) : null,
-                h("p", { style: hintStyle }, t("schedulerDecisionStatus")),
-                decisionAvailable && draft.planningDecisionEnabled
-                  ? h(
-                      "div",
-                      { "data-task-scheduler-decision-entry": true },
-                      h(
-                        Button,
-                        {
-                          variant: "outline",
-                          onClick: () => {
-                            openDecisionModels?.("planner");
-                          },
-                        },
-                        t("schedulerDecisionModelEntry"),
-                      ),
-                      renderDecisionModels?.("planner"),
-                      h(
-                        "div",
-                        {
-                          id: "task-scheduler-decision-model",
-                          hidden: !advanced,
-                          tabIndex: -1,
-                        },
-                        h(
-                          "p",
-                          { style: hintStyle },
-                          t("schedulerDecisionSetup"),
-                        ),
-                        h("p", { style: hintStyle }, t("decisionHint")),
-                      ),
-                    )
-                  : null,
-              ),
-              h(
-                "div",
-                {
-                  "data-task-executor-decision": true,
-                  hidden: !executor && !advanced,
-                },
-                h("h4", { style: headingStyle }, t("executorDecisionTitle")),
-                h("p", { style: hintStyle }, t("executorDecisionHint")),
-                !executor
-                  ? h("p", { style: hintStyle }, t("executorDecisionInactive"))
-                  : null,
-                renderExecutionDirectory?.(),
-                advanced ? WorkspaceSelect({
-                  t,
-                  row,
-                  directory: workspaceDirectory,
-                  refresh: refreshWorkspaces,
-                  selected: draft.defaultWorkspaceId,
-                  edit,
-                  disabled: disabled || !executor,
-                  advanced,
-                  controlStyle,
-                }) : null,
-                h(
-                  "label",
-                  {
-                    style: {
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                      gap: 20,
-                      margin: "12px 0",
-                    },
-                  },
-                  t("sessionDecisionEnabled"),
-                  h(Switch, {
-                    label: t("sessionDecisionEnabled"),
-                    checked: decisionAvailable && draft.sessionDecisionEnabled,
-                    disabled: disabled || !executor || !decisionAvailable,
-                    onChange: (value) => edit("sessionDecisionEnabled", value),
-                  }),
-                ),
-                !decisionAvailable ? h("p", {role:"note",style:hintStyle}, t("decisionDependencyRequired")) : null,
-                h("p", { style: hintStyle }, t("workspaceHint")),
-                decisionAvailable && executor && draft.sessionDecisionEnabled
-                  ? h(
-                      "div",
-                      { "data-task-decision-entry": true },
-                      h("p", { style: hintStyle }, t("decisionModelStatus")),
-                      h(
-                        Button,
-                        {
-                          variant: "outline",
-                          onClick: () => {
-                            openDecisionModels?.("executor");
-                          },
-                        },
-                        t("decisionModelEntry"),
-                      ),
-                      renderDecisionModels?.("executor"),
-                      h(
-                        "div",
-                        {
-                          id: "task-decision-model",
-                          hidden: !advanced,
-                          tabIndex: -1,
-                        },
-                        h("p", { style: hintStyle }, t("decisionModelSetup")),
-                        h("p", { style: hintStyle }, t("decisionHint")),
-                      ),
-                    )
-                  : null,
-              ),
-            )
-          : h(
-              React.Fragment,
-              null,
+      const decisionToggle = (key, active) => h("label", {className:"task-switch-row"}, t(key), h(Switch, {label:t(key), checked:decisionAvailable && draft[key], disabled:disabled || !active || !decisionAvailable, onChange:value=>edit(key,value)}));
+      if (target !== "task") {
+      return h("section", {"data-startup-target":"remote",hidden:!visible},
+        !row.loaded || row.loaderDisabled ? h("p",{role:"note",style:hintStyle},t("startupRemoteDisabled")) : null,
+        h("div", {"data-connection-role":"executor",hidden:!executor,style:{order:2}},
+          h("h3",{style:headingStyle},"执行端 · 连接调度端"),
+h(
+              "div",
+              {"data-collaboration-controls":true,style:{order:0}},
               h(
                 "label",
                 {
@@ -2186,11 +1871,11 @@ window.__ModuleLoader__.load({
                   },
                   "data-task-availability-switch": true,
                 },
-                t(executor ? "executorEnabled" : "remoteEnabled"),
+                "启用执行端连接",
                 h(Switch, {
-                  label: t(executor ? "executorEnabled" : "remoteEnabled"),
+                  label: "启用执行端连接",
                   checked: !draft.paused,
-                  disabled: disabled || parsed.invalid.length > 0,
+                  disabled,
                   onChange: async (enabled) => {
                     const next = { ...draft, paused: !enabled };
                     setDraft(next);
@@ -2199,75 +1884,34 @@ window.__ModuleLoader__.load({
                   },
                 }),
               ),
-              draft.paused
+              row.values.paused
                 ? h(
                     "p",
                     { role: "status", style: hintStyle },
-                    t("remotePausedStatus"),
+                    "执行端连接已暂停：不连接调度端、不领取远程任务，也不发送心跳。调度端监听与本机任务不受影响。",
                   )
                 : null,
-              h("p", { style: hintStyle }, t(executor ? "executorEnabledHint" : "remoteEnabledHint")),
+              h("p", { style: hintStyle }, "控制连接调度端、接收任务和发送心跳。修改先进入草稿，保存后应用；活动或未确认工作会阻止变更。"),
+            ),
               executor && !row.values.paused
                 ? h("p", { role: "status", style: hintStyle, "data-task-heartbeat-status": true },
                     t(`heartbeat_${row.heartbeat?.state ?? "waiting"}`),
                     row.heartbeat?.acknowledgedAt ? ` · ${new Date(row.heartbeat.acknowledgedAt).toLocaleString()}` : "")
                 : null,
-              ...["endpoint", "audience", "pollIntervalMs", "concurrency"].map(
-                (key) => field(key),
-              ),
-              row.values.trustedNetworkTarget || row.values.endpoint === null
-                ? h(
-                    React.Fragment,
-                    null,
-                    ...[
-                      "targetAddress",
-                      "targetPort",
-                      "targetLocalAddress",
-                    ].map((key) => field(key)),
-                  )
-                : null,
+              h(OutboundConnectionFields,{fields:draft,edit,disabled,trusted:connectionAuthMode ? connectionAuthMode==="trusted-network" : !!row.values.trustedNetworkTarget || row.values.endpoint===null,idPrefix:"task-startup-remote",mismatch:!draft.connectionTouched && outboundMismatch(row.values.endpoint,row.values.trustedNetworkTarget),originalTarget:row.values.trustedNetworkTarget,onSynchronize:()=>edit("connectionTouched",true)}),
+              h("div",{className:"task-connection-grid"},...["pollIntervalMs","concurrency"].map(key=>field(key))),
               row.values.endpoint === null
                 ? h(
                     "p",
-                    { style: hintStyle, hidden: !advanced },
+                    { style: hintStyle },
                     t("startupUnconfigured"),
                   )
                 : null,
               h(
                 "p",
-                { style: hintStyle, hidden: !advanced },
+                { style: hintStyle },
                 t("startupEndpointHint"),
               ),
-              !advanced
-                ? h(
-                    "div",
-                    { "data-task-connection-status": true },
-                    h(
-                      "p",
-                      {
-                        role: "status",
-                        style: hintStyle,
-                        hidden: !!connection.value,
-                      },
-                      t(
-                        row.values.endpoint === null ||
-                          !row.loaded ||
-                          row.loaderDisabled
-                          ? "connectionSetupStatus"
-                          : "connectionUnconfirmed",
-                      ),
-                    ),
-                    h(
-                      Button,
-                      {
-                        variant: "outline",
-                        onClick: () =>
-                          openAdvanced?.("task-startup-remote-endpoint"),
-                      },
-                      t("openAdvanced"),
-                    ),
-                  )
-                : null,
               row.values.taskSessionsEnabled === false &&
                 row.values.endpoint !== null
                 ? h(
@@ -2275,14 +1919,13 @@ window.__ModuleLoader__.load({
                     null,
                     h(
                       "p",
-                      { style: hintStyle, hidden: !advanced },
+                      { style: hintStyle },
                       t("startupMigrationHint"),
                     ),
                     h(
                       Button,
                       {
                         variant: "outline",
-                        hidden: !advanced,
                         disabled: disabled || parsed.invalid.length > 0,
                         onClick: () => saveCoordinator ? edit("taskSessionsEnabled",true) : save(true),
                       },
@@ -2291,10 +1934,11 @@ window.__ModuleLoader__.load({
                   )
                 : null,
             ),
+        hiddenDraft ? h("p",{role:"note",style:{...hintStyle,order:3}},"未启用或未选中的执行端连接草稿已保留，本次保存不提交不完整内容。") : null,
         target === "remote"
           ? h(
               "div",
-              { "data-task-connection-check": true },
+              { "data-task-connection-check": true,hidden:!executor,style:{order:2} },
               h("p", { style: hintStyle }, t("connectionPortHint")),
               h(
                 Button,
@@ -2304,7 +1948,7 @@ window.__ModuleLoader__.load({
                     disabled ||
                     !checkConnection ||
                     parsed.invalid.length > 0 ||
-                    !draft.endpoint,
+                    !((parsed.changes.endpoint ?? row.values.endpoint)),
                   onClick: async () => {
                     setConnection({ checking: true });
                     try {
@@ -2363,7 +2007,7 @@ window.__ModuleLoader__.load({
         parsed.invalid.length
           ? h(
               "p",
-              { role: "alert", hidden: !advanced && target === "remote" },
+              { role: "alert" },
               t("startupInvalid"),
             )
           : null,
@@ -2378,7 +2022,7 @@ window.__ModuleLoader__.load({
               status.errorCode ? ` (${status.errorCode})` : "",
             )
           : null,
-        status.saved ? h("p", { role: "status" }, t("startupSaved")) : null,
+        status.saved && !saveCoordinator ? h("p", { role: "status" }, t("startupSaved")) : null,
         !saveCoordinator ? h(
           "div",
           {
@@ -2409,9 +2053,101 @@ window.__ModuleLoader__.load({
               disabled: disabled || !parsed.dirty,
               onClick: () => {
                 setDraft(startupDraft(target, row.values));
-                setEndpointText(
-                  simpleEndpointDisplay(row.values.endpoint ?? ""),
-                );
+                setConnection({ checking: false });
+                onRoleChange?.(row.values.role);
+                setStatus({ saving: false });
+              },
+            },
+            t("discardDraft"),
+          ),
+        ) : null,
+      );
+      }
+      return h("div", {"data-startup-target":"task"},
+        h(SettingsArea, {id:"task-local",title:"本机与工作区",description:"以下设置属于当前连接的 DSH 服务设备。任务中心显示的中央任务进度不改变设置的所属设备。"},
+          field("role"),
+          row.values.nodeId ? h("div",{"data-local-node-identity":true},h("h3",null,executor?"执行端 ID（本机实例）":"本机节点 ID"),h("code",{style:{overflowWrap:"anywhere"}},row.values.nodeId),h("p",{style:hintStyle},"此稳定身份不随连接地址或调度端改变；节点昵称单独设置。")) : null,
+          h("div",{hidden:!planner,"data-task-database-settings":true},h("h3",null,"调度端任务数据库"),h("label",{className:"task-connection-field"},h("span",null,"SQLite 数据库文件路径"),h("input",{id:"task-startup-task-databasePath",style:controlStyle,value:draft.databasePath,disabled,onChange:event=>edit("databasePath",event.target.value)})),h("p",{style:hintStyle},"填写此设备上的绝对文件路径。保存后重建任务服务并加载目标库，不搬移旧数据，也不覆盖目标库；不存在的文件将创建新账本及新的调度端身份。原数据库保留。")),
+          h("div", {className:"task-directory-grid"},
+            h("div",null,renderProjectDirectory?.()),
+            h("div",null,renderExecutionDirectory?.())),
+          ),
+        h(SettingsArea, {id:"task-connections",title:"协作连接",description:"调度端监听和执行端连接分别启用；未启用的一侧可留空。远程领取与本机自动执行独立生效。"},
+          renderConnection?.(),
+          h("div",null,
+        planner ? h("div", {"data-task-node-capacities": true},
+          h("h4", {style: headingStyle}, t("nodeCapacityTitle")),
+          h("p", {style: hintStyle}, t("nodeCapacityHint")),
+          ...(draft.nodeCapacities ?? []).map((node, index) => h("div", {key:node.nodeId, style:{margin:"12px 0"}},
+            h("label", {htmlFor:`task-node-capacity-${index}`, style:{display:"block", marginBottom:6}}, `${node.nodeId} · ${t("nodeCapacity")}`),
+            h("input", {id:`task-node-capacity-${index}`, type:"number", min:1, max:32, step:1, style:controlStyle, value:node.maxConcurrent, disabled,
+              "aria-invalid": parsed.invalid.includes("nodeCapacities") || undefined,
+              onChange:event => edit("nodeCapacities", draft.nodeCapacities.map((value,i) => i === index ? {...value,maxConcurrent:event.target.value} : value))}))),
+          !draft.nodeCapacities?.length ? h("p", {style:hintStyle}, t("nodeCapacityEmpty")) : null) : null,
+
+          )),
+        h(SettingsArea,{id:"task-decisions",title:"决策模型",description:"两种用途分别绑定 JEV 预设；角色与决策开关共享本机启动配置草稿；目录单独保存。"},
+          h("div",{className:"task-decision-grid"},
+            h("div",{"data-task-scheduler-decision":true},
+              h("h3",null,t("schedulerDecisionTitle")),h("p",{style:hintStyle},t("schedulerDecisionHint")),
+              !planner ? h("p",{style:hintStyle},"当前角色为执行端，此用途不生效。") : null,
+              decisionToggle("planningDecisionEnabled",planner),
+              renderDecisionModels?.("planner")),
+            h("div",{"data-task-executor-decision":true},
+              h("h3",null,t("executorDecisionTitle")),h("p",{style:hintStyle},t("executorDecisionHint")),
+              !executor ? h("p",{style:hintStyle},t("executorDecisionInactive")) : null,
+              decisionToggle("sessionDecisionEnabled",executor),
+              renderDecisionModels?.("executor"))),
+          !decisionAvailable ? h("p",{role:"note",style:hintStyle},t("decisionDependencyRequired")) : null),
+        parsed.invalid.length
+          ? h(
+              "p",
+              { role: "alert" },
+              t("startupInvalid"),
+            )
+          : null,
+        status.failed
+          ? h(
+              "p",
+              { role: "alert" },
+              t(`startupError_${status.errorCode}`) ===
+                `startupError_${status.errorCode}`
+                ? t("startupSaveFailed")
+                : t(`startupError_${status.errorCode}`),
+              status.errorCode ? ` (${status.errorCode})` : "",
+            )
+          : null,
+        status.saved && !saveCoordinator ? h("p", { role: "status" }, t("startupSaved")) : null,
+        !saveCoordinator ? h(
+          "div",
+          {
+            style: {
+              display: "flex",
+              flexWrap: "wrap",
+              gap: 12,
+              marginTop: 14,
+            },
+          },
+          h(
+            Button,
+            {
+              variant: "outline",
+              disabled:
+                disabled ||
+                workspaceInvalid ||
+                !parsed.dirty ||
+                parsed.invalid.length > 0,
+              onClick: () => save(),
+            },
+            t(status.saving ? "startupSaving" : "startupSave"),
+          ),
+          h(
+            Button,
+            {
+              variant: "outline",
+              disabled: disabled || !parsed.dirty,
+              onClick: () => {
+                setDraft(startupDraft(target, row.values));
                 setConnection({ checking: false });
                 onRoleChange?.(row.values.role);
                 setStatus({ saving: false });
@@ -2422,15 +2158,169 @@ window.__ModuleLoader__.load({
         ) : null,
       );
     }
+    const nodeModelKey = choice => JSON.stringify([choice.provider,choice.model,choice.backend ?? null]);
+    const nodeModelChoiceKey = choice => choice ? JSON.stringify([choice.provider,choice.model,choice.reasoningEffort ?? null,choice.backend ?? null]) : "";
+    function nodeModelCatalog(value) {
+      const positive=value?.catalog.positiveSnapshot;
+      const recent=!!positive?.revision && positive.expiresAt>Date.now();
+      const snapshot=recent?positive:value?.catalog.snapshot;
+      return {snapshot,available:recent || (value?.catalog.state==="fresh" && snapshot?.complete===true && snapshot.expiresAt>Date.now() && !!snapshot.revision)};
+    }
+    function NodeModelSettings({nodeId,read,refresh,save,saveCoordinator,writable,active=true}) {
+      const [state,setState]=React.useState({loading:true}),[draft,setDraft]=React.useState(null),[saving,setSaving]=React.useState(false),[message,setMessage]=React.useState("");
+      const generation=React.useRef(0);
+      const [,setCatalogClock]=React.useState(0);
+      const expiry=state.value?.catalog.positiveSnapshot?.expiresAt ?? state.value?.catalog.snapshot?.expiresAt;
+      React.useEffect(()=>{
+        if(!expiry || expiry<=Date.now())return;
+        const timer=setTimeout(()=>setCatalogClock(value=>value+1),Math.min(2147483647,expiry-Date.now()+1));
+        return()=>clearTimeout(timer);
+      },[expiry]);
+      const accept = value => {
+        if(value?.nodeId!==nodeId || !value.policy || !value.catalog)throw new Error("节点模型设置返回的身份不匹配");
+        return value;
+      };
+      const load=React.useCallback(async force=>{
+        const request=++generation.current;
+        setState(old=>({...old,loading:true,error:""}));
+        try {
+          let value=accept(await (force?refresh:read)({nodeId}));
+          if(generation.current!==request)return;
+          setState({value,loading:false});
+          if(!force && !nodeModelCatalog(value).available){
+            setState({value,loading:true});
+            value=accept(await refresh({nodeId}));
+            if(generation.current===request)setState({value,loading:false});
+          }
+        }catch(error){if(generation.current===request)setState(old=>({...old,loading:false,error:error?.message || "模型目录读取失败"}));}
+      },[nodeId,read,refresh]);
+      React.useEffect(()=>{void load(false);return()=>{generation.current++;};},[load]);
+      const value=state.value,{snapshot,available}=nodeModelCatalog(value);
+      const fresh=available && !state.error;
+      const models=snapshot?.models ?? [],groups=new Map();
+      for(const model of models){const key=nodeModelKey(model);if(!groups.has(key))groups.set(key,{...model,efforts:[]});const group=groups.get(key);if(!group.efforts.includes(model.reasoningEffort))group.efforts.push(model.reasoningEffort);}
+      const choice=draft?.choice ?? value?.policy.choice,modelKey=choice?nodeModelKey(choice):"",group=groups.get(modelKey);
+      const dirty=!!draft && nodeModelChoiceKey(draft.choice)!==nodeModelChoiceKey(value?.policy.choice);
+      const valid=!!draft?.choice;
+      const disabled=!writable || !active || saving || state.loading || !fresh;
+      const choose=next=>{setDraft({choice:next,catalogRevision:snapshot.revision,expectedRevision:draft?.expectedRevision ?? value.policy.revision});setMessage("");};
+      const saveDefault=async()=>{
+        if(!dirty || !valid || !writable || !active || saving || state.loading)return false;
+        setSaving(true);setMessage("");
+        try {
+          const result=accept(await save({nodeId,expectedRevision:draft.expectedRevision,expectedCatalogRevision:draft.catalogRevision,choice:draft.choice}));
+          generation.current++;setState({value:result,loading:false});setDraft(null);setMessage("节点默认执行模型已保存。");return true;
+        }catch(error){const code=error?.details?.reason ?? error?.code;
+          const reason={EXECUTION_CATALOG_STALE:"暂未取得新鲜目录，执行端可能离线或响应超时，请稍后重试。",EXECUTION_CATALOG_UNCONFIRMED:"本次目录仅部分成功，尚不能确认所选模型与档位，请稍后重试。",EXECUTION_MODEL_UNAVAILABLE:"最新完整目录中已没有所选模型与档位，请核对后选择。",EXECUTION_MODEL_POLICY_CONFLICT:"此节点默认值已被其他操作修改。请刷新核对，丢弃这份旧草稿后重新选择并保存。",EXECUTION_MODEL_AUTHORITY_CHANGED:"调度端身份已变化，请刷新核对后再保存。",EXECUTOR_REQUIRED:"此执行端已停用或身份绑定已变化，请重新核对节点。",FORBIDDEN:"当前身份不能保存调度端设置。"}[code];
+          setMessage(`保存失败，草稿已保留：${reason ?? error?.message ?? code ?? "请稍后重试"}`);return false;}
+        finally{setSaving(false);}
+      };
+      useSaveParticipant(saveCoordinator,`node-model-${nodeId}`,{meta:{dirty:dirty && active,retainedDirty:dirty && !active,invalid:!writable || !valid,busy:saving || state.loading,restart:false},save:saveDefault,discard:()=>{setDraft(null);setMessage("");}});
+      return h("section",{"data-node-model-settings":nodeId},
+        h("h4",null,"默认执行模型"),
+        h("p",{style:hintStyle},"仅影响未明确指定执行模型的任务。此设置属于这个节点，不修改全局模型或决策模型。"),
+        !value?.policy.choice?h("p",{style:hintStyle},"尚未设置节点默认值；系统备用为 deepseek-official / deepseek-flash · high，实际执行前会验证可用性。"):null,
+        h("p",{role:"status",style:hintStyle},state.loading?"正在读取此节点的模型目录…":state.error || (fresh && !snapshot.complete?"已读取部分模型目录，可选择已确认的模型。未列出的模型与已有默认值保持不变。":({fresh:fresh?"已读取完整模型目录。":"模型目录已过期，保存时将重新确认所选模型。",stale:"模型目录已过期，保留已有默认值。",pending:"正在等待节点返回模型目录，保留已有默认值。",unavailable:"模型目录暂不可用，保留已有默认值。"}[value?.catalog.state] ?? "尚未读取模型目录。"))),
+        choice?h("p",{style:hintStyle},`当前${draft?"草稿":"默认"}：${choice.provider} / ${choice.model}${choice.backend?` · ${choice.backend}`:""} · ${choice.reasoningEffort ?? "模型默认档位"}`):null,
+        h("div",{className:"task-connection-grid"},
+          h("label",{className:"task-connection-field"},h("span",null,"执行模型"),h("select",{"aria-label":"默认执行模型",style:controlStyle,value:modelKey,disabled,onChange:event=>{
+            const selected=groups.get(event.target.value);if(!selected)return;
+            const effort=selected.efforts.includes(choice?.reasoningEffort)?choice?.reasoningEffort:selected.efforts.includes("high")?"high":selected.efforts[0];
+            choose({provider:selected.provider,model:selected.model,...(selected.backend?{backend:selected.backend}:{}),...(effort!==undefined?{reasoningEffort:effort}:{})});
+          }},h("option",{value:"",disabled:true},"选择此节点的执行模型"),
+          choice && !groups.has(modelKey)?h("option",{value:modelKey,disabled:true},`${choice.provider} / ${choice.model} · 当前目录未确认`):null,
+          ...[...groups].map(([key,model])=>h("option",{key,value:key},`${model.provider} / ${model.model}${model.backend?` · ${model.backend}`:""}`)))),
+          h("label",{className:"task-connection-field"},h("span",null,"推理档位"),h("select",{"aria-label":"默认推理档位",style:controlStyle,value:choice?.reasoningEffort ?? "",disabled:disabled || !group,onChange:event=>{
+            if(!choice)return;const {reasoningEffort,...base}=choice;choose({...base,...(event.target.value?{reasoningEffort:event.target.value}:{})});
+          }},!group || !group.efforts.includes(choice?.reasoningEffort)?h("option",{value:choice?.reasoningEffort ?? "",disabled:true},choice?.reasoningEffort ?? "请先选择模型"):null,
+          ...(group?.efforts ?? []).map(effort=>h("option",{key:effort ?? "",value:effort ?? ""},effort ?? "模型默认档位"))))),
+        dirty && !fresh?h("p",{role:"note",style:hintStyle},"草稿已保留；保存时会按需刷新目录并确认所选模型与档位，不会替换你的选择。"):null,
+        message?h("p",{role:"status",style:hintStyle},message):null,
+        h(Button,{variant:"outline",disabled:saving || state.loading,onClick:()=>load(true)},"刷新模型目录"),
+        !saveCoordinator?h(Button,{variant:"outline",disabled:!writable || !active || saving || state.loading || !dirty || !valid,onClick:saveDefault},saving?"保存中…":"保存节点默认模型"):null);
+    }
+    function ConnectionSettings({read,save,onSaved,saveCoordinator,role,onCreatedDraft,savedPaused,onAuthMode,nodeModelApi}) {
+      const {state,replace,refresh}=useReadSnapshot(read);
+      const [draft,setDraft]=React.useState(null),[expected,setExpected]=React.useState(null),[status,setStatus]=React.useState({saving:false}),[checks,setChecks]=React.useState({});
+      const current=state.value,value=draft ?? current?.values;
+      const paused=savedPaused ?? current?.paused;
+      React.useEffect(()=>{if(current)onAuthMode?.(current.values.authMode);},[current?.values.authMode]);
+      const edit=(key,next)=>{setExpected(old=>old ?? current.revision);setDraft(old=>({...old ?? current.values,[key]:next}));setStatus({saving:false});};
+      const planner=role==="planner" || role==="both",executor=role==="executor" || role==="both";
+      const schedulerKeys=["listenerEnabled","listenAddress","listenPort","routePath","serviceAudience","peers"];
+      const outboundEditor=value?.outbound?._fields;
+      const outboundParsed=outboundEditor?buildOutbound(outboundEditor,value.authMode==="trusted-network"):null;
+      const selectedOutbound=outboundParsed?{endpoint:outboundParsed.endpoint,audience:outboundParsed.audience,target:outboundParsed.target}:value?.outbound;
+      const schedulerReady=!!value && connectionHost(value.listenAddress,true) && Number.isInteger(value.listenPort) && value.listenPort>=1 && value.listenPort<=65535 && /^\/[A-Za-z0-9/_-]+$/.test(value.routePath) && !!value.serviceAudience?.trim() && !value.peers.some(peer=>!peer.nickname?.trim() || !connectionHost(peer.address,true));
+      const schedulerRetained=planner && !value?.listenerEnabled && !schedulerReady && ["listenAddress","listenPort","peers"].some(key=>JSON.stringify(value?.[key])!==JSON.stringify(current?.values[key]));
+      const outboundRetained=executor && !!outboundParsed?.invalid.length && (paused || !current?.exists);
+      const projected=value?{...current.values,...Object.fromEntries(schedulerKeys.filter(()=>planner && !schedulerRetained).map(key=>[key,value[key]])),...(planner?{listenerEnabled:value.listenerEnabled}:{}),...(executor && !outboundRetained?{outbound:selectedOutbound}:{})}:null;
+      const dirty=!!draft && JSON.stringify(projected)!==JSON.stringify(current?.values);
+      const hiddenDraft=!!draft && (schedulerRetained || outboundRetained || (!planner && schedulerKeys.some(key=>JSON.stringify(value[key])!==JSON.stringify(current.values[key]))) || (!executor && JSON.stringify(value.outbound)!==JSON.stringify(current.values.outbound)));
+      const saveConfig=async()=>{if(!current?.writable || !value || status.saving || (executor && !paused && current?.exists && outboundParsed?.invalid.length))return false;setStatus({saving:true});try{const result=await save({expected:expected ?? current.revision,value:projected});
+        const retained={...result.values,...Object.fromEntries(schedulerKeys.filter(()=>!planner || schedulerRetained).map(key=>[key,value[key]])),...(!executor || outboundRetained?{outbound:value.outbound}:{})};
+        if(!current.exists && !executor && value.outbound && JSON.stringify(value.outbound)!==JSON.stringify(current.values.outbound)){
+          onCreatedDraft?.({...outboundFields(value.outbound.endpoint,value.outbound.audience,value.outbound.target),...value.outbound._fields,connectionTouched:true});retained.outbound=result.values.outbound;
+        }
+        replace(result);setDraft(JSON.stringify(retained)===JSON.stringify(result.values)?null:retained);setExpected(result.revision);setStatus({saving:false,saved:true});await onSaved();return true;}catch(error){setStatus({saving:false,error:error?.details?.reason ?? error?.code ?? "CONNECTION_SAVE_FAILED"});return false;}};
+      useSaveParticipant(saveCoordinator,"connection-settings",{meta:{dirty,retainedDirty:hiddenDraft,invalid:!current?.writable || (planner && value?.listenerEnabled && !schedulerReady) || (executor && !paused && current?.exists && !!outboundParsed?.invalid.length),busy:status.saving,restart:true},save:saveConfig,discard:()=>{setDraft(null);setExpected(null);setStatus({saving:false});}});
+      if(!value)return h("p",{role:state.failed?"alert":"status"},state.failed?"连接设置读取失败，请刷新重试。":"正在读取连接设置…");
+      const field=(key,label,numeric=false)=>h("label",{className:"task-connection-field"},h("span",null,label),h("input",{id:`task-connection-${key}`,style:controlStyle,value:value[key] ?? "",inputMode:numeric?"numeric":undefined,disabled:status.saving || !current.writable || (value.authMode!=="trusted-network" && ["listenAddress","listenPort"].includes(key)),onChange:event=>edit(key,numeric?(event.target.value?Number(event.target.value):null):event.target.value)}));
+      const editPeer=(index,key,next)=>{setChecks(old=>{const copy={...old};delete copy[value.peers[index].address];return copy;});edit("peers",value.peers.map((row,i)=>i===index?{...row,[key]:next}:row));};
+      const outbound=value.outbound ?? {endpoint:"",audience:"",target:{address:"",port:null,localAddress:"",allowHttp:true}};
+      const outgoingFields=outbound._fields ?? outboundFields(outbound.endpoint,outbound.audience,outbound.target);
+      const editOutbound=(key,next)=>edit("outbound",{...outbound,_fields:{...outgoingFields,[key]:next}});
+      return h("section",{"data-connection-settings":true},
+        h("div",{"data-connection-role":"planner",hidden:!planner,style:{order:1}},
+        h("h3",null,"调度端 · 本机任务服务"),
+        h("p",{style:hintStyle},"接收执行端轮询和心跳；来源地址列表限定哪些执行端可以连接。"),
+        h("label",{className:"task-switch-row"},"启用任务服务监听",h(Switch,{label:"启用任务服务监听",checked:value.listenerEnabled,disabled:!current.exists || !current.writable || status.saving,onChange:enabled=>edit("listenerEnabled",enabled)})),
+        h("p",{role:"status",style:hintStyle},current.values.listenerEnabled?"已保存配置允许入站监听；服务状态和网络可达性需单独确认。":"已保存配置未启用入站任务接口。执行端连接可独立运行。"),
+        h("div",{className:"task-connection-grid"},field("listenAddress","本机监听地址"),field("listenPort","本机监听端口",true),field("routePath","任务协议路径"),field("serviceAudience","本机任务服务受众标识（audience）")),
+        h("h4",null,"执行端节点"),
+        h("p",{style:hintStyle},"保存节点昵称和允许的来源地址后，首次合法握手会绑定真实执行端 ID。昵称不改变身份；只接受双方已明确配置的连接。"),
+        ...value.peers.map((row,index)=>{
+          const saved=current.values.peers.find(peer=>peer.address===row.address),evidence=current.peersStatus?.find(peer=>peer.address===row.address),check=checks[row.address];
+          return h("div",{key:index,className:"task-connection-peer"},
+            h("div",{className:"task-connection-grid"},...[ ["nickname","节点昵称"],["address","执行端来源地址"] ].map(([key,label])=>h("label",{key,className:"task-connection-field"},h("span",null,label),h("input",{style:controlStyle,value:row[key] ?? "",disabled:status.saving || !current.writable,onChange:event=>editPeer(index,key,event.target.value)})))),
+            h("p",{style:hintStyle},row.nodeId?`执行端 ID：${row.nodeId}`:"执行端 ID：等待此来源首次握手后绑定"),
+            row.nodeId && nodeModelApi?h(NodeModelSettings,{key:row.nodeId,nodeId:row.nodeId,...nodeModelApi,saveCoordinator,writable:current.writable,active:planner}):h("p",{style:hintStyle},"先连接并绑定执行端身份，随后可设置此节点的默认执行模型。"),
+            h("p",{style:hintStyle},"允许此节点连接并执行分配给它的任务。新会话使用 PTC 和默认工具。"),
+            check ? h("p",{role:"status"},check) : evidence?.state==="unpaired" ? h("p",{style:hintStyle},"尚未连接") : null,
+            h("div",{style:{display:"flex",justifyContent:"space-between",gap:12,flexWrap:"wrap"}},
+              h(Button,{variant:"outline",disabled:status.saving || !current.writable,onClick:()=>{setChecks(old=>{const copy={...old};delete copy[row.address];return copy;});edit("peers",value.peers.filter((_,i)=>i!==index));}},"移除执行端节点"),
+              h(Button,{variant:"outline",disabled:status.saving,onClick:async()=>{
+                if(!saved || row.nickname!==saved.nickname || row.address!==saved.address){setChecks(old=>({...old,[row.address]:"此节点草稿尚未保存，未检测。"}));return;}
+                try{const snapshot=await read(),item=snapshot.peersStatus?.find(peer=>peer.address===row.address);replace(snapshot);
+                  const message=!item?.nodeId?"尚未连接：等待执行端发来首次合法握手。":`执行端 ID：${item.nodeId}；${item.sampledAt?`最近心跳 ${new Date(item.sampledAt).toLocaleString()}`:"尚无心跳"}；${{online:"在线",stale:"心跳已过期",unavailable:"已连接但执行环境未就绪",disabled:"节点已停用",unknown:"尚无已确认心跳",waiting:"尚无已确认心跳",unregistered:"尚未完成登记"}[item.state] ?? item.state}。依据最近心跳判断连接状态；模型目录在节点卡片中按需读取。`;
+                  setChecks(old=>({...old,[row.address]:message}));
+                }catch{setChecks(old=>({...old,[row.address]:"检测状态读取失败，未确认连接。"}));}
+              }},"检测")));
+        }),
+        h(Button,{variant:"outline",disabled:!current.writable || status.saving || value.authMode!=="trusted-network",onClick:()=>edit("peers",[...value.peers,{address:"",nodeId:"",nickname:""}])},"添加执行端节点"),
+        ),
+        !current.exists ? h("div",{"data-connection-role":"executor",hidden:!executor,style:{order:2}},
+          h("h3",null,"执行端 · 连接调度端"),h("p",{style:hintStyle},"执行端主动连接调度端任务协议地址，不需要配置一个供调度端反向调用的执行端监听。可按需要填写外连地址。"),
+          h(OutboundConnectionFields,{fields:outgoingFields,edit:editOutbound,disabled:status.saving || !current.writable,trusted:value.authMode==="trusted-network",idPrefix:"task-connection-outbound",mismatch:!outbound._fields && outboundMismatch(outbound.endpoint,outbound.target),originalTarget:outbound.target,onSynchronize:()=>edit("outbound",{...outbound,_fields:outgoingFields})}),
+          executor && outboundParsed?.invalid.length ? h("p",{role:"note",style:hintStyle},"当前执行端未启用，不完整草稿已保留；启用前需补全调度端地址、端口、路径、受众标识和本机来源地址。") : null,
+          ) : null,
+        !current.exists ? h("div",{style:{order:3}},h(Button,{variant:"outline",disabled:!current.writable || status.saving || (executor && !paused && current?.exists && !!outboundParsed?.invalid.length),onClick:saveConfig},status.saving?"保存中…":"保存连接配置"),h("p",{style:hintStyle},"首次保存后保持暂停，可在完成配置后启用。")) : null,
+        hiddenDraft ? h("p",{role:"note",style:{...hintStyle,order:3}},"未启用或未选中的连接草稿已保留，本次保存不提交不完整内容。") : null,
+        status.error ? h("p",{role:"alert",style:{order:3}},`未能保存连接配置：${status.error}。草稿已保留。`) : null,
+        status.saved ? h("p",{role:"status",style:{order:3}},"连接配置已保存；尚未据此验证网络或执行能力。") : null,
+        h("details",{style:{order:3}},h("summary",null,"连接信息与刷新"),h("p",{style:hintStyle},`节点 ${value.nodeId} · ${value.authMode==="trusted-network"?"可信网络协议":"既有签名协议"}`),h(Button,{variant:"outline",disabled:status.saving,onClick:refresh},"刷新连接配置")));
+    }
     function StartupSettings({
       t,
+      readConnectionSettings,saveConnectionSettings,
+      nodeModelApi,
       startup,
       saveStartup,
       readWorkspaces,
       renderExecutionDirectory,
+      renderProjectDirectory,
+      renderConnection,
       onSaved,
-      advanced = true,
-      openAdvanced,
       openPlugins,
       openDecisionModels,
       renderDecisionModels,
@@ -2438,45 +2328,26 @@ window.__ModuleLoader__.load({
       saveCoordinator,
     }) {
       const { state, refresh, replace } = useReadSnapshot(startup);
-      const workspaceScopeKey = JSON.stringify([
-        state.value?.task?.entryId,
-        state.value?.task?.workspaceScope,
-      ]);
-      const workspaceRead = React.useCallback(
-        () => readWorkspaces(),
-        [readWorkspaces, workspaceScopeKey],
-      );
-      const workspaceCatalog = useReadSnapshot(
-        workspaceRead,
-        !!readWorkspaces && !!state.value?.task,
-      );
       const [taskRole, setTaskRole] = React.useState(null);
+      const [createdRemoteDraft,setCreatedRemoteDraft]=React.useState(null);
+      const [connectionAuthMode,setConnectionAuthMode]=React.useState(null);
       const savedRoleKey =
         state.value?.task?.entryId +
-        JSON.stringify(state.value?.task?.values) +
-        workspaceScopeKey;
+        JSON.stringify(state.value?.task?.values);
       React.useEffect(() => {
         setTaskRole(state.value?.task?.values.role ?? null);
       }, [savedRoleKey]);
       const role = taskRole ?? state.value?.task?.values.role;
-      const executor = role === "executor" || role === "both";
-      const planner = role === "planner" || role === "both";
       const afterSave = async () => {
         // Clear the old connection summary before reading the new plugin state.
         onSaved();
         const value = await startup();
         replace(value);
-        if (readWorkspaces) workspaceCatalog.refresh();
+        return value;
       };
       return h(
         "section",
         { "data-task-startup-settings": true },
-        h("h3", { style: headingStyle }, t("startupEditable")),
-        h(
-          "p",
-          { style: hintStyle, hidden: !advanced },
-          t("startupRestartHint"),
-        ),
         state.value?.restartBlockers?.length ? h("details", {"data-task-restart-blockers":true},
           h("summary",null,`有 ${state.value.restartBlockers.length} 项执行／恢复记录会阻止重启类变更；即时设置可正常保存`),
           ...state.value.restartBlockers.map(run=>h("p",{key:run.runId,style:hintStyle},`${run.title} · ${run.state} · ${run.runId}`))) : null,
@@ -2501,20 +2372,17 @@ window.__ModuleLoader__.load({
               state.value.task
                 ? h(StartupRow, {
                     key:
-                      state.value.task.entryId +
-                      JSON.stringify(state.value.task.values) +
-                      workspaceScopeKey,
+                      state.value.task.entryId,
                     t,
                     target: "task",
-                    advanced,
-                    openAdvanced,
                     openPlugins,
-                    openDecisionModels,
                     renderDecisionModels,
                     onRoleChange: setTaskRole,
                     renderExecutionDirectory,
-                    workspaceDirectory: workspaceCatalog.state,
-                    refreshWorkspaces: workspaceCatalog.refresh,
+                    renderProjectDirectory,
+                    renderConnection: () => h("div",{className:"task-collaboration-settings"},
+                      state.value.remote ? h(StartupRow,{key:state.value.remote.entryId,t,target:"remote",connectionRole:role,connectionAuthMode,initialDraft:createdRemoteDraft,checkConnection,visible:true,row:state.value.remote,writable:state.value.writable,saveStartup,saveCoordinator,onSaved:afterSave}) : null,
+                      h(ConnectionSettings,{key:"network-settings",role,savedPaused:state.value.remote?.values.paused,read:readConnectionSettings,save:saveConnectionSettings,onSaved:afterSave,saveCoordinator,onCreatedDraft:setCreatedRemoteDraft,onAuthMode:setConnectionAuthMode,nodeModelApi})),
                     row: state.value.task,
                     decisionAvailable: state.value.task.decisionAvailable === true,
                     writable: state.value.writable,
@@ -2522,64 +2390,22 @@ window.__ModuleLoader__.load({
                     saveCoordinator,
                     onSaved: afterSave,
                   })
-                : h("p", { style: hintStyle }, t("startupUnavailable")),
-              !advanced && planner
-                ? h(
-                    "section",
-                    { "data-task-executor-connections": true },
-                    h("h4", { style: headingStyle }, t("executorConnections")),
-                    h(
-                      "p",
-                      { role: "status", style: hintStyle },
-                      t("executorSetupStatus"),
-                    ),
-                    h(
-                      Button,
-                      {
-                        variant: "outline",
-                        onClick: () => openAdvanced?.("task-startup-task-role"),
-                      },
-                      t("openAdvanced"),
-                    ),
-                  )
-                : null,
-              state.value.remote
+                : h(React.Fragment,null,h("p", { style: hintStyle }, t("startupUnavailable")),h(SettingsArea,{id:"task-connections",title:"协作连接"},state.value.remote
                 ? h(StartupRow, {
                     key:
-                      state.value.remote.entryId +
-                      JSON.stringify(state.value.remote.values),
+                      state.value.remote.entryId,
                     t,
                     target: "remote",
                     checkConnection,
-                    advanced,
-                    visible: advanced || executor,
-                    openAdvanced,
-                    row: state.value.remote,
+                    visible: true,
+                                  row: state.value.remote,
                     writable: state.value.writable,
                     saveStartup,
                     saveCoordinator,
                     onSaved: afterSave,
                   })
-                : executor || advanced
-                  ? h(
-                      "div",
-                      null,
-                      h(
-                        "p",
-                        { role: "status", style: hintStyle },
-                        t("connectionSetupStatus"),
-                      ),
-                      h(
-                        Button,
-                        {
-                          variant: "outline",
-                          onClick: () =>
-                            openAdvanced?.("task-startup-task-role"),
-                        },
-                        t("openAdvanced"),
-                      ),
-                    )
-                  : null,
+                : h("p",{role:"note",style:hintStyle},t("connectionSetupStatus")))),
+
             )
           : null,
         h(
@@ -2896,7 +2722,7 @@ window.__ModuleLoader__.load({
               ` (${status.code})`,
             )
           : null,
-        status.saved ? h("p", { role: "status" }, t("startupSaved")) : null,
+        status.saved && !saveCoordinator ? h("p", { role: "status" }, t("startupSaved")) : null,
         h(
           "div",
           {
@@ -2955,15 +2781,15 @@ window.__ModuleLoader__.load({
       const consumer = role === "planner" ? "task-planning" : "task-session";
       const current = state.value?.bindings?.[consumer] ?? "";
       const choice = selected ?? current;
-      const savePreset=async()=>{setSaving(true);setMessage(null);try {await setDecisionPreset({expected:state.value.revision,consumer,id:choice});select(null);await refresh();setMessage("预设选择已保存。");return true;} catch(error){setMessage(error?.details?.reason==="DECISION_CONFLICT" ? "配置已变化，请刷新后核对草稿。" : "保存未能确认，请查看决策插件状态。");return false;} finally {setSaving(false);}};
+      const savePreset=async()=>{setSaving(true);setMessage(null);try {const latest=await readDecisionConsole();if((latest.bindings?.[consumer] ?? "")!==current)throw {details:{reason:"DECISION_CONFLICT"}};await setDecisionPreset({expected:latest.revision,consumer,id:choice});select(null);await refresh();setMessage("预设选择已保存。");return true;} catch(error){setMessage(error?.details?.reason==="DECISION_CONFLICT" ? "配置已变化，请刷新后核对草稿。" : "保存未能确认，请查看决策插件状态。");return false;} finally {setSaving(false);}};
       useSaveParticipant(saveCoordinator,`preset-${consumer}`,{meta:{dirty:choice!==current,invalid:!state.value?.writable,busy:saving,restart:false},save:savePreset,discard:()=>{select(null);setMessage(null);}});
-      return h("section", {"data-decision-model-settings": true, id:"task-decision-model-form", tabIndex:-1},
+      return h("section", {"data-decision-model-settings": true, id:`task-decision-model-${role}`, tabIndex:-1},
         h("h4", {style:headingStyle}, "决策预设"),
         h("p", {style:hintStyle}, "在本插件选择预设。服务商、模型与思考强度在“JEV”中管理。此处只选择任务调用的模型配置。"),
         state.failed ? h("p", {role:"alert"}, "无法读取决策预设，请检查 Jev 是否启用。") : null,
         state.value ? h(React.Fragment, null,
-          h("label", {htmlFor:"task-preset-select",style:{display:"block",margin:"12px 0 6px"}}, role === "planner" ? "选择执行者使用的预设" : "选择工作区与会话使用的预设"),
-          h("select", {id:"task-preset-select", value:choice, disabled:saving || !state.value.writable, style:controlStyle, onChange:e=>{select(e.target.value);setMessage(null);}},
+          h("label", {htmlFor:`task-preset-select-${role}`,style:{display:"block",margin:"12px 0 6px"}}, role === "planner" ? "选择执行者使用的预设" : "选择会话使用的预设"),
+          h("select", {id:`task-preset-select-${role}`, value:choice, disabled:saving || !state.value.writable, style:controlStyle, onChange:e=>{select(e.target.value);setMessage(null);}},
             h("option", {value:""}, "跟随 Jev 默认服务商与模型"),
             ...(state.value.presets ?? []).map(p => h("option", {key:p.id,value:p.id}, p.name))),
           message ? h("p", {role:"status",style:hintStyle}, message) : null,
@@ -2971,7 +2797,7 @@ window.__ModuleLoader__.load({
         h("div", {style:{display:"flex",flexWrap:"wrap",gap:8,marginTop:12}},
           h(Button, {variant:"outline",onClick:()=>{if(!openDecisions())setMessage("请打开设置 → JEV。");}}, "打开 JEV 设置"),
           h(Button, {variant:"outline",disabled:state.loading,onClick:refresh}, "刷新预设"),
-          h(Button, {variant:"outline",onClick:close}, "关闭预设选择")));
+          close ? h(Button, {variant:"outline",onClick:close}, "关闭预设选择") : null));
     }
     function DecisionModelSettings({
       t,
@@ -3026,7 +2852,7 @@ window.__ModuleLoader__.load({
       );
     }
 
-    function DirectoryField({ value, onChange, disabled, directoryApi, label = "项目父目录" }) {
+    function DirectoryField({ value, onChange, disabled, directoryApi, extraActions, label = "项目父目录" }) {
       const [open, setOpen] = React.useState(false);
       const [listing, setListing] = React.useState(null);
       const [loading, setLoading] = React.useState(false);
@@ -3052,9 +2878,10 @@ window.__ModuleLoader__.load({
       const close = () => { request.current++; setOpen(false); setLoading(false); setFolder(null); };
       return h("div", {"data-task-directory-picker":true},
         h("p", {style:hintStyle}, label),
-        h("div", {style:{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}},
-          h("span", {style:{overflowWrap:"anywhere",flex:"1 1 220px"}}, value || "尚未选择目录"),
-          h(Button, {variant:"outline",disabled:disabled || !directoryApi,onClick:()=>{setListing(null);setFolder(null);setOpen(true);void browse(value);}}, "选择目录")),
+        h("div", {className:"task-directory-value"}, value || "尚未选择目录"),
+        h("div", {className:"task-directory-actions"},
+          h(Button, {variant:"outline",disabled:disabled || !directoryApi,onClick:()=>{setListing(null);setFolder(null);setOpen(true);void browse(value);}}, "选择目录"),
+          extraActions),
         open ? h(Modal, {open:true,onClose:close,closeLabel:"取消目录选择",title:"选择当前服务所在设备的目录"},
           h("div", {style:{maxHeight:"65vh",overflowY:"auto",padding:12,minWidth:0}},
             h("p", {style:hintStyle}, "浏览的是当前连接的 DSH 服务设备；选择后会在这里自动创建项目文件夹。"),
@@ -3082,16 +2909,19 @@ window.__ModuleLoader__.load({
       const saveRoot=async()=>{setSaving(true);setNotice("");try {const value=await saveProjectSettings({root:(root ?? state.value.root ?? state.value.fallback ?? "").trim(),expectedRevision:state.value.revision});replace({enabled:true,...value});setRoot(null);setNotice("项目父目录已保存");return true;} catch {setNotice("保存失败，请核对路径或刷新后重试；草稿已保留。");return false;} finally {setSaving(false);}};
       useSaveParticipant(saveCoordinator,executor ? "execution-root" : "project-root",{meta:{dirty:root!==null && root!==state.value?.root,invalid:!state.value?.enabled || !(root ?? state.value?.root ?? state.value?.fallback ?? "").trim(),busy:saving,restart:false},save:saveRoot,discard:()=>{setRoot(null);setNotice("");}});
       if (state.value && !state.value.enabled) return null;
-      return h("section", {"data-project-workspace-settings": true},
-        executor ? null : h("h3", {style: headingStyle}, "调度端 · 项目工作区"),
-        h("p", {style: hintStyle}, executor ? "选择这台执行设备上的父目录。新项目自动创建文件夹和 DSH 工作区，再在工作区内创建任务会话；同一项目复用工作区，独立任务分别建目录。已有工作区与会话保留原位置。" : "项目和临时任务的规划工作区父目录。只影响新建工作区；执行端在各自设备上选择父目录。"),
-        state.failed ? h("p", {role:"alert"}, "读取项目父目录失败，请刷新重试。") : null,
+      return h("section", {"data-project-workspace-settings": true, className:"task-directory-card"},
+        h("h3", {style: headingStyle}, executor ? "执行端 · 工作区" : "调度端 · 项目工作区"),
+        h("p", {style: hintStyle}, executor ? "选择这台执行设备上的父目录。项目任务按项目创建文件夹；普通临时任务共用 temporary-tasks。递归子任务单独隔离，已有会话保留原位置。" : "项目和临时任务的规划工作区父目录。只影响新建工作区；执行端在各自设备上选择父目录。"),
         h(DirectoryField, {value:root ?? state.value?.root ?? state.value?.fallback ?? "", directoryApi, disabled:!state.value?.enabled || saving,
-          onChange:value=>{setRoot(value);setNotice("");}}),
-        !saveCoordinator ? h(Button,{variant:"outline",disabled:!state.value?.enabled || saving,onClick:saveRoot},saving ? "正在保存…" : "保存项目父目录") : null,
-        h(Button, {variant:"outline",style:{marginLeft:8},disabled:saving,onClick:()=>{setRoot(null);setNotice("");refresh();}}, "刷新"),
-        notice ? h("p", {role:"status",style:hintStyle}, notice) : null);
+          onChange:value=>{setRoot(value);setNotice("");},
+          extraActions:h(React.Fragment,null,
+            !saveCoordinator ? h(Button,{variant:"outline",disabled:!state.value?.enabled || saving,onClick:saveRoot},saving ? "正在保存…" : "保存项目父目录") : null,
+            h(Button,{variant:"outline",disabled:saving,onClick:()=>{setNotice("");refresh();}},"刷新"))}),
+        h("div",{className:"task-directory-notice"},
+          state.failed ? h("p",{role:"alert"},"读取项目父目录失败，请刷新重试。") : null,
+          notice ? h("p",{role:"status",style:hintStyle},notice) : null));
     }
+
     function Page(props) {
       const { t } = props;
       const registryRef=React.useRef(null);if (!registryRef.current) registryRef.current=new SettingsSaveCoordinator();
@@ -3099,21 +2929,11 @@ window.__ModuleLoader__.load({
       const [,redrawSave]=React.useState(0);
       React.useEffect(()=>saveCoordinator.subscribe(()=>redrawSave(value=>value+1)),[saveCoordinator]);
       const [refreshKey, setRefreshKey] = React.useState(0);
-      const [advanced, setAdvanced] = React.useState(false);
-      const [modelOpen, setModelOpen] = React.useState(false);
-      const openDecisionModels = (role) => {
-        setModelOpen(role);
-        requestAnimationFrame(() =>
-          document.getElementById("task-decision-model-form")?.focus(),
-        );
-      };
-      const openAdvanced = (id) => {
-        setAdvanced(true);
-        requestAnimationFrame(() => document.getElementById(id)?.focus());
-      };
       const state = props.useTaskSettings((snapshot) => snapshot);
       useSaveParticipant(saveCoordinator,"runtime",{meta:{dirty:state.dirty,invalid:state.invalid || !state.writable,busy:state.saving,restart:false},save:props.save,discard:props.discard});
       const saveState=saveCoordinator.snapshot();
+      const hostIdentity=useReadSnapshot(props.read);
+      React.useEffect(()=>{const warn=event=>{if(saveCoordinator.snapshot().count || saveCoordinator.snapshot().retained){event.preventDefault();event.returnValue="";}};window.addEventListener("beforeunload",warn);return()=>window.removeEventListener("beforeunload",warn);},[saveCoordinator]);
       if (props.view === "summary") return t("summary");
       return h(
         "div",
@@ -3121,9 +2941,53 @@ window.__ModuleLoader__.load({
         h(
           "style",
           null,
-          `[data-task-plugin-settings] { min-width: 0; overflow-wrap: anywhere; }
+          `[data-task-plugin-settings] { min-width:0; width:100%; max-width:none; margin:0; padding:0 40px; box-sizing:border-box; overflow-wrap:anywhere; }
+          [data-task-plugin-settings] * { box-sizing:border-box; }
+          [data-task-plugin-settings] > :not(style):not(header) {width:100%;max-width:1200px;margin-left:auto;margin-right:auto;}
+          [data-task-plugin-settings] h1 {font-size:17px;margin:0 0 8px;line-height:1.3;}
+          [data-task-plugin-settings] h3 {font-size:17px;margin:22px 0 10px;}
+          [data-task-plugin-settings] .task-settings-header {display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin:0 -40px 22px;padding:16px 26px;border-bottom:1px solid var(--dsw-alias-border-l3,#ddd);min-height:76px;}
+          [data-task-plugin-settings] .task-settings-header p{font-size:11px;margin:4px 0 0;}
+          [data-task-plugin-settings] .task-primary-nav {display:flex;flex-wrap:wrap;gap:3px;border-radius:18px;padding:5px;background:color-mix(in srgb,var(--dsw-alias-bg-layer-2,#eef1ef) 88%,#839b8c 12%);}
+          [data-task-plugin-settings] .task-primary-nav button:not([role="switch"]) {border:0!important;background:transparent!important;border-radius:14px!important;padding:8px 16px!important;font-size:13px;white-space:nowrap;}
+          [data-task-plugin-settings] .task-primary-nav button[aria-current=page]:not([role="switch"]){background:var(--dsw-alias-bg-layer-1,#fff)!important;box-shadow:0 1px 4px #00000012;color:var(--dsw-alias-label-primary,#222);font-weight:600;}
+
+          [data-task-plugin-settings] .task-settings-nav {display:flex;flex-wrap:wrap;gap:8px 22px;padding:16px 0 24px;}
+          [data-task-plugin-settings] .task-settings-nav a {color:var(--dsw-alias-link,#4d94e6);text-decoration:none;font-size:14px;}
+          [data-task-plugin-settings] [data-settings-area] {margin:24px 0 40px;scroll-margin-top:20px;}
+          [data-task-plugin-settings] [data-settings-area] > header {border-left:4px solid #4d94e6;background:color-mix(in srgb,#4d94e6 7%,transparent);padding:16px 22px;margin-bottom:22px;}
+          [data-task-plugin-settings] [data-settings-area] > header h2 {color:var(--dsw-alias-link,#4d94e6);font-size:24px;line-height:1.3;margin:0 0 8px;font-weight:650;}
+          [data-task-plugin-settings] [data-settings-area] > header p {margin-bottom:0;}
+          [data-task-plugin-settings] [data-settings-area-body] {padding:0 6px;}
+          [data-task-plugin-settings] .task-collaboration-settings{display:flex;flex-direction:column;gap:10px;}
+          [data-task-plugin-settings] .task-collaboration-settings > [data-startup-target=remote], [data-task-plugin-settings] .task-collaboration-settings > [data-connection-settings]{display:contents!important;}
+          [data-task-plugin-settings] .task-directory-grid > div:empty{display:none;}
+          [data-task-plugin-settings] .task-directory-grid > div:not(:empty){display:contents;}
+          [data-task-plugin-settings] .task-directory-card{display:grid;grid-template-rows:subgrid;grid-row:span 6;row-gap:10px;min-width:0;}
+          [data-task-plugin-settings] .task-directory-card > h3,[data-task-plugin-settings] .task-directory-card > p{margin:0;}
+          [data-task-plugin-settings] .task-directory-card [data-task-directory-picker]{display:contents;}
+          [data-task-plugin-settings] .task-directory-card [data-task-directory-picker] > p{margin:0;}
+          [data-task-plugin-settings] .task-directory-value{overflow-wrap:anywhere;min-width:0;align-self:start;}
+          [data-task-plugin-settings] .task-directory-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;align-self:start;}
+
+          [data-task-plugin-settings] .task-directory-grid:has(> div:empty){grid-template-columns:minmax(0,1fr);}
+          [data-task-plugin-settings] .task-directory-grid,[data-task-plugin-settings] .task-decision-grid {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:32px;}
+          [data-task-plugin-settings] .task-connection-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px 28px;}
+          [data-task-plugin-settings] .task-connection-field{display:flex;flex-direction:column;gap:6px;margin:8px 0;min-width:0;}
+          [data-task-plugin-settings] .task-connection-peer{border:1px solid var(--dsw-alias-border-l3,#888);border-radius:10px;padding:16px;margin:16px 0;}
+          [data-task-plugin-settings] .task-operation-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;font-size:12px;}
+          @media(max-width:760px){[data-task-plugin-settings] .task-connection-grid{grid-template-columns:minmax(0,1fr);}}
+          [data-task-plugin-settings] .task-switch-row {display:flex;align-items:center;justify-content:space-between;gap:20px;margin:16px 0;}
+          [data-task-plugin-settings] [data-startup-target=remote] {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 28px;}
+          [data-task-plugin-settings] [data-startup-target=remote] > :not(label) {grid-column:1/-1;}
+          [data-task-plugin-settings] [data-task-runtime-form] {max-width:780px;}
+          [data-task-plugin-settings] details {padding:14px 0;}
+          [data-task-plugin-settings] summary {cursor:pointer;font-weight:600;}
+          @media(max-width:760px){[data-task-plugin-settings]{padding:0 18px;}[data-task-plugin-settings] .task-settings-header{margin:0 -18px 18px;padding:14px 16px;align-items:flex-start;}[data-task-plugin-settings] .task-primary-nav{max-width:100%;}[data-task-plugin-settings] .task-primary-nav button{padding:7px 11px!important;}[data-task-plugin-settings] .task-directory-grid,[data-task-plugin-settings] .task-decision-grid,[data-task-plugin-settings] [data-startup-target=remote]{grid-template-columns:minmax(0,1fr);gap:16px;}[data-task-plugin-settings] [data-settings-area] > header{padding:14px 16px;}[data-task-plugin-settings] [data-settings-area] > header h2{font-size:21px;}}
+
           [data-task-plugin-settings] [hidden] { display: none !important; }
           [data-task-plugin-settings] input, [data-task-plugin-settings] select { min-width: 0; max-width: 100%; }
+          [data-task-plugin-settings] select { appearance:none; -webkit-appearance:none; padding-right:36px!important; background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16'%3E%3Cpath d='m4 6 4 4 4-4' fill='none' stroke='%23788894' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")!important; background-repeat:no-repeat!important; background-position:right 12px center!important; background-size:16px 16px!important; }
           [data-task-plugin-settings] [role="switch"] { flex-shrink: 0; }
           [data-task-plugin-settings] button:not([role="switch"]) { border: 1px solid var(--dsw-alias-border-l3, #8a8a8a) !important; }
           [data-task-plugin-settings] button:not([role="switch"]) { border-radius: 6px; background: var(--dsw-alias-bg-layer-2, #e9e9e9); padding: 7px 12px; color: var(--dsw-alias-label-primary, #252525); }
@@ -3131,13 +2995,11 @@ window.__ModuleLoader__.load({
           [data-task-plugin-settings] [data-task-detail-row] { align-items: start; }
           [data-task-plugin-settings] table th, [data-task-plugin-settings] table td { vertical-align: top; text-align: left; }
           [data-task-plugin-settings] button:focus-visible, [data-task-plugin-settings] input:focus-visible, [data-task-plugin-settings] select:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
-          [data-task-plugin-settings] section, [data-task-plugin-settings] [data-task-runtime] { border-top: 1px solid var(--dsw-alias-border-l3, #8a8a8a); padding-top: 18px; margin-top: 22px; }
+          [data-task-plugin-settings] section { border:0; padding-top:0; }
           [data-task-plugin-settings] [data-task-startup-settings] > [data-startup-target="task"] { border-top: 0; padding-top: 0; margin-top: 0; }
           [data-task-plugin-settings] section > h3:first-child, [data-task-plugin-settings] section > h4:first-child { margin-top: 0 !important; }
           [data-task-plugin-settings] [data-task-runtime-form] > div > div:last-child > button { display:none; }
           [data-task-plugin-settings] [data-task-save-bar] { position:sticky; bottom:0; z-index:5; margin-top:20px; padding:12px; background:var(--dsw-alias-bg-layer-1,#fff); border-top:1px solid var(--dsw-alias-border-l3,#8a8a8a); box-shadow:0 -4px 12px rgba(0,0,0,.12); }
-          [data-task-plugin-settings] [data-task-mode] { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-          [data-task-plugin-settings] [data-task-mode] [aria-pressed="true"] { font-weight: 600; box-shadow: inset 0 -2px currentColor; }
           @media (max-width: 640px) {
             /* Scope the Host shell adaptation to the active task page. */
             [role="dialog"]:has([data-task-plugin-settings]) { flex-direction: column; position: relative; width: calc(100vw - 24px); max-height: calc(100dvh - 24px); }
@@ -3152,70 +3014,35 @@ window.__ModuleLoader__.load({
             [data-task-plugin-settings] button:not([role="switch"]), [data-task-plugin-settings] input, [data-task-plugin-settings] select { min-height: 44px; }
           }`,
         ),
-        h(
-          "div",
-          {
-            "data-task-mode": true,
-            role: "group",
-            "aria-label": t("settingsMode"),
-          },
-          h(
-            Button,
-            {
-              variant: "outline",
-              "aria-pressed": !advanced,
-              onClick: () => setAdvanced(false),
-            },
-            t("simpleMode"),
-          ),
-          h(
-            Button,
-            {
-              variant: "outline",
-              "aria-pressed": advanced,
-              onClick: () => setAdvanced(true),
-            },
-            t("advancedMode"),
-          ),
-        ),
-        h("p", { style: hintStyle }, t("simpleHint")),
+        h("header", {className:"task-settings-header"},
+          h("div",null,h("h1",null,"设置"),h("p",{style:hintStyle},`当前服务设备 · ${hostIdentity.state.value?.nodeId ?? (hostIdentity.state.failed ? "身份读取失败" : "正在读取身份…")} · 本机配置`)),
+          h("nav",{className:"task-primary-nav","aria-label":"任务系统导航"},...[ ["tasks","任务"],["projects","项目"],["fullpanel","完整面板"],["settings","设置"] ].map(([target,label])=>h("button",{type:"button",key:target,"aria-current":target==="settings"?"page":undefined,onClick:()=>props.onNavigate?.(target)},label)))),
+        h("p",{style:hintStyle},"修改先保留为草稿；底部统一保存。即时设置与需重启插件的设置会分别标明，部分保存失败会保留未完成草稿。"),
+        h("nav",{className:"task-settings-nav","aria-label":"设置分区"},...[ ["task-local","本机与工作区"],["task-connections","协作连接"],["task-decisions","决策模型"],["task-runtime","运行控制"],["task-diagnostics","状态与诊断"] ].map(([id,title])=>h("a",{key:id,href:`#${id}`,onClick:event=>{event.preventDefault();document.getElementById(id)?.scrollIntoView({block:"start",behavior:"smooth"});}},title))),
         props.startup
           ? h(StartupSettings, {
               t,
+              readConnectionSettings:props.readConnectionSettings,
+              saveConnectionSettings:props.saveConnectionSettings,
+              nodeModelApi:props.nodeModelApi,
               startup: props.startup,
               readWorkspaces: props.readWorkspaces,
+              renderProjectDirectory:()=>h(ProjectWorkspaceSettings,{readProjectSettings:props.readProjectSettings,saveProjectSettings:props.saveProjectSettings,saveCoordinator,directoryApi:props.directoryApi}),
               renderExecutionDirectory:()=>h(ProjectWorkspaceSettings,{executor:true,readProjectSettings:props.readExecutionDirectorySettings,saveProjectSettings:props.saveExecutionDirectorySettings,saveCoordinator,directoryApi:props.directoryApi}),
               saveStartup: props.saveStartup,
               onSaved: () => setRefreshKey((value) => value + 1),
-              advanced,
-              openAdvanced,
               openPlugins: props.openPlugins,
-              openDecisionModels,
               checkConnection: props.checkConnection,
               saveCoordinator,
-              renderDecisionModels: (role) =>
-                modelOpen === role
-                  ? h(DecisionPresetSettings, {
-                      role,
-                      readDecisionConsole: props.readDecisionConsole,
-                      setDecisionPreset: props.setDecisionPreset,
-                      openDecisions: props.openDecisions,
-                      close: () => setModelOpen(false),
-                      saveCoordinator,
-                    })
-                  : null,
+              renderDecisionModels: (role) => h(DecisionPresetSettings, {
+                role, readDecisionConsole:props.readDecisionConsole, setDecisionPreset:props.setDecisionPreset,
+                openDecisions:props.openDecisions, saveCoordinator,
+              }),
             })
           : null,
-        h(ProjectWorkspaceSettings, {readProjectSettings:props.readProjectSettings,saveProjectSettings:props.saveProjectSettings,saveCoordinator,directoryApi:props.directoryApi}),
-        h(LocalQueue, {
-          key: refreshKey,
-          t,
-          readQueue: props.readQueue,
-          advanced,
-        }),
         h(
           "div",
-          { hidden: !advanced, "data-task-advanced": true },
+          { "data-task-runtime-and-diagnostics": true },
           h(
             "p",
             {
@@ -3231,8 +3058,8 @@ window.__ModuleLoader__.load({
           ),
           h(
             "section",
-            { "data-task-runtime": true },
-            h("h3", { style: headingStyle }, t("runtime")),
+            { "data-task-runtime": true, id:"task-runtime", "data-settings-area":true },
+            h("header",null,h("h2",null,"运行控制"),h("p",{style:hintStyle},"控制本机维护与自动执行；远程领取在协作连接中单独设置。")),
             h("p", { style: hintStyle }, t("savedHint")),
             h("div", {"data-task-runtime-form":true}, h(
               SettingsForm,
@@ -3303,19 +3130,36 @@ window.__ModuleLoader__.load({
               ),
             )),
           ),
-          h(ReadOnly, {
-            key: refreshKey,
-            t,
-            read: props.read,
-            queryIdentity: props.queryIdentity,
-          }),
+          h(SettingsArea,{id:"task-diagnostics",title:"状态与诊断",description:"这里显示实际运行状态。路径、内部 ID 和部署细节保持只读。"},
+        h(LocalQueue, {
+          key: refreshKey,
+          t,
+          readQueue: props.readQueue,
+        }),
+          h("details",null,h("summary",null,"部署与技术详情"),h(ReadOnly,{key:refreshKey,t,read:props.read,queryIdentity:props.queryIdentity}))),
         ),
         h("div", {"data-task-save-bar":true},
-          h("p",{role:"status",style:{...hintStyle,margin:"0 0 8px"}},saveState.message || (saveState.count ? `有 ${saveState.count} 处未保存修改。${saveState.restart ? "包含需重启插件的变更。" : "保存后即时生效，已有运行保持原配置。"}` : "设置已保存；修改后在此统一保存。")),
+          h("p",{role:"status",style:{...hintStyle,margin:"0 0 8px"}},saveState.message || (saveState.count ? `有 ${saveState.count} 处未保存修改。${saveState.restart ? "包含需重启插件的变更。" : "保存后即时生效，已有运行保持原配置。"}` : saveState.retained ? "有未选角色的草稿保留，当前不提交；切回对应角色可继续编辑。" : "设置已保存；修改后在此统一保存。")),
           h("div",{style:{display:"flex",flexWrap:"wrap",gap:8}},
             h(Button,{variant:"outline",disabled:!saveState.count || saveState.invalid || saveState.busy,onClick:()=>saveCoordinator.saveAll()},saveState.busy ? "保存中…" : saveState.restart ? "保存并重启插件" : "保存设置"),
-            h(Button,{variant:"outline",disabled:!saveState.count || saveState.busy,onClick:()=>saveCoordinator.discardAll()},"丢弃全部草稿")))
+            h(Button,{variant:"outline",disabled:(!saveState.count && !saveState.retained) || saveState.busy,onClick:()=>saveCoordinator.discardAll()},"丢弃全部草稿")))
       );
+    }
+    class TaskSettingsSurface {
+      constructor() { this.container=document.createElement("div");this.container.style.cssText="height:100%;min-height:0;width:100%;overflow:auto";this.listeners=new Set();this.opened=false; }
+      subscribe = listener => {this.listeners.add(listener);return()=>this.listeners.delete(listener);};
+      snapshot = () => this.opened;
+      attach(node) {node.appendChild(this.container);if(!this.opened){this.opened=true;for(const listener of this.listeners)listener();}}
+      detach(node) {if(this.container.parentNode===node)this.container.remove();}
+    }
+    function TaskSettingsPanel({surface}) {
+      const ref=React.useRef(null);
+      React.useEffect(()=>{const node=ref.current;surface.attach(node);return()=>surface.detach(node);},[surface]);
+      return h("div",{ref,style:{height:"100%",minHeight:0,width:"100%"},"data-task-settings-panel":true});
+    }
+    function TaskSettingsPortal({surface, ...props}) {
+      const opened=React.useSyncExternalStore(surface.subscribe,surface.snapshot,surface.snapshot);
+      return opened ? createPortal(h(Page,props),surface.container) : null;
     }
     async function readRemote(ctx, method, codec, ...args) {
       // $mount owns a separate Cordis namespace. This dynamically mounted service
@@ -3345,6 +3189,8 @@ window.__ModuleLoader__.load({
     const openPlugins = (ctx) => openSettingsSection(ctx, "plugins");
     const openModels = (ctx) => openSettingsSection(ctx, "models");
     const projectMethods = [
+      "connectionSettings","saveConnectionSettings",
+      "nodeModelSettings","refreshNodeModels","saveNodeModelDefault",
       "workflowView", "setTaskPresentation", "readProjectReport", "getProjectReportPresentation",
       "workflowPage", "workflowSnapshot", "saveWorkflow", "startWorkflow", "retryWorkflowStep", "cancelWorkflow", "configureWorkflowTask", "adoptWorkflow", "createProjectTask", "runProjectTask",
       "sessionTasks",
@@ -3377,7 +3223,7 @@ window.__ModuleLoader__.load({
       namespace: "taskPluginSettings",
       method,
       invocation: { kind: "direct" },
-      parameters: ["workflowPage", "workflowSnapshot", "executionDirectorySettings", "projectSettings", "projectSnapshot", "projectPage", "conversationModels", "scheduleOptions"].includes(method)
+      parameters: ["workflowPage", "workflowSnapshot", "connectionSettings", "executionDirectorySettings", "projectSettings", "projectSnapshot", "projectPage", "conversationModels", "scheduleOptions"].includes(method)
         ? []
         : [
             {
@@ -3447,14 +3293,27 @@ window.__ModuleLoader__.load({
       update();
       return () => { observer.disconnect(); system.removeEventListener("change", update); };
     }
-    function ProjectPanel({ invoke, directoryApi }) {
+    class ProjectNavigation {
+      constructor(){this.target=null;this.listeners=new Set();}
+      go(target){if(!["tasks","projects","fullpanel"].includes(target))return;this.target=target;for(const listener of this.listeners)listener(target);}
+      subscribe(listener){this.listeners.add(listener);return()=>this.listeners.delete(listener);}
+    }
+    function ProjectPanel({ invoke, directoryApi, navigation }) {
       const frame = React.useRef(null),
         [html, setHtml] = React.useState(null),
         [page, setPage] = React.useState({method: "projectPage", context: null}),
         [error, setError] = React.useState(null),
         [detailFullscreen, setDetailFullscreen] = React.useState(false);
+      const frameReady=React.useRef(false);
+      const sendNavigation = () => {
+        if(!navigation?.target)return;
+        if(page.method!=="projectPage"){frameReady.current=false;setPage({method:"projectPage",context:null});return;}
+        if(frameReady.current && frame.current?.contentWindow)frame.current.contentWindow.postMessage({channel:"dsh-project-runtime",method:"navigate",input:navigation.target},"*");
+      };
+      React.useEffect(()=>navigation?.subscribe(sendNavigation),[navigation,page.method]);
       React.useEffect(() => {
         let active = true;
+        frameReady.current=false;
         invoke(page.method).then(
           (value) => {
             if (active) {
@@ -3474,6 +3333,11 @@ window.__ModuleLoader__.load({
       }, [invoke, page]);
       React.useEffect(() => {
         const listener = async (event) => {
+          if(event.source===frame.current?.contentWindow && event.data?.channel==="dsh-project-runtime" && event.data.method==="navigateAcknowledged"){
+            if(navigation?.target===event.data.input)navigation.target=null;
+            return;
+          }
+
           if (event.source === frame.current?.contentWindow && event.data?.channel === "dsh-project-runtime" && event.data.method === "detailFullscreen") {
             setDetailFullscreen(event.data.input === true);
             return;
@@ -3542,7 +3406,7 @@ window.__ModuleLoader__.load({
         };
         window.addEventListener("message", listener);
         return () => window.removeEventListener("message", listener);
-      }, [invoke, directoryApi]);
+      }, [invoke, directoryApi, navigation]);
       React.useEffect(() => html ? watchTheme(frame, "dsh-project-runtime") : undefined, [html]);
       if (error)
         return h("div", { role: "alert", style: { padding: 24 } }, error);
@@ -3552,7 +3416,7 @@ window.__ModuleLoader__.load({
         ref: frame,
         title: page.method === "workflowPage" ? "项目工作流" : "项目与任务",
         srcDoc: html,
-        onLoad: () => sendTheme(frame, "dsh-project-runtime"),
+        onLoad: () => {frameReady.current=true;sendTheme(frame, "dsh-project-runtime");sendNavigation();},
         sandbox: "allow-scripts allow-same-origin allow-forms allow-popups",
         style: {
           ...(detailFullscreen ? {position: "fixed", inset: 0, zIndex: 1000, width: "100vw", height: "100dvh"} : {}),
@@ -3739,10 +3603,11 @@ window.__ModuleLoader__.load({
           ...(input === undefined ? [] : [input]),
         );
       };
+      const projectNavigation = new ProjectNavigation();
       const projectDirectoryApi = {
         list: path => {const service=ctx.get("uiWorkspace");if(!service)throw Error("DSH 目录浏览服务尚未加载，请稍后重试");return service.listDirectory(path);},
         pick: () => {const service=ctx.get("uiWorkspace");if(!service)throw Error("DSH 目录选择服务尚未加载");return service.pickDirectory();},
-        openSettings: () => openSettingsSection(ctx,"task-system"),
+        openSettings: () => {ctx.get("layout")?.selectPanel("dsh-task-settings");return true;},
         openModels: () => openModels(ctx),
       };
       ctx.effect(() => mountSessionTaskPanel(ctx, invoke), "session task monitor");
@@ -3752,7 +3617,7 @@ window.__ModuleLoader__.load({
             {
               name: "main",
               key: "dsh-task-projects",
-              inject: () => ({ invoke, directoryApi: projectDirectoryApi }),
+              inject: () => ({ invoke, directoryApi: projectDirectoryApi, navigation:projectNavigation }),
             },
             ProjectPanel,
           ),
@@ -3841,6 +3706,9 @@ window.__ModuleLoader__.load({
               ...controller.inject(),
               read,
               readQueue,
+              readConnectionSettings:()=>invoke("connectionSettings"),
+              saveConnectionSettings:input=>invoke("saveConnectionSettings",input),
+              nodeModelApi:{read:input=>invoke("nodeModelSettings",input),refresh:input=>invoke("refreshNodeModels",input),save:input=>invoke("saveNodeModelDefault",input)},
               readProjectSettings: () => invoke("projectSettings"),
               readExecutionDirectorySettings: () => invoke("executionDirectorySettings"),
               saveExecutionDirectorySettings: input => invoke("saveExecutionDirectorySettings",input),
@@ -3863,33 +3731,12 @@ window.__ModuleLoader__.load({
               checkConnection,
               openPlugins: () => openPlugins(ctx),
             });
-            const section = ctx.slots.inject("settings.section", () =>
-              ctx.slots.register(
-                {
-                  name: "settings.section",
-                  id: "task-system",
-                  order: 30,
-                  label: () => t("title"),
-                  locale: NS,
-                  inject,
-                },
-                Page,
-              ),
-            );
-            const row = ctx.slots.inject("plugins.row.config", () =>
-              ctx.slots.register(
-                {
-                  name: "plugins.row.config",
-                  key: "@dsh-task/task-system#task-system",
-                  locale: NS,
-                  inject,
-                },
-                Page,
-              ),
-            );
+            const surface = new TaskSettingsSurface();
+            const main = ctx.slots.inject("main", () => ctx.slots.register({name:"main",key:"dsh-task-settings",inject:()=>({surface})}, TaskSettingsPanel));
+            const portal = ctx.slots.inject("shell.overlay", () => ctx.slots.register({name:"shell.overlay",id:"task-settings-surface",locale:NS,inject:()=>({...inject(),surface,onNavigate:target=>{if(target!=="settings"){projectNavigation.go(target);ctx.get("layout")?.selectPanel("dsh-task-projects");}}})},TaskSettingsPortal));
             return () => {
-              row();
-              section();
+              main();
+              portal();
             };
           }),
         "task settings page",
@@ -3903,6 +3750,8 @@ window.__ModuleLoader__.load({
       SessionTaskPanel,
       mountSessionTaskPanel,
       SettingsSaveCoordinator,
+      NodeModelSettings,
+      ConnectionSettings,
       ProjectCommandFeedback,
       ProjectCommandResult,
       mountProjectCommandFeedback,
@@ -3931,18 +3780,17 @@ window.__ModuleLoader__.load({
       ExecutorIdentity,
       startupDraft,
       startupChanges,
-      simpleEndpointDisplay,
-      simpleEndpointInput,
       StartupRow,
-      WorkspaceSelect,
       DirectoryField,
       ProjectWorkspaceSettings,
-      workspaceDirectoryState,
       StartupSettings,
       QueueContents,
       LocalQueue,
       ReadOnly,
       Page,
+      TaskSettingsSurface,
+      TaskSettingsPanel,
+      TaskSettingsPortal,
       en,
       zh,
       keys,

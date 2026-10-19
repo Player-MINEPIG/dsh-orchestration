@@ -311,3 +311,15 @@ for (const lostAfterCommit of [false,true]) test(`normal polling redelivers a du
  assert.deepEqual(await f.worker.pollOnce(),[]);assert.equal(f.store.dispatch('attempt1').state,'acknowledged');
  assert.equal(f.executions(),1);assert.equal(new Set(ids).size,1);assert.equal(ids.length,3);
 });
+
+test('configuration pause drains a discovery read without admitting its returned queued work',async t=>{
+ const f=worker(t);let entered,finish;const reading=new Promise(done=>entered=done),pending=new Promise(done=>finish=done);
+ f.ledger.pendingRuns=async()=>{entered();await pending;return [f.run]};f.worker.startPolling(100);await reading;
+ const acquiring=f.worker.beginConfigurationEdit();finish();const release=await acquiring;
+ assert.equal(f.calls.filter(([operation])=>operation==='claim').length,0);assert.equal(f.executions(),0);assert.throws(()=>f.worker.execute(f.run.runId,'blocked'),{code:'CONFIGURATION_BUSY'});release();
+});
+test('a claim already admitted but not yet returned remains a configuration blocker before any dispatch is persisted',async t=>{
+ const f=worker(t);let entered,finish;const claiming=new Promise(done=>entered=done),pending=new Promise(done=>finish=done),claim=f.ledger.claim;
+ f.ledger.claim=async(...args)=>{const receipt=claim(...args);entered();await pending;return receipt;};
+ const execution=f.worker.execute(f.run.runId,'claim-inflight');await claiming;assert.equal(f.store.dispatches().length,0);await assert.rejects(f.worker.beginConfigurationEdit(),{code:'CONFIGURATION_BUSY'});finish();await execution;
+});

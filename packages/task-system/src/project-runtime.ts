@@ -1,3 +1,4 @@
+import { temporaryTaskDirectory,temporaryTaskMetadata } from "./remote/project-workspace.js";
 import type { TaskSystemService } from "./dsh-plugin.js";
 import type {} from "@deepseek-ai/dsh-session-persistence-jsonl";
 import { Context } from "@deepseek-ai/cordis";
@@ -620,20 +621,18 @@ export class ProjectRuntime {
         throw new TaskError("CONFIGURATION", "Set the project root first");
       // A planner context directory, never registered as a user project or executor workspace.
       const id = `adhoc:${taskId}`,
-        cwd = join(
-          root,
-          "temporary-tasks",
-          `task-${digest(taskId).slice(0, 32)}`,
-        );
+        cwd = join(root,"temporary-tasks");
       this.db
         .prepare("INSERT INTO pr_adhoc VALUES(?,?,?,?,?,1,'creating')")
         .run(id, taskId, root, cwd, `adhoc-${randomUUID()}`);
     }
     const p = this.adhoc(taskId);
     if (p.state === "ready") return p;
-    mkdirSync(p.cwd, { recursive: true, mode: 0o700 });
+    const shared=p.cwd===join(p.root,"temporary-tasks");
+    const metadata=shared ? await temporaryTaskMetadata(await temporaryTaskDirectory(p.root),this.ledger.schedulerIdentity(),taskId,"planner") : p.cwd;
+    mkdirSync(metadata, { recursive: true, mode: 0o700 });
     this.exclusiveFile(
-      join(p.cwd, "TOOLS.md"),
+      join(metadata, "TOOLS.md"),
       `# 临时任务规划\n\nTask ID: ${taskId}\n${TOOLS.join(", ")}\n仅保留轻量调度上下文。沿用原任务 ID，不创建同名任务。纯调度端不得执行工作负载。\n`,
     );
     if (
@@ -657,6 +656,10 @@ export class ProjectRuntime {
     this.db
       .prepare("INSERT OR IGNORE INTO pr_sessions VALUES(?,?,?,?,?)")
       .run(p.session, p.id, 1, "", now());
+    if(shared) {
+      const registry=this.ctx.get("workspaceRegistry");
+      if(registry){const workspace=await registry.create(p.cwd,"temporary-tasks");await workspace.attachSession(SessionId(p.session));}
+    }
     this.db
       .prepare("UPDATE pr_adhoc SET state='ready' WHERE task=?")
       .run(taskId);
@@ -1421,12 +1424,17 @@ export class ProjectRuntime {
       | "reject"
       | "confirm-stopped"
       | "status"
-      | "retry";
+      | "retry"
+      | "repair";
   }) {
     this.authorize();
     const view = this.ledger.taskActionState(input.taskId),
       task = this.ledger.getTask(input.taskId);
     if (input.action === "retry") return this.retryTask(input);
+    if (input.action === "repair") {
+      if(!input.runId)throw new TaskError("INVALID","Repair requires the current Run ID");
+      return this.ledger.repairDispatch(input.commandId,{taskId:input.taskId,runId:input.runId,expectedActionVersion:input.expectedVersion});
+    }
     const common = {
       taskId: input.taskId,
       expectedActionVersion: input.expectedVersion,
@@ -1746,6 +1754,8 @@ export class ProjectRuntime {
               : "cancelled"
           : t.state === "archived"
             ? "archived"
+            : run?.dispatchIssue?.kind === "needs_action"
+              ? "error"
             : workflowRun?.state === "needs_attention"
               ? "error"
             : t.state === "inbox" && dispatch?.state === "inbox"
@@ -1783,6 +1793,8 @@ export class ProjectRuntime {
         description: t.description,
         status,
         actionVersion: attention.version,
+        dispatchIssue: run?.dispatchIssue ?? null,
+        canRepair: attention.canRepair,
         runId: run?.runId ?? null,
         revision:t.revision??1,
         workflowBinding:(()=>{const binding=workflowBindings.find(binding=>binding.taskId===t.taskId);return binding?{taskId:binding.taskId,projectId:binding.projectId,workflowId:binding.workflowId,revision:binding.revision}:null;})(),
@@ -1870,7 +1882,11 @@ export class ProjectRuntime {
                   ? "已验收"
                   : t.state === "inbox" && dispatch?.state === "inbox"
                   ? "等待执行端接收"
-                  : run?.state === "queued"
+                  : run?.dispatchIssue?.kind === "needs_action"
+                    ? "需处理"
+                    : run?.dispatchIssue?.kind === "waiting"
+                      ? "等待执行端目录"
+                    : run?.state === "queued"
                     ? "待领取"
                     : null,
         runStatus:

@@ -3,7 +3,7 @@
       name: '@dsh-task/task-system/plugin'
       config:
         databasePath: !!js "process.env.DSH_TASK_DATABASE || dshHomePath('task-system', 'tasks.sqlite')"
-        nodeId: !!js "process.env.DSH_TASK_NODE_ID || 'local'"
+        nodeId: !!js "process.env.DSH_TASK_NODE_ID || ''"
         role: !!js "process.env.DSH_TASK_ROLE || 'both'"
         keepAlive: true
         maintenanceIntervalMs: 1000

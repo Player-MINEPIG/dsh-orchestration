@@ -1,4 +1,7 @@
-import { executorModelRoutes } from "./executor-models.js";
+import { ExecutionModelChoice } from "./execution-models.js";
+import { resolveDeviceNodeId } from "./device-identity.js";
+import { acquireWorkspaceExecution } from "./workspace-execution-lock.js";
+import { ExecutionModelInventory } from "./executor-models.js";
 import { workflowInputPage, workflowPromptConfiguration } from "./workflow-input.js";
 import { ProgramRegistry } from "./workflow-programs.js";
 import { WorkflowRuntime } from "./workflows.js";
@@ -164,7 +167,7 @@ const PlainConfig: z<Config> = z.object({
     ])
     .default(null),
   databasePath: z.string().default(".dsh-task/tasks.sqlite"),
-  nodeId: z.string().default("local"),
+  nodeId: z.string().default(""),
   role: z
     .union([z.const("planner"), z.const("executor"), z.const("both")])
     .default("both"),
@@ -396,6 +399,7 @@ export interface ExternalExecutionRequest {
   collaboration?: NativeCollaboration;
 }
 export interface NativeDescendantStatus {
+  needsAction?: {runId:string;taskId:string;issue?: import("./contracts.js").DispatchIssue}[];
   settled: boolean;
   pendingRunIds: string[];
   pendingTaskIds: string[];
@@ -403,6 +407,7 @@ export interface NativeDescendantStatus {
   quietUntil: string;
 }
 export interface NativeCollaboration {
+  nodes?():Promise<import("./execution-models.js").ExecutionModelsView[]>;
   availableOperations?: readonly string[];
   delegate(
     commandId: string,
@@ -581,7 +586,7 @@ export class NativeExecutionProvider {
     const abort = () =>
       agent?.cancel({ kind: "hook", reason: "Direct message interrupted" });
     try {
-      const composition = await this.executionComposition();
+      const composition = await this.executionComposition(false);
       const setup = async (ctx: Context, a: Agent) => {
         if (a.inbox.nextTurn.length || a.inbox.nextStep.length)
           throw new TaskError("SESSION_BUSY", "Session has pending work");
@@ -819,6 +824,9 @@ export class NativeExecutionProvider {
           ].includes(tool)),
     );
   }
+  private transportTools(ctx: Context, agent: Agent): string[] {
+    return ctx.tools.get("run_code", agent) ? ["run_code"] : [];
+  }
   private workflowReadTools(claim: NativeClaim): string[] {
     const configuration = claim.run.configuration;
     return configuration && typeof configuration === "object" && !Array.isArray(configuration) && configuration.workflow && claim.task.policy?.allowedTools?.includes("workflow_input_read") ? ["workflow_input_read"] : [];
@@ -832,7 +840,7 @@ export class NativeExecutionProvider {
         .schemas(scopeParentOf(scopeOf(agent.ctx)!))
         .map((tool) => tool.name),
     );
-    ctx.tools.restrict({ allow: allow.filter((name) => inherited.has(name)) });
+    ctx.tools.restrict({ allow: allow.filter((name) => name !== "run_code" && inherited.has(name)) });
   }
   private fileBoundary(
     exec: Readonly<ToolExecution>,
@@ -1121,7 +1129,9 @@ export class NativeExecutionProvider {
         const failure = this.preDispatchFailure(claim);
         if (failure) return failure;
         const route = claim.run.route!;
-        const composition = await this.executionComposition();
+        const composition = await this.executionComposition(
+          !(claim.run.retry || request.resumeSession),
+        );
         const operations = request.collaboration?.availableOperations;
         const toolOperation: Record<string, string> = {
           task_history: "taskHistory",
@@ -1146,6 +1156,7 @@ export class NativeExecutionProvider {
             await composition.mount(agentCtx, agent);
             allow = [
               "task_settle",
+              ...this.transportTools(agentCtx, agent),
               ...this.workflowReadTools(claim),
               ...(request.collaboration ? [...READ_TOOLS, "task_report"] : []),
               ...this.workloadTools(claim, agentCtx, agent).filter(
@@ -1553,7 +1564,7 @@ export class NativeExecutionProvider {
   /** Native agents do not implicitly mount the WebUI's default tool preset.
    * Compose it through DSH's official service. Follow its capabilities by
    * default; explicit task/host lists remain narrower masks; on resume keep the preset recorded by that session. */
-  private async executionComposition() {
+  private async executionComposition(newSession: boolean) {
     const presets = this.ctx.get("agentPresets") as unknown as
       | {
           resolve(id?: string): Promise<{ id: string }>;
@@ -1562,15 +1573,30 @@ export class NativeExecutionProvider {
       | undefined;
     if (!presets)
       return { meta: {}, mount: async (_ctx: Context, _agent: Agent) => {} };
-    const { id } = await presets.resolve();
+    let id: string | undefined;
+    if (newSession) {
+      try {
+        id = (await presets.resolve("ptc")).id;
+      } catch {
+        throw new TaskError(
+          "PTC_UNAVAILABLE",
+          "New task sessions require the host's registered PTC preset (ptc)",
+        );
+      }
+    }
     return {
-      meta: { agentPreset: id },
+      meta: id ? { agentPreset: id } : {},
       mount: async (agentCtx: Context, agent: Agent) => {
         const projections = this.ctx.get("sessionProjections") as unknown as
           | { stateOf(session: Agent["session"], name: string): unknown }
           | undefined;
         const recorded = projections?.stateOf(agent.session, "agentPreset");
-        const wanted = typeof recorded === "string" ? recorded : id;
+        const wanted = recorded === null
+          ? undefined
+          : typeof recorded === "string"
+            ? recorded
+            : agent.session.header.agentPreset ?? id;
+        if (!wanted) return;
         const composed = agentCtx
           .get("agentPresets")
           ?.composedPreset(agent.ctx);
@@ -1589,7 +1615,7 @@ export class NativeExecutionProvider {
     const registry = this.ctx.get("workspaceRegistry") as unknown as
       {create(path: string,title?: string): Promise<{attachSession(id: SessionId): Promise<void>}>} | undefined;
     if (registry) {
-      const workspace = await registry.create(path, claim.run.projectContext.project?.title ?? claim.task.title);
+      const workspace = await registry.create(path, claim.run.projectContext.project?.title ?? "temporary-tasks");
       await workspace.attachSession(SessionId(sessionId));
     }
   }
@@ -1605,7 +1631,10 @@ export class NativeExecutionProvider {
       );
     let sessionId = claim.attempt.sessionId ?? "";
     let workspace: ReturnType<TaskLedger["getWorkspace"]> | undefined;
-    const composition = await this.executionComposition();
+    let workspacePath:string|undefined;
+    let executionRoot=this.owner.executionDirectories.settings().root;
+    let releaseWorkspace:(()=>void)|undefined;
+    let composition: Awaited<ReturnType<NativeExecutionProvider["executionComposition"]>>;
     const setup = async (agentCtx: Context, agent: Agent) => {
       await composition.mount(agentCtx, agent);
       owned.agent = agent;
@@ -1617,6 +1646,7 @@ export class NativeExecutionProvider {
         });
       const allow = [
         ...OWNED_TOOLS,
+        ...this.transportTools(agentCtx, agent),
         ...this.workflowReadTools(claim),
         ...this.workloadTools(claim, agentCtx, agent),
       ];
@@ -1628,8 +1658,8 @@ export class NativeExecutionProvider {
         if (owned.aborted) return "attempt is cancelled or its lease was lost";
         if (owned.pending && !READ_TOOLS.includes(exec.name))
           return "attempt already submitted its final outcome";
-        if (exec.agent && exec.agent.id !== agent.id)
-          return "foreign agent cannot use this attempt";
+        if (exec.agent !== agent)
+          return "the exact owned agent is required for this attempt";
         const current = this.owner.ledger.getAttempt(ref.attemptId);
         if (
           !current ||
@@ -1645,7 +1675,7 @@ export class NativeExecutionProvider {
           this.resumeBoundary(exec, claim) ??
           (this.owner.config.executionTools == null
             ? undefined
-            : this.fileBoundary(exec, workspace?.path))
+            : this.fileBoundary(exec, workspacePath))
         );
       });
     };
@@ -1665,6 +1695,7 @@ export class NativeExecutionProvider {
       ref,
     );
     try {
+      if(claim.run.projectContext && !resume) executionRoot=this.owner.executionDirectories.validatedRoot();
       const failure = resume ? undefined : this.preDispatchFailure(claim);
       if (failure) {
         const run = this.owner.ledger.submit(
@@ -1718,6 +1749,7 @@ export class NativeExecutionProvider {
           claim,
           context,
           defaultWorkspaceId: this.owner.config.defaultWorkspaceId,
+          managedWorkspaceAvailable: !!executionRoot,
           workspaces: (this.owner.ledger.snapshot().workspaces ?? []).map(
             (workspace) => ({
               workspaceId: workspace.workspaceId,
@@ -1768,23 +1800,27 @@ export class NativeExecutionProvider {
           sessionId,
         },
       );
-      if (workspace && claim.run.projectContext) {
-        const directories = this.owner.executionDirectories;
-        // A pre-existing local session has no directory binding: keep its stored cwd.
-        if (!resume || directories.sessionWorkspace(workspaceSessionKey(claim, sessionId))) {
-          workspace = { ...workspace, path: await executionWorkspace({
-            parent: workspace.path, projectRoot: directories.settings().root,
-            claim, sessionId, resume, store: directories,
-          }) };
+      workspacePath=workspace?.path;
+      if (claim.run.projectContext) {
+        const directories=this.owner.executionDirectories;
+        const parent=workspacePath ?? executionRoot;
+        if(!parent)throw new Error("TASK_EXECUTION_ROOT_REQUIRED: select this device's execution parent directory");
+        if(!resume || directories.sessionWorkspace(workspaceSessionKey(claim,sessionId)))
+          workspacePath=await executionWorkspace({parent,projectRoot:executionRoot,claim,sessionId,resume,store:directories});
+        else if(!workspacePath) {
+          const handle=await this.ctx.sessionPersistence.open(SessionId(sessionId),"read");
+          try {workspacePath=handle.header.cwd;} finally {await handle.close();}
+          if(!workspacePath)throw new Error("SESSION_WORKSPACE_MAPPING_REQUIRED: original session has no execution directory");
         }
       }
+      if(workspacePath)releaseWorkspace=await acquireWorkspaceExecution(workspacePath,owned.creation.signal);
       if (route.backend) {
-        if (!workspace)
+        if (!workspacePath)
           throw new Error("official backend requires an assigned workspace");
         const outcome = await this.official(
           owned,
           sessionId,
-          workspace.path,
+          workspacePath,
           resume,
         );
         owned.pending = {
@@ -1792,6 +1828,7 @@ export class NativeExecutionProvider {
           outcome,
         };
       } else {
+        composition = await this.executionComposition(!resume);
         owned.handle = resume
           ? await this.ctx.agents.resume({
               resumeSessionId: SessionId(sessionId),
@@ -1803,15 +1840,15 @@ export class NativeExecutionProvider {
               sessionId: SessionId(sessionId),
               agentOptions,
               meta: {
-                ...(workspace ? { cwd: workspace.path } : {}),
+                ...(workspacePath ? { cwd: workspacePath } : {}),
                 ...composition.meta,
               },
               setup,
               signal: owned.creation.signal,
             });
         if (
-          workspace &&
-          owned.handle.agent.session.header.cwd !== workspace.path
+          workspacePath &&
+          owned.handle.agent.session.header.cwd !== workspacePath
         )
           throw new Error(
             "Resumed session workspace does not match its authorized binding",
@@ -1820,7 +1857,7 @@ export class NativeExecutionProvider {
         if (!this.accepting || owned.aborted)
           throw new Error("native execution stopped during agent creation");
         await this.ctx.sessions.flush(owned.handle.agent.session);
-        if (workspace) await this.attachExecutionWorkspace(claim, workspace.path, sessionId);
+        if (workspacePath) await this.attachExecutionWorkspace(claim, workspacePath, sessionId);
         // Resumed inbox items retain their DSH message identities. The new
         // instruction explicitly requests reconciliation before further effects.
         owned.handle.agent.followup(
@@ -1925,7 +1962,7 @@ export class NativeExecutionProvider {
       throw error;
     } finally {
       if (renewal) clearInterval(renewal);
-      await this.release(owned);
+      try {await this.release(owned);}finally {releaseWorkspace?.();}
       // Cancellation acknowledgment releases task resources only after the
       // native handle has stopped and its scoped tools have unwound.
       if (this.owner.ledger.getRun(ref.runId).cancellationRequested) {
@@ -2077,9 +2114,7 @@ export class TaskSystemService extends Service {
   private observationGeneration = 0;
   private observationSubscription?: ObservationSubscription;
   private readonly observationJobs = new Set<Promise<void>>();
-  private localCatalogPending = false;
-  private localCatalogAt = 0;
-  private localModelRoutes: Awaited<ReturnType<typeof executorModelRoutes>> = [];
+  private localCatalogJob?: Promise<unknown>;
   private lastHeartbeatAt = 0;
   private lastHeartbeatSample = 0;
   private lastRuntimeReady?: boolean;
@@ -2093,11 +2128,21 @@ export class TaskSystemService extends Service {
   ) {
     super(ctx, "taskSystem");
     this.executionDirectories = new ExecutionDirectories(ledger.managementDatabase());
+    ledger.executionDirectoryReady=()=>{try{return !!this.executionDirectories.validatedRoot();}catch{return false;}};
+    const inventory=new ExecutionModelInventory({llm:()=>this.ctx.get("llm"),nativeReady:()=>!!this.native,officialBackends:()=>this.config.officialBackends,officialAvailable:backend=>!!this.ctx.get("subagents")?.getProvider(backend),temporaryWorkspaceReady:()=>ledger.executionDirectoryReady?.()===true});
+    ledger.localExecutionCatalog=()=>inventory.collect();
     this.programs = new ProgramRegistry(config.nodeId);
     this.workflows = new WorkflowRuntime(ledger, this.programs);
   }
   applyLiveNodeCapacities(): void {
-    for (const node of this.config.remoteNodes) {
+    const nodes = new Map<string, NodeBootstrap>(
+      this.ledger.nodeStatuses()
+        .filter((node) => node.nodeId !== this.config.nodeId)
+        .map((node) => [node.nodeId, this.ledger.getNode(node.nodeId)]),
+    );
+    for (const node of this.config.remoteNodes)
+      if (node.nodeId !== this.config.nodeId) nodes.set(node.nodeId, node);
+    for (const node of nodes.values()) {
       const capacity =
         this.config.nodeCapacityOverrides?.[node.nodeId] ??
         node.maxConcurrent ??
@@ -2156,6 +2201,7 @@ export class TaskSystemService extends Service {
       ...[...this.providers].map((provider) => provider.dispose()),
       Promise.allSettled([...this.observationJobs]),
     ]);
+    await this.localCatalogJob;
     await this.programWorker?.dispose();
     this.programStore?.close();
     this.results.close();
@@ -2303,45 +2349,6 @@ export class TaskSystemService extends Service {
     subscription.tail = job;
     this.observationJobs.add(job);
   }
-  private refreshLocalModelRoutes(now: number): void {
-    if (
-      !this.config.localNode ||
-      this.localCatalogPending ||
-      now - this.localCatalogAt < this.config.localHeartbeatIntervalMs
-    )
-      return;
-    this.localCatalogPending = true;
-    this.localCatalogAt = now;
-    const grants = this.config.localNode.models.flatMap((model) =>
-      (model.reasoningEfforts.length
-        ? model.reasoningEfforts
-        : [undefined]
-      ).map((reasoningEffort) => ({
-        nodeId: this.config.nodeId,
-        provider: model.provider,
-        model: model.model,
-        ...(reasoningEffort ? { reasoningEffort } : {}),
-        requiredCapabilities: [],
-      })),
-    );
-    void executorModelRoutes(this.ctx.get("llm"), grants)
-      .then((routes) => {
-        if (
-          this.ledgerClosed ||
-          !this.accepting ||
-          canonical(routes) === canonical(this.localModelRoutes)
-        )
-          return;
-        this.localModelRoutes = routes;
-        this.localHeartbeat(true);
-      })
-      .catch((error) =>
-        this.ctx.logger.warn("model catalog unavailable: %s", error),
-      )
-      .finally(() => {
-        this.localCatalogPending = false;
-      });
-  }
   private localHeartbeat(force = false): void {
     if (!this.config.localNode || this.ledgerClosed) return;
     const now = Date.now();
@@ -2354,24 +2361,12 @@ export class TaskSystemService extends Service {
       now - this.lastHeartbeatAt < this.config.localHeartbeatIntervalMs
     )
       return;
-    this.refreshLocalModelRoutes(now);
     this.lastHeartbeatSample = Math.max(now, this.lastHeartbeatSample + 1);
     try {
       const providerStatus = {
         ...(this.programs.catalog().length
           ? { programs: this.programs.catalog() }
           : {}),
-        executionRoutes: [
-          ...this.localModelRoutes,
-          ...this.config.officialBackends.map((backend) => ({
-            nodeId: this.config.nodeId,
-            provider: backend.provider,
-            model: backend.model,
-            reasoningEffort: backend.reasoningEffort,
-            backend: backend.backend,
-            requiredCapabilities: ["official-codex"],
-          })),
-        ].slice(0, 128),
         state: "not-probed",
         providers: [
           ...new Set(
@@ -2381,11 +2376,6 @@ export class TaskSystemService extends Service {
       };
       while (providerStatus.providers.length > 32)
         providerStatus.providers.pop();
-      while (
-        providerStatus.executionRoutes.length &&
-        Buffer.byteLength(JSON.stringify(providerStatus)) > 8192
-      )
-        providerStatus.executionRoutes.pop();
       while (
         providerStatus.providers.length &&
         Buffer.byteLength(JSON.stringify(providerStatus)) > 8192
@@ -2420,6 +2410,10 @@ export class TaskSystemService extends Service {
     if (!this.accepting) return;
     this.recoverResults();
     this.localHeartbeat();
+    if(!this.configurationPaused && !this.localCatalogJob && this.ledger.executionModels.pending(this.config.nodeId).length) {
+      const job=this.ledger.refreshNodeModels(this.config.nodeId).catch(error=>this.ctx.logger.warn("local model directory unavailable: %s",error)).finally(()=>{if(this.localCatalogJob===job)this.localCatalogJob=undefined;});
+      this.localCatalogJob=job;
+    }
     if (this.config.role !== "executor" && this.config.healthAlerts)
       this.ledger.reconcileNodeHealth(`native-health:${randomUUID()}`);
     if (this.ledger.recoveryNeeded())
@@ -2434,7 +2428,6 @@ export class TaskSystemService extends Service {
             {
               scheduleId: schedule.scheduleId,
               occurrenceAt: schedule.nextDueAt,
-              route: schedule.route,
             },
           );
         } catch (error) {
@@ -2518,6 +2511,11 @@ function taskWithin(
 
 export async function apply(ctx: Context, input: Config): Promise<void> {
   const config = liveConfig(input);
+  const profile = ctx.get("profileContext") as { dir?: string } | undefined;
+  config.nodeId = resolveDeviceNodeId(config.nodeId, {
+    profileDir: profile?.dir,
+    legacyDatabasePath: resolve(config.databasePath),
+  });
   if (config.officialBackends.length) {
     for (const backend of config.officialBackends)
       verifyOfficialProfile(backend);
@@ -2750,7 +2748,7 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
         interpolate: false,
         text: ({ agent }) =>
           agent && !service.native?.scopeFor(agent)
-            ? "You coordinate work across registered execution nodes. For an authorized user request that requires task execution, prefer dispatching to a suitable executor over doing the workload in this conversation. When available, use task_nodes to inspect executor capabilities and runtime health, then task_plan action=propose with the task title and complete instructions in description. The user need not specify an executor, provider, model, or reasoning effort: omit route to let the configured planning decision service choose an eligible executor and execution model/effort tuple. task_plan provider/model/reasoningEffort configure the decision call itself, not the workload model; normally omit them. Review routingStatus and the recorded proposal; apply a ready proposal using task_plan action=apply with the same requestId when the user has authorized execution. Apply already creates the assigned Run; do not create a duplicate task_run. If routing is pending or the decision abstains, report the missing configuration or clarification instead of inventing a route or silently performing the workload locally. Follow host and channel tool permissions. Track the actual Run/report outcome with task_query, task_history or task_wait; an applied proposal or delivery ACK alone does not prove task success. Brief conversation and planning explanations can be answered here."
+            ? "You coordinate work across registered execution nodes. For an authorized user request that requires task execution, prefer dispatching to a suitable executor over doing the workload in this conversation. When available, use task_nodes to inspect executor capabilities and runtime health, then task_plan action=propose with the task title and complete instructions in description. The user need not specify an executor, provider, model, or reasoning effort: omit route to let the planning decision service choose an eligible executor; its configured node default supplies the workload model/effort. If the user explicitly requests an execution model, extract it into executionModel {provider,model,reasoningEffort?,backend?}; never use the decision-call fields or guess a model from unrelated context. task_plan provider/model/reasoningEffort configure the decision call itself, not the workload model; normally omit them. Review routingStatus and the recorded proposal; apply a ready proposal using task_plan action=apply with the same requestId when the user has authorized execution. Apply already creates the assigned Run; do not create a duplicate task_run. If routing is pending or the decision abstains, report the missing configuration or clarification instead of inventing a route or silently performing the workload locally. Follow host and channel tool permissions. Track the actual Run/report outcome with task_query, task_history or task_wait; an applied proposal or delivery ACK alone does not prove task success. Brief conversation and planning explanations can be answered here."
             : "",
       });
     });
@@ -2862,8 +2860,9 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
             type: "object",
             additionalProperties: true,
             description:
-              "Optional complete execution assignment. Omit to let planning select the executor and workload model.",
+              "Optional explicit complete execution assignment. Omit to let planning select an executor and use its node default workload model.",
           },
+          executionModel: {type:"object",additionalProperties:true,description:"Explicit workload model requested by the user context: {provider,model,reasoningEffort?,backend?}. Omit to use the executor node default. Do not infer a workload model from decision-call provider/model or let the planner guess it."},
           workspaceId: {
             type: "string",
             description:
@@ -2929,6 +2928,7 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
                   ...(args.route
                     ? { route: args.route as unknown as Claim["run"]["route"] }
                     : {}),
+                  ...(args.executionModel ? {executionModel:ExecutionModelChoice.parse(args.executionModel)} : {}),
                   ...(args.workspaceId
                     ? { workspaceId: args.workspaceId }
                     : {}),
@@ -3008,14 +3008,19 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
     defineTool({
       name: "task_nodes",
       description:
-        "Discover registered execution nodes, supported provider/model/effort tuples, capabilities, and sampled runtime health before dispatching work with task_plan. Owned execution and executor profiles see only their own node; provider readiness remains explicitly unprobed.",
+        "Request current executor model catalogs and inspect node defaults, capabilities, sampled runtime health and catalog freshness before task_plan. Catalog requests are bounded and can return pending/stale/unavailable without erasing the last good models. Owned execution and executor profiles see only their own node; provider connectivity is unprobed.",
       parameters: {},
       output,
       execute: async (_args, exec) => {
         const bound = service.native?.scopeFor(exec.agent);
+        if(bound?.external) {
+          if(!bound.collaboration?.nodes)throw new TaskError("CATALOG_UNSUPPORTED","Coordinator does not provide this executor catalog view");
+          return json((await bound.collaboration.nodes()).map(view=>({nodeId:view.nodeId,executionModels:view,models:view.catalog.positiveSnapshot?.models ?? view.catalog.snapshot?.models ?? [],runtimeHealth:"not-sampled-by-this-view"})));
+        }
         const nodeId =
           bound?.ref.nodeId ??
           (config.role === "executor" ? config.nodeId : undefined);
+        await Promise.all(ledger.decisionCatalog().nodes.filter(node=>node.enabled&&(!nodeId||node.nodeId===nodeId)).map(node=>ledger.refreshNodeModels(node.nodeId)));
         return json(
           ledger
             .nodeStatuses()
@@ -3027,6 +3032,7 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
                 roles: node.roles,
                 capabilities: node.capabilities,
                 models: node.models,
+                executionModels:ledger.executionModels.view(node.nodeId),
                 workspaceIds: node.workspaceIds,
                 ...(node.defaultWorkspaceId
                   ? { defaultWorkspaceId: node.defaultWorkspaceId }
@@ -3156,10 +3162,15 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
       defineTool({
         name: "task_run",
         description:
-          "Create a run for an existing task; execution requires a validated explicit route. Owned agents can dispatch only descendants.",
+          "Create one execution request for an existing task. Specify nodeId (or omit when one eligible executor exists); omit executionModel to use that node default. route is an explicit full assignment. Ordinary temporary tasks use temporary-tasks automatically. Owned agents may dispatch only descendants.",
         parameters: {
           commandId: { type: "string", required: true },
+          action:{type:"string",enum:["create","repair"],description:"Default create; repair updates the same unclaimed Run with runId and expectedActionVersion, never creates another attempt."},
+          runId:{type:"string"},
+          expectedActionVersion:{type:"string"},
           taskId: { type: "string", required: true },
+          nodeId:{type:"string"},
+          executionModel:{type:"object",additionalProperties:true,description:"Explicit user workload selection {provider,model,reasoningEffort?,backend?}; unrelated to the planning model."},
           route: { type: "object", additionalProperties: true },
           configuration: {
             type: "json",
@@ -3180,10 +3191,23 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
             throw new Error(
               "owned agent may dispatch only its descendant tasks",
             );
+          if(args.action==="repair") {
+            if(!args.runId||!args.expectedActionVersion)throw new TaskError("INVALID","repair requires runId and expectedActionVersion from task_query/history");
+            if(args.route||args.nodeId||args.configuration)throw new TaskError("INVALID","Repair keeps the current node, context and configuration; optionally provide executionModel only.");
+            return json(ledger.repairDispatch(args.commandId,{taskId:args.taskId,runId:args.runId,expectedActionVersion:args.expectedActionVersion,...(args.executionModel?{executionModel:ExecutionModelChoice.parse(args.executionModel)}:{})}));
+          }
+          const explicit=args.route ? args.route as unknown as Claim["run"]["route"] : args.executionModel ? ExecutionModelChoice.parse(args.executionModel) : undefined;
+          const candidates=ledger.decisionCatalog().nodes.filter(node=>node.enabled&&node.roles.some(role=>role==="executor"||role==="both")&&!(config.role==="planner"&&node.nodeId===config.nodeId));
+          const nodeId=args.route ? (args.route as Record<string,unknown>).nodeId : args.nodeId ?? (candidates.length===1?candidates[0]?.nodeId:undefined);
+          if(typeof nodeId!=="string")throw new TaskError("EXECUTOR_REQUIRED","Choose nodeId from task_nodes, then call task_run with that node. Do not provision a workspace for an ordinary temporary task.");
+          if(ledger.executionModels.view(nodeId).catalog.state!=="fresh")await ledger.refreshNodeModels(nodeId);
+          const selected=ledger.selectExecutionModel(nodeId,explicit);
+          const route=args.route ? args.route as unknown as Claim["run"]["route"] : {nodeId,...selected.choice,requiredCapabilities:[]};
           return json(
             ledger.createRun(args.commandId, {
               taskId: args.taskId,
-              route: args.route as unknown as Claim["run"]["route"],
+              route,
+              executionModel:selected.executionModel,
               configuration: args.configuration as Json | undefined,
               ...(bound ? { parentRunId: bound.ref.runId } : {}),
             }),
@@ -3344,7 +3368,7 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
     defineTool({
       name: "task_wait",
       description:
-        "Wait up to 30 seconds for descendant tasks to settle through a quiet window; return current state if time expires.",
+        "Wait up to 30 seconds for the requested task and descendants (owned agents: descendants only). Return early with needsAction while settled=false when operator repair is required; ordinary offline/capacity waiting remains pending.",
       parameters: {
         taskId: { type: "string", required: true },
         timeoutMs: { type: "integer" },
@@ -3380,8 +3404,8 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
                   taskId: args.taskId,
                   quietMs: args.quietMs ?? 1000,
                 })
-              : ledger.allSettled(args.taskId, args.quietMs ?? 1000);
-          if (state.settled || Date.now() >= until) return json(state);
+              : ledger.allSettled(args.taskId, args.quietMs ?? 1000,undefined,true);
+          if (state.settled || state.needsAction?.length || Date.now() >= until) return json(state);
           await new Promise((resolve) =>
             setTimeout(
               resolve,
@@ -3596,7 +3620,7 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
     defineTool({
       name: "task_schedule",
       description:
-        "Define a versioned template or schedule, toggle a schedule, or inspect due occurrences. Admission and execution are separate.",
+        "Define a versioned template or project-bound schedule, toggle a schedule, or inspect due occurrences. Scheduled tasks must belong to a project; ordinary temporary tasks run immediately without a schedule.",
       parameters: {
         commandId: { type: "string", required: true },
         action: {
@@ -3612,6 +3636,13 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
         if (config.role === "executor")
           throw new Error("executor role may only inspect due schedules");
         if (!args.value) throw new Error("schedule action requires value");
+        if (["create","update","enable"].includes(args.action)) {
+          const value=args.value as Record<string,unknown>;
+          const scheduled=args.action==="create" ? value : ledger.snapshot().schedules?.find(s=>s.scheduleId===value.scheduleId);
+          const taskId=scheduled?.taskId;
+          if(typeof taskId!=="string" || !ledger.projectForTask(taskId))
+            throw new TaskError("PROJECT_REQUIRED","Bind this task to a project before creating, updating or enabling its schedule.");
+        }
         if (args.action === "template")
           return json(
             ledger.updateTemplate(

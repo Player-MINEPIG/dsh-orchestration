@@ -145,7 +145,7 @@ test('actual TaskLedger committed settlement recovers receipt without a second s
   assert.equal(f.serverStore.receipt('node-a','submit-crash').state,'done')
 })
 
-test('native coordinator config rejects forwarding without binding or with a second admission authority', () => {
+test('native coordinator config rejects forwarding without binding or with a second admission authority', async () => {
   assert.equal(plugin.Config({}).coordinator ?? null,null)
   assert.equal(plugin.Config({}).observationForwarding ?? null,null)
   const config = plugin.Config({ role: 'executor',nodeId: 'node-a',statePath: ':memory:',coordinator: { endpoint: 'https://fixture.invalid',audience: 'planner',keyId: 'key-a',privateKeyEnv: 'DSH_REMOTE_CONFIG_TEST_KEY',nativeRoutes: [] },observationForwarding: { workspaceId: 'workspace' } })
@@ -153,8 +153,8 @@ test('native coordinator config rejects forwarding without binding or with a sec
   try {
     const ctx = new Context(); const recovery = new RecoveryStore(':memory:')
     const service = new plugin.RemoteExecutionService(ctx,config,{},recovery)
-    assert.throws(() => service.configureCoordinator({ ledger: {},config: { autoAdmitObservations: true },subscribeObservations: () => () => {} }),/OBSERVATION_REQUIRES_SINGLE_AUTHORITY/)
-    assert.throws(() => service.configureCoordinator({ ledger: {},config: { autoAdmitObservations: false },subscribeObservations: () => () => {} }),/OBSERVATION_WORKSPACE_BINDING_REQUIRED/)
+    await assert.rejects(service.configureCoordinator({ ledger: {},config: { autoAdmitObservations: true },subscribeObservations: () => () => {} }),/OBSERVATION_REQUIRES_SINGLE_AUTHORITY/)
+    await assert.rejects(service.configureCoordinator({ ledger: {},config: { autoAdmitObservations: false },subscribeObservations: () => () => {} }),/OBSERVATION_WORKSPACE_BINDING_REQUIRED/)
     recovery.close()
   } finally { if (env === undefined) delete process.env.DSH_REMOTE_CONFIG_TEST_KEY; else process.env.DSH_REMOTE_CONFIG_TEST_KEY = env }
 })

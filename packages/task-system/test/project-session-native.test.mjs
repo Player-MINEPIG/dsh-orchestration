@@ -43,6 +43,7 @@ async function harness(config = {}) {
       config: {
         databasePath: join(dir, "central.sqlite"),
         role: "planner",
+        nodeId: "local",
         keepAlive: false,
         schedulerEnabled: false,
         autoExecute: false,

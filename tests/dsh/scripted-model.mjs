@@ -3,6 +3,7 @@ import { LlmAdapter } from '@deepseek-ai/dsh-llm';
 /** Only the model boundary is fake; Loader, sessions, tools and AgentLoop are real. */
 export class ScriptedModel extends LlmAdapter {
   constructor(script) { super(); this.script = [...script]; this.requests = []; }
+  async listModels(provider) { return [{provider,id:"script",name:"Scripted fixture"}]; }
   async *stream(options) {
     this.requests.push(options);
     let entry = this.script.shift();

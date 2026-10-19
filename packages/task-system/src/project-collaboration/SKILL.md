@@ -8,8 +8,8 @@ disable-model-invocation: true
 
 此技能只在当前会话协作模式有效时注入；项目身份由插件绑定，不能自行选择其他项目。普通对话可以直接回应。用户授权执行项目工作后按以下流程行动：
 
-1. 用 `project_status` 查看中央已有任务和结果，避免重复派发；用 `project_nodes` 查询真实可用节点和完整路线 `routes`。从 `routes` 选择符合用户执行端、模型和推理强度要求的对象；没有符合要求的完整可用路线时说明阻塞。
-2. 用 `project_dispatch` 派发明确的工作项，提供标题、完整任务说明和稳定 `requestId`。显式 `routeJson` 必须把 `project_nodes.routes` 中选中的完整对象序列化为 JSON 原样传入，保留 `nodeId`、`provider`、`model`、`reasoningEffort`、`workspaceId`、`requiredCapabilities`（包括空数组）以及返回的 `backend`；只复制返回字段，不凭记忆拼装或编造 `routeId`。需要中央自动选路时可省略 `routeJson`。独立可并行工作可派发多个任务。中央回执如仍是 proposed、pending 或 routing pending，不代表执行已开始。
+1. 用 `project_status` 查看中央已有任务和结果，避免重复派发。用 `project_nodes` 查询执行端身份、默认模型、模型目录状态和显式路线。目录 pending、stale 或节点离线表示等待，不能据此判断某个模型已被移除。
+2. 用 `project_dispatch` 提供标题、完整任务说明和稳定 `requestId`。用户明确指定执行端时传 `nodeId`，否则让中央选择执行端。未指定执行模型时省略模型参数，使用该节点默认模型。用户明确选择了执行模型时，从用户上下文提取 `executionModelJson`，内容为 `{provider,model,reasoningEffort?,backend?}`；这是工作负载模型，与中央规划决策模型分开。用户明确要求完整路线时，可原样传入 `project_nodes.routes` 返回的对象作为 `routeJson`，保留返回字段，不与 `nodeId` 或 `executionModelJson` 同传。项目目录由执行端按权威 context 分配，普通项目任务不要求调用者创建 workspace。独立工作可分别派发。queued、pending 或 routing pending 回执不代表执行已开始。
 3. 用 `project_status` 跟踪实际任务、Run、报告和验收状态。用 `project_progress` 将已发生的进度、证据和阻塞同步中央；不要编造结果。保持同一工作项 requestId；新进度版本使用新的 requestId。
 4. 工作完成后先检查真实任务结果、测试和交付证据，再用 `project_finish` 提交摘要供用户或中央复核。提交不等于验收通过，不得替用户批准或关闭审查。
 

@@ -5,6 +5,6 @@ export function isTransientReceipt(operation: unknown): boolean {
   return typeof operation === "string" && [
     "listWork", "heartbeat", "getRun", "getAttempt", "receipt", "nodeStatus",
     "taskHistory", "taskWait", "approvalStatus", "sessionContext",
-    "sessionMessages", "projectSnapshot",
+    "sessionMessages", "projectSnapshot", "executionModelRequests", "executionModelView",
   ].includes(operation);
 }

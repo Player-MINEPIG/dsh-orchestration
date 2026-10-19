@@ -1,6 +1,6 @@
 {
   "name": "@dsh-task/task-system",
-  "version": "0.2.27",
+  "version": "0.2.38",
   "type": "module",
   "license": "MIT",
   "description": "Durable task management and authenticated multi-device execution inside DSH",
@@ -80,7 +80,10 @@
     "@deepseek-ai/dsh-typert-protocol": "0.2.1-rc.2",
     "@deepseek-ai/dsh-user-approval": "0.2.1-rc.2",
     "@deepseek-ai/schemastery": "3.18.5",
-    "dsh-jev-plugin": "^0.3.0"
+    "dsh-jev-plugin": "^0.3.0",
+    "@deepseek-ai/dsh-app-boot": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-atomic-write": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-config-editor": "0.2.1-rc.2"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "4.0.5",
@@ -99,7 +102,8 @@
     "ajv": "8.17.1",
     "cron-parser": "5.4.0",
     "markdown-it": "15.0.2",
-    "zod": "4.4.3"
+    "zod": "4.4.3",
+    "yaml": "2.9.1"
   },
   "peerDependenciesMeta": {
     "@deepseek-ai/dsh-session-projection": {

@@ -1,3 +1,10 @@
+import {
+  ExecutionCatalogRequest,
+  ExecutionModelViewPage,
+  type AdmissionReport,
+  type ExecutionModelsView,
+  type CompleteExecutionModels,
+} from "../execution-models.js";
 import { randomUUID } from "node:crypto";
 import type { KeyObject } from "node:crypto";
 import { assertEndpoint } from "./http.js";
@@ -149,6 +156,7 @@ export class RemoteClient {
   }
   async executorIdentity(options?: {
     diagnostic?: boolean;
+    signal?: AbortSignal;
   }): Promise<ExecutorIdentity> {
     const receipt = await this.send(
       "executorIdentity",
@@ -220,177 +228,199 @@ export class RemoteClient {
       // arrive out of order. Retry only an explicit pre-admission rejection,
       // at most twice, retaining the business command and payload unchanged.
       for (let orderingRetry = 0; ; orderingRetry++) {
-      const { store, nodeId, keyId, privateKey, audience } = this.options;
-      const requestHash = digest({ operation, payload });
-      const authMode = this.options.authMode ?? "ed25519";
-      const destination = {
-        sender: nodeId,
-        audience,
-        endpoint: this.endpoint.href,
-        authMode,
-        authBinding: this.authBinding,
-      };
-      const now = (this.options.now ?? Date.now)();
-      const existing = store.outbound(commandId, now);
-      if (existing) {
-        insist(
-          isRecord(existing) && existing.digest === requestHash,
-          "COMMAND_CONFLICT",
-          409,
-        );
-        insist(
-          (existing.authMode ?? "ed25519") === authMode &&
-            (existing.authBinding === undefined
-              ? authMode === "ed25519"
-              : existing.authBinding === this.authBinding),
-          "SAVED_AUTH_MISMATCH",
-          409,
-        );
-        if (existing.sender !== undefined)
+        const { store, nodeId, keyId, privateKey, audience } = this.options;
+        const requestHash = digest({ operation, payload });
+        const authMode = this.options.authMode ?? "ed25519";
+        const destination = {
+          sender: nodeId,
+          audience,
+          endpoint: this.endpoint.href,
+          authMode,
+          authBinding: this.authBinding,
+        };
+        const now = (this.options.now ?? Date.now)();
+        const existing = store.outbound(commandId, now);
+        if (existing) {
           insist(
-            existing.sender === nodeId &&
-              existing.audience === audience &&
-              existing.endpoint === this.endpoint.href,
-            "SAVED_DESTINATION_MISMATCH",
+            isRecord(existing) && existing.digest === requestHash,
+            "COMMAND_CONFLICT",
             409,
           );
-        if (existing.state === "done")
-          return existing.receipt as unknown as CommandReceipt;
-        // Retrying this exact command is safe at the gateway: stored pending/uncertain
-        // work is never dispatched again. It may only return its existing receipt.
-      }
-      const common = {
-        nodeId,
-        audience,
-        commandId,
-        nonce: randomUUID(),
-        sequence: store.nextSequence(nodeId),
-        issuedAt: now,
-        expiresAt: now + 60000,
-        operation,
-        payload,
-      };
-      const envelope: CommandEnvelope =
-        authMode === "trusted-network"
-          ? { version: 2, authMode: "trusted-network", ...common }
-          : signEnvelope({ version: 1, keyId: keyId!, ...common }, privateKey!);
-      const body = JSON.stringify(envelope);
-      insist(
-        Buffer.byteLength(body) <= this.options.maxBodyBytes!,
-        "BODY_LIMIT",
-        413,
-      );
-      store.saveOutbound(commandId, {
-        ...destination,
-        digest: requestHash,
-        operation,
-        payload,
-        state: "sending",
-      }, now);
-      try {
-        const response = await this.transportFetch(this.endpoint, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body,
-          redirect: "error",
-          credentials: "omit",
-          signal: AbortSignal.any([
-            this.lifetime.signal,
-            AbortSignal.timeout(this.options.timeoutMs ?? 35000),
-            ...(signal ? [signal] : []),
-          ]),
-        });
-        if (!response.ok) {
-          let code = "REMOTE_REJECTED";
-          if ((diagnostic || response.status === 409) && response.body) {
-            const reader = response.body.getReader(),
-              chunks: Uint8Array[] = [];
-            let bytes = 0;
-            try {
-              while (true) {
-                const chunk = await reader.read();
-                if (chunk.done) break;
-                bytes += chunk.value.length;
-                if (bytes > 4096) break;
-                chunks.push(chunk.value);
-              }
-              if (bytes <= 4096) {
-                const data: unknown = JSON.parse(
-                  Buffer.concat(chunks).toString("utf8"),
-                );
-                if (
-                  isRecord(data) &&
-                  typeof data.error === "string" &&
-                  /^[A-Z][A-Z0-9_]{0,99}$/.test(data.error)
-                )
-                  code = data.error;
-              }
-            } catch {
-              /* Keep the bounded, non-secret fallback code. */
-            } finally {
-              await reader.cancel().catch(() => undefined);
-            }
-          } else await response.body?.cancel().catch(() => undefined);
-          insist(false, code, response.status);
+          insist(
+            (existing.authMode ?? "ed25519") === authMode &&
+              (existing.authBinding === undefined
+                ? authMode === "ed25519"
+                : existing.authBinding === this.authBinding),
+            "SAVED_AUTH_MISMATCH",
+            409,
+          );
+          if (existing.sender !== undefined)
+            insist(
+              existing.sender === nodeId &&
+                existing.audience === audience &&
+                existing.endpoint === this.endpoint.href,
+              "SAVED_DESTINATION_MISMATCH",
+              409,
+            );
+          if (existing.state === "done")
+            return existing.receipt as unknown as CommandReceipt;
+          // Retrying this exact command is safe at the gateway: stored pending/uncertain
+          // work is never dispatched again. It may only return its existing receipt.
         }
-        const length = response.headers.get("content-length");
-        if (
-          length !== null &&
-          (!/^\d+$/.test(length) ||
-            Number(length) > this.options.maxResponseBytes!)
-        ) {
-          await response.body?.cancel().catch(() => undefined);
-          insist(false, "RESPONSE_LIMIT");
-        }
-        insist(response.body, "EMPTY_RESPONSE");
-        const reader = response.body.getReader();
-        const chunks: Uint8Array[] = [];
-        let bytes = 0;
-        try {
-          while (true) {
-            const chunk = await reader.read();
-            if (chunk.done) break;
-            bytes += chunk.value.length;
-            insist(bytes <= this.options.maxResponseBytes!, "RESPONSE_LIMIT");
-            chunks.push(chunk.value);
-          }
-        } finally {
-          await reader.cancel().catch(() => undefined);
-        }
-        const receipt = JSON.parse(
-          Buffer.concat(chunks).toString("utf8"),
-        ) as unknown;
+        const common = {
+          nodeId,
+          audience,
+          commandId,
+          nonce: randomUUID(),
+          sequence: store.nextSequence(nodeId),
+          issuedAt: now,
+          expiresAt: now + 60000,
+          operation,
+          payload,
+        };
+        const envelope: CommandEnvelope =
+          authMode === "trusted-network"
+            ? { version: 2, authMode: "trusted-network", ...common }
+            : signEnvelope(
+                { version: 1, keyId: keyId!, ...common },
+                privateKey!,
+              );
+        const body = JSON.stringify(envelope);
         insist(
-          isRecord(receipt) &&
-            receipt.commandId === commandId &&
-            ["done", "pending", "uncertain"].includes(String(receipt.state)),
-          "INVALID_RECEIPT",
+          Buffer.byteLength(body) <= this.options.maxBodyBytes!,
+          "BODY_LIMIT",
+          413,
         );
-        store.saveOutbound(commandId, {
-          ...destination,
-          digest: requestHash,
-          operation,
-          payload,
-          state: receipt.state as Json,
-          receipt: receipt as Json,
-        }, now);
-        return receipt as unknown as CommandReceipt;
-      } catch (error) {
-        store.saveOutbound(commandId, {
-          ...destination,
-          digest: requestHash,
-          operation,
-          payload,
-          state: "uncertain",
-        }, now);
-        if (error instanceof ProtocolError && error.status === 409 && error.code === "OUT_OF_ORDER" && orderingRetry < 2) {
-          await new Promise(resolve => setTimeout(resolve, 25 * (orderingRetry + 1)));
-          insist(this.active && !signal?.aborted, "TRANSPORT_ABORTED", 503);
-          continue;
+        store.saveOutbound(
+          commandId,
+          {
+            ...destination,
+            digest: requestHash,
+            operation,
+            payload,
+            state: "sending",
+          },
+          now,
+        );
+        try {
+          const response = await this.transportFetch(this.endpoint, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body,
+            redirect: "error",
+            credentials: "omit",
+            signal: AbortSignal.any([
+              this.lifetime.signal,
+              AbortSignal.timeout(this.options.timeoutMs ?? 35000),
+              ...(signal ? [signal] : []),
+            ]),
+          });
+          if (!response.ok) {
+            let code = "REMOTE_REJECTED";
+            if ((diagnostic || response.status === 409) && response.body) {
+              const reader = response.body.getReader(),
+                chunks: Uint8Array[] = [];
+              let bytes = 0;
+              try {
+                while (true) {
+                  const chunk = await reader.read();
+                  if (chunk.done) break;
+                  bytes += chunk.value.length;
+                  if (bytes > 4096) break;
+                  chunks.push(chunk.value);
+                }
+                if (bytes <= 4096) {
+                  const data: unknown = JSON.parse(
+                    Buffer.concat(chunks).toString("utf8"),
+                  );
+                  if (
+                    isRecord(data) &&
+                    typeof data.error === "string" &&
+                    /^[A-Z][A-Z0-9_]{0,99}$/.test(data.error)
+                  )
+                    code = data.error;
+                }
+              } catch {
+                /* Keep the bounded, non-secret fallback code. */
+              } finally {
+                await reader.cancel().catch(() => undefined);
+              }
+            } else await response.body?.cancel().catch(() => undefined);
+            insist(false, code, response.status);
+          }
+          const length = response.headers.get("content-length");
+          if (
+            length !== null &&
+            (!/^\d+$/.test(length) ||
+              Number(length) > this.options.maxResponseBytes!)
+          ) {
+            await response.body?.cancel().catch(() => undefined);
+            insist(false, "RESPONSE_LIMIT");
+          }
+          insist(response.body, "EMPTY_RESPONSE");
+          const reader = response.body.getReader();
+          const chunks: Uint8Array[] = [];
+          let bytes = 0;
+          try {
+            while (true) {
+              const chunk = await reader.read();
+              if (chunk.done) break;
+              bytes += chunk.value.length;
+              insist(bytes <= this.options.maxResponseBytes!, "RESPONSE_LIMIT");
+              chunks.push(chunk.value);
+            }
+          } finally {
+            await reader.cancel().catch(() => undefined);
+          }
+          const receipt = JSON.parse(
+            Buffer.concat(chunks).toString("utf8"),
+          ) as unknown;
+          insist(
+            isRecord(receipt) &&
+              receipt.commandId === commandId &&
+              ["done", "pending", "uncertain"].includes(String(receipt.state)),
+            "INVALID_RECEIPT",
+          );
+          store.saveOutbound(
+            commandId,
+            {
+              ...destination,
+              digest: requestHash,
+              operation,
+              payload,
+              state: receipt.state as Json,
+              receipt: receipt as Json,
+            },
+            now,
+          );
+          return receipt as unknown as CommandReceipt;
+        } catch (error) {
+          store.saveOutbound(
+            commandId,
+            {
+              ...destination,
+              digest: requestHash,
+              operation,
+              payload,
+              state: "uncertain",
+            },
+            now,
+          );
+          if (
+            error instanceof ProtocolError &&
+            error.status === 409 &&
+            error.code === "OUT_OF_ORDER" &&
+            orderingRetry < 2
+          ) {
+            await new Promise((resolve) =>
+              setTimeout(resolve, 25 * (orderingRetry + 1)),
+            );
+            insist(this.active && !signal?.aborted, "TRANSPORT_ABORTED", 503);
+            continue;
+          }
+          if (diagnostic) throw error;
+          return { commandId, state: "uncertain" };
         }
-        if (diagnostic) throw error;
-        return { commandId, state: "uncertain" };
-      }
       }
     } finally {
       this.busy = false;
@@ -473,20 +503,149 @@ export class RemoteLedgerClient implements LedgerPort {
     );
     return response.result as unknown as T;
   }
-  async projectCollaborate(nodeId: string, commandId: string, input: import("../project-collaboration/types.js").ProjectCollaborationInput): Promise<Json> {
+  async executionModelView(
+    nodeId: string,
+    refresh = false,
+    options?: { signal?: AbortSignal },
+  ): Promise<ExecutionModelsView> {
+    insist(nodeId === this.nodeId, "WRONG_CLIENT_NODE", 403);
+    const signal = options?.signal
+      ? AbortSignal.any([options.signal, AbortSignal.timeout(3000)])
+      : AbortSignal.timeout(3000);
+    for (let attempt = 0; attempt < 2; attempt++) {
+      let first: ReturnType<typeof ExecutionModelViewPage.parse> | undefined;
+      const models: {
+        snapshot: import("../execution-models.js").ExecutionModelChoice[];
+        positiveSnapshot: import("../execution-models.js").ExecutionModelChoice[];
+      } = { snapshot: [], positiveSnapshot: [] };
+      let changed = false;
+      for (let offset = 0; offset < 2048; ) {
+        const raw = await this.command<unknown>(
+          "executionModelView",
+          `catalog-view:${randomUUID()}`,
+          {
+            nodeId,
+            refresh: attempt === 0 && offset === 0 && refresh === true,
+            offset,
+            limit: 32,
+          },
+          { signal },
+        );
+        if (
+          isRecord(raw) &&
+          isRecord(raw.catalogError) &&
+          typeof raw.catalogError.code === "string"
+        )
+          throw new ProtocolError(
+            raw.catalogError.code,
+            raw.catalogError.code === "RESPONSE_LIMIT" ? 413 : 400,
+          );
+        const page = ExecutionModelViewPage.parse(raw);
+        insist(
+          page.offset === offset && page.view.nodeId === nodeId,
+          "INVALID_EXECUTION_CATALOG_PAGE",
+        );
+        if (!first) first = page;
+        else if (
+          JSON.stringify(first.view) !== JSON.stringify(page.view) ||
+          JSON.stringify(first.total) !== JSON.stringify(page.total)
+        ) {
+          changed = true;
+          break;
+        }
+        offset += page.count;
+        models.snapshot.push(...page.modelsPage.snapshot);
+        models.positiveSnapshot.push(...page.modelsPage.positiveSnapshot);
+        if (
+          models.snapshot.length >= page.total.snapshot &&
+          models.positiveSnapshot.length >= page.total.positiveSnapshot
+        )
+          break;
+      }
+      if (!changed && first) {
+        insist(
+          models.snapshot.length === first.total.snapshot &&
+            models.positiveSnapshot.length === first.total.positiveSnapshot,
+          "INVALID_EXECUTION_CATALOG_PAGE",
+        );
+        const view = first.view;
+        if (view.catalog.snapshot)
+          view.catalog.snapshot.models = models.snapshot;
+        if (view.catalog.positiveSnapshot)
+          view.catalog.positiveSnapshot.models = models.positiveSnapshot;
+        return view;
+      }
+    }
+    throw new ProtocolError("EXECUTION_CATALOG_CHANGED", 409);
+  }
+  async reportAdmission(
+    commandId: string,
+    input: AdmissionReport,
+  ): Promise<Receipt<Run>> {
+    insist(input.nodeId === this.nodeId, "WRONG_CLIENT_NODE", 403);
+    const { nodeId: _nodeId, ...payload } = input;
+    return this.command("reportAdmission", commandId, payload, {
+      diagnostic: true,
+    });
+  }
+  async executionModelRequests(
+    nodeId: string,
+    options?: { signal?: AbortSignal },
+  ): Promise<ExecutionCatalogRequest[]> {
+    insist(nodeId === this.nodeId, "WRONG_CLIENT_NODE", 403);
+    const result = await this.command<unknown>(
+      "executionModelRequests",
+      `catalog-poll:${randomUUID()}`,
+      {},
+      options,
+    );
+    return ExecutionCatalogRequest.array().max(1).parse(result);
+  }
+  async completeExecutionModels(
+    commandId: string,
+    input: CompleteExecutionModels,
+    options?: { signal?: AbortSignal },
+  ): Promise<Receipt<{ accepted: true }>> {
+    insist(input.nodeId === this.nodeId, "WRONG_CLIENT_NODE", 403);
+    const { nodeId: _nodeId, ...payload } = input;
+    return await this.command(
+      "completeExecutionModels",
+      commandId,
+      JSON.parse(JSON.stringify(payload)),
+      options,
+    );
+  }
+  async projectCollaborate(
+    nodeId: string,
+    commandId: string,
+    input: import("../project-collaboration/types.js").ProjectCollaborationInput,
+  ): Promise<Json> {
     insist(nodeId === this.nodeId, "WRONG_CLIENT_NODE", 403);
     let receipt: { value: Json };
     try {
-      receipt = await this.command<{ value: Json }>("projectCollaborate", commandId, { input: JSON.parse(JSON.stringify(input)) }, { diagnostic: true });
+      receipt = await this.command<{ value: Json }>(
+        "projectCollaborate",
+        commandId,
+        { input: JSON.parse(JSON.stringify(input)) },
+        { diagnostic: true },
+      );
     } catch (error) {
       // Only this operation exposes definitive HTTP request rejections. A transport
       // failure or server failure still cannot establish whether work committed.
-      if (error instanceof ProtocolError && error.status >= 400 && error.status < 500) throw error;
+      if (
+        error instanceof ProtocolError &&
+        error.status >= 400 &&
+        error.status < 500
+      )
+        throw error;
       throw new ProtocolError("REMOTE_OUTCOME_UNCERTAIN", 503);
     }
     const result = receipt.value;
     if (isRecord(result) && isRecord(result.collaborationError)) {
-      const error = new ProtocolError(String(result.collaborationError.code), 409);
+      const error = new ProtocolError(
+        String(result.collaborationError.code),
+        409,
+      );
       error.message = `${error.code}: ${String(result.collaborationError.message)}`;
       throw error;
     }
@@ -548,7 +707,12 @@ export class RemoteLedgerClient implements LedgerPort {
       outcome: input.outcome,
       summary: input.summary,
       ...(input.report ? { report: input.report as unknown as Json } : {}),
-      ...(input.resultValidationFailure ? {resultValidationFailure:input.resultValidationFailure as unknown as Json}:{}),
+      ...(input.resultValidationFailure
+        ? {
+            resultValidationFailure:
+              input.resultValidationFailure as unknown as Json,
+          }
+        : {}),
       ...(input.preDispatchFailure
         ? { preDispatchFailure: input.preDispatchFailure as unknown as Json }
         : {}),

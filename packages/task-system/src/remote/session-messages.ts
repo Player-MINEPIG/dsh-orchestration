@@ -14,7 +14,7 @@ export class SessionMessages {
   get activeCount() {
     return this.active.size;
   }
-  async poll(concurrency: number) {
+  async poll(concurrency: number, canAdmit: () => boolean = () => true) {
     const { ledger, provider, policy } = this.options;
     if (
       this.stopped ||
@@ -24,6 +24,7 @@ export class SessionMessages {
     )
       return;
     const messages = await ledger.pendingSessionMessages(policy.nodeId);
+    if(!canAdmit())return;
     for (const message of messages) {
       if (
         this.active.size >= concurrency &&

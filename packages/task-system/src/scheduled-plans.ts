@@ -3,6 +3,7 @@ import { z } from "zod";
 import { TaskLedger, TaskError, canonical } from "./ledger.js";
 import { Workbench } from "./workbench.js";
 import type { ExecutionRoute } from "./contracts.js";
+import { ExecutionModelChoice } from "./execution-models.js";
 
 const hash = (value: unknown) =>
   createHash("sha256").update(canonical(value)).digest("hex");
@@ -13,6 +14,8 @@ export const scheduledPlanInput = z
     description: z.string().trim().min(1).max(20000),
     projectId: z.string().trim().min(1),
     routeId: z.string().min(1).max(128).optional(),
+    nodeId: z.string().min(1).max(128).optional(),
+    executionModel: ExecutionModelChoice.optional(),
     execution: z
       .object({
         kind: z.literal("workflow"),
@@ -62,6 +65,7 @@ export class ScheduledPlans {
           label: string;
           workspaceLabel: string;
           route: ExecutionRoute;
+          executionModel: NonNullable<ReturnType<TaskLedger["selectExecutionModel"]>["executionModel"]>;
         }
       >();
     for (const status of this.ledger.nodeStatuses()) {
@@ -71,54 +75,30 @@ export class ScheduledPlans {
         !node.roles.some((role) => role === "executor" || role === "both")
       )
         continue;
-      const advertised = (
-        status.providerStatus as
-          | { executionRoutes?: ExecutionRoute[] }
-          | undefined
-      )?.executionRoutes;
-      const candidates = Array.isArray(advertised)
-        ? advertised.slice(0, 128)
-        : [];
-      for (const candidate of candidates) {
-        if (!candidate || candidate.nodeId !== node.nodeId) continue;
-        const route = Object.fromEntries(
-          Object.entries(candidate).filter(([key]) =>
-            [
-              "nodeId",
-              "provider",
-              "model",
-              "reasoningEffort",
-              "backend",
-              "requiredCapabilities",
-            ].includes(key),
-          ),
-        ) as unknown as ExecutionRoute;
-        if (
-          route.backend !== undefined &&
-          (typeof route.backend !== "string" ||
-            !route.backend ||
-            route.backend.length > 128)
-        )
-          continue;
-        for (const workspace of data.workspaces ?? []) {
-          if (
-            workspace.nodeId !== node.nodeId ||
-            workspace.state !== "ready" ||
-            !node.workspaceIds.includes(workspace.workspaceId)
-          )
-            continue;
-          const executable = { ...route, workspaceId: workspace.workspaceId };
+      const view=this.ledger.executionModels.view(node.nodeId);
+      if(!view.catalog.positiveSnapshot || view.catalog.positiveSnapshot.expiresAt<=Date.now())continue;
+      const preferred=this.ledger.selectExecutionModel(node.nodeId);
+      for (const selection of [
+        { ...preferred,defaultChoice:true },
+        ...view.catalog.positiveSnapshot.models.map(choice=>({...this.ledger.selectExecutionModel(node.nodeId,choice),defaultChoice:false})),
+      ]) {
+        const {provider,model,reasoningEffort,backend}=selection.choice;
+        const route:ExecutionRoute={nodeId:node.nodeId,provider,model,...(reasoningEffort?{reasoningEffort}:{}),...(backend?{backend}:{}),requiredCapabilities:[]};
+        const workspaces=(data.workspaces ?? []).filter(workspace=>workspace.nodeId===node.nodeId && workspace.state==="ready" && node.workspaceIds.includes(workspace.workspaceId));
+        for (const workspace of [undefined,...workspaces]) {
+          const executable = { ...route,...(workspace?{workspaceId:workspace.workspaceId}:{}) };
           try {
             this.ledger.validateRoute(executable);
           } catch {
             continue;
           }
-          const id = hash(executable);
+          const id = selection.defaultChoice?hash({route:executable,source:"node_default",policyRevision:view.policy.revision,catalogRevision:view.catalog.positiveSnapshot.revision}):hash(executable);
           routes.set(id, {
             id,
-            workspaceLabel: workspace.label,
+            workspaceLabel: workspace?.label ?? "项目执行目录",
             route: executable,
-            label: `${node.nodeId} · ${route.model} · ${route.reasoningEffort ?? "默认"} · ${workspace.label}${status.state === "online" ? "" : " · 离线排队"}`,
+            executionModel:selection.executionModel,
+            label: `${node.nodeId} · ${selection.defaultChoice?"节点默认 · ":""}${route.model} · ${route.reasoningEffort ?? "默认"}${route.backend?` · ${route.backend}`:""} · ${workspace?.label ?? "项目执行目录"}${status.state === "online" ? "" : " · 离线排队"}`,
           });
         }
       }
@@ -149,10 +129,18 @@ export class ScheduledPlans {
       )
     )
       throw new TaskError("NOT_FOUND", "Project unavailable");
-    const selected = this.options().routes.find((r) => r.id === input.routeId);
+    let selected = this.options().routes.find((r) => r.id === input.routeId);
+    if(!input.execution && !input.routeId){
+      const candidates=this.ledger.decisionCatalog().nodes.filter(node=>node.enabled&&node.roles.some(role=>role==="executor"||role==="both"));
+      const nodeId=input.nodeId ?? (candidates.length===1?candidates[0]?.nodeId:undefined);
+      if(!nodeId)throw new TaskError("EXECUTOR_REQUIRED","Choose an executor node for this plan");
+      const selection=this.ledger.selectExecutionModel(nodeId,input.executionModel);
+      const {provider,model,reasoningEffort,backend}=selection.choice;
+      selected={id:"node-policy",label:nodeId,workspaceLabel:"项目执行目录",route:{nodeId,provider,model,...(reasoningEffort?{reasoningEffort}:{}),...(backend?{backend}:{}),requiredCapabilities:[]},executionModel:selection.executionModel};
+    }
     if (
-      (!input.execution && !input.routeId) ||
-      (input.execution && input.routeId)
+      (input.execution && (input.routeId || input.nodeId || input.executionModel)) ||
+      (input.routeId && (input.nodeId || input.executionModel))
     )
       throw new TaskError(
         "INVALID",
@@ -209,7 +197,7 @@ export class ScheduledPlans {
               },
               workflowInput: input.execution.input,
             }
-          : { route: selected!.route }),
+          : { route: selected!.route,executionModel:selected!.executionModel }),
         ...(input.cadence.mode === "interval"
           ? { intervalMs: input.cadence.minutes * 60000 }
           : {

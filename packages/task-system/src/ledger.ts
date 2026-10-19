@@ -1,3 +1,6 @@
+import { ExecutionModels, ExecutionModelChoice, sameExecutionModel } from "./execution-models.js";
+import type { CompleteExecutionModels } from "./execution-models.js";
+import { pairedExecutorModels } from "./paired-executors.js";
 import { ProgramCatalog, ProgramRoute } from "./workflow-programs.js";
 import type {
   TaskSession,
@@ -67,6 +70,10 @@ import type {
   Workspace,
 } from "./contracts.js";
 
+function withExecutionModel(base:ExecutionRoute,choice:ExecutionModelChoice):ExecutionRoute {
+  const {provider:_provider,model:_model,reasoningEffort:_effort,backend:_backend,...scope}=base;
+  return {...scope,provider:choice.provider,model:choice.model,...(choice.reasoningEffort?{reasoningEffort:choice.reasoningEffort}:{}),...(choice.backend?{backend:choice.backend}:{})};
+}
 export class TaskError extends Error {
   constructor(
     public readonly code: string,
@@ -216,6 +223,7 @@ export interface RunInput {
   parentRunId?: string;
   route?: ExecutionRoute;
   configuration?: Json;
+  executionModel?: Run["executionModel"];
   sessionIds?: string[];
   occurrenceId?: string;
   contextNotes?: Run["contextNotes"];
@@ -316,6 +324,9 @@ export class TaskLedger {
   readonly nodeId: string;
   private readonly clock: () => number;
   private readonly db: DatabaseSync;
+  readonly executionModels: ExecutionModels;
+  executionDirectoryReady?:()=>boolean;
+  localExecutionCatalog?:()=>Promise<import("./execution-models.js").ExecutionCatalogResult>;
   private closed = false;
   private validatorGeneration = 0;
   private readonly resultValidators = new Map<
@@ -395,6 +406,7 @@ export class TaskLedger {
     }
     this.db = new DatabaseSync(path, { readOnly: options.readOnly ?? false });
     this.db.exec("PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON;");
+    this.executionModels = new ExecutionModels(this.db,{now:this.clock,readOnly:options.readOnly});
     if (!options.readOnly) {
       this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
       CREATE TABLE IF NOT EXISTS schema_meta(version INTEGER NOT NULL);
@@ -554,6 +566,10 @@ export class TaskLedger {
   private projectEntity<T>(kind: string, value: any): T {
     if (kind === "task") value.priority = this.priorityFor(value);
     if (kind === "run") {
+      if(value.state === "queued" && !value.route?.workspaceId && !value.projectContext && value.route && !value.historyOnly && !value.observationOnly) {
+        const issue={kind:"needs_action",code:"TEMPORARY_CONTEXT_REQUIRED",message:"Repair this unclaimed request to attach its temporary task context.",action:"repair_context"};
+        value.dispatchIssue={...issue,revision:hash(issue)};
+      }
       const sessions = this.list<Attempt>("attempt", value.runId).flatMap(
         (a) => (a.sessionId ? [a.sessionId] : []),
       );
@@ -1991,6 +2007,14 @@ export class TaskLedger {
       fail("TOO_LARGE", "Resolved execution context exceeds 1 MB");
     return context;
   }
+  projectForTask(taskId:string):string|undefined {
+    this.getTask(taskId);
+    const exists=this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='wb_projects'").get();
+    if(!exists)return undefined;
+    const rows=this.db.prepare("SELECT DISTINCT p.project_id FROM wb_projects p JOIN wb_backlogs b ON b.project_id=p.project_id JOIN wb_backlog_tasks t ON t.backlog_id=b.backlog_id WHERE t.task_id=?").all(taskId);
+    if(rows.length>1)fail("AMBIGUOUS_PROJECT","Task belongs to more than one project");
+    return rows[0]?String(rows[0].project_id):undefined;
+  }
   private projectContextSnapshot(
     task: Task,
     parentRunId?: string,
@@ -2016,19 +2040,8 @@ export class TaskLedger {
     if (projects.length > 1)
       fail("AMBIGUOUS_PROJECT", "A dispatched task must belong to one project");
     const p = projects[0];
-    const hasTemporary = this.db
-      .prepare(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='pr_adhoc'",
-      )
-      .get();
-    if (
-      !p &&
-      !(
-        hasTemporary &&
-        this.db.prepare("SELECT 1 FROM pr_adhoc WHERE task=?").get(task.taskId)
-      )
-    )
-      return undefined;
+    // Ordinary independently dispatched work has authority-owned temporary scope.
+    // Conversation provisioning is optional; external tools do not create pr_adhoc rows.
     return projectContext({
       version: 1,
       schedulerId: this.schedulerIdentity(),
@@ -2083,6 +2096,8 @@ export class TaskLedger {
         "UNRESOLVED_EFFECTS",
         "Reconcile uncertain prior execution before another run",
       );
+    const scopedContext = inherited?.projectContext ?? this.projectContextSnapshot(task,parentRunId);
+    const project = scopedContext?.project===null && workspaceConstraint ? undefined : scopedContext;
     if (input.route) {
       const workspaceId =
         input.route.workspaceId ??
@@ -2091,9 +2106,9 @@ export class TaskLedger {
           "taskSessionDefault",
           hash([task.taskId, input.route.nodeId]),
         )?.workspaceId ??
-        this.getNode(input.route.nodeId).defaultWorkspaceId;
+        (!project ? this.getNode(input.route.nodeId).defaultWorkspaceId : undefined);
       if (workspaceId) input.route = { ...input.route, workspaceId };
-      this.validateRoute(input.route);
+      this.validateRoute(input.route,{admission:true,skipModel:!!input.executionModel});
       if (input.route.backend && !task.policy?.allowedBackends?.includes(input.route.backend)) fail("FORBIDDEN", "Native backend grant required");
       const node = this.getNode(input.route.nodeId);
       let ancestorRunId = parentRunId;
@@ -2123,8 +2138,6 @@ export class TaskLedger {
     const configuration = this.pinConfiguration(input.configuration);
     const invocation = configuration && typeof configuration === 'object' && !Array.isArray(configuration) && configuration.workflowInvocation;
     if (this.hasWorkflowBinding(task.taskId) && !invocation) fail('WORKFLOW_TASK','Start this Task through its configured workflow');
-    const project =
-      inherited?.projectContext ?? this.projectContextSnapshot(task, parentRunId);
     const key = id(input.runId ?? randomUUID());
     if (this.get("run", key)) fail("CONFLICT", "Run ID already exists");
     const notes = this.list<{
@@ -2183,6 +2196,7 @@ export class TaskLedger {
       historyOnly: false,
       configuration,
       ...(project ? { projectContext: project } : {}),
+      ...(input.executionModel ? { executionModel: input.executionModel } : {}),
       intentSnapshot: {
         title: task.title,
         description: task.description,
@@ -2211,6 +2225,7 @@ export class TaskLedger {
     };
     if (this.isWorkflowInvocation(run) && run.route) fail('FORBIDDEN', 'Workflow roots cannot have an execution route');
     this.saveRun(run);
+    if(input.executionModel)this.refreshDispatchEligibility(run.runId);
     if (this.isWorkflowInvocation(run)) {
       const admit = this.workflowRunAdmission ?? fail('UNAVAILABLE', 'Workflow runtime is unavailable');
       const config = run.configuration as {workflowInvocation: {workflowId: string}; input?: Json};
@@ -2239,13 +2254,26 @@ export class TaskLedger {
       task.taskId,
       key,
     );
-    return run;
+    return this.getRun(run.runId);
   }
   createRun(commandId: string, input: RunInput) {
     this.planner();
     return this.command(commandId, "createRun", input, () =>
       this.newRun(input),
     );
+  }
+  registerPairedExecutor(commandId:string,nodeId:string,providerStatus?:unknown) {
+    id(nodeId);
+    const prior=this.get<NodeCapability>("node",nodeId),managed=this.get<{managed:true}>("pairedExecutor",nodeId);
+    if(prior && !managed)return prior;
+    const advertised=providerStatus===undefined && prior ? {models:prior.models,capabilities:prior.capabilities} : pairedExecutorModels(nodeId,providerStatus);
+    const next:NodeCapability={nodeId,roles:["executor"],...advertised,workspaceIds:prior?.workspaceIds ?? [],enabled:true,maxConcurrent:prior?.maxConcurrent ?? 1,lastSeenAt:this.now()};
+    return this.command(commandId,"registerPairedExecutor",{nodeId,providerStatus:providerStatus ?? null},()=>{this.put("pairedExecutor",nodeId,{managed:true});this.put("node",nodeId,next);return next;});
+  }
+  deactivatePairedExecutor(commandId:string,nodeId:string) {
+    const node=this.get<NodeCapability>("node",nodeId);
+    if(!node)return;
+    return this.command(commandId,"deactivatePairedExecutor",{nodeId},()=>{node.enabled=false;this.put("node",nodeId,node);return node;});
   }
   registerNode(commandId: string, node: NodeCapability) {
     if (
@@ -2359,13 +2387,13 @@ export class TaskLedger {
       return task;
     });
   }
-  validateRoute(route: ExecutionRoute) {
+  validateRoute(route: ExecutionRoute, options:{admission?:boolean;skipModel?:boolean}={}) {
     if (this.role === "planner" && route.nodeId === this.nodeId)
       fail("FORBIDDEN", "Planner-only host cannot execute its own workload");
     const node = this.getNode(route.nodeId);
     if (!node.enabled) fail("FORBIDDEN", "Node disabled");
     if (
-      this.options.requireFreshHeartbeat &&
+      !options.admission && this.options.requireFreshHeartbeat &&
       this.nodeStatuses().find((n) => n.nodeId === node.nodeId)?.state !==
         "online"
     )
@@ -2387,16 +2415,13 @@ export class TaskLedger {
         const parsed = ProgramCatalog.safeParse(entry);
         return parsed.success && parsed.data.nodeId === node.nodeId && parsed.data.programId === program.programId && parsed.data.version === program.version;
       })) fail("UNSUPPORTED", "Program version not advertised by executor");
-    } else {
-    const m =
-      node.models.find(
-        (x) => x.provider === route.provider && x.model === route.model,
-      ) ?? fail("UNSUPPORTED", "Provider/model not advertised");
-    if (
-      route.reasoningEffort !== undefined &&
-      !m.reasoningEfforts.includes(route.reasoningEffort)
-    )
-      fail("UNSUPPORTED", "Reasoning effort not supported");
+    } else if(!options.skipModel) {
+    const positive=this.executionModels.view(route.nodeId).catalog.positiveSnapshot;
+    const confirmed=positive && positive.expiresAt>this.clock() && positive.models.some(choice=>sameExecutionModel(choice,route));
+    if(!confirmed) {
+      const m=node.models.find(x=>x.provider===route.provider&&x.model===route.model) ?? fail("UNSUPPORTED","Provider/model not advertised");
+      if(route.reasoningEffort!==undefined && !m.reasoningEfforts.includes(route.reasoningEffort))fail("UNSUPPORTED","Reasoning effort not supported");
+    }
     }
     if (route.workspaceId) {
       const w = this.getWorkspace(route.workspaceId);
@@ -2428,13 +2453,15 @@ export class TaskLedger {
         (this.role === "executor" && input.nodeId !== this.nodeId)
       )
         fail("FORBIDDEN", "Role cannot execute on this node");
-      const run = this.getRun(input.runId);
+      let run = this.getRun(input.runId);
       if (this.isWorkflowInvocation(run)) fail("FORBIDDEN", "Workflow roots cannot be claimed");
       if (run.state !== "queued") fail("CONFLICT", "Run is not queued");
       if (run.retry && Date.parse(run.retry.notBefore) > this.clock())
         fail("NOT_DUE", "Safe retry delay has not elapsed");
       if (!run.route || run.route.nodeId !== input.nodeId)
         fail("FORBIDDEN", "Assignment belongs to another node");
+      run=this.refreshDispatchEligibility(run.runId);
+      if(run.dispatchIssue) fail(run.dispatchIssue.code,run.dispatchIssue.message);
       this.validateRoute(run.route!);
       const node = this.getNode(input.nodeId);
       if (
@@ -2725,10 +2752,14 @@ export class TaskLedger {
         policy: input.policy,
         workspaceId: (input.route ?? parentRun.route)?.workspaceId,
       });
+      const inherited=!parentRun.executionModel || parentRun.executionModel.origin==="explicit" ? parentRun.route : undefined;
+      const selected=this.selectExecutionModel((input.route ?? parentRun.route)!.nodeId,input.route ?? inherited);
+      const route=input.route ?? withExecutionModel(parentRun.route!,selected.choice);
       const run = this.newRun({
         taskId: task.taskId,
         parentRunId: parentRun.runId,
-        route: input.route ?? parentRun.route,
+        route,
+        executionModel:selected.executionModel,
         configuration: input.configuration,
       });
       task.delegationDisplay = display;
@@ -3311,7 +3342,7 @@ export class TaskLedger {
         input.workspaceId ??
         run.route!.workspaceId ??
         task.workspaceId ??
-        this.getNode(input.nodeId).defaultWorkspaceId;
+        (!run.projectContext ? this.getNode(input.nodeId).defaultWorkspaceId : undefined);
       if (run.workspaceConstraint && workspaceId !== run.workspaceConstraint)
         fail(
           "FORBIDDEN",
@@ -3919,6 +3950,10 @@ export class TaskLedger {
         r.reviewStatus ?? null,
         !!r.cancellationRequested,
         r.currentAttemptId ?? null,
+        r.dispatchIssue?.revision ?? null,
+        r.route ?? null,
+        r.executionModel ?? null,
+        r.projectContext ?? null,
       ]),
       reports: this.list<Report>("report", taskId).map((r) => r.reportId),
     });
@@ -3928,6 +3963,7 @@ export class TaskLedger {
     const handled = record?.fingerprint === fingerprint && record.handled;
     return {
       version: hash({ fingerprint, record }),
+      canRepair: !!run && !["cancelled","archived"].includes(task.state) && !run.cancellationRequested && run.state === "queued" && run.dispatchIssue?.kind === "needs_action" && !run.currentAttemptId && !this.list<Attempt>("attempt").some(a=>a.runId===run.runId),
       fingerprint,
       handled: !!handled,
       confirmationPending,
@@ -3967,6 +4003,137 @@ export class TaskLedger {
         !active &&
         owned.filter((r) => r.state === "uncertain").length === 1,
     };
+  }
+  selectExecutionModel(nodeId:string,explicit?:ExecutionModelChoice) {
+    const view=this.executionModels.view(nodeId);
+    const source=explicit ?? view.policy.choice ?? {provider:"deepseek-official",model:"deepseek-flash",reasoningEffort:"high"};
+    const primary={provider:source.provider,model:source.model,...(source.reasoningEffort?{reasoningEffort:source.reasoningEffort}:{}),...(source.backend?{backend:source.backend}:{})};
+    let choice=primary;
+    let origin:NonNullable<Run["executionModel"]>["origin"]=explicit?"explicit":"node_default";
+    const proven=view.catalog.state==="fresh" && view.catalog.snapshot?.complete;
+    if(!explicit && proven && !view.catalog.snapshot!.models.some(model=>sameExecutionModel(model,primary))) {
+      choice={provider:"deepseek-official",model:"deepseek-flash",reasoningEffort:"high"};origin="fallback";
+    }
+    return {choice,proven,executionModel:{origin,policyRevision:String(view.policy.revision),...(view.catalog.snapshot?{catalogRevision:view.catalog.snapshot.revision}:{}),...(origin==="fallback"?{original:primary}:{})} satisfies NonNullable<Run["executionModel"]>};
+  }
+  executionModelView(nodeId:string,refresh=false) {
+    this.getNode(nodeId);
+    return refresh?this.executionModels.request(`view:${randomUUID()}`,{nodeId}):this.executionModels.view(nodeId);
+  }
+  reportAdmission(commandId:string,input:{runId:string;nodeId:string;expectedUpdatedAt:string;routeDigest:string;code:"READY"|"MODEL_UNAVAILABLE"|"CAPABILITY_REQUIRED"|"WORKSPACE_BINDING_REQUIRED"|"EXECUTION_ROOT_REQUIRED"|"BACKEND_UNAVAILABLE"}) {
+    return this.command(commandId,"reportAdmission",input,()=>{
+      const run=this.getRun(input.runId),task=this.getTask(run.taskId);
+      if(run.state!=="queued" || run.currentAttemptId || run.cancellationRequested || ["cancelled","archived"].includes(task.state) || this.list<Attempt>("attempt").some(a=>a.runId===run.runId))fail("CONFLICT","Admission evidence applies only before any attempt");
+      if(run.route?.nodeId!==input.nodeId)fail("FORBIDDEN","Admission evidence belongs to a different executor");
+      if(run.updatedAt!==input.expectedUpdatedAt || hash(run.route)!==input.routeDigest)fail("CONFLICT","Execution request changed before admission evidence arrived");
+      if(input.code==="READY")return run.dispatchIssue?.source==="executor"?this.setDispatchIssue(run,undefined):run;
+      const messages={MODEL_UNAVAILABLE:"The assigned model is unavailable on this executor. Restore it or explicitly repair this unclaimed request with a supported executionModel.",CAPABILITY_REQUIRED:"The executor does not provide a required task capability. Restore the capability or review the assignment.",WORKSPACE_BINDING_REQUIRED:"The explicit workspace is not bound on this executor. Restore the matching workspace binding; ordinary temporary tasks do not need a workspace ID.",EXECUTION_ROOT_REQUIRED:"Configure the execution parent directory in this executor settings before continuing.",BACKEND_UNAVAILABLE:"The assigned execution backend is unavailable or not permitted by this executor. Restore the backend or explicitly repair the model selection."};
+      return this.setDispatchIssue(run,{source:"executor",kind:"needs_action",code:input.code,message:messages[input.code],action:input.code==="MODEL_UNAVAILABLE"||input.code==="BACKEND_UNAVAILABLE"?"choose_execution_model":"review_assignment"});
+    });
+  }
+  executionModelRequests(nodeId:string){this.getNode(nodeId);return this.executionModels.pending(nodeId);}
+  completeExecutionModels(commandId:string,input:CompleteExecutionModels) {
+    return this.command(commandId,"completeExecutionModels",input,()=>{
+      const node=this.getNode(input.nodeId);
+      const view=this.executionModels.complete(commandId,input);
+      if(input.result.state==="success" && input.result.complete && view.catalog.snapshot?.revision===input.requestId) {
+        const models=new Map<string,NodeCapability["models"][number]>();
+        for(const route of view.catalog.snapshot.models){const key=JSON.stringify([route.provider,route.model]);const prior=models.get(key)??{provider:route.provider,model:route.model,reasoningEfforts:[]};if(route.reasoningEffort&&!prior.reasoningEfforts.includes(route.reasoningEffort))prior.reasoningEfforts.push(route.reasoningEffort);models.set(key,prior);}
+        node.models=[...models.values()];this.put("node",node.nodeId,node);
+        this.event("node.execution_catalog",{nodeId:node.nodeId,revision:view.catalog.snapshot.revision,complete:input.result.complete},undefined);
+      }
+      if(!view.catalog.request)for(const run of this.list<Run>("run").filter(run=>run.state==="queued"&&run.route?.nodeId===input.nodeId))this.refreshDispatchEligibility(run.runId);
+      return view;
+    });
+  }
+  async refreshNodeModels(nodeId:string,waitMs=3000) {
+    this.getNode(nodeId);
+    const request=this.executionModels.request(`catalog:${randomUUID()}`,{nodeId});
+    if(nodeId===this.nodeId && this.localExecutionCatalog && request.catalog.request) {
+      const pending=request.catalog.request;
+      const result=await this.localExecutionCatalog();
+      this.completeExecutionModels(`local-catalog:${pending.requestId}`,{nodeId,requestId:pending.requestId,generation:pending.generation,result});
+      return this.executionModels.view(nodeId);
+    }
+    const requestId=request.catalog.request?.requestId,until=Date.now()+Math.min(3000,Math.max(0,waitMs));
+    while(requestId && Date.now()<until && this.executionModels.view(nodeId).catalog.request?.requestId===requestId)await new Promise(resolve=>setTimeout(resolve,50));
+    return this.executionModels.view(nodeId);
+  }
+  /** Repair only an unclaimed request; never manufacture an execution or reset its ID. */
+  repairDispatch(commandId: string, input: {taskId:string;runId:string;expectedActionVersion:string;executionModel?:ExecutionModelChoice}) {
+    this.planner();
+    return this.command(commandId,"repairDispatch",input,()=>{
+      text(input.expectedActionVersion,"expectedActionVersion",200);
+      this.assertTaskActionVersion(input.taskId,input.expectedActionVersion);
+      const run=this.getRun(input.runId),task=this.getTask(input.taskId);
+      if(run.taskId!==task.taskId || run.state!=="queued" || run.currentAttemptId || this.list<Attempt>("attempt").some(a=>a.runId===run.runId) || run.historyOnly || run.observationOnly || run.cancellationRequested || ["cancelled","archived"].includes(task.state)) fail("CONFLICT","Only an unclaimed execution request can be repaired");
+      if(this.list<Run>("run",task.taskId).filter(record=>!(record.historyOnly||record.observationOnly)).at(-1)?.runId!==run.runId)fail("CONFLICT","Repair the current task request only");
+      if(run.parentRunId) {
+        const parent=this.getRun(run.parentRunId);
+        if(parent.taskId!==task.parentTaskId || (task.parentRunId && task.parentRunId!==parent.runId))fail("FORBIDDEN","Run parent does not match the task tree");
+      }
+      if(input.executionModel) {
+        const originalRoute=run.route ?? fail("FORBIDDEN","Unassigned requests cannot change Agent model through repair");
+        if(originalRoute.execution)fail("FORBIDDEN","Program requests cannot change Agent model through repair");
+        const selected=this.selectExecutionModel(originalRoute.nodeId,ExecutionModelChoice.parse(input.executionModel));
+        const route=withExecutionModel(originalRoute,selected.choice);
+        if(!selected.choice.backend)delete route.backend;
+        this.validateRoute(route,{admission:true,skipModel:true});
+        if(route.backend&&!task.policy?.allowedBackends?.includes(route.backend))fail("FORBIDDEN","Task policy excludes that backend");
+        run.route=route;run.executionModel=selected.executionModel;
+      }
+      if(!run.executionModel && run.route && !run.route.execution)run.executionModel={origin:"explicit",policyRevision:"legacy-pinned"};
+      if(!run.projectContext) run.projectContext=this.projectContextSnapshot(task,run.parentRunId);
+      run.updatedAt=this.now();
+      this.saveRun(run);
+      const value=this.refreshDispatchEligibility(run.runId);
+      this.event("run.dispatch_repaired",{issue:value.dispatchIssue ? {...value.dispatchIssue} : null,route:value.route?{...value.route}:null,modelOrigin:value.executionModel?.origin ?? "legacy",contextDigest:hash(value.projectContext ?? null)},task.taskId,run.runId);
+      return value;
+    });
+  }
+  private setDispatchIssue(run:Run, issue:Omit<NonNullable<Run["dispatchIssue"]>,"revision"> | undefined) {
+    const next=issue?{...issue,revision:hash(issue)}:undefined;
+    if(canonical(run.dispatchIssue ?? null)===canonical(next ?? null)) return run;
+    if(next)run.dispatchIssue=next;else delete run.dispatchIssue;
+    if(this.options.readOnly)return run;
+    run.updatedAt=this.now();this.saveRun(run);
+    this.event(next?"run.dispatch_issue":"run.dispatch_ready",{issue:next ?? null},run.taskId,run.runId);
+    return run;
+  }
+  refreshDispatchEligibility(runId:string):Run {
+    const run=this.getRun(runId);
+    if(run.state!=="queued" || run.currentAttemptId || run.historyOnly || run.observationOnly)return run;
+    if(!run.route)return this.setDispatchIssue(run,{kind:"needs_action",code:"EXECUTOR_REQUIRED",message:"Select an executor before dispatching this task.",action:"review_assignment"});
+    if(run.projectContext && !run.route.workspaceId && run.route.nodeId===this.nodeId && this.executionDirectoryReady?.()===false)return this.setDispatchIssue(run,{kind:"needs_action",code:"EXECUTION_ROOT_REQUIRED",message:"Configure this executor execution parent directory before starting the task.",action:"review_assignment"});
+    if(!run.route.workspaceId && !run.projectContext)return this.setDispatchIssue(run,{kind:"needs_action",code:"TEMPORARY_CONTEXT_REQUIRED",message:"Repair this unclaimed request to attach its temporary task context.",action:"repair_context"});
+    if(!run.executionModel && !run.route.execution && this.get("pairedExecutor",run.route.nodeId)) {
+      run.executionModel={origin:"explicit",policyRevision:"legacy-pinned"};
+      if(!this.options.readOnly){this.saveRun(run);this.event("run.legacy_model_pinned",{route:{...run.route}},run.taskId,run.runId);}
+    }
+    if(run.executionModel && !run.route.execution) {
+      const view=this.executionModels.view(run.route.nodeId);
+      const positive=view.catalog.positiveSnapshot;
+      if(positive && positive.expiresAt>this.clock() && positive.temporaryWorkspaceReady===false && !run.route.workspaceId && run.projectContext)return this.setDispatchIssue(run,{kind:"needs_action",code:"EXECUTION_ROOT_REQUIRED",message:"Configure the execution parent directory in this executor settings, then refresh its catalog. No attempt has started.",action:"review_assignment"});
+      const confirmed=!!positive && positive.expiresAt>this.clock() && positive.models.some(choice=>sameExecutionModel(choice,run.route!));
+      if(!confirmed && (view.catalog.state!=="fresh" || !view.catalog.snapshot?.complete)) {
+        if(!this.options.readOnly)this.executionModels.request(`run:${run.runId}:${view.catalog.snapshot?.revision ?? "none"}:${Math.floor(this.clock()/30000)}`,{nodeId:run.route.nodeId});
+        return this.setDispatchIssue(run,{kind:"waiting",code:"EXECUTION_CATALOG_PENDING",message:"Waiting for a fresh executor model catalog. The last known configuration has been preserved.",action:"refresh_catalog"});
+      }
+      const available=(route:ExecutionRoute)=>!!positive && positive.expiresAt>this.clock() && positive.models.some(choice=>sameExecutionModel(choice,route));
+      if(!this.options.readOnly && view.catalog.state==="fresh" && view.catalog.snapshot?.complete && !available(run.route) && run.executionModel.origin!=="explicit" && !this.list<Attempt>("attempt").some(a=>a.runId===run.runId)) {
+        const fallback={provider:"deepseek-official",model:"deepseek-flash",reasoningEffort:"high"};
+        if(available({...run.route,...fallback,backend:undefined})) {
+          const original={provider:run.route.provider,model:run.route.model,...(run.route.reasoningEffort?{reasoningEffort:run.route.reasoningEffort}:{}),...(run.route.backend?{backend:run.route.backend}:{})};
+          run.route={...run.route,...fallback};delete run.route.backend;
+          run.executionModel={...run.executionModel,origin:"fallback",catalogRevision:view.catalog.snapshot.revision,original};
+          this.saveRun(run);this.event("run.model_fallback",{original,selected:fallback,catalogRevision:view.catalog.snapshot.revision},run.taskId,run.runId);
+        }
+      }
+      if(!available(run.route))return this.setDispatchIssue(run,{kind:"needs_action",code:run.executionModel.origin==="explicit"?"EXPLICIT_EXECUTION_MODEL_UNAVAILABLE":"EXECUTION_DEFAULT_AND_FALLBACK_UNAVAILABLE",message:run.executionModel.origin==="explicit"?"The explicitly requested execution model or effort is unavailable. Select a supported model explicitly; it was not replaced.":"The executor default and deepseek-official/deepseek-flash high are unavailable. Update the node default or restore the model on the executor.",action:"choose_execution_model"});
+    }
+    if(run.dispatchIssue?.code==="EXECUTION_ROOT_REQUIRED" && run.route.nodeId!==this.nodeId && !run.route.workspaceId && this.executionModels.view(run.route.nodeId).catalog.positiveSnapshot?.temporaryWorkspaceReady!==true)return run;
+    if(run.dispatchIssue && !["TEMPORARY_CONTEXT_REQUIRED","EXECUTOR_REQUIRED","EXECUTION_CATALOG_PENDING","EXPLICIT_EXECUTION_MODEL_UNAVAILABLE","EXECUTION_DEFAULT_AND_FALLBACK_UNAVAILABLE","EXECUTION_ROOT_REQUIRED"].includes(run.dispatchIssue.code))return run;
+    return this.setDispatchIssue(run,undefined);
   }
   private assertTaskActionVersion(taskId: string, expected?: string) {
     if (expected && this.taskActionState(taskId).version !== expected)
@@ -4606,6 +4773,7 @@ export class TaskLedger {
       attachTaskId?: string;
       persistence: "ignore" | "create" | "attach";
       route?: ExecutionRoute;
+      executionModel?: Run["executionModel"];
       reporting: "none" | "summary" | "escalate";
       workspaceId?: string;
     },
@@ -4739,6 +4907,11 @@ export class TaskLedger {
         if (!this.taskActionState(task.taskId).canRetry)
           fail("CONFLICT", "Task is not safe to dispatch again");
       }
+      if(input.route && input.executionModel) {
+        const explicit=fixedRoute ?? (originalInput.executionModel ? ExecutionModelChoice.parse(originalInput.executionModel) : undefined);
+        const expected=this.selectExecutionModel(input.route.nodeId,explicit);
+        if(canonical(expected.executionModel)!==canonical(input.executionModel))fail("CONFLICT","Execution model provenance differs from the recorded request");
+      }
       const report = this.report({
         taskId: task.taskId,
         title: "Task request",
@@ -4781,6 +4954,7 @@ export class TaskLedger {
           ? this.newRun({
               taskId: task.taskId,
               route: input.route,
+              executionModel:input.executionModel,
               configuration: {
                 decisionId: input.decisionId,
                 reporting: input.reporting,
@@ -4856,7 +5030,7 @@ export class TaskLedger {
       fail("INVALID", "Invalid schedule calendar window");
     }
     validateSchema(template.inputSchema, effectiveInput, "Schedule input");
-    if (schedule.route) this.validateRoute(schedule.route);
+    if (schedule.route) this.validateRoute(schedule.route,{admission:true,skipModel:!!schedule.executionModel});
     if (Boolean(schedule.cron) === (schedule.intervalMs !== undefined))
       fail("INVALID", "Choose cron or intervalMs");
     if (schedule.intervalMs !== undefined)
@@ -4883,7 +5057,7 @@ export class TaskLedger {
   /** Atomic preparation; the UI links the project before enabling the plan. */
   prepareScheduledPlan(commandId: string, input: {
     requestHash: string; taskId: string; scheduleId: string;
-    title: string; description: string; route?: ExecutionRoute;
+    title: string; description: string; route?: ExecutionRoute; executionModel?:Run["executionModel"];
     execution?: {kind: "workflow"; workflowId: string}; workflowInput?: Json; existingTaskId?: string; nextDueAt?: string; calendarWindow?: Schedule["calendarWindow"];
     intervalMs?: number; cron?: string; timeZone?: string;
   }) {
@@ -4903,7 +5077,7 @@ export class TaskLedger {
         : new Date(this.clock()+(input.intervalMs??0)).toISOString());
       const schedule: Schedule = {scheduleId:input.scheduleId,taskId:task.taskId,templateId,templateVersion:version,
         enabled:false,revision:1,intervalMs:input.intervalMs,cron:input.cron,timeZone:input.timeZone,
-        nextDueAt,overlap:"skip",misfire:"once",input:input.workflowInput ?? {},route:input.route,
+        nextDueAt,overlap:"skip",misfire:"once",input:input.workflowInput ?? {},route:input.route,...(input.executionModel?{executionModel:input.executionModel}:{}),
         ...(input.execution ? {execution:input.execution} : {}), ...(input.calendarWindow ? {calendarWindow:input.calendarWindow} : {})};
       this.validateSchedule(schedule);
       this.put("schedule",schedule.scheduleId,schedule,task.taskId);
@@ -5072,10 +5246,12 @@ export class TaskLedger {
       );
       let run: Run | undefined;
       const template = this.getTemplate(s.templateId, s.templateVersion);
+      const policySelection=!input.route && s.route && s.executionModel && s.executionModel.origin!=="explicit" && !s.route.execution ? this.selectExecutionModel(s.route.nodeId) : undefined;
       if (!skipMisfire && !(active && s.overlap === "skip"))
         run = this.newRun({
           taskId: s.taskId,
-          route: input.route ?? s.route,
+          route: input.route ?? (policySelection?withExecutionModel(s.route!,policySelection.choice):s.route),
+          executionModel:input.route ? undefined : policySelection?.executionModel ?? s.executionModel,
           occurrenceId: key,
           configuration: {
             ...(s.execution ? {workflowInvocation:{workflowId:s.execution.workflowId}} : {}),
@@ -5136,13 +5312,14 @@ export class TaskLedger {
           AND json_extract(data,'$.route.nodeId')=? ORDER BY rowid
       `)
       .all(nodeId)
-      .map((row) => this.projectEntity<Run>("run", JSON.parse(String(row.data))));
+      .map((row) => this.refreshDispatchEligibility(JSON.parse(String(row.data)).runId));
     if (!runs.length) return [];
     const tasks = new Map(this.list<Task>("task").map((t) => [t.taskId, t]));
     return runs
       .filter(
         (r) =>
           r.state === "queued" &&
+          (!r.dispatchIssue || r.dispatchIssue.source==="executor") &&
           !this.isWorkflowInvocation(r) &&
           (!r.retry || Date.parse(r.retry.notBefore) <= this.clock()) &&
           r.route?.nodeId === nodeId &&
@@ -5310,13 +5487,13 @@ export class TaskLedger {
     const eligible=!!run.resultValidationFailure&&run.state==="failed"&&latest?.runId===runId&&count<limit&&!['cancelled','archived','completed'].includes(task.state)&&!this.taskActionState(task.taskId).handled;
     return {limit,count,remaining:Math.max(0,limit-count),eligible};
   }
-  allSettled(taskId: string, quietMs = 1000, rootRunId?: string) {
+  allSettled(taskId: string, quietMs = 1000, rootRunId?: string, includeTask = false) {
     finite(quietMs, 0, 300000, "quiet window");
     this.getTask(taskId);
     const scope = rootRunId
       ? this.executionScope(taskId, rootRunId)
       : undefined;
-    const tasks = scope?.tasks ?? this.descendants(taskId),
+    const tasks = scope?.tasks ?? [...(includeTask?[this.getTask(taskId)]:[]),...this.descendants(taskId)],
       ids = new Set(tasks.map((t) => t.taskId));
     const runs =
       scope?.runs ?? this.list<Run>("run").filter((r) => ids.has(r.taskId));
@@ -5342,6 +5519,7 @@ export class TaskLedger {
         unstarted.length === 0 &&
         this.clock() - latest >= quietMs,
       pendingRunIds: pending.map((r) => r.runId),
+      needsAction: pending.filter(r=>r.dispatchIssue?.kind === "needs_action").map(r=>({runId:r.runId,taskId:r.taskId,issue:r.dispatchIssue})),
       pendingTaskIds: unstarted.map((t) => t.taskId),
       taskIds: [...ids],
       quietUntil: new Date(latest + quietMs).toISOString(),
@@ -5414,7 +5592,7 @@ export class TaskLedger {
     const ids = new Set(tasks.map((task) => task.taskId));
     return {
       ...snapshot,
-      tasks,
+      tasks:tasks.map(task=>({...task,actionVersion:this.taskActionState(task.taskId).version})),
       runs: snapshot.runs.filter((run) => ids.has(run.taskId)),
       reports: snapshot.reports.filter((report) => ids.has(report.taskId)),
       artifacts: snapshot.artifacts.filter((artifact) =>

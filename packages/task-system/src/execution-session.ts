@@ -3,7 +3,10 @@ import {
   defaultTaskSessionSelection,
   type TaskSessionSnapshot,
 } from "./session-default.js";
-import type { TaskSessionDecisionService } from "./session-policy.js";
+import {
+  resolveManagedTaskSessionDecision,
+  type TaskSessionDecisionService,
+} from "./session-policy.js";
 import type {
   Claim,
   TaskSessionChoice,
@@ -15,12 +18,18 @@ export async function chooseExecutionSession(input: {
     task: Claim["task"];
     run: Pick<
       Claim["run"],
-      "runId" | "route" | "retry" | "workspaceConstraint" | "configuration"
+      | "runId"
+      | "route"
+      | "retry"
+      | "workspaceConstraint"
+      | "configuration"
+      | "projectContext"
     >;
     attempt: Pick<Claim["attempt"], "attemptId" | "nodeId">;
   };
   context: TaskSessionContext;
   defaultWorkspaceId?: string | null;
+  managedWorkspaceAvailable?: boolean;
   workspaces: {
     workspaceId: string;
     nodeId: string;
@@ -38,18 +47,86 @@ export async function chooseExecutionSession(input: {
   const workspaceId =
     claim.run.route?.workspaceId ??
     claim.task.workspaceId ??
-    input.defaultWorkspaceId ??
+    (!claim.run.projectContext ? input.defaultWorkspaceId : undefined) ??
     undefined;
   if (claim.run.retry)
     return {
       ...(workspaceId ? { workspaceId } : {}),
       session: { mode: "reuse", sessionId: claim.run.retry.sessionId },
     };
-  const config = claim.run.configuration && typeof claim.run.configuration === "object" && !Array.isArray(claim.run.configuration)
-    ? claim.run.configuration as Record<string, unknown> : {};
+  const config =
+    claim.run.configuration &&
+    typeof claim.run.configuration === "object" &&
+    !Array.isArray(claim.run.configuration)
+      ? (claim.run.configuration as Record<string, unknown>)
+      : {};
   // Each scheduled occurrence has a new evidence window. Explicit redispatch and
   // transport recovery continue the existing session, retaining previous results.
-  const independentScheduleRun = claim.task.kind === "scheduled" && !config.taskRetry && !config.continuationOf;
+  const independentScheduleRun =
+    claim.task.kind === "scheduled" &&
+    !config.taskRetry &&
+    !config.continuationOf;
+  if (claim.run.projectContext && !workspaceId) {
+    if (!input.managedWorkspaceAvailable)
+      throw new Error(
+        "TASK_EXECUTION_ROOT_REQUIRED: select this device's execution parent directory",
+      );
+    if (
+      claim.run.workspaceConstraint ||
+      claim.task.workspaceId ||
+      claim.task.policy?.allowedWorkspaceIds
+    )
+      throw new Error(
+        "TASK_WORKSPACE_DENIED: managed directories cannot replace an explicit workspace grant",
+      );
+    const managedSnapshot = () => ({
+      taskId: claim.task.taskId,
+      nodeId: claim.attempt.nodeId,
+      schedulerId: context.schedulerId,
+      ...(context.taskSessionId
+        ? { taskSessionId: context.taskSessionId }
+        : {}),
+      validUntil: Date.now() + (input.ttlMs ?? 30000),
+      sessions: independentScheduleRun
+        ? []
+        : context.sessions.filter(
+            (session) =>
+              session.taskId === claim.task.taskId &&
+              session.nodeId === claim.attempt.nodeId &&
+              session.schedulerId === context.schedulerId &&
+              session.workspaceId === undefined,
+          ),
+      context: {
+        title: claim.task.title,
+        ...(claim.task.description
+          ? { description: claim.task.description }
+          : {}),
+        runId: claim.run.runId,
+      },
+    });
+    const selection = await resolveManagedTaskSessionDecision(
+      managedSnapshot(),
+      {
+        decisions: input.decisions,
+        provider: input.decisionProvider,
+        requestId: `task-session-${claim.attempt.attemptId}`,
+        signal: input.signal,
+        ...(input.refresh
+          ? {
+              currentSnapshot: async () => {
+                context = await input.refresh!();
+                return managedSnapshot();
+              },
+            }
+          : {}),
+      },
+    );
+    return {
+      expectedTaskSessionId: context.taskSessionId ?? null,
+      session: selection.session,
+      ...(selection.decision ? { decision: selection.decision } : {}),
+    };
+  }
   // Older text-only profiles have no workspace grant. Preserve that mode without
   // inventing a directory or offering a decision that could grant filesystem access.
   if (!workspaceId) {
@@ -69,9 +146,10 @@ export async function chooseExecutionSession(input: {
       );
     return {
       expectedTaskSessionId: context.taskSessionId ?? null,
-      session: current && !independentScheduleRun
-        ? { mode: "reuse", sessionId: current.sessionId }
-        : { mode: "new" },
+      session:
+        current && !independentScheduleRun
+          ? { mode: "reuse", sessionId: current.sessionId }
+          : { mode: "new" },
     };
   }
   const buildSnapshot = (): TaskSessionSnapshot => {
@@ -125,27 +203,32 @@ export async function chooseExecutionSession(input: {
   // An authority-owned binding is already a decision. Validate its identity,
   // workspace and current grants, rather than asking a model to choose again.
   const selection = independentScheduleRun
-    ? defaultTaskSessionSelection({ ...snapshot, taskSessionId: undefined }, "independent-scheduled-run")
+    ? defaultTaskSessionSelection(
+        { ...snapshot, taskSessionId: undefined },
+        "independent-scheduled-run",
+      )
     : snapshot.taskSessionId
-    ? defaultTaskSessionSelection(snapshot, "existing-task-binding")
-    : input.decisions
-    ? await (
-        await import("./session-policy.js")
-      ).resolveTaskSessionDecision(snapshot, {
-        decisions: input.decisions,
-    route: input.decisionProvider ? {provider:input.decisionProvider} : {},
-        requestId: `task-session-${claim.attempt.attemptId}`,
-        signal: input.signal,
-        ...(input.refresh
-          ? {
-              currentSnapshot: async () => {
-                context = await input.refresh!();
-                return buildSnapshot();
-              },
-            }
-          : {}),
-      })
-    : defaultTaskSessionSelection(snapshot, "decision-disabled");
+      ? defaultTaskSessionSelection(snapshot, "existing-task-binding")
+      : input.decisions
+        ? await (
+            await import("./session-policy.js")
+          ).resolveTaskSessionDecision(snapshot, {
+            decisions: input.decisions,
+            route: input.decisionProvider
+              ? { provider: input.decisionProvider }
+              : {},
+            requestId: `task-session-${claim.attempt.attemptId}`,
+            signal: input.signal,
+            ...(input.refresh
+              ? {
+                  currentSnapshot: async () => {
+                    context = await input.refresh!();
+                    return buildSnapshot();
+                  },
+                }
+              : {}),
+          })
+        : defaultTaskSessionSelection(snapshot, "decision-disabled");
   input.signal?.throwIfAborted();
   return {
     expectedTaskSessionId: context.taskSessionId ?? null,

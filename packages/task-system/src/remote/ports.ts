@@ -1,3 +1,8 @@
+import type {
+  CompleteExecutionModels,
+  ExecutionCatalogRequest,
+  ExecutionModelsView,
+} from "../execution-models.js";
 import type { Json, Role, PreDispatchFailure } from "./protocol.js";
 import type { Claim as CoreClaim, Run as CoreRun } from "../contracts.js";
 
@@ -89,6 +94,8 @@ export interface Task {
   policy?: TaskPolicy;
 }
 export interface Run {
+  updatedAt?: string;
+  dispatchIssue?: CoreRun["dispatchIssue"];
   parentRunId?: string;
   currentAttemptId?: string;
   runId: string;
@@ -306,6 +313,7 @@ export interface ApprovalRequest extends ApprovalOffer, LeaseRef {
   reason?: string;
 }
 export interface ExecutionCollaboration {
+  nodes?(): Promise<ExecutionModelsView[]>;
   availableOperations?: readonly string[];
   delegate(
     commandId: string,
@@ -328,9 +336,36 @@ export interface ExecutionCollaboration {
 type MaybePromise<T> = T | Promise<T>;
 /** An adapter must preserve the ledger's transaction, idempotency, lease and fencing guarantees. */
 export interface LedgerPort {
+  executionModelView?(
+    nodeId: string,
+    refresh?: boolean,
+  ): MaybePromise<ExecutionModelsView>;
+  reportAdmission?(
+    commandId: string,
+    input: import("../execution-models.js").AdmissionReport,
+  ): MaybePromise<Receipt<Run>>;
+  executionModelRequests?(
+    nodeId: string,
+  ): MaybePromise<ExecutionCatalogRequest[]>;
+  completeExecutionModels?(
+    commandId: string,
+    input: CompleteExecutionModels,
+  ): MaybePromise<Receipt<ExecutionModelsView | { accepted: true }>>;
+  getWorkspace?(
+    workspaceId: string,
+  ): MaybePromise<{ workspaceId: string; nodeId: string }>;
+  registerPairedExecutor?(
+    commandId: string,
+    nodeId: string,
+    providerStatus?: unknown,
+  ): MaybePromise<unknown>;
   /** Authority derives visibility from the authenticated executor node. */
   projectSnapshot?(nodeId: string): MaybePromise<Json>;
-  projectCollaborate?(nodeId: string, commandId: string, input: import("../project-collaboration/types.js").ProjectCollaborationInput): MaybePromise<Json>;
+  projectCollaborate?(
+    nodeId: string,
+    commandId: string,
+    input: import("../project-collaboration/types.js").ProjectCollaborationInput,
+  ): MaybePromise<Json>;
   pendingSessionMessages?(nodeId: string): MaybePromise<SessionMessage[]>;
   getSessionMessage?(messageId: string): MaybePromise<SessionMessage>;
   completeSessionMessage?(
@@ -447,7 +482,11 @@ export interface ExecutionRequest {
 }
 export type ExecutionResult = Pick<
   Settlement,
-  "outcome" | "summary" | "report" | "preDispatchFailure" | "resultValidationFailure"
+  | "outcome"
+  | "summary"
+  | "report"
+  | "preDispatchFailure"
+  | "resultValidationFailure"
 > & { retryWitness?: SafeRetryWitness; retryAllowed?: boolean };
 /** Host-owned implementation. Must enforce declared capabilities and await abort quiescence. */
 export interface ExecutionProvider {

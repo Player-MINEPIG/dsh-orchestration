@@ -1,3 +1,4 @@
+import { acquireWorkspaceExecution } from "../workspace-execution-lock.js";
 import { randomUUID } from "node:crypto";
 import { SessionMessages } from "./session-messages.js";
 import { chooseExecutionSession } from "../execution-session.js";
@@ -38,7 +39,13 @@ export interface WorkerOptions {
   now?: () => number;
   taskSessions?: boolean;
   prepare?: () => Promise<void>;
+  prepareForWork?: (
+    runs: readonly import("./ports.js").Run[],
+  ) => Promise<boolean>;
   projectRoot?: () => string | null | undefined;
+  modelAdmission?: (
+    route: import("./ports.js").Route,
+  ) => "MODEL_UNAVAILABLE" | "BACKEND_UNAVAILABLE" | undefined;
   chooseSession?: (
     claim: Claim,
     context: TaskSessionContext,
@@ -101,19 +108,29 @@ export class ExecutorWorker {
       "INVALID_TTL",
     );
   }
-  beginConfigurationEdit(): () => void {
+  async beginConfigurationEdit(): Promise<() => void> {
     insist(
       !this.configurationPaused &&
         this.runs.size === 0 &&
-        !this.polling &&
         !this.messages.activeCount,
       "CONFIGURATION_BUSY",
       409,
     );
     this.configurationPaused = true;
-    return () => {
+    try {
+      await this.polling;
+      insist(
+        this.active && this.runs.size === 0 && !this.messages.activeCount,
+        "CONFIGURATION_BUSY",
+        409,
+      );
+      return () => {
+        this.configurationPaused = false;
+      };
+    } catch (error) {
       this.configurationPaused = false;
-    };
+      throw error;
+    }
   }
   execute(runId: string, commandId: string): Promise<DispatchRecord> {
     insist(this.active, "DRAINING", 503);
@@ -151,19 +168,101 @@ export class ExecutorWorker {
         await this.deliver(record);
     }
     await this.reconcileUncertain();
+    if (this.configurationPaused || !this.active) return [];
     await this.messages
-      .poll(Math.max(0, concurrency - this.runs.size))
+      .poll(
+        Math.max(0, concurrency - this.runs.size),
+        () => !this.configurationPaused && this.active,
+      )
       .catch(() => {});
+    if (this.configurationPaused || !this.active) return [];
     const pending = await this.options.ledger.pendingRuns(
       this.options.policy.nodeId,
     );
     this.observedQueue = pending.slice(0, 128);
+    if (
+      pending.length &&
+      this.options.prepareForWork &&
+      !(await this.options.prepareForWork(pending))
+    )
+      return [];
+    if (this.configurationPaused || !this.active) return [];
     const { policy, provider } = this.options;
+    const denied = new Set<string>();
+    for (const run of pending) {
+      const route = run.route;
+      if (
+        !route ||
+        route.nodeId !== policy.nodeId ||
+        run.state !== "queued" ||
+        run.historyOnly ||
+        run.observationOnly ||
+        run.currentAttemptId
+      )
+        continue;
+      let code: import("../execution-models.js").AdmissionReport["code"] =
+        !route.requiredCapabilities.every(
+          (cap) =>
+            policy.capabilities.includes(cap) &&
+            provider.capabilities.includes(cap),
+        )
+          ? "CAPABILITY_REQUIRED"
+          : route.workspaceId &&
+              !policy.workspaces.some(
+                (workspace) =>
+                  workspace.nodeId === policy.nodeId &&
+                  workspace.workspaceId === route.workspaceId,
+              )
+            ? "WORKSPACE_BINDING_REQUIRED"
+            : !route.workspaceId &&
+                run.projectContext &&
+                !this.options.projectRoot?.()
+              ? "EXECUTION_ROOT_REQUIRED"
+              : !provider.supports(route)
+                ? this.options.modelAdmission
+                  ? (this.options.modelAdmission(route) ?? "READY")
+                  : route.backend
+                    ? "BACKEND_UNAVAILABLE"
+                    : "MODEL_UNAVAILABLE"
+                : "READY";
+      if (code !== "READY") denied.add(run.runId);
+      if (
+        this.options.ledger.reportAdmission &&
+        run.updatedAt &&
+        (code !== "READY" || run.dispatchIssue?.source === "executor")
+      ) {
+        try {
+          await this.options.ledger.reportAdmission(
+            `admission:${digest([run.runId, run.updatedAt, route, code])}`,
+            {
+              runId: run.runId,
+              nodeId: policy.nodeId,
+              expectedUpdatedAt: run.updatedAt,
+              routeDigest: digest(route),
+              code,
+            },
+          );
+          if (code === "READY") {
+            const current = await this.options.ledger.getRun?.(run.runId);
+            if (
+              !current ||
+              current.state !== "queued" ||
+              current.dispatchIssue ||
+              digest(current.route) !== digest(route)
+            )
+              denied.add(run.runId);
+          }
+        } catch {
+          denied.add(run.runId);
+        }
+      }
+    }
     const plannedProjects = new Map(this.projectRuns);
     const candidates = pending
       .filter((run) => {
         const route = run.route;
         return (
+          !denied.has(run.runId) &&
           !run.historyOnly &&
           !run.observationOnly &&
           (!run.retry || Date.parse(run.retry.notBefore) <= this.now()) &&
@@ -175,11 +274,14 @@ export class ExecutorWorker {
               policy.capabilities.includes(cap) &&
               provider.capabilities.includes(cap),
           ) &&
-          policy.workspaces.some(
+          (policy.workspaces.some(
             (workspace) =>
               workspace.nodeId === policy.nodeId &&
               workspace.workspaceId === route.workspaceId,
-          ) &&
+          ) ||
+            (!!run.projectContext &&
+              !route.workspaceId &&
+              !!this.options.projectRoot?.())) &&
           !this.runs.has(run.runId)
         );
       })
@@ -322,7 +424,12 @@ export class ExecutorWorker {
         : existing.state === "retry_pending"
           ? await this.requestRetry(existing)
           : existing;
-    let workspacePath = await authorizedWorkspace(claim, policy, provider);
+    let workspacePath = await authorizedWorkspace(
+      claim,
+      policy,
+      provider,
+      this.options.projectRoot?.(),
+    );
     insist(
       Date.parse(claim.attempt.leaseExpiresAt) > this.now(),
       "LEASE_EXPIRED",
@@ -480,6 +587,7 @@ export class ExecutorWorker {
             : await chooseExecutionSession({
                 claim,
                 context,
+                managedWorkspaceAvailable: !!this.options.projectRoot?.(),
                 workspaces: policy.workspaces.map((workspace) => ({
                   ...workspace,
                   description: workspace.workspaceId,
@@ -505,7 +613,12 @@ export class ExecutorWorker {
           resumeSession = selected.resume;
           claim.run = (await ledger.getRun(runId))!;
           claim.attempt = (await ledger.getAttempt(lease.attemptId))!;
-          workspacePath = await authorizedWorkspace(claim, policy, provider);
+          workspacePath = await authorizedWorkspace(
+            claim,
+            policy,
+            provider,
+            this.options.projectRoot?.(),
+          );
           record.sessionId = sessionId;
           selectingSession = false;
         }
@@ -555,6 +668,10 @@ export class ExecutorWorker {
             return delegate(id, input);
           },
         };
+        const releaseWorkspace = await acquireWorkspaceExecution(
+          workspacePath,
+          abort.signal,
+        );
         this.executing++;
         let result: ExecutionResult;
         try {
@@ -567,6 +684,7 @@ export class ExecutorWorker {
             collaboration: boundedCollaboration,
           });
         } finally {
+          releaseWorkspace();
           this.executing--;
         }
         validateResult(result, this.options.maxResultBytes!);
@@ -812,7 +930,16 @@ export class ExecutorWorker {
 }
 function validateResult(result: ExecutionResult, maxBytes: number): void {
   insist(isRecord(result), "INVALID_EXECUTION_RESULT");
-  if(result.resultValidationFailure!==undefined){validateResultValidationFailure(result.resultValidationFailure);insist(result.outcome==="failure"&&!result.report&&!result.preDispatchFailure&&!result.retryWitness,"INVALID_RESULT_VALIDATION_FAILURE");}
+  if (result.resultValidationFailure !== undefined) {
+    validateResultValidationFailure(result.resultValidationFailure);
+    insist(
+      result.outcome === "failure" &&
+        !result.report &&
+        !result.preDispatchFailure &&
+        !result.retryWitness,
+      "INVALID_RESULT_VALIDATION_FAILURE",
+    );
+  }
   if (result.preDispatchFailure !== undefined) {
     validatePreDispatchFailure(result.preDispatchFailure);
     insist(

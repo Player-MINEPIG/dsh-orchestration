@@ -1,3 +1,7 @@
+import {
+  AdmissionReport,
+  CompleteExecutionModels,
+} from "../execution-models.js";
 import { ProgramCatalog, ProgramRoute } from "../workflow-programs.js";
 import { validateCollaborationInput } from "../project-collaboration/authority.js";
 import { TaskError } from "../ledger.js";
@@ -168,7 +172,11 @@ function delegation(input: Record<string, Json>): void {
       ["nodeId", "provider", "model", "requiredCapabilities"],
       ["workspaceId", "reasoningEffort", "backend", "execution"],
     );
-    if (route.execution !== undefined) insist(ProgramRoute.safeParse(route.execution).success, "INVALID_PROGRAM_ROUTE");
+    if (route.execution !== undefined)
+      insist(
+        ProgramRoute.safeParse(route.execution).success,
+        "INVALID_PROGRAM_ROUTE",
+      );
     if (route.backend !== undefined) text(route, "backend", 100);
     id(route, "nodeId");
     text(route, "provider", 100);
@@ -235,9 +243,11 @@ export function validatePayload(envelope: CommandEnvelope): void {
   switch (envelope.operation) {
     case "projectCollaborate":
       fields(p, ["input"]);
-      try { validateCollaborationInput(p.input); }
-      catch (error) {
-        if (error instanceof TaskError) throw new ProtocolError(error.code, 400);
+      try {
+        validateCollaborationInput(p.input);
+      } catch (error) {
+        if (error instanceof TaskError)
+          throw new ProtocolError(error.code, 400);
         throw error;
       }
       break;
@@ -289,6 +299,51 @@ export function validatePayload(envelope: CommandEnvelope): void {
     case "executorIdentity":
       fields(p, []);
       break;
+    case "executionModelView":
+      fields(p, [], ["nodeId", "refresh", "offset", "limit"]);
+      insist(
+        p.nodeId === undefined || p.nodeId === envelope.nodeId,
+        "EXECUTION_CATALOG_NODE_DENIED",
+        403,
+      );
+      insist(
+        p.refresh === undefined || typeof p.refresh === "boolean",
+        "INVALID_REFRESH",
+      );
+      insist(
+        p.offset === undefined ||
+          (Number.isSafeInteger(p.offset) &&
+            Number(p.offset) >= 0 &&
+            Number(p.offset) <= 2048),
+        "INVALID_OFFSET",
+      );
+      insist(
+        p.limit === undefined ||
+          (Number.isSafeInteger(p.limit) &&
+            Number(p.limit) >= 1 &&
+            Number(p.limit) <= 32),
+        "INVALID_LIMIT",
+      );
+      break;
+    case "reportAdmission":
+      fields(p, ["runId", "expectedUpdatedAt", "routeDigest", "code"]);
+      try {
+        AdmissionReport.parse({ ...p, nodeId: envelope.nodeId });
+      } catch {
+        throw new ProtocolError("INVALID_ADMISSION_REPORT");
+      }
+      break;
+    case "executionModelRequests":
+      fields(p, []);
+      break;
+    case "completeExecutionModels":
+      fields(p, ["requestId", "generation", "result"], ["page"]);
+      try {
+        CompleteExecutionModels.parse({ ...p, nodeId: envelope.nodeId });
+      } catch {
+        throw new ProtocolError("INVALID_EXECUTION_CATALOG");
+      }
+      break;
     case "heartbeat": {
       fields(
         p,
@@ -311,10 +366,16 @@ export function validatePayload(envelope: CommandEnvelope): void {
         const status = p.providerStatus as Record<string, Json>;
         fields(status, ["state", "providers"], ["executionRoutes", "programs"]);
         if (status.programs !== undefined) {
-          insist(Array.isArray(status.programs) && status.programs.length <= 32, "INVALID_PROGRAM_CATALOG");
+          insist(
+            Array.isArray(status.programs) && status.programs.length <= 32,
+            "INVALID_PROGRAM_CATALOG",
+          );
           for (const program of status.programs) {
             const parsed = ProgramCatalog.safeParse(program);
-            insist(parsed.success && parsed.data.nodeId === envelope.nodeId, "INVALID_PROGRAM_CATALOG");
+            insist(
+              parsed.success && parsed.data.nodeId === envelope.nodeId,
+              "INVALID_PROGRAM_CATALOG",
+            );
           }
         }
         const states = ["not-probed", "ready", "unavailable"];
@@ -324,8 +385,18 @@ export function validatePayload(envelope: CommandEnvelope): void {
           "INVALID_PROVIDER_LIST",
         );
         if (status.executionRoutes !== undefined) {
-          insist(Array.isArray(status.executionRoutes) && status.executionRoutes.length <= 128, "INVALID_EXECUTION_ROUTES");
-          for (const route of status.executionRoutes) validateCollaborationInput({ action: "nodes", sessionId: "heartbeat", cwd: "/", route });
+          insist(
+            Array.isArray(status.executionRoutes) &&
+              status.executionRoutes.length <= 128,
+            "INVALID_EXECUTION_ROUTES",
+          );
+          for (const route of status.executionRoutes)
+            validateCollaborationInput({
+              action: "nodes",
+              sessionId: "heartbeat",
+              cwd: "/",
+              route,
+            });
         }
         const providers = new Set<string>();
         for (const entry of status.providers) {
@@ -542,7 +613,12 @@ export function validatePayload(envelope: CommandEnvelope): void {
       fields(
         p,
         ["runId", "attemptId", "fence", "outcome", "summary"],
-        ["report", "executionId", "preDispatchFailure", "resultValidationFailure"],
+        [
+          "report",
+          "executionId",
+          "preDispatchFailure",
+          "resultValidationFailure",
+        ],
       );
       lease(p, envelope.nodeId);
       insist(
@@ -552,7 +628,15 @@ export function validatePayload(envelope: CommandEnvelope): void {
         "INVALID_OUTCOME",
       );
       text(p, "summary", 5000);
-      if(p.resultValidationFailure!==undefined){validateResultValidationFailure(p.resultValidationFailure);insist(p.outcome==="failure"&&p.report===undefined&&p.preDispatchFailure===undefined,"INVALID_RESULT_VALIDATION_FAILURE");}
+      if (p.resultValidationFailure !== undefined) {
+        validateResultValidationFailure(p.resultValidationFailure);
+        insist(
+          p.outcome === "failure" &&
+            p.report === undefined &&
+            p.preDispatchFailure === undefined,
+          "INVALID_RESULT_VALIDATION_FAILURE",
+        );
+      }
       if (p.preDispatchFailure !== undefined) {
         validatePreDispatchFailure(p.preDispatchFailure);
         insist(
@@ -645,6 +729,16 @@ export class RemoteGateway {
     );
     const peer = verifier.verify(envelope, now, transport);
     validatePayload(envelope);
+    if (peer.managedAccess)
+      insist(peer.nodeId !== this.options.nodeId, "NODE_ID_COLLISION", 403);
+    if (peer.managedAccess && envelope.operation === "heartbeat") {
+      insist(
+        Number(envelope.payload.sampledAt) >= envelope.issuedAt - 60000 &&
+          Number(envelope.payload.sampledAt) <= envelope.issuedAt + 5000,
+        "STALE_HEARTBEAT_SAMPLE",
+        401,
+      );
+    }
     // An authenticated exact command retry may read its receipt after the lease
     // settled or expired. Mutable lease checks apply only to new commands.
     const recorded = store.receipt(peer.nodeId, envelope.commandId, now);
@@ -654,15 +748,144 @@ export class RemoteGateway {
       !recorded || envelope.operation === "approvalStatus",
     );
     const old = store.admit(envelope, now);
-    if (old && !(envelope.operation === "projectCollaborate" && old.state === "uncertain")) return await this.reconcile(peer.nodeId, old);
+    if (
+      old &&
+      !(
+        envelope.operation === "projectCollaborate" && old.state === "uncertain"
+      )
+    )
+      return await this.reconcile(peer.nodeId, old, envelope.operation);
     const commandId = `remote-${digest([peer.nodeId, envelope.commandId])}`;
     const p = envelope.payload;
     try {
+      verifier.admitIdentity?.(envelope, peer);
+      if (
+        peer.managedAccess &&
+        ["heartbeat", "executorIdentity"].includes(envelope.operation)
+      )
+        await ledger.registerPairedExecutor?.(
+          `pair:${digest([peer.nodeId, envelope.commandId])}`,
+          peer.nodeId,
+          undefined,
+        );
       let result: unknown;
       switch (envelope.operation) {
+        case "executionModelView": {
+          insist(
+            ledger.executionModelView,
+            "EXECUTION_CATALOG_UNSUPPORTED",
+            503,
+          );
+          const view = await ledger.executionModelView(
+            peer.nodeId,
+            p.refresh === true,
+          );
+          const offset = Number(p.offset ?? 0),
+            limit = Number(p.limit ?? 32);
+          const snapshot = view.catalog.snapshot?.models ?? [],
+            positive = view.catalog.positiveSnapshot?.models ?? [];
+          const page = {
+            view: {
+              ...view,
+              catalog: {
+                ...view.catalog,
+                ...(view.catalog.snapshot
+                  ? { snapshot: { ...view.catalog.snapshot, models: [] } }
+                  : {}),
+                ...(view.catalog.positiveSnapshot
+                  ? {
+                      positiveSnapshot: {
+                        ...view.catalog.positiveSnapshot,
+                        models: [],
+                      },
+                    }
+                  : {}),
+              },
+            },
+            offset,
+            count: Math.max(
+              1,
+              Math.min(
+                limit,
+                Math.max(snapshot.length, positive.length) - offset,
+              ),
+            ),
+            modelsPage: {
+              snapshot: snapshot.slice(offset, offset + limit),
+              positiveSnapshot: positive.slice(offset, offset + limit),
+            },
+            total: {
+              snapshot: snapshot.length,
+              positiveSnapshot: positive.length,
+            },
+          };
+          while (
+            Buffer.byteLength(
+              canonical({
+                commandId: envelope.commandId,
+                state: "done",
+                result: page,
+              }),
+            ) > this.options.maxResponseBytes!
+          ) {
+            insist(page.count > 1, "RESPONSE_LIMIT", 413);
+            page.count = Math.max(1, Math.floor(page.count / 2));
+            page.modelsPage.snapshot = snapshot.slice(
+              offset,
+              offset + page.count,
+            );
+            page.modelsPage.positiveSnapshot = positive.slice(
+              offset,
+              offset + page.count,
+            );
+          }
+          result = page;
+          break;
+        }
+        case "reportAdmission":
+          insist(ledger.reportAdmission, "ADMISSION_REPORT_UNSUPPORTED", 503);
+          result = await ledger.reportAdmission(
+            commandId,
+            AdmissionReport.parse({ ...p, nodeId: peer.nodeId }),
+          );
+          break;
+        case "executionModelRequests":
+          insist(
+            ledger.executionModelRequests,
+            "EXECUTION_CATALOG_UNSUPPORTED",
+            503,
+          );
+          result = await ledger.executionModelRequests(peer.nodeId);
+          break;
+        case "completeExecutionModels": {
+          insist(
+            ledger.completeExecutionModels,
+            "EXECUTION_CATALOG_UNSUPPORTED",
+            503,
+          );
+          const input = CompleteExecutionModels.parse({
+            ...p,
+            nodeId: peer.nodeId,
+          });
+          const saved = await ledger.completeExecutionModels(commandId, input);
+          result = {
+            commandId: saved.commandId,
+            acceptedAt: saved.acceptedAt,
+            value: { accepted: true },
+          };
+          break;
+        }
         case "projectCollaborate":
-          insist(ledger.projectCollaborate, "PROJECT_COLLABORATION_UNSUPPORTED", 503);
-          result = await ledger.projectCollaborate(peer.nodeId, commandId, p.input as unknown as import("../project-collaboration/types.js").ProjectCollaborationInput);
+          insist(
+            ledger.projectCollaborate,
+            "PROJECT_COLLABORATION_UNSUPPORTED",
+            503,
+          );
+          result = await ledger.projectCollaborate(
+            peer.nodeId,
+            commandId,
+            p.input as unknown as import("../project-collaboration/types.js").ProjectCollaborationInput,
+          );
           break;
         case "projectSnapshot":
           insist(ledger.projectSnapshot, "PROJECT_SNAPSHOT_UNSUPPORTED", 503);
@@ -677,7 +900,10 @@ export class RemoteGateway {
           let bytes = 0;
           result = (await ledger.pendingSessionMessages(peer.nodeId)).filter(
             (m) => {
-              if (!peer.workspaces.includes(m.workspaceId)) return false;
+              if (
+                !(peer.managedAccess || peer.workspaces.includes(m.workspaceId))
+              )
+                return false;
               const size = Buffer.byteLength(JSON.stringify(m));
               if (bytes + size > this.options.maxResponseBytes! - 2048)
                 return false;
@@ -714,13 +940,19 @@ export class RemoteGateway {
         case "sessionContext": {
           insist(ledger.sessionContext, "TASK_SESSIONS_UNSUPPORTED", 503);
           const context = await ledger.sessionContext(lease(p, peer.nodeId));
+          const ownedRun = await ledger.getRun(id(p, "runId"));
+          insist(ownedRun, "RUN_NOT_FOUND", 404);
           const current = context.sessions.find(
             (session) => session.sessionId === context.taskSessionId,
           );
           insist(
             !current ||
-              (current.workspaceId &&
-                peer.workspaces.includes(current.workspaceId)),
+              (current.workspaceId
+                ? peer.managedAccess ||
+                  peer.workspaces.includes(current.workspaceId)
+                : !!context.projectContext &&
+                  !context.workspaceId &&
+                  !context.workspaceConstraint),
             "TASK_SESSION_WORKSPACE_DENIED",
             403,
           );
@@ -730,14 +962,23 @@ export class RemoteGateway {
             ...(context.eligibleWorkspaceIds
               ? {
                   eligibleWorkspaceIds: context.eligibleWorkspaceIds.filter(
-                    (workspaceId) => peer.workspaces.includes(workspaceId),
+                    (workspaceId) =>
+                      peer.managedAccess ||
+                      peer.workspaces.includes(workspaceId),
                   ),
                 }
               : {}),
             sessions: context.sessions.filter(
               (session) =>
-                session.workspaceId &&
-                peer.workspaces.includes(session.workspaceId),
+                session.schedulerId === context.schedulerId &&
+                session.taskId === ownedRun.taskId &&
+                session.nodeId === peer.nodeId &&
+                (session.workspaceId
+                  ? peer.managedAccess ||
+                    peer.workspaces.includes(session.workspaceId)
+                  : !!context.projectContext &&
+                    !context.workspaceId &&
+                    !context.workspaceConstraint),
             ),
           };
           break;
@@ -815,7 +1056,12 @@ export class RemoteGateway {
             ...(p.report
               ? { report: p.report as unknown as Settlement["report"] }
               : {}),
-            ...(p.resultValidationFailure ? {resultValidationFailure:p.resultValidationFailure as unknown as Settlement["resultValidationFailure"]}:{}),
+            ...(p.resultValidationFailure
+              ? {
+                  resultValidationFailure:
+                    p.resultValidationFailure as unknown as Settlement["resultValidationFailure"],
+                }
+              : {}),
             ...(p.preDispatchFailure
               ? {
                   preDispatchFailure:
@@ -957,17 +1203,44 @@ export class RemoteGateway {
         }
         case "listWork": {
           const runs = await ledger.pendingRuns(peer.nodeId);
+          if (!peer.managedAccess && ledger.reportAdmission)
+            for (const run of runs) {
+              if (run.route?.nodeId !== peer.nodeId || !run.updatedAt) continue;
+              const code =
+                run.route.workspaceId &&
+                !peer.workspaces.includes(run.route.workspaceId)
+                  ? "WORKSPACE_BINDING_REQUIRED"
+                  : !run.route.requiredCapabilities.every((cap) =>
+                        peer.capabilities.includes(cap),
+                      )
+                    ? "CAPABILITY_REQUIRED"
+                    : undefined;
+              if (code)
+                await ledger.reportAdmission(
+                  `gateway-admission:${digest([peer.nodeId, run.runId, run.updatedAt, code])}`,
+                  {
+                    runId: run.runId,
+                    nodeId: peer.nodeId,
+                    expectedUpdatedAt: run.updatedAt,
+                    routeDigest: digest(run.route),
+                    code,
+                  },
+                );
+            }
           result = runs
             .filter(
               (run) =>
                 !run.historyOnly &&
                 !run.observationOnly &&
                 run.route?.nodeId === peer.nodeId &&
-                run.route.workspaceId &&
-                peer.workspaces.includes(run.route.workspaceId) &&
-                run.route.requiredCapabilities.every((cap) =>
-                  peer.capabilities.includes(cap),
-                ),
+                (run.route.workspaceId
+                  ? peer.managedAccess ||
+                    peer.workspaces.includes(run.route.workspaceId)
+                  : !!run.projectContext && !run.workspaceConstraint) &&
+                (peer.managedAccess ||
+                  run.route.requiredCapabilities.every((cap) =>
+                    peer.capabilities.includes(cap),
+                  )),
             )
             .slice(0, 32);
           break;
@@ -997,8 +1270,18 @@ export class RemoteGateway {
         }
       }
       if (envelope.operation === "projectCollaborate") {
-        const durable = { commandId, acceptedAt: new Date().toISOString(), value: result };
-        if (old?.state === "uncertain") return store.resolve(peer.nodeId, envelope.commandId, durable, this.options.maxResponseBytes);
+        const durable = {
+          commandId,
+          acceptedAt: new Date().toISOString(),
+          value: result,
+        };
+        if (old?.state === "uncertain")
+          return store.resolve(
+            peer.nodeId,
+            envelope.commandId,
+            durable,
+            this.options.maxResponseBytes,
+          );
         result = durable;
       }
       const json = JSON.parse(JSON.stringify(result)) as Json;
@@ -1016,11 +1299,44 @@ export class RemoteGateway {
       );
       return receipt;
     } catch (error) {
-      if (envelope.operation === "projectCollaborate" && (error instanceof TaskError || error instanceof ProtocolError)) {
-        const durable = { commandId, acceptedAt: new Date().toISOString(), value: { collaborationError: { code: error.code, message: error.message } } };
-        if (old?.state === "uncertain") return store.resolve(peer.nodeId, envelope.commandId, durable, this.options.maxResponseBytes);
+      if (
+        envelope.operation === "executionModelView" &&
+        error instanceof ProtocolError
+      ) {
+        const result = { catalogError: { code: error.code } };
+        store.complete(
+          peer.nodeId,
+          envelope.commandId,
+          result,
+          this.options.maxResponseBytes,
+        );
+        return { commandId: envelope.commandId, state: "done", result };
+      }
+      if (
+        envelope.operation === "projectCollaborate" &&
+        (error instanceof TaskError || error instanceof ProtocolError)
+      ) {
+        const durable = {
+          commandId,
+          acceptedAt: new Date().toISOString(),
+          value: {
+            collaborationError: { code: error.code, message: error.message },
+          },
+        };
+        if (old?.state === "uncertain")
+          return store.resolve(
+            peer.nodeId,
+            envelope.commandId,
+            durable,
+            this.options.maxResponseBytes,
+          );
         const result = JSON.parse(JSON.stringify(durable)) as Json;
-        store.complete(peer.nodeId, envelope.commandId, result, this.options.maxResponseBytes);
+        store.complete(
+          peer.nodeId,
+          envelope.commandId,
+          result,
+          this.options.maxResponseBytes,
+        );
         return { commandId: envelope.commandId, state: "done", result };
       }
       // An arbitrary adapter exception is not proof that its transaction failed.
@@ -1031,6 +1347,7 @@ export class RemoteGateway {
   private async reconcile(
     nodeId: string,
     receipt: CommandReceipt,
+    operation?: import("./protocol.js").Operation,
   ): Promise<CommandReceipt> {
     if (receipt.state !== "uncertain" || !this.options.ledger.commandReceipt)
       return receipt;
@@ -1042,7 +1359,9 @@ export class RemoteGateway {
         ? this.options.store.resolve(
             nodeId,
             receipt.commandId,
-            durable,
+            operation === "completeExecutionModels"
+              ? { ...durable, value: { accepted: true } }
+              : durable,
             this.options.maxResponseBytes,
           )
         : receipt;
@@ -1066,7 +1385,8 @@ export class RemoteGateway {
         String(e.payload.messageId),
       );
       insist(
-        m.nodeId === peer.nodeId && peer.workspaces.includes(m.workspaceId),
+        m.nodeId === peer.nodeId &&
+          (peer.managedAccess || peer.workspaces.includes(m.workspaceId)),
         "SESSION_MESSAGE_DENIED",
         403,
       );
@@ -1078,13 +1398,27 @@ export class RemoteGateway {
       e.operation === "nodeStatus" ||
       e.operation === "executorIdentity" ||
       e.operation === "projectSnapshot" ||
-      e.operation === "projectCollaborate"
+      e.operation === "projectCollaborate" ||
+      e.operation === "executionModelView" ||
+      e.operation === "reportAdmission" ||
+      e.operation === "executionModelRequests" ||
+      e.operation === "completeExecutionModels"
     ) {
       insist(this.options.ledger.nodeStatuses, "NODE_STATUS_UNSUPPORTED", 503);
       const status = (await this.options.ledger.nodeStatuses()).find(
         (node) => node.nodeId === peer.nodeId,
       );
+      if (
+        !status &&
+        peer.managedAccess &&
+        ["heartbeat", "executorIdentity"].includes(e.operation)
+      )
+        return;
       insist(status, "REGISTERED_NODE_REQUIRED", 403);
+      if (e.operation === "reportAdmission") {
+        const run = await this.options.ledger.getRun?.(String(e.payload.runId));
+        insist(run?.route?.nodeId === peer.nodeId, "ASSIGNMENT_DENIED", 403);
+      }
       if (e.operation === "heartbeat") {
         insist(
           this.options.ledger.recordNodeHeartbeat,
@@ -1102,8 +1436,15 @@ export class RemoteGateway {
       return;
     }
     if (e.operation === "observe") {
+      const ownedWorkspace = peer.managedAccess
+        ? await this.options.ledger.getWorkspace?.(
+            String(e.payload.workspaceId),
+          )
+        : null;
       insist(
-        peer.workspaces.includes(String(e.payload.workspaceId)),
+        peer.managedAccess
+          ? ownedWorkspace?.nodeId === peer.nodeId
+          : peer.workspaces.includes(String(e.payload.workspaceId)),
         "WORKSPACE_DENIED",
         403,
       );
@@ -1141,7 +1482,8 @@ export class RemoteGateway {
       e.payload.workspaceId !== undefined
     )
       insist(
-        peer.workspaces.includes(String(e.payload.workspaceId)),
+        peer.managedAccess ||
+          peer.workspaces.includes(String(e.payload.workspaceId)),
         "WORKSPACE_DENIED",
         403,
       );
@@ -1180,14 +1522,17 @@ export class RemoteGateway {
     insist(run.route.nodeId === peer.nodeId, "NODE_ROUTE_DENIED", 403);
     const workspace = run.route.workspaceId;
     insist(
-      workspace && peer.workspaces.includes(workspace),
+      workspace
+        ? peer.managedAccess || peer.workspaces.includes(workspace)
+        : !!run.projectContext && !run.workspaceConstraint,
       "WORKSPACE_DENIED",
       403,
     );
     insist(
-      run.route.requiredCapabilities.every((cap) =>
-        peer.capabilities.includes(cap),
-      ),
+      peer.managedAccess ||
+        run.route.requiredCapabilities.every((cap) =>
+          peer.capabilities.includes(cap),
+        ),
       "CAPABILITY_DENIED",
       403,
     );

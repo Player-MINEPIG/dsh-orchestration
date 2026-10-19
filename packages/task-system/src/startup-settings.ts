@@ -1,4 +1,5 @@
 /** Narrow startup config editing through the host's public ConfigEditor only. */
+import { independentRemoteControls, remoteListenerEnabled, remoteExecutorPaused } from "./remote/controls.js";
 import type { Context } from "@deepseek-ai/cordis";
 import { z } from "zod";
 import { isDeepStrictEqual } from "node:util";
@@ -6,6 +7,9 @@ import type { TaskSystemService } from "./dsh-plugin.js";
 import type { RemoteExecutionService } from "./remote/index.js";
 import { assertEndpoint } from "./remote/http.js";
 import { validateNetworkTarget } from "./remote/network-client.js";
+
+import { resolve } from "node:path";
+import { validateTaskDatabasePath } from "./database-settings.js";
 
 const Role = z.enum(["planner", "executor", "both"]);
 const Target = z
@@ -19,6 +23,8 @@ const Target = z
 export const TaskStartupValues = z
   .object({
     role: Role,
+    databasePath: z.string().optional(),
+    nodeId: z.string().optional(),
     nodeCapacities: z
       .array(
         z
@@ -29,7 +35,6 @@ export const TaskStartupValues = z
           .strict(),
       )
       .optional(),
-    defaultWorkspaceId: z.string().min(1).nullable(),
     sessionDecisionEnabled: z.boolean(),
     planningDecisionEnabled: z.boolean(),
   })
@@ -81,14 +86,14 @@ export const SaveStartupInput = z.discriminatedUnion("target", [
     .object({
       target: z.literal("task"),
       expected: TaskStartupValues,
-      changes: TaskStartupValues.partial().strict(),
+      changes: TaskStartupValues.omit({nodeId:true}).partial().strict(),
     })
     .strict(),
   z
     .object({
       target: z.literal("remote"),
       expected: RemoteStartupValues,
-      changes: RemoteStartupValues.partial().strict(),
+      changes: RemoteStartupValues.omit({role:true}).partial().strict(),
     })
     .strict(),
 ]);
@@ -175,20 +180,14 @@ function publicEndpoint(value: unknown): string | null {
 }
 function taskValues(raw: Raw, task: TaskSystemService | undefined) {
   return TaskStartupValues.parse({
+    databasePath: resolve(typeof raw.databasePath==="string" ? raw.databasePath : task?.config.databasePath ?? ".dsh-task/tasks.sqlite"),
+    nodeId: task?.config.nodeId ?? (typeof raw.nodeId==="string" ? raw.nodeId : "local"),
     role:
       typeof raw.role === "string" ? raw.role : (task?.config.role ?? "both"),
-    nodeCapacities: (Array.isArray(raw.remoteNodes)
-      ? raw.remoteNodes
-      : (task?.config.remoteNodes ?? [])
-    ).map((value) => {
-      const node = record(value);
-      return { nodeId: node?.nodeId, maxConcurrent: record(raw.nodeCapacityOverrides)?.[String(node?.nodeId)] ?? node?.maxConcurrent ?? 1 };
-    }),
-    defaultWorkspaceId:
-      raw.defaultWorkspaceId === null ||
-      typeof raw.defaultWorkspaceId === "string"
-        ? raw.defaultWorkspaceId
-        : (task?.config.defaultWorkspaceId ?? null),
+    nodeCapacities: [...new Map([
+      ...(Array.isArray(raw.remoteNodes) ? raw.remoteNodes : task?.config.remoteNodes ?? []).map(value=>{const node=record(value);return [String(node?.nodeId),{nodeId:String(node?.nodeId),maxConcurrent:Number(record(raw.nodeCapacityOverrides)?.[String(node?.nodeId)] ?? node?.maxConcurrent ?? 1)}] as const;}),
+      ...(task?.ledger.nodeStatuses().filter(node=>node.nodeId!==task.config.nodeId).map(node=>[node.nodeId,{nodeId:node.nodeId,maxConcurrent:Number(record(raw.nodeCapacityOverrides)?.[node.nodeId] ?? task.ledger.getNode(node.nodeId).maxConcurrent ?? 1)}] as const) ?? []),
+    ]).values()],
     planningDecisionEnabled:
       typeof raw.planningDecisionEnabled === "boolean"
         ? raw.planningDecisionEnabled
@@ -199,16 +198,16 @@ function taskValues(raw: Raw, task: TaskSystemService | undefined) {
         : (task?.config.sessionDecisionEnabled ?? false),
   });
 }
-function remoteValues(raw: Raw, remote: RemoteExecutionService | undefined) {
+function remoteValues(raw: Raw, remote: RemoteExecutionService | undefined, task?:TaskSystemService) {
   const current = remote?.settingsSnapshot(),
     limits = record(raw.executionLimits),
     coordinator = record(raw.coordinator),
     target = record(coordinator?.trustedNetwork);
   return RemoteStartupValues.parse({
     paused:
-      typeof raw.paused === "boolean" ? raw.paused : (current?.paused ?? false),
+      remoteExecutorPaused(raw),
     role:
-      typeof raw.role === "string" ? raw.role : (current?.role ?? "executor"),
+      task?.config.role ?? current?.role ?? raw.role ?? "executor",
     endpoint: coordinator
       ? (publicEndpoint(coordinator.endpoint) ?? current?.endpoint ?? null)
       : null,
@@ -287,7 +286,7 @@ export function readStartupSettings(ctx: Context) {
           entryId: b.options.id,
           loaded: !!remote,
           loaderDisabled: b.disabled === true || b.options.disabled === true,
-          values: remoteValues(b.options.config ?? {}, remote),
+          values: remoteValues(b.options.config ?? {}, remote, task),
           ...(remote ? { heartbeat: remote.heartbeatSnapshot() } : {}),
         }
       : null,
@@ -388,19 +387,25 @@ export async function saveStartupSettings(ctx: Context, value: unknown) {
       "STARTUP_DECISION_REQUIRED",
       "Install and enable dsh-jev-plugin before enabling decisions",
     );
-  const restart = Object.keys(input.changes).some(key => !(input.target === "task" ? ["nodeCapacities", "defaultWorkspaceId", "planningDecisionEnabled", "sessionDecisionEnabled"] : ["concurrency", "pollIntervalMs"]).includes(key));
+  const restart = Object.keys(input.changes).some(key => !(input.target === "task" ? ["nodeCapacities", "planningDecisionEnabled", "sessionDecisionEnabled"] : ["concurrency", "pollIntervalMs"]).includes(key));
+  if(input.target==="task" && input.changes.databasePath!==undefined) {
+    const role=input.changes.role ?? task.config.role;
+    if(role==="executor")reject("STARTUP_DATABASE_DENIED","Only a scheduler may select its task database");
+    try { input.changes.databasePath=await validateTaskDatabasePath(input.changes.databasePath); } catch(error) { reject("STARTUP_DATABASE_INVALID",error instanceof Error?error.message:"Database path is invalid"); }
+  }
   const releases: (() => void)[] = [];
   try {
     if (restart) {
       releases.push(task.beginConfigurationEdit());
-      if (remote) releases.push(remote.beginConfigurationEdit());
+      if (remote) releases.push(await remote.beginConfigurationEdit());
     }
     await host.edit(entry, (current) => {
       const actual =
         input.target === "task"
           ? taskValues(current, task)
-          : remoteValues(current, remote);
-      if (!isDeepStrictEqual(actual, input.expected))
+          : remoteValues(current, remote, task);
+      const omitRole=(value:Raw)=>Object.fromEntries(Object.entries(value).filter(([key])=>key!=="role"));
+      if (!isDeepStrictEqual(input.target==="remote"?omitRole(actual):actual, input.target==="remote"?omitRole(input.expected):input.expected))
         reject(
           "STARTUP_CONFLICT",
           "Configuration changed since this page was read; reload before saving",
@@ -409,16 +414,14 @@ export async function saveStartupSettings(ctx: Context, value: unknown) {
         const { nodeCapacities, ...selected } = input.changes;
         const next: Raw = { ...current, ...selected },
           resolved = { ...input.expected, ...input.changes };
+        if(selected.databasePath!==undefined && selected.databasePath!==input.expected.databasePath)next.defaultWorkspaceId=null;
         if (nodeCapacities !== undefined) {
           if (resolved.role === "executor")
             reject(
               "STARTUP_CAPACITY_DENIED",
               "Only a scheduler may configure its registered executor capacities",
             );
-          const nodes = Array.isArray(current.remoteNodes)
-            ? current.remoteNodes
-            : (task.config.remoteNodes ?? []);
-          const ids = nodes.map((node) => record(node)?.nodeId);
+          const ids = taskValues(current,task).nodeCapacities?.map(node=>node.nodeId) ?? [];
           if (
             new Set(ids).size !== ids.length ||
             nodeCapacities.length !== ids.length ||
@@ -446,37 +449,22 @@ export async function saveStartupSettings(ctx: Context, value: unknown) {
             "STARTUP_ROLE_CONFLICT",
             "This profile still owns remote node registrations and cannot become executor-only",
           );
-        if (resolved.defaultWorkspaceId) {
-          const workspace = task.ledger.getWorkspace(
-              resolved.defaultWorkspaceId,
-            ),
-            node = task.ledger.getNode(task.config.nodeId);
-          if (
-            workspace.nodeId !== task.config.nodeId ||
-            workspace.state !== "ready" ||
-            !node.workspaceIds.includes(workspace.workspaceId)
-          )
-            reject(
-              "STARTUP_WORKSPACE_DENIED",
-              "Default workspace must already be registered, ready and granted to this executor",
-            );
+        if(input.changes.role!==undefined){
+          const remoteEntry=row(host,"remote"),raw=remoteEntry?.options.config;
+          if(raw){
+            const coordinator=record(raw.coordinator),limits=record(raw.executionLimits);
+            if((resolved.role==="executor" && remoteListenerEnabled(raw)) ||
+               (resolved.role==="planner" && !remoteExecutorPaused(raw) && (Number(limits?.pollIntervalMs ?? raw.pollIntervalMs ?? 0)>0 || Number(coordinator?.heartbeatIntervalMs ?? 0)>0)) ||
+               (resolved.role!=="executor" && remoteListenerEnabled(raw) && raw.authMode==="trusted-network" && !raw.trustedNetwork))
+              reject("STARTUP_ROLE_CONFLICT","The selected role conflicts with the current connection listener, polling or heartbeat. Pause the connection or adjust those settings first");
+          }
         }
-        if (
-          resolved.sessionDecisionEnabled &&
-          !resolved.defaultWorkspaceId &&
-          (input.changes.sessionDecisionEnabled === true ||
-            Object.hasOwn(input.changes, "defaultWorkspaceId"))
-        )
-          reject(
-            "STARTUP_WORKSPACE_REQUIRED",
-            "Choose an authorized default workspace before enabling session decisions",
-          );
         return next;
       }
       const { endpoint, audience, trustedNetworkTarget, ...top } =
         input.changes;
       const {concurrency, pollIntervalMs, ...bootFields} = top;
-      const next: Raw = { ...current, ...bootFields };
+      const next: Raw = { ...current, ...(restart ? independentRemoteControls(current) : {}), ...bootFields };
       if (concurrency !== undefined || pollIntervalMs !== undefined)
         next.executionLimits = { ...record(current.executionLimits), ...(concurrency === undefined ? {} : {concurrency}), ...(pollIntervalMs === undefined ? {} : {pollIntervalMs}) };
       let coordinator = record(current.coordinator);
@@ -573,7 +561,7 @@ export async function saveStartupSettings(ctx: Context, value: unknown) {
       if (
         input.changes.paused === false &&
         input.expected.paused &&
-        (next.role ?? input.expected.role) === "executor"
+        task.config.role === "executor"
       ) {
         const connection = record(next.coordinator);
         if (
@@ -598,18 +586,10 @@ export async function saveStartupSettings(ctx: Context, value: unknown) {
       // legacy intervals must not leave an enabled executor silently offline.
       if (
         input.changes.paused === false &&
-        (next.role ?? input.expected.role) !== "planner"
+        task.config.role !== "planner"
       ) {
         const connection = record(next.coordinator);
-        if (
-          !connection ||
-          !Array.isArray(connection.nativeRoutes) ||
-          !connection.nativeRoutes.length
-        )
-          reject(
-            "STARTUP_ROUTES_REQUIRED",
-            "Configure authorized native execution routes before enabling this executor",
-          );
+        if(!connection)reject("STARTUP_CONNECTION_REQUIRED","Configure the scheduler address before enabling collaboration");
         next.executionLimits = { ...record(next.executionLimits), pollIntervalMs: (record(next.executionLimits)?.pollIntervalMs ?? next.pollIntervalMs ?? input.expected.pollIntervalMs) || 1000 };
         next.coordinator = {
           ...connection,

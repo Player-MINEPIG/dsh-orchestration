@@ -188,7 +188,7 @@ export async function resolveTaskSessionDecision(
     request = buildTaskSessionDecisionRequest(
       options.requestId,
       initial,
-      options.route && Object.values(options.route).some(v => v !== undefined)
+      options.route && Object.values(options.route).some((v) => v !== undefined)
         ? options.route
         : {},
       now(),
@@ -217,4 +217,131 @@ export async function resolveTaskSessionDecision(
     ),
     receipt,
   };
+}
+
+export interface ManagedTaskSessionSnapshot {
+  taskId: string;
+  nodeId: string;
+  schedulerId: string;
+  taskSessionId?: string;
+  validUntil: number;
+  sessions: { sessionId: string }[];
+  context: Json;
+}
+/** A fixed directory leaves only the new/reuse session question for the model. */
+export async function resolveManagedTaskSessionDecision(
+  snapshot: ManagedTaskSessionSnapshot,
+  options: {
+    decisions?: TaskSessionDecisionService;
+    provider?: string;
+    requestId: string;
+    signal?: AbortSignal;
+    currentSnapshot?: () =>
+      | ManagedTaskSessionSnapshot
+      | Promise<ManagedTaskSessionSnapshot>;
+    now?: () => number;
+  },
+): Promise<{
+  session: { mode: "new" } | { mode: "reuse"; sessionId: string };
+  decision?: Json;
+}> {
+  const now = options.now ?? Date.now;
+  const fallback = (
+    value: ManagedTaskSessionSnapshot,
+  ): { session: { mode: "new" } | { mode: "reuse"; sessionId: string } } => {
+    const existing = value.sessions.find(
+      (session) => session.sessionId === value.taskSessionId,
+    );
+    return {
+      session: existing
+        ? { mode: "reuse", sessionId: existing.sessionId }
+        : { mode: "new" },
+    };
+  };
+  const build = (value: ManagedTaskSessionSnapshot): DecisionRequest => {
+    const context = {
+      taskId: value.taskId,
+      nodeId: value.nodeId,
+      schedulerId: value.schedulerId,
+      directory: "fixed-by-project-or-temporary-rule",
+      sessions: value.sessions,
+      state: value.context,
+    };
+    const request: DecisionRequest = {
+      requestId: options.requestId,
+      stateHash: digest(context),
+      context,
+      questions: [
+        {
+          questionId: "session",
+          questionVersion: "1",
+          type: "choice",
+          instructions:
+            "Choose a new session or one of this Task's eligible sessions. The directory is fixed and this choice grants no permissions.",
+          candidates: {
+            new: "Create a new session for this Task",
+            ...Object.fromEntries(
+              value.sessions.map((session, index) => [
+                `reuse-${index}`,
+                `Reuse this Task session ${session.sessionId}`,
+              ]),
+            ),
+          },
+        },
+      ],
+      ...(options.provider ? { provider: options.provider } : {}),
+    };
+    validateRequest(request);
+    return request;
+  };
+  options.signal?.throwIfAborted();
+  const initial = structuredClone(snapshot);
+  if (!Number.isFinite(initial.validUntil) || initial.validUntil <= now())
+    throw new Error("Task session decision snapshot expired");
+  if (!options.decisions) return fallback(initial);
+  let request: DecisionRequest, receipt: DecisionReceipt;
+  try {
+    request = build(initial);
+    receipt = await askTaskDecision(options.decisions, request, {
+      signal: options.signal,
+    });
+  } catch {
+    options.signal?.throwIfAborted();
+    const current = (await options.currentSnapshot?.()) ?? initial;
+    options.signal?.throwIfAborted();
+    return fallback(current);
+  }
+  options.signal?.throwIfAborted();
+  const current = (await options.currentSnapshot?.()) ?? initial;
+  options.signal?.throwIfAborted();
+  try {
+    if (
+      Math.min(initial.validUntil, current.validUntil) <= now() ||
+      stableStringify(build(current)) !== stableStringify(request) ||
+      receipt.requestId !== request.requestId ||
+      receipt.schemaVersion !== 1 ||
+      receipt.error ||
+      receipt.status !== "answered" ||
+      receipt.requestDigest !== digest(request) ||
+      receipt.stateHash !== request.stateHash ||
+      receipt.questionVersions.session !== "1"
+    )
+      return fallback(current);
+    object(receipt.answers, "managed session answers");
+    keys(receipt.answers, ["session"], ["session"], "managed session answers");
+    validateAnswer(receipt.answers.session, request.questions[0]!, true);
+    const answer = receipt.answers.session;
+    if (answer.type !== "choice") return fallback(current);
+    const selected = current.sessions.find(
+      (_, index) => `reuse-${index}` === answer.choice,
+    );
+    return {
+      session: selected
+        ? { mode: "reuse", sessionId: selected.sessionId }
+        : { mode: "new" },
+      decision: JSON.parse(JSON.stringify(receipt)),
+    };
+  } catch {
+    return fallback(current);
+  }
 }

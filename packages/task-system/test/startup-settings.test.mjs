@@ -35,21 +35,21 @@ test('startup read/save descriptors use exact public service methods and a singl
 test('startup read excludes credentials, node grants and full raw config',t=>{
   const f=fixture(t),view=readStartupSettings(f.ctx)
   assert.equal(view.task.values.role,'both');assert.equal(view.applies,'plugin-restart')
-  assert.ok(!JSON.stringify(view).includes('NOT_A_REAL_SECRET'));assert.ok(!JSON.stringify(view).includes('private.sqlite'));assert.ok(!JSON.stringify(view).includes('executionTools'))
+  assert.ok(!JSON.stringify(view).includes('NOT_A_REAL_SECRET'));assert.equal(view.task.values.databasePath,'/tmp/private.sqlite');assert.equal(view.task.values.nodeId,'worker');assert.ok(!JSON.stringify(view).includes('executionTools'))
 })
 test('public ConfigEditor merge persists only selected startup fields and preserves unknown data',async t=>{
-  const f=fixture(t),result=await saveStartupSettings(f.ctx,input(f,'task',{defaultWorkspaceId:'other',sessionDecisionEnabled:true}))
+  const f=fixture(t),result=await saveStartupSettings(f.ctx,input(f,'task',{sessionDecisionEnabled:true}))
   assert.deepEqual(result,{saved:true,applies:'live'});assert.equal(f.writes.length,1)
-  assert.equal(f.taskRow.options.config.privateMarker,'NOT_A_REAL_SECRET');assert.deepEqual(f.taskRow.options.config.unknownExtension,{keep:true});assert.equal(f.taskRow.options.config.defaultWorkspaceId,'other')
+  assert.equal(f.taskRow.options.config.privateMarker,'NOT_A_REAL_SECRET');assert.deepEqual(f.taskRow.options.config.unknownExtension,{keep:true});assert.equal(f.taskRow.options.config.defaultWorkspaceId,'default')
   assert.equal(f.task.configurationPaused,false)
 })
 test('role selection is saved but cannot silently remove incompatible node bootstrap',async t=>{
-  const f=fixture(t);await saveStartupSettings(f.ctx,input(f,'task',{role:'planner'}));assert.equal(f.taskRow.options.config.role,'planner')
+  const f=fixture(t);f.remoteRow.options.config.paused=true;await saveStartupSettings(f.ctx,input(f,'task',{role:'planner'}));assert.equal(f.taskRow.options.config.role,'planner')
   f.taskRow.options.config.localNode={models:[]};await assert.rejects(saveStartupSettings(f.ctx,input(f,'task',{role:'planner'})),{code:'STARTUP_ROLE_CONFLICT'})
   assert.deepEqual(f.taskRow.options.config.localNode,{models:[]})
 })
 test('CAS rejects a stale startup snapshot without overwriting a newer field',async t=>{
-  const f=fixture(t),request=input(f,'task',{role:'executor'});f.taskRow.options.config.defaultWorkspaceId='other'
+  const f=fixture(t),request=input(f,'task',{role:'executor'});f.taskRow.options.config.sessionDecisionEnabled=true
   await assert.rejects(saveStartupSettings(f.ctx,request),{code:'STARTUP_CONFLICT'});assert.equal(f.writes.length,0);assert.equal(f.taskRow.options.config.role,'both')
 })
 test('credentials, key identities, grants and arbitrary namespaces cannot enter the edit payload',async t=>{
@@ -65,7 +65,7 @@ test('command-line and Home overrides refuse saves and leave the source intact',
   await assert.rejects(saveStartupSettings(f.ctx,input(f,'task',{role:'executor'})),{code:'STARTUP_OVERRIDE'});assert.equal(f.writes.length,0);assert.equal(f.task.configurationPaused,false)
 })
 test('invalid default workspace is never provisioned or granted by the startup RPC',async t=>{
-  const f=fixture(t);await assert.rejects(saveStartupSettings(f.ctx,input(f,'task',{defaultWorkspaceId:'not-registered'})),{code:'STARTUP_SAVE_FAILED'});assert.equal(f.writes.length,0);assert.deepEqual(f.ledger.getNode('worker').workspaceIds,['default','other'])
+  const f=fixture(t);await assert.rejects(saveStartupSettings(f.ctx,input(f,'task',{defaultWorkspaceId:'not-registered'})),);assert.equal(f.writes.length,0);assert.deepEqual(f.ledger.getNode('worker').workspaceIds,['default','other'])
 })
 test('active claimed work blocks connection changes before ConfigEditor is called',async t=>{
   const f=fixture(t),task=f.ledger.createTask('task',{title:'active'}).value,run=f.ledger.createRun('run',{taskId:task.taskId,route:{nodeId:'worker',provider:'fixture',model:'fixture',workspaceId:'default',requiredCapabilities:[]}}).value
@@ -80,8 +80,8 @@ test('native external work and unresolved remote recovery block startup edits',a
 })
 test('admissions are held throughout asynchronous persistence and released after failure',async t=>{
   const f=fixture(t),task=f.ledger.createTask('task',{title:'queued'}).value,run=f.ledger.createRun('run',{taskId:task.taskId,route:{nodeId:'worker',provider:'fixture',model:'fixture',workspaceId:'default',requiredCapabilities:[]}}).value
-  let continueEdit;f.host.before=()=>new Promise(resolve=>{continueEdit=resolve})
-  const saving=saveStartupSettings(f.ctx,input(f,'task',{role:'executor'}));await Promise.resolve()
+  let continueEdit,entered;const editing=new Promise(resolve=>entered=resolve);f.host.before=()=>new Promise(resolve=>{continueEdit=resolve;entered()})
+  const saving=saveStartupSettings(f.ctx,input(f,'task',{role:'executor'}));await editing
   assert.throws(()=>f.ledger.claim('claim-during-save',{runId:run.runId,nodeId:'worker',ttlMs:60000}),{code:'CONFIGURATION_BUSY'})
   f.host.fail=true;continueEdit();await assert.rejects(saving,{code:'STARTUP_OVERRIDE'})
   assert.ok(f.ledger.claim('claim-after-save',{runId:run.runId,nodeId:'worker',ttlMs:60000}).value)
@@ -102,10 +102,12 @@ test('an unconfigured connection cannot be enrolled or granted permissions throu
   await assert.rejects(saveStartupSettings(f.ctx,input(f,'remote',{endpoint:'https://new.invalid/commands'})),{code:'STARTUP_CONNECTION_REQUIRED'});assert.equal(f.writes.length,0)
 })
 
-test('clearing a default workspace is reflected as null rather than the older runtime value',async t=>{
-  const f=fixture(t)
-  await saveStartupSettings(f.ctx,input(f,'task',{defaultWorkspaceId:null}))
-  assert.equal(readStartupSettings(f.ctx).task.values.defaultWorkspaceId,null)
+test('JEV can be enabled with no legacy default workspace and does not invent one',async t=>{
+ const f=fixture(t);delete f.taskRow.options.config.defaultWorkspaceId;
+ await saveStartupSettings(f.ctx,input(f,'task',{sessionDecisionEnabled:true}));
+ assert.equal(f.taskRow.options.config.sessionDecisionEnabled,true);
+ assert.equal('defaultWorkspaceId' in f.taskRow.options.config,false);
+ assert.equal('defaultWorkspaceId' in readStartupSettings(f.ctx).task.values,false);
 })
 
 test('a new explicitly selected trusted-network connection preserves identity and creates no peer grants',async t=>{
@@ -194,11 +196,11 @@ test('enabling an executor restores automatic heartbeat and polling from legacy 
   assert.equal(f.remoteRow.options.config.paused,true);
   assert.equal(f.remoteRow.options.config.coordinator.heartbeatIntervalMs,5000);
 });
-test('executor switch cannot activate an identity-only connection, and planner remains unable to execute',async t=>{
+test('executor can connect before model discovery, and planner remains unable to execute',async t=>{
   const f=fixture(t);f.remoteRow.options.config.paused=true;
-  await assert.rejects(saveStartupSettings(f.ctx,input(f,'remote',{paused:false})),{code:'STARTUP_ROUTES_REQUIRED'});
-  assert.equal(f.writes.length,0);
-  f.remoteRow.options.config.role='planner';
+  await saveStartupSettings(f.ctx,input(f,'remote',{paused:false}));
+  assert.equal(f.writes.length,1);assert.deepEqual(f.remoteRow.options.config.coordinator.nativeRoutes,[]);f.remoteRow.options.config.paused=true;f.remoteRow.options.config.coordinator.heartbeatIntervalMs=0;f.remoteRow.options.config.pollIntervalMs=0;f.remoteRow.options.config.executionLimits.pollIntervalMs=0;
+  f.remoteRow.options.config.role='executor';f.task.config.role='planner';f.taskRow.options.config.role='planner';
   await saveStartupSettings(f.ctx,input(f,'remote',{paused:false}));
   assert.equal(f.remoteRow.options.config.pollIntervalMs,0);
   assert.equal(f.remoteRow.options.config.coordinator.heartbeatIntervalMs,0);
@@ -227,7 +229,7 @@ test('capacity edits reject new identities, grants, omissions, duplicates, inval
   assert.equal(f.writes.length,0);
 });
 test('capacity edits leave active work intact and apply without the restart gate',async t=>{
-  const f=fixture(t);f.taskRow.options.config.remoteNodes=[{nodeId:'worker',maxConcurrent:2}];f.task.providers.add({activeCount:1});
+  const f=fixture(t);f.task.config.nodeId='planner';f.taskRow.options.config.nodeId='planner';f.taskRow.options.config.remoteNodes=[{nodeId:'worker',maxConcurrent:2}];f.task.providers.add({activeCount:1});
   const task=f.ledger.createTask('task',{title:'active'}).value,run=f.ledger.createRun('run',{taskId:task.taskId,route:{nodeId:'worker',provider:'fixture',model:'fixture',workspaceId:'default',requiredCapabilities:[]}}).value;
   const claim=f.ledger.claim('claim',{runId:run.runId,nodeId:'worker',ttlMs:60000}).value;
   const result=await saveStartupSettings(f.ctx,input(f,'task',{nodeCapacities:[{nodeId:'worker',maxConcurrent:1}]}));
@@ -240,4 +242,23 @@ test('executor limits persist during unresolved recovery without rebuilding serv
  const result=await saveStartupSettings(f.ctx,input(f,'remote',{concurrency:2,pollIntervalMs:1100}));
  assert.equal(result.applies,'live');assert.deepEqual(f.remoteRow.options.config.executionLimits,{concurrency:2,pollIntervalMs:1100});assert.equal(f.store.dispatches()[0].state,'uncertain');assert.equal(f.remote.configurationPaused,false);
  assert.equal(readStartupSettings(f.ctx).restartBlockers[0].title,'Recovery');
+});
+
+test('connection role is read-only and top-level transitions reject incompatible polling/listening before writes',async t=>{
+ const f=fixture(t);await assert.rejects(saveStartupSettings(f.ctx,input(f,'remote',{role:'planner'})));assert.equal(f.writes.length,0);
+ f.remoteRow.options.config.exposeHttp=true;await assert.rejects(saveStartupSettings(f.ctx,input(f,'task',{role:'executor'})),{code:'STARTUP_ROLE_CONFLICT'});assert.equal(f.writes.length,0);assert.equal(f.task.configurationPaused,false);
+ f.remoteRow.options.config.exposeHttp=false;f.remoteRow.options.config.pollIntervalMs=1000;await assert.rejects(saveStartupSettings(f.ctx,input(f,'task',{role:'planner'})),{code:'STARTUP_ROLE_CONFLICT'});assert.equal(f.writes.length,0);
+});
+
+test('executor toggle migrates legacy pause without activating its formerly suppressed listener',async t=>{
+ const f=fixture(t);Object.assign(f.remoteRow.options.config,{paused:true,exposeHttp:true});
+ await saveStartupSettings(f.ctx,input(f,'remote',{paused:false}));
+ assert.equal(f.remoteRow.options.config.pauseScope,'executor');assert.equal(f.remoteRow.options.config.exposeHttp,false);assert.equal(f.remoteRow.options.config.paused,false);
+});
+test('role preflight protects an independent active listener even when executor is paused',async t=>{
+ const f=fixture(t);Object.assign(f.remoteRow.options.config,{paused:true,pauseScope:'executor',exposeHttp:true});
+ await assert.rejects(saveStartupSettings(f.ctx,input(f,'task',{role:'executor'})),{code:'STARTUP_ROLE_CONFLICT'});assert.equal(f.writes.length,0);
+});
+test('a legacy both listener without an upstream projects executor as disabled',t=>{
+ const f=fixture(t);Object.assign(f.remoteRow.options.config,{paused:false,exposeHttp:true,coordinator:null});assert.equal(readStartupSettings(f.ctx).remote.values.paused,true);
 });

@@ -1,3 +1,6 @@
+import { ExecutionModelChoice, ExecutionModelsError, sameExecutionModel } from "./execution-models.js";
+import { randomUUID } from "node:crypto";
+import {readConnectionSettings,saveConnectionSettings,SaveConnectionInput} from "./connection-settings.js";
 import { SaveWorkflow, StartWorkflow, RetryWorkflowStep, CancelWorkflow, ConfigureWorkflowTask, AdoptWorkflow } from "./workflow-contracts.js";
 import { scheduledPlanInput, scheduledPlanControl } from "./scheduled-plans.js";
 import { SessionDispatchIndex, sessionDispatchOperations, sessionTaskSnapshot, sortSessionTasks } from "./session-task-monitor.js";
@@ -338,6 +341,11 @@ export function hasTaskConfigOverride(patches: readonly unknown[]): boolean {
 }
 
 const projectInputs = {
+  nodeModelSettings:z.object({nodeId:z.string().min(1).max(128)}).strict(),
+  refreshNodeModels:z.object({nodeId:z.string().min(1).max(128)}).strict(),
+  saveNodeModelDefault:z.object({nodeId:z.string().min(1).max(128),expectedRevision:z.number().int().nonnegative(),expectedCatalogRevision:z.string().min(1),choice:ExecutionModelChoice}).strict(),
+  connectionSettings:null,
+  saveConnectionSettings:SaveConnectionInput,
   workflowView:z.object({workflowRunId:z.string().min(1).max(200).nullable()}).strict(),
   setTaskPresentation:z.object({commandId:z.string().min(1).max(200),taskId:z.string().min(1).max(200),visibility:z.enum(["primary","execution"])}).strict(),
   getProjectReportPresentation:z.object({reportId:z.string().min(1).max(200),contentVersion:z.string().regex(/^[a-f0-9]{64}$/)}).strict(),
@@ -432,7 +440,7 @@ const projectInputs = {
       taskId: z.string().min(1),
       expectedVersion: z.string().min(1).max(200),
       runId: z.string().min(1).nullable(),
-      confirmationRevision: z.number().int().positive(),
+      confirmationRevision: z.number().int().positive().default(1),
       retryPrompt: z.string().max(20000).optional(),
       action: z.enum([
         "complete-materials",
@@ -445,7 +453,7 @@ const projectInputs = {
         "reject",
         "confirm-stopped",
         "status",
-        "retry",
+        "retry", "repair",
       ]),
     })
     .strict(),
@@ -602,10 +610,9 @@ export class TaskPluginSettings extends TypertRemoteService {
   async executionDirectorySettings() {
     const task = this.ctx.get("taskSystem") as TaskSystemService | undefined;
     if (!task) throw new Error("Task service unavailable");
-    const fallback = task.config.defaultWorkspaceId
-      ? task.ledger.registeredWorkspaces(task.config.nodeId).find(item => item.workspaceId === task.config.defaultWorkspaceId)?.path ?? null : null;
-    return {enabled: task.config.role !== "planner", nodeId: task.config.nodeId, fallback, ...task.executionDirectories.settings()};
+    return {enabled: task.config.role !== "planner", nodeId: task.config.nodeId, fallback:null, ...task.executionDirectories.settings()};
   }
+
   async saveExecutionDirectorySettings(input: unknown) {
     const task = this.ctx.get("taskSystem") as TaskSystemService | undefined;
     if (!task || task.config.role === "planner") throw new Error("Executor required");
@@ -782,6 +789,34 @@ export class TaskPluginSettings extends TypertRemoteService {
       items,
     });
   }
+  private modelAuthority(nodeId:string) {
+    const task=this.ctx.get("taskSystem") as TaskSystemService|undefined;
+    if(!task || task.config.role==="executor")throw new TaskError("FORBIDDEN","Scheduler settings required");
+    const node=task.ledger.getNode(nodeId);
+    if(!node.enabled || nodeId===task.config.nodeId)throw new TaskError("EXECUTOR_REQUIRED","Connect the executor before setting its default model");
+    return task.ledger;
+  }
+  async nodeModelSettings(input:unknown){return this.projectOperation(()=>{const value=projectInputs.nodeModelSettings.parse(input);return this.modelAuthority(value.nodeId).executionModels.view(value.nodeId);});}
+  async refreshNodeModels(input:unknown){return this.projectOperation(async()=>{const value=projectInputs.refreshNodeModels.parse(input);return await this.modelAuthority(value.nodeId).refreshNodeModels(value.nodeId);});}
+  async saveNodeModelDefault(input:unknown) {
+    return this.projectOperation(async()=>{
+      const value=projectInputs.saveNodeModelDefault.parse(input);
+      const authority=this.modelAuthority(value.nodeId),schedulerId=authority.schedulerIdentity();
+      try {
+        let view=authority.executionModels.view(value.nodeId);
+        if(view.policy.revision!==value.expectedRevision)throw new TaskError("EXECUTION_MODEL_POLICY_CONFLICT","EXECUTION_MODEL_POLICY_CONFLICT");
+        const confirmsChoice=()=>!!view.catalog.positiveSnapshot && view.catalog.positiveSnapshot.expiresAt>Date.now() && view.catalog.positiveSnapshot.models.some(choice=>sameExecutionModel(choice,value.choice));
+        if(!confirmsChoice())view=await authority.refreshNodeModels(value.nodeId);
+        if(this.modelAuthority(value.nodeId)!==authority || authority.schedulerIdentity()!==schedulerId)throw new TaskError("EXECUTION_MODEL_AUTHORITY_CHANGED","EXECUTION_MODEL_AUTHORITY_CHANGED");
+        const snapshot=view.catalog.positiveSnapshot;
+        if(!snapshot || snapshot.expiresAt<=Date.now())throw new TaskError("EXECUTION_CATALOG_STALE","EXECUTION_CATALOG_STALE");
+        if(!confirmsChoice())throw new TaskError(snapshot.complete?"EXECUTION_MODEL_UNAVAILABLE":"EXECUTION_CATALOG_UNCONFIRMED","Selected model and effort could not be confirmed");
+        return authority.executionModels.setDefault(`settings-default:${randomUUID()}`,{...value,expectedCatalogRevision:snapshot.revision});
+      }catch(error){if(error instanceof ExecutionModelsError)throw new TaskError(error.code,error.message);throw error;}
+    });
+  }
+  async connectionSettings(){return await readConnectionSettings(this.ctx);}
+  async saveConnectionSettings(input:unknown){try{return await saveConnectionSettings(this.ctx,input);}catch(error){if(error instanceof StartupSettingsError)throw new RemoteError("task/startup",error.message,{reason:error.code});throw error;}}
   async saveStartup(input: unknown) {
     try {
       return await saveStartupSettings(this.ctx, input);

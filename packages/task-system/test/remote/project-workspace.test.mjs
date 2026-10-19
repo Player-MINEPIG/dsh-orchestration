@@ -1,11 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync,realpathSync,rmSync,readFileSync,writeFileSync,symlinkSync,renameSync} from 'node:fs';
+import {mkdtempSync,mkdirSync,realpathSync,rmSync,readFileSync,writeFileSync,symlinkSync,renameSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join,dirname} from 'node:path';
 import {execFileSync} from 'node:child_process';
 import {RecoveryStore} from '../../dist/remote/store.js';
-import {executionWorkspace} from '../../dist/remote/project-workspace.js';
+import {executionWorkspace,temporaryTaskMetadata} from '../../dist/remote/project-workspace.js';
 function fixture(t) {
  const parent=realpathSync(mkdtempSync(join(tmpdir(),'dsh-project-worker-'))),store=new RecoveryStore(join(parent,'store.sqlite'));
  t.after(()=>{store.close();rmSync(parent,{recursive:true,force:true})});
@@ -13,10 +13,10 @@ function fixture(t) {
  const workspace=(claim,sessionId='session',resume=false)=>executionWorkspace({parent,store,claim,sessionId,resume});
  return {parent,store,claim,workspace};
 }
-test('projects and schedulers are isolated; temporary tasks have independent workspaces',async t=>{
+test('projects and schedulers are isolated; temporary tasks share one selected directory',async t=>{
  const f=fixture(t),a=await f.workspace(f.claim(),'a'),b=await f.workspace(f.claim('p','task-b'),'b');assert.equal(a,b);
  assert.notEqual(await f.workspace(f.claim('q'),'c'),a);assert.notEqual(await f.workspace(f.claim('p','task','scheduler-other'),'d'),a);
- const temp=await f.workspace(f.claim(null,'temp'),'e');assert.notEqual(temp,a);assert.notEqual(await f.workspace(f.claim(null,'temp-other'),'f'),temp);assert.notEqual(await f.workspace(f.claim(null,'temp','scheduler-other'),'g'),temp);
+ const temp=await f.workspace(f.claim(null,'temp'),'e');assert.notEqual(temp,a);assert.equal(temp,join(f.parent,'temporary-tasks'));assert.equal(await f.workspace(f.claim(null,'temp-other'),'f'),temp);assert.equal(await f.workspace(f.claim(null,'temp','scheduler-other'),'g'),temp);
  assert.equal(await f.workspace(f.claim(),'a',true),a);
  assert.equal(JSON.parse(readFileSync(join(a,'.dsh-project-context/revision-1.json'),'utf8')).project.projectId,'p');
  await assert.rejects(f.workspace(f.claim('q'),'a',true),/TASK_PROJECT_CHANGED/);
@@ -71,4 +71,11 @@ test('an explicit workspace constraint cannot resume outside a replaced route bi
  const replacement=realpathSync(mkdtempSync(join(tmpdir(),'dsh-restricted-root-')));t.after(()=>rmSync(replacement,{recursive:true,force:true}));
  await assert.rejects(executionWorkspace({parent:replacement,projectRoot:f.parent,store:f.store,claim,sessionId:'existing',resume:true}),/WORKSPACE_ESCAPE/);
  await assert.rejects(executionWorkspace({parent:replacement,store:f.store,claim,sessionId:'new-session',resume:false}),/WORKSPACE_ESCAPE/);
+});
+
+test('upgrade adopts selected existing temporary folder without touching old task files; context namespaces never collide',async t=>{
+ const f=fixture(t),old=join(f.parent,'temporary-tasks');mkdirSync(old);mkdirSync(join(old,'task-old'));writeFileSync(join(old,'task-old','TOOLS.md'),'original');
+ const cwd=await f.workspace(f.claim(null,'new'),'new');assert.equal(cwd,old);assert.equal(readFileSync(join(old,'task-old','TOOLS.md'),'utf8'),'original');
+ const a=await temporaryTaskMetadata(cwd,'scheduler-one','new','planner'),b=await temporaryTaskMetadata(cwd,'scheduler-one','new','executor'),c=await temporaryTaskMetadata(cwd,'scheduler-two','new','executor');
+ assert.notEqual(a,b);assert.notEqual(b,c);assert.equal(await f.workspace(f.claim(null,'new'),'new',true),old);
 });

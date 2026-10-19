@@ -38,6 +38,7 @@ async function harness({ role = 'both', script = [], dir, native = true, config 
   await ctx.loader.root.update(rows);
   await ctx.loader.await();
   assert.ok(ctx.taskSystem, 'real Loader must activate taskSystem');
+  if(role!== 'planner' && !ctx.taskSystem.executionDirectories.settings().root)ctx.taskSystem.executionDirectories.save({root:realpathSync(dir),expectedRevision:0});
   if (native && role !== 'planner') assert.ok(ctx.taskSystem.native, 'native provider injection must activate');
   const adapter = new ScriptedModel(script);
   ctx.llm.registerAdapter(['test-offline'], adapter);
@@ -371,7 +372,7 @@ test('native resume restores the exact persisted session bound to an unexpired a
   const ref = { runId: claim.run.runId, attemptId: claim.attempt.attemptId, nodeId: 'local', fence: claim.attempt.fence };
   const sessionId = `task-${ref.attemptId}`;
   first.ledger.bindSession('resume-bind-fixture', { ...ref, sessionId });
-  const handle = await first.ctx.agents.create({ sessionId: SessionId(sessionId), agentOptions: { provider: 'test-offline', model: 'script' } });
+  const handle = await first.ctx.agents.create({ sessionId: SessionId(sessionId), meta:{cwd:first.dir}, agentOptions: { provider: 'test-offline', model: 'script' } });
   handle.agent.followup(createUserMessage({ content: [{ type: 'text', text: 'Earlier persisted input' }], source: { kind: 'user' } }));
   await handle.agent.whenIdle();
   await first.ctx.sessions.flush(handle.agent.session);
@@ -883,7 +884,7 @@ test('resume continues a live lease even after its legacy runtime budget', async
   const ref = { runId: claim.run.runId, attemptId: claim.attempt.attemptId, nodeId: 'local', fence: claim.attempt.fence };
   const sessionId = `task-${ref.attemptId}`;
   initial.ledger.bindSession('budget-resume-bind', { ...ref, sessionId });
-  const handle = await initial.ctx.agents.create({ sessionId: SessionId(sessionId), agentOptions: { provider: 'test-offline', model: 'script' } });
+  const handle = await initial.ctx.agents.create({ sessionId: SessionId(sessionId), meta:{cwd:initial.dir}, agentOptions: { provider: 'test-offline', model: 'script' } });
   await initial.ctx.sessions.flush(handle.agent.session);
   await handle.dispose(); await initial.dispose();
   await until(() => Date.now() - Date.parse(claim.attempt.createdAt) > 110);

@@ -23,7 +23,8 @@ export function validateResultValidationFailure(value: unknown): asserts value i
 }
 
 export type Role = 'planner' | 'executor' | 'both'
-export type Operation = 'claim' | 'renew' | 'submit' | 'cancel' | 'receipt' | 'bindSession' | 'markRunning' | 'getRun' | 'getAttempt' | 'acknowledgeCancellation' | 'listWork' | 'observe' | 'delegate' | 'taskHistory' | 'taskWait' | 'taskNote' | 'taskReport' | 'heartbeat' | 'nodeStatus' | 'retryBeforeEffects' | 'offerApproval' | 'approvalStatus' | 'cancelApproval' | 'executorIdentity' | 'sessionContext' | 'selectTaskSession' | 'sessionMessages' | 'sessionMessageReply' | 'projectSnapshot' | 'projectCollaborate'
+export const EXECUTOR_OPERATIONS = ['claim', 'renew', 'submit', 'cancel', 'receipt', 'bindSession', 'markRunning', 'getRun', 'getAttempt', 'acknowledgeCancellation', 'listWork', 'observe', 'delegate', 'taskHistory', 'taskWait', 'taskNote', 'taskReport', 'heartbeat', 'nodeStatus', 'retryBeforeEffects', 'offerApproval', 'approvalStatus', 'cancelApproval', 'executorIdentity', 'sessionContext', 'selectTaskSession', 'sessionMessages', 'sessionMessageReply', 'projectSnapshot', 'projectCollaborate', 'executionModelRequests', 'completeExecutionModels', 'executionModelView', 'reportAdmission'] as const
+export type Operation = typeof EXECUTOR_OPERATIONS[number]
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json }
 export const DEFAULT_MAX_BODY_BYTES = 64 * 1024
 export const DEFAULT_MAX_RESPONSE_BYTES = 128 * 1024
@@ -65,10 +66,11 @@ export type AuthMode = 'ed25519' | 'trusted-network'
 /** Network identity is supplied by the transport, never by these wire fields. */
 export type TrustedNetworkEnvelope = Omit<Envelope, 'version' | 'keyId' | 'signature'> & { version: 2; authMode: 'trusted-network' }
 export type CommandEnvelope = Envelope | TrustedNetworkEnvelope
-export type AuthorizedPeer = Pick<Peer, 'nodeId' | 'audience' | 'operations' | 'workspaces' | 'capabilities'>
+export type AuthorizedPeer = Pick<Peer, 'nodeId' | 'audience' | 'operations' | 'workspaces' | 'capabilities'> & { managedAccess?: true; networkSource?: string }
 export interface TransportIdentity { remoteAddress?: string; localAddress?: string; localPort?: number }
 export interface RequestVerifier {
   readonly authMode: AuthMode
+  admitIdentity?(envelope: CommandEnvelope, peer: AuthorizedPeer): void
   verify(envelope: CommandEnvelope, now?: number, transport?: TransportIdentity): AuthorizedPeer
 }
 export class ProtocolError extends Error {
@@ -126,7 +128,7 @@ export function parseCommandEnvelope(body: Uint8Array | string, authMode: AuthMo
   for (const key of ['nodeId', 'audience', 'commandId', 'nonce',...(authMode === 'ed25519' ? ['keyId'] : [])]) insist(identifier(e[key]), `INVALID_${key}`)
   insist(Number.isSafeInteger(e.sequence) && Number(e.sequence) > 0, 'INVALID_SEQUENCE')
   insist(Number.isSafeInteger(e.issuedAt) && Number.isSafeInteger(e.expiresAt), 'INVALID_TIME')
-  insist(['claim','renew','submit','cancel','receipt','bindSession','markRunning','getRun','getAttempt','acknowledgeCancellation','listWork','observe','delegate','taskHistory','taskWait','taskNote','taskReport','heartbeat','nodeStatus','retryBeforeEffects','offerApproval','approvalStatus','cancelApproval','executorIdentity','sessionContext','selectTaskSession','sessionMessages','sessionMessageReply','projectSnapshot','projectCollaborate'].includes(String(e.operation)), 'UNKNOWN_OPERATION')
+  insist(['claim','renew','submit','cancel','receipt','bindSession','markRunning','getRun','getAttempt','acknowledgeCancellation','listWork','observe','delegate','taskHistory','taskWait','taskNote','taskReport','heartbeat','nodeStatus','retryBeforeEffects','offerApproval','approvalStatus','cancelApproval','executorIdentity','sessionContext','selectTaskSession','sessionMessages','sessionMessageReply','projectSnapshot','projectCollaborate','executionModelRequests','completeExecutionModels','executionModelView','reportAdmission'].includes(String(e.operation)), 'UNKNOWN_OPERATION')
   insist(isRecord(e.payload), 'INVALID_PAYLOAD')
   if (authMode === 'ed25519') insist(typeof e.signature === 'string' && /^[A-Za-z0-9_-]{86}$/.test(e.signature), 'INVALID_SIGNATURE', 401)
   canonical(e)

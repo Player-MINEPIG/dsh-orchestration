@@ -1,4 +1,5 @@
 import type { ExecutionRoute } from "../contracts.js";
+import type { ExecutionModelChoice } from "../execution-models.js";
 export interface ProjectCollaborationInput {
   action: "activate" | "status" | "nodes" | "dispatch" | "update" | "submit";
   sessionId: string;
@@ -8,6 +9,8 @@ export interface ProjectCollaborationInput {
   goal?: string;
   summary?: string;
   route?: ExecutionRoute;
+  nodeId?: string;
+  executionModel?: ExecutionModelChoice;
   description?: string;
 }
 export interface CollaborationSummary {

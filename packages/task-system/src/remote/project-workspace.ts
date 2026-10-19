@@ -5,11 +5,22 @@ import { promisify } from "node:util";
 import { canonical, digest, insist } from "./protocol.js";
 import { projectContext } from "../project-context.js";
 import type { Claim } from "./ports.js";
-export type WorkspaceBinding = { path: string; projectId: string | null; root?: string };
+export type WorkspaceBinding = {
+  path: string;
+  projectId: string | null;
+  root?: string;
+};
 export interface WorkspaceMemory {
   sessionWorkspace(key: string): WorkspaceBinding | undefined;
   rememberSessionWorkspace(key: string, value: WorkspaceBinding): void;
-  dispatches(): {sessionId: string; claim: {task: {taskId: string}; attempt: {nodeId: string}; run: {projectContext?: unknown}}}[];
+  dispatches(): {
+    sessionId: string;
+    claim: {
+      task: { taskId: string };
+      attempt: { nodeId: string };
+      run: { projectContext?: unknown };
+    };
+  }[];
   legacySchedulerIs(schedulerId: string, nodeId: string): boolean;
 }
 
@@ -63,7 +74,12 @@ async function file(path: string, content: string) {
     );
   }
 }
-async function directory(parent: string, name: string, identity: unknown) {
+async function createDirectory(
+  parent: string,
+  name: string,
+  identity: unknown,
+  adoptSelectedTemporary = false,
+) {
   const path = join(parent, name),
     proof = canonical(identity);
   let created = false;
@@ -75,15 +91,73 @@ async function directory(parent: string, name: string, identity: unknown) {
   }
   await inside(parent, path);
   insist((await lstat(path)).isDirectory(), "PROJECT_WORKSPACE_NOT_DIRECTORY");
-  // Never adopt a pre-existing unmarked directory, even if its name matches.
-  if (!created)
-    insist(
-      (await readFile(join(path, marker), "utf8")) === proof,
-      "PROJECT_WORKSPACE_CONFLICT",
-      409,
-    );
+  if (!created) {
+    try {
+      insist(
+        (await readFile(join(path, marker), "utf8")) === proof,
+        "PROJECT_WORKSPACE_CONFLICT",
+        409,
+      );
+    } catch (error) {
+      if (
+        !adoptSelectedTemporary ||
+        (error as NodeJS.ErrnoException).code !== "ENOENT"
+      )
+        throw error;
+    }
+  }
   await file(join(path, marker), proof);
   return path;
+}
+
+const directoryWrites = new Map<string, Promise<unknown>>();
+async function directory(
+  parent: string,
+  name: string,
+  identity: unknown,
+  adoptSelectedTemporary = false,
+) {
+  const key = join(parent, name),
+    previous = directoryWrites.get(key) ?? Promise.resolve();
+  const current = previous
+    .catch(() => {})
+    .then(() =>
+      createDirectory(parent, name, identity, adoptSelectedTemporary),
+    );
+  directoryWrites.set(key, current);
+  try {
+    return await current;
+  } finally {
+    if (directoryWrites.get(key) === current) directoryWrites.delete(key);
+  }
+}
+export async function temporaryTaskDirectory(parent: string) {
+  return directory(
+    await realpath(parent),
+    "temporary-tasks",
+    { kind: "temporary-tasks", version: 1 },
+    true,
+  );
+}
+export async function temporaryTaskMetadata(
+  cwd: string,
+  schedulerId: string,
+  taskId: string,
+  role: "planner" | "executor" = "executor",
+) {
+  const metadata = await directory(cwd, ".dsh-project-context", {
+    kind: "temporary-task-context",
+  });
+  const scheduler = await directory(
+    metadata,
+    component(schedulerId, "scheduler"),
+    { schedulerId },
+  );
+  const task = await directory(scheduler, component(taskId, "task"), {
+    schedulerId,
+    taskId,
+  });
+  return directory(task, role, { schedulerId, taskId, role });
 }
 
 /** Explicit workspace constraints retain their authorized root. Otherwise the operator's
@@ -94,15 +168,26 @@ type WorkspaceInput = {
   projectRoot?: string | null;
   claim: {
     task: Pick<Claim["task"], "taskId">;
-    run: Pick<Claim["run"], "projectContext" | "parentRunId" | "workspaceConstraint">;
+    run: Pick<
+      Claim["run"],
+      "projectContext" | "parentRunId" | "workspaceConstraint"
+    >;
     attempt: Pick<Claim["attempt"], "nodeId">;
   };
   sessionId: string;
   resume: boolean;
   store: WorkspaceMemory;
 };
-export function workspaceSessionKey(claim: WorkspaceInput["claim"], sessionId: string) {
-  return digest([claim.run.projectContext!.schedulerId, claim.attempt.nodeId, claim.task.taskId, sessionId]);
+export function workspaceSessionKey(
+  claim: WorkspaceInput["claim"],
+  sessionId: string,
+) {
+  return digest([
+    claim.run.projectContext!.schedulerId,
+    claim.attempt.nodeId,
+    claim.task.taskId,
+    sessionId,
+  ]);
 }
 const provisioning = new Map<string, Promise<unknown>>();
 /** Serialize only short filesystem provisioning, never model execution. */
@@ -110,7 +195,12 @@ export async function executionWorkspace(
   input: WorkspaceInput,
 ): Promise<string> {
   const key = input.claim.run.projectContext
-    ? digest([input.claim.run.projectContext.schedulerId, input.claim.attempt.nodeId, input.claim.run.projectContext.project?.projectId ?? input.claim.task.taskId])
+    ? digest([
+        input.claim.run.projectContext.schedulerId,
+        input.claim.attempt.nodeId,
+        input.claim.run.projectContext.project?.projectId ??
+          input.claim.task.taskId,
+      ])
     : input.parent;
   const prior = provisioning.get(key) ?? Promise.resolve();
   const operation = prior
@@ -138,11 +228,13 @@ async function provisionExecutionWorkspace(
     parent = prior.root ?? parent;
     insist(prior.projectId === projectId, "TASK_PROJECT_CHANGED", 409);
     if (claim.run.parentRunId) {
-      const shared = join(
-        parent,
-        component(context.schedulerId, "scheduler"),
-        projectId ? component(projectId, "project") : "temporary-tasks",
-      );
+      const shared = projectId
+        ? join(
+            parent,
+            component(context.schedulerId, "scheduler"),
+            component(projectId, "project"),
+          )
+        : join(parent, "temporary-tasks");
       insist(
         prior.path !== parent && prior.path !== shared,
         "RECURSIVE_WORKSPACE_REQUIRES_NEW_SESSION",
@@ -177,15 +269,22 @@ async function provisionExecutionWorkspace(
     store.rememberSessionWorkspace(key, { path: parent, projectId });
     return parent;
   }
-  if (input.projectRoot && !claim.run.workspaceConstraint) parent = await realpath(input.projectRoot);
+  if (input.projectRoot && !claim.run.workspaceConstraint)
+    parent = await realpath(input.projectRoot);
   const projectKey = `project:${digest([context.schedulerId, claim.attempt.nodeId, projectId, claim.run.workspaceConstraint ?? null])}`;
-  const existingProject = projectId ? store.sessionWorkspace(projectKey) : undefined;
+  const existingProject = projectId
+    ? store.sessionWorkspace(projectKey)
+    : undefined;
   if (existingProject?.root) {
-    if (claim.run.workspaceConstraint) await inside(input.parent, existingProject.path);
+    if (claim.run.workspaceConstraint)
+      await inside(input.parent, existingProject.path);
     parent = existingProject.root;
-  }
-  else if (projectId && parent !== input.parent) {
-    const legacyProject = join(input.parent, component(context.schedulerId, "scheduler"), component(projectId, "project"));
+  } else if (projectId && parent !== input.parent) {
+    const legacyProject = join(
+      input.parent,
+      component(context.schedulerId, "scheduler"),
+      component(projectId, "project"),
+    );
     try {
       await lstat(legacyProject);
       parent = input.parent;
@@ -193,27 +292,24 @@ async function provisionExecutionWorkspace(
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
   }
-  const scheduler = await directory(
-    parent,
-    component(context.schedulerId, "scheduler"),
-    { schedulerId: context.schedulerId },
-  );
+  const scheduler = projectId
+    ? await directory(parent, component(context.schedulerId, "scheduler"), {
+        schedulerId: context.schedulerId,
+      })
+    : parent;
   const project = projectId
     ? await directory(scheduler, component(projectId, "project"), {
         schedulerId: context.schedulerId,
         projectId,
       })
-    : await directory(scheduler, "temporary-tasks", {
-        schedulerId: context.schedulerId,
-        temporary: true,
-      });
-  if (projectId && !existingProject) store.rememberSessionWorkspace(projectKey, {path: project, projectId, root: parent});
-  let path = project;
-  if (!projectId && !claim.run.parentRunId) {
-    path = await directory(project, component(claim.task.taskId, "task"), {
-      schedulerId: context.schedulerId, taskId: claim.task.taskId, temporary: true,
+    : await temporaryTaskDirectory(parent);
+  if (projectId && !existingProject)
+    store.rememberSessionWorkspace(projectKey, {
+      path: project,
+      projectId,
+      root: parent,
     });
-  }
+  let path = project;
   if (projectId) {
     let top: string | undefined;
     try {
@@ -254,22 +350,19 @@ async function provisionExecutionWorkspace(
     }
   }
   if (claim.run.parentRunId && path === project) {
-    const children = await directory(scheduler, "delegated-tasks", {
-      schedulerId: context.schedulerId,
-      kind: "recursive-task-workspaces",
-    });
-    const group = await directory(
-      children,
-      component(projectId ?? "temporary", "project"),
-      {
-        schedulerId: context.schedulerId,
-        projectId,
-        kind: "recursive-task-workspaces",
-      },
-    );
+    const children = projectId
+      ? await directory(scheduler, "delegated-tasks", {
+          schedulerId: context.schedulerId,
+          kind: "recursive-task-workspaces",
+        })
+      : await directory(
+          await directory(project, ".dsh", { kind: "task-runtime" }),
+          "delegated",
+          { kind: "recursive-task-workspaces" },
+        );
     path = await directory(
-      group,
-      `${component(claim.task.taskId, "task")}-${digest(sessionId).slice(0, 12)}`,
+      children,
+      `${component(claim.task.taskId, "task")}-${digest([context.schedulerId, sessionId]).slice(0, 12)}`,
       {
         schedulerId: context.schedulerId,
         projectId,
@@ -280,11 +373,13 @@ async function provisionExecutionWorkspace(
     );
   }
   const revision = context.project?.revision ?? 0;
-  const metadata = await directory(path, ".dsh-project-context", {
-    schedulerId: context.schedulerId,
-    projectId,
-    taskId: null,
-  });
+  const metadata = projectId
+    ? await directory(path, ".dsh-project-context", {
+        schedulerId: context.schedulerId,
+        projectId,
+        taskId: null,
+      })
+    : await temporaryTaskMetadata(path, context.schedulerId, claim.task.taskId);
   await file(join(metadata, `revision-${revision}.json`), canonical(context));
   await file(
     join(metadata, "TOOLS.md"),
