@@ -202,7 +202,7 @@ test("central ledger pins parent execution, inherits backend grants, retains ste
     title: "Parent",
     policy: {
       allowedBackends: ["codex-luna-low"],
-      allowedTools: ["task_delegate"],
+      allowedTools: ["task_dispatch"],
       maxChildren: 3,
     },
   }).value;

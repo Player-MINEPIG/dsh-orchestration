@@ -231,6 +231,6 @@ DSH **设置 → 决策** 由 `@dsh-task/typed-decisions` 自己提供，不依�
 
 保存节点默认模型时，调度端使用当前新鲜目录确认用户选择的精确模型与档位。目录过期时有界刷新，不要求重新选择，也不因目录版本变化替换草稿。刷新失败或部分目录未确认所选项时保留草稿；仅完整新鲜目录缺项才明确报告该选择不可用。并发修改默认值或调度端身份变化仍拒绝保存。
 
-公共 `task_plan` 的 `provider/model/reasoningEffort` 仍指决策调用；实际工作模型使用独立 `executionModel` 对象。调用者应将用户明确的模型要求放入该对象，未指定就省略。`task_run` 选择节点后可使用其默认；`action=repair` 带原 `runId` 与 `expectedActionVersion` 可修复未领取请求，保留原 ID，不新增 Attempt。定时任务必须绑定项目。
+公共 `task_plan` 的 `provider/model/reasoningEffort` 仍指决策调用；实际工作模型使用独立 `executionModel` 对象。调用者应将用户明确的模型要求放入该对象，未指定就省略。`task_dispatch` 选择节点后可使用其默认；`task_repair_dispatch` 带原 `runId` 与 `expectedActionVersion` 可修复未领取请求，保留原 ID，不新增 Attempt。定时任务必须绑定项目。
 
 临时任务的执行上下文由权威调度端生成，无需调用方创建规划会话或手填工作区。执行端缺目录、显式模型不可用或明确工作区绑定缺失时，任务中心及查询工具显示原因和下一步。正常离线、容量满和等待目录属于等待状态；恢复配置后继续原请求，不把等待伪造为执行失败。

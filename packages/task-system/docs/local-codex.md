@@ -26,7 +26,7 @@ Each execution gets an isolated temporary Codex home. Only authentication is cop
 
 ## Tool lifecycle
 
-In an ordinary session, call `task_delegate` with a stable `commandId`, a `title` and the full task prompt in `description`; `backend: "codex"` is optional. The same ID and identical instructions return the existing task instead of running it twice. Local delegation rejects ledger-only `route`, `policy`, `configuration` and `display` options. Existing owned-task delegation still uses its authoritative ledger, and cannot bypass it by selecting this backend.
+In an ordinary session, call `codex_delegate` with a stable `commandId`, a `title` and the full task prompt in `description`. The same ID and identical instructions return the existing task instead of running it twice. Local delegation rejects ledger-only `route`, `policy`, `configuration` and `display` options. Owned tasks use `task_dispatch` through their authoritative ledger and cannot call `codex_delegate`.
 
 `reasoningEffort` optionally overrides the host's configured effort for one local task. For the default model, supported values include `low`, `medium`, `high`, `xhigh`, `max` and `ultra`; other models must support the requested value. Omission uses the host default (`high` unless configured otherwise). Receipts and `codex_status` return the selected model, effort, original parent mode and separate sandbox/approval/reviewer fields. Retrying an existing ID cannot change its effort; omitting the override on a retry returns the original selection even if the host default has changed. Owned ledger tasks continue to use `route.reasoningEffort`.
 

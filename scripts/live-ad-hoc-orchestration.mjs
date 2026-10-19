@@ -33,18 +33,18 @@ async function run(ctx,config,signal) {
     const combined=AbortSignal.any([signal,cancel.signal]);let steps=0;
     const requestId=config.requestId??'live-ad-hoc-20261006-plan';
     handle=await ctx.agents.create({sessionId:config.sessionId??'live-ad-hoc-20261006-conversation',agentOptions:{provider:'deepseek-official',model:'deepseek-flash',reasoningEffort:'off',maxTokens:1024},signal:combined,setup:(agentCtx,agent)=>{
-      agentCtx.tools.restrict({allow:['task_nodes','task_plan','task_query']});
-      agentCtx.systemPrompt.section({name:'live-acceptance-identity',order:95,interpolate:false,text:`This is one bounded authorized acceptance request. Use requestId ${requestId} for task_plan propose and apply. Do not specify route, workspaceId or decision provider/model/effort overrides. Create one new Task for this incoming request. Do not create or modify other tasks. After applying the proposal, return a short acknowledgement; do not wait for execution in this conversation.`});
+      agentCtx.tools.restrict({allow:['task_nodes','task_plan','task_dispatch','task_query']});
+      agentCtx.systemPrompt.section({name:'live-acceptance-identity',order:95,interpolate:false,text:`This is one bounded authorized acceptance request. Use requestId ${requestId} for task_plan and commandId ${requestId} for task_dispatch. Do not specify route, workspaceId or decision provider/model/effort overrides. Create one new Task for this incoming request. Do not create or modify other tasks. After applying the proposal, return a short acknowledgement; do not wait for execution in this conversation.`});
       agentCtx.on('agent/pre-step',async(_payload,next)=>++steps<=6?next():{kind:'reject'});
       agentCtx.tools.guard(exec=>{
         if(exec.agent!==agent)return 'Foreign agent';
-        if(exec.name==='task_plan') {
+        if(exec.name==='task_plan'||exec.name==='task_dispatch') {
           const args=exec.arguments;
           if(args.workspaceId)return 'Omit workspaceId: the user supplied no workspace constraint; the executor selects its workspace';
-          if(args.requestId!==requestId||args.route||args.provider||args.model||args.reasoningEffort)return 'Acceptance requires an unassigned natural-language task';
-          if(args.action==='propose'&&!String(args.description).includes(marker))return 'Complete task instructions required';
-          if(args.action==='apply') {
-            const record=ledger.getDecision(args.requestId),proposal=record?.proposal;
+          if((exec.name==='task_plan'?args.requestId:args.commandId)!==requestId||args.route||args.provider||args.model||args.reasoningEffort)return 'Acceptance requires an unassigned natural-language task';
+          if(exec.name==='task_plan'&&!String(args.description).includes(marker))return 'Complete task instructions required';
+          if(exec.name==='task_dispatch') {
+            const record=ledger.getDecision(args.requestId??args.commandId),proposal=record?.proposal;
             if(record?.receipt?.status!=='answered'||proposal?.kind!=='proposal'||proposal.persistence!=='create'||proposal.executor?.id!=='mbp-executor'||proposal.modelRoute?.provider!=='deepseek-official'||proposal.modelRoute?.model!=='deepseek-flash')return 'Outside bounded acceptance catalog';
           }
         }
@@ -58,7 +58,7 @@ async function run(ctx,config,signal) {
     require(record&&record.receipt.status==='answered'&&applied?.value?.runId,'CONVERSATION_DID_NOT_DISPATCH');
     require(!record.input.route&&!record.input.provider&&!record.input.model&&!record.input.reasoningEffort,'CALLER_PINNED_ROUTE');
     result.planning=record;result.applied=applied;result.taskId=applied.value.taskId;result.runId=applied.value.runId;result.conversationSteps=steps;save();
-    result.checks.push('real conversation model received dispatch tools and preferred a remote executor','real decision model selected execution route without caller model/node/effort','task_plan apply created exactly one assigned Run');
+    result.checks.push('real conversation model received dispatch tools and preferred a remote executor','real decision model selected execution route without caller model/node/effort','task_dispatch created exactly one assigned Run');
     await handle.dispose();handle=undefined;
     const deadline=Date.now()+100000;
     while(Date.now()<deadline) {

@@ -39,14 +39,14 @@ test('a project message uses real native dispatch tools and persists offline que
   try{const runtime=h.ctx.taskSystem.projects;h.ledger.registerNode('worker',worker);runtime.saveSettings({root:join(h.dir,'projects'),expectedRevision:0});
     const {projectId}=await runtime.create({commandId:'new',title:'Phone task',goal:'Small real dispatch'});
     const command='message1',requestId='project-message:'+command;
-    h.adapter.script.push({name:'task_nodes',args:{}},{name:'task_plan',args:{action:'propose',requestId,title:'Calculate',description:'Compute 1+1 and report'}},{name:'task_plan',args:{action:'apply',requestId}},'任务已经排队，等待执行端上线');
+    h.adapter.script.push({name:'task_nodes',args:{}},{name:'task_plan',args:{requestId,title:'Calculate',description:'Compute 1+1 and report'}},{name:'task_dispatch',args:{commandId:requestId}},'任务已经排队，等待执行端上线');
     const input={projectId,commandId:command,text:'请计算 1+1，交给执行端'};
     runtime.send(input);assert.equal((await settle(h,command)).state,'completed');
     const snapshot=runtime.snapshot();assert.equal(snapshot.tasks.length,1,JSON.stringify(h.adapter.requests.at(-1)));assert.equal(snapshot.tasks[0].project,projectId);assert.equal(snapshot.tasks[0].status,'queued');
     assert.equal(h.ledger.snapshot().attempts.length,0);assert.equal(snapshot.runs.length,0);assert.equal(snapshot.tasks[0].nativeState,'inbox');assert.equal(snapshot.tasks[0].report,'尚未收到执行报告');assert.equal(snapshot.tasks[0].recommendation[0].nodeId,'worker');
     runtime.send(input);assert.equal(h.ledger.snapshot().runs.length,0);assert.equal(h.adapter.requests.length,4);
     assert.throws(()=>runtime.send({...input,text:'different'}),/reused/);
-    const request=h.adapter.requests[0];assert.deepEqual(request.tools.map(t=>t.name).sort(),['task_children','task_history','task_nodes','task_plan','task_query'].sort());
+    const request=h.adapter.requests[0];assert.deepEqual(request.tools.map(t=>t.name).sort(),['task_wait','task_history','task_nodes','task_plan','task_dispatch','task_query'].sort());
     assert.match(JSON.stringify(request.messages),/project-message:message1/);
     const conversation=await runtime.conversation(projectId);assert.equal(conversation.messages[0].role,'user');assert.equal(conversation.messages.filter(m=>m.role==='user').length,1);assert.match(conversation.messages.at(-1).text,/排队/);
     const second=await runtime.create({commandId:'new2',title:'Other',goal:'Isolated'}),other=runtime.snapshot().projects.find(p=>p.id===second.projectId);
@@ -57,7 +57,7 @@ test('a project message uses real native dispatch tools and persists offline que
     h.ledger.managementDatabase().prepare("UPDATE pr_dispatch SET updated='2000-01-01T00:00:00Z'").run();
     runtime.tick();assert.equal(h.ledger.getRun(runtime.snapshot().runs[0].id).state,'cancelled');assert.equal(runtime.snapshot().tasks[0].nativeState,'inbox');assert.equal(runtime.snapshot().tasks[0].stateLabel,'等待执行端接收');
     const replanId='project-message:replan-message';
-    h.adapter.script.push({name:'task_plan',args:{action:'propose',requestId:replanId,title:'Replan',description:'Replan the same pending task'}},{name:'task_plan',args:{action:'apply',requestId:replanId}},'已更新候选');
+    h.adapter.script.push({name:'task_plan',args:{requestId:replanId,title:'Replan',description:'Replan the same pending task'}},{name:'task_dispatch',args:{commandId:replanId}},'已更新候选');
     runtime.send({projectId,commandId:'replan-message',text:'重新规划尚未领取的同一任务'});assert.equal((await settle(h,'replan-message')).state,'completed');
     assert.equal(h.ledger.snapshot().tasks.length,1);assert.equal(h.ledger.managementDatabase().prepare('SELECT decision FROM pr_dispatch').get().decision,replanId);
     runtime.enqueueDecision(requestId,snapshot.tasks[0].id);assert.equal(h.ledger.managementDatabase().prepare('SELECT decision FROM pr_dispatch').get().decision,replanId,'older recovery receipts must not overwrite a replan');
@@ -89,7 +89,7 @@ test('ordered candidate admission skips offline primary, persists fallback order
   const runtime=h.ctx.taskSystem.projects;runtime.saveSettings({root:join(h.dir,'projects'),expectedRevision:0});
   const {projectId}=await runtime.create({commandId:'new-fallback',title:'Fallback',goal:'Use alternate executor'});
   const command='fallback-message',requestId='project-message:'+command;
-  h.adapter.script.push({name:'task_plan',args:{action:'propose',requestId,title:'Small task',description:'Report two'}},{name:'task_plan',args:{action:'apply',requestId}},'已提交');
+  h.adapter.script.push({name:'task_plan',args:{requestId,title:'Small task',description:'Report two'}},{name:'task_dispatch',args:{commandId:requestId}},'已提交');
   runtime.send({projectId,commandId:command,text:'派发小任务'});assert.equal((await settle(h,command)).state,'completed');
   let task=runtime.snapshot().tasks[0];assert.deepEqual(task.recommendation.map(r=>r.nodeId),['worker','backup']);
   assert.deepEqual(task.candidateChecks,[{nodeId:'worker',reason:'offline'},{nodeId:'backup',reason:'assigned'}]);
@@ -184,7 +184,7 @@ test('continue dispatch reuses a safe project recommendation, queues offline and
  try {
   h.ledger.registerNode('node',worker);const runtime=h.ctx.taskSystem.projects;runtime.saveSettings({root:join(h.dir,'projects'),expectedRevision:0});
   const {projectId}=await runtime.create({commandId:'retry-project',title:'Retry project',goal:'Compute externally'}),requestId='project-message:retry-message';
-  h.adapter.script.push({name:'task_plan',args:{action:'propose',requestId,title:'Retry work',description:'Compute once'}},{name:'task_plan',args:{action:'apply',requestId}},'排队');
+  h.adapter.script.push({name:'task_plan',args:{requestId,title:'Retry work',description:'Compute once'}},{name:'task_dispatch',args:{commandId:requestId}},'排队');
   runtime.send({projectId,commandId:'retry-message',text:'派发'});await settle(h,'retry-message');
   h.ledger.recordNodeHeartbeat('online',{nodeId:'worker',runtimeReady:true,activeExecutions:0});runtime.tick();
   const run=h.ledger.snapshot().runs[0],a=h.ledger.claim('claim',{runId:run.runId,nodeId:'worker',ttlMs:10000}).value.attempt;
@@ -214,7 +214,7 @@ test('legacy unassigned tasks have isolated durable planning sessions and safe r
   assert.equal((await runtime.taskConversation(one.task.taskId)).sessionId,a.sessionId);
   const command='legacy-clarify';h.adapter.script.push('可以在任务详情点击重新尝试派发');runtime.sendTask({taskId:one.task.taskId,commandId:command,text:'说明这个任务失败后如何恢复'});await settle(h,command);
   assert.match((await runtime.taskConversation(one.task.taskId)).messages.at(-1).text,/重新尝试/);assert.equal((await runtime.taskConversation(two.task.taskId)).messages.length,0);assert.equal(h.ledger.snapshot().tasks.length,2);
-  assert.deepEqual(h.adapter.requests[0].tools.map(t=>t.name).sort(),['task_children','task_history','task_nodes','task_plan','task_query'].sort());
+  assert.deepEqual(h.adapter.requests[0].tools.map(t=>t.name).sort(),['task_wait','task_history','task_nodes','task_plan','task_dispatch','task_query'].sort());
   const input=operator(runtime,one.task.taskId,'retry','legacy-retry');await runtime.actOnTask(input);await runtime.actOnTask(input);
   let row=runtime.snapshot().tasks.find(t=>t.id===one.task.taskId);assert.equal(row.stateLabel,'等待执行端接收');assert.equal(row.status,'queued');assert.equal(row.project,'unassigned');assert.equal(row.recommendation[0].reasoningEffort,'off');assert.equal(h.ledger.snapshot().runs.length,2);assert.equal(h.ledger.getRun(one.run.runId).state,'failed');assert.equal(h.ledger.snapshot().reports.filter(r=>r.kind==='result').length,2);
   assert.throws(()=>runtime.assertDecisionScope(b.sessionId,'task-retry:legacy-retry'),/another temporary task/);
@@ -229,12 +229,12 @@ test('temporary conversation applies to the host-owned inbox task and cannot byp
   const runtime=h.ctx.taskSystem.projects;runtime.saveSettings({root:join(h.dir,'projects'),expectedRevision:0});h.ledger.registerNode('node',worker);
   const task=h.ledger.createTask('inbox-temporary',{title:'Temporary',description:'Compute externally'}).value;
   const conversation=await runtime.taskConversation(task.taskId),command='temporary-plan',requestId='project-message:'+command;
-  h.adapter.script.push({name:'task_plan',args:{action:'propose',requestId,title:'Calculate',description:'Compute externally'}},{name:'task_plan',args:{action:'apply',requestId}},'已排队');
+  h.adapter.script.push({name:'task_plan',args:{requestId,title:'Calculate',description:'Compute externally'}},{name:'task_dispatch',args:{commandId:requestId}},'已排队');
   runtime.sendTask({taskId:task.taskId,commandId:command,text:'安排这个任务'});assert.equal((await settle(h,command)).state,'completed');assert.equal(h.ledger.snapshot().tasks.length,1);assert.equal(runtime.snapshot().tasks[0].stateLabel,'等待执行端接收');assert.equal(runtime.snapshot().tasks[0].recommendation[0].nodeId,'worker');
   assert.equal(h.ledger.getDecision(requestId).proposal.attachTaskId,task.taskId);
   h.ledger.recordNodeHeartbeat('up',{nodeId:'worker',runtimeReady:true,activeExecutions:0});runtime.tick();const run=h.ledger.snapshot().runs[0],a=h.ledger.claim('claim-temp',{runId:run.runId,nodeId:'worker',ttlMs:10000}).value.attempt;
   h.ledger.submit('temp-failed',{runId:a.runId,attemptId:a.attemptId,nodeId:a.nodeId,fence:a.fence,outcome:'failure',summary:'Failed'});
-  const request2='project-message:unsafe-model-retry';h.adapter.script.push({name:'task_plan',args:{action:'propose',requestId:request2,title:'Calculate',description:'Try again'}},{name:'task_plan',args:{action:'apply',requestId:request2}},'需要点击重试');runtime.sendTask({taskId:task.taskId,commandId:'unsafe-model-retry',text:'重做'});await settle(h,'unsafe-model-retry');
+  const request2='project-message:unsafe-model-retry';h.adapter.script.push({name:'task_plan',args:{requestId:request2,title:'Calculate',description:'Try again'}},{name:'task_dispatch',args:{commandId:request2}},'需要点击重试');runtime.sendTask({taskId:task.taskId,commandId:'unsafe-model-retry',text:'重做'});await settle(h,'unsafe-model-retry');
   assert.equal(h.ledger.snapshot().runs.length,1);assert.equal(h.ledger.getTask(task.taskId).state,'failed');assert.equal(h.ledger.commandReceipt('apply-decision:'+request2),undefined);
   assert.throws(()=>runtime.assertProposalScope(conversation.sessionId,{requestId,route:{nodeId:'local'}}),/current message/);
  }finally{await h.dispose();await engine.close();}

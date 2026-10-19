@@ -38,7 +38,7 @@ The Workflow panel shows device connections and the program/Agent steps inside e
 
 ## Configuration and roles
 
-For local Desktop Codex delegation through `task_delegate`, session monitoring and parent acceptance, see [Local Codex delegation](docs/local-codex.md).
+For local Desktop Codex delegation through `codex_delegate`, session monitoring and parent acceptance, see [Local Codex delegation](docs/local-codex.md).
 
 `databasePath`, `nodeId`, `role` (`planner`, `executor`, `both`), lifecycle timing and tool limits are explicit native Config fields. `autoExecute` is off by default. Enable it only with registered model/node/workspace capabilities and the intended DSH Agent preset permissions. `maxConcurrent` limits local execution. Scheduler admission uses an explicitly configured route or leaves a run queued for later routing. The plugin owns its timers, native handles, observer and cleanup; an external supervisor may keep the DSH host alive.
 
@@ -83,11 +83,21 @@ For an ad hoc user message, no execution model or node is required in the input.
 Planner/both conversations receive an orchestration prompt that prefers dispatch
 to an eligible executor. `task_nodes` exposes each visible node's roles,
 capabilities, supported provider/model/effort tuples and sampled runtime health.
-Use `task_plan` with `action: "propose"`, a stable `requestId`, `title` and complete
-task instructions in `description`; omit `route`. With planning decisions
-enabled and a configured decision provider, the planner selects a catalog route.
-Apply a ready proposal with `action: "apply"` and the same `requestId`; application
-creates the assigned Run, so a second `task_run` would duplicate dispatch.
+Use `task_dispatch` with a stable `commandId`, `title`, and complete instructions
+in `description`; omit `route` to let planning choose an eligible executor.
+To review a plan first, call `task_plan` with a stable `requestId`, `title`, and
+`description`. This tool only proposes. Dispatch that proposal with
+`task_dispatch({commandId: requestId, requestId})`.
+An existing draft uses `task_dispatch({commandId, taskId, nodeId})`.
+`task_create` creates a draft without execution. `task_repair_dispatch` repairs
+the same unclaimed Run using `runId` and `expectedActionVersion`.
+`task_wait({taskId, timeoutMs: 0})` inspects current settlement without waiting.
+Owned agents use the same `task_dispatch` tool to create and dispatch a child
+through their authoritative fenced lease. Ordinary local Desktop Codex work uses
+`codex_delegate`, which retains the parent workspace and permissions.
+The old `task_run`, `task_delegate`, `task_children`, and `project_dispatch`
+public tools are removed. Active `/project` sessions dispatch through
+`task_dispatch` with their host-bound project identity.
 The top-level `provider`, `model` and `reasoningEffort` parameters of `task_plan`
 override the decision call, not the workload route. Normally leave them unset.
 Without a usable decision service, routing stays pending. Brief conversation
@@ -95,7 +105,7 @@ can still be answered locally. Owned workload agents do not receive the
 conversation's dispatch preference.
 
 Channel tool restrictions still apply. Feishu planner operators must enable
-task integration and include `task_nodes`, `task_plan` and the desired task
+task integration and include `task_nodes`, `task_dispatch`, optional `task_plan`, and the desired task
 query tools in `plannerTools`; installing the task package does not grant
 channel planning authority.
 

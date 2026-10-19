@@ -164,7 +164,7 @@ test('native observed text reaches signed planner intake within workspace scope 
 
 test('two real native executor hosts delegate through the signed coordinator, enforce subtree scope, wait, and recover without replay', { timeout: 30000 }, async () => {
   const dir = mkdtempSync(join(tmpdir(), 'dsh-native-recursion-'));
-  const configA = { role: 'executor', nodeId: 'alpha', executionTools: ['task_delegate', 'task_note'] };
+  const configA = { role: 'executor', nodeId: 'alpha', executionTools: ['task_dispatch', 'task_note'] };
   let a = await createNativeHarness({ dir: join(dir, 'alpha'), config: configA });
   const b = await createNativeHarness({ dir: join(dir, 'beta'), config: { role: 'executor', nodeId: 'beta' } });
   const ledger = TaskLedger.open(join(dir, 'coordinator.sqlite'), { role: 'planner', nodeId: 'planner' });
@@ -201,14 +201,17 @@ test('two real native executor hosts delegate through the signed coordinator, en
     for (const [index, nodeId] of nodes.entries()) {
       ledger.registerWorkspace(`workspace-${nodeId}`, { ...bindings[index], label: `Isolated ${nodeId}`, state: 'ready', createdAt: new Date().toISOString() });
       ledger.registerNode(`node-${nodeId}`, { nodeId, roles: ['executor'], models: [{ provider: 'test-offline', model: 'script', reasoningEfforts: [] }], capabilities: ['native-offline'], workspaceIds: [bindings[index].workspaceId], maxConcurrent: 1, enabled: true, lastSeenAt: new Date().toISOString() });
+      const request=ledger.executionModels.request(`catalog-${nodeId}`,{nodeId}).catalog.request;
+      ledger.completeExecutionModels(`complete-catalog-${nodeId}`,{nodeId,requestId:request.requestId,generation:request.generation,result:{state:'success',observedAt:Date.now(),complete:true,models:[{provider:'test-offline',model:'script'}]}});
+
     }
     const route = index => ({ nodeId: nodes[index], workspaceId: bindings[index].workspaceId, provider: 'test-offline', model: 'script', requiredCapabilities: ['native-offline'] });
-    const parent = ledger.createTask('recursive-root', { title: 'Coordinate scoped native child', workspaceId: bindings[0].workspaceId, policy: { allowedNodeIds: nodes, allowedWorkspaceIds: bindings.map(binding => binding.workspaceId), allowedTools: ['task_delegate', 'task_note'], maxRuntimeMs: 15000, settlementQuietMs: 50, maxDepth: 2 } }).value;
+    const parent = ledger.createTask('recursive-root', { title: 'Coordinate scoped native child', workspaceId: bindings[0].workspaceId, policy: { allowedNodeIds: nodes, allowedWorkspaceIds: bindings.map(binding => binding.workspaceId), allowedTools: ['task_dispatch', 'task_note'], maxRuntimeMs: 15000, settlementQuietMs: 50, maxDepth: 2 } }).value;
     ledger.queueTaskNote('root-context-note', { taskId: parent.taskId, body: 'Coordinator-provided context for the next run.', actor: 'offline-operator' });
     const run = ledger.createRun('recursive-root-run', { taskId: parent.taskId, route: route(0) }).value;
     const foreign = ledger.createTask('foreign-recursive-task', { title: 'Confidential unrelated coordinator task' }).value;
     a.adapter.script.push(
-      { name: 'task_delegate', args: { commandId: 'delegate-child', title: 'Scoped child on beta', route: route(1) } },
+      { name: 'task_dispatch', args: { commandId: 'delegate-child', title: 'Scoped child on beta', route: route(1) } },
       options => { child = toolValue(options).value; assert.equal(child.task.parentTaskId, parent.taskId); return { name: 'task_note', args: { commandId: 'future-child-note', taskId: child.task.taskId, body: 'Only a future child run may consume this note.' } }; },
       { name: 'task_history', args: { taskId: foreign.taskId } },
       options => { assert.equal(options.messages.findLast(message => message.role === 'tool').isError, true); assert.ok(!JSON.stringify(options.messages).includes(foreign.title)); return { name: 'task_report', args: { commandId: 'parent-progress', taskId: parent.taskId, title: 'Delegated', body: 'Waiting for a scoped child.' } }; },

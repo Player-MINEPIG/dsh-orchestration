@@ -845,27 +845,25 @@ test('native observation replay preserves historical candidates without newly in
 });
 
 test('explicit delegation tools create only descendants, inherit policy, and expose all-settled review', async () => {
-  const h = await harness({ config: { executionTools: ['task_create', 'task_run'], maxConcurrent: 2 }, script: ['hang'] });
+  const h = await harness({ config: { executionTools: ['task_create', 'task_dispatch'], maxConcurrent: 2 }, script: ['hang'] });
   try {
-    const { task, claim } = seed(h, '', { policy: { allowedTools: ['task_create', 'task_run'], maxDepth: 1 } });
+    const { task, claim } = seed(h, '', { policy: { allowedTools: ['task_create', 'task_dispatch'], maxDepth: 1 } });
     h.ledger.registerNode('delegation-capacity', { ...h.ledger.getNode('local'), maxConcurrent: 2 });
     const other = h.ledger.createTask('unrelated', { title: 'Other task' }).value;
     const pending = h.ctx.taskSystem.native.execute(claim);
     pending.catch(() => undefined);
     await until(() => h.adapter.requests.length);
     const agent = h.ctx.agents.get(h.ledger.getAttempt(claim.attempt.attemptId).sessionId);
-    const childResult = await tool(h.ctx, 'task_create', { commandId: 'owned-child', title: 'Delegated child' }, agent);
-    assert.equal(childResult.isError, false);
-    const child = childResult.value.value;
+    const unrelated = await tool(h.ctx, 'task_dispatch', { commandId: 'forbidden-sibling', taskId: other.taskId }, agent);
+    assert.equal(unrelated.isError, true);
+    const childRun = await tool(h.ctx, 'task_dispatch', { commandId: 'child-run', title: 'Delegated child', route: claim.run.route }, agent);
+    assert.equal(childRun.isError, false, JSON.stringify(childRun));
+    const child = childRun.value.value.task;
     assert.equal(child.parentTaskId, task.taskId);
     assert.deepEqual(child.policy.allowedTools, task.policy.allowedTools);
-    const unrelated = await tool(h.ctx, 'task_run', { commandId: 'forbidden-sibling', taskId: other.taskId }, agent);
-    assert.equal(unrelated.isError, true);
-    const childRun = await tool(h.ctx, 'task_run', { commandId: 'child-run', taskId: child.taskId, route: claim.run.route }, agent);
-    assert.equal(childRun.isError, false);
-    const waiting = await tool(h.ctx, 'task_children', { taskId: task.taskId, quietMs: 0 }, agent);
+    const waiting = await tool(h.ctx, 'task_wait', { taskId: task.taskId, quietMs: 0, timeoutMs: 0 }, agent);
     assert.equal(waiting.value.settled, false);
-    assert.deepEqual(waiting.value.pendingRunIds, [childRun.value.value.runId]);
+    assert.deepEqual(waiting.value.pendingRunIds, [childRun.value.value.run.runId]);
     const premature = await tool(h.ctx, 'task_settle', { outcome: 'success', summary: 'Too early' }, agent);
     assert.equal(premature.isError, true);
     h.ledger.cancel('cancel-child', { taskId: child.taskId, reason: 'Complete fixture by explicit cancellation' });
@@ -903,20 +901,20 @@ test('planning tool keeps a deterministic path before provider load and after un
   const h = await harness({ role: 'planner' });
   try {
     assert.ok(h.ctx.tools.get('task_plan'));
-    const before = await tool(h.ctx, 'task_plan', { action: 'propose', requestId: 'before-provider', title: 'Await assignment without a model' });
+    const before = await tool(h.ctx, 'task_plan', { requestId: 'before-provider', title: 'Await assignment without a model' });
     assert.equal(before.isError, false); assert.equal(h.ledger.getDecision('before-provider').receipt.kind, 'deterministic-planning-v1');
     await h.ctx.loader.create({ id: 'decisions', name: pathToFileURL(resolve('packages/jev/lib/index.js')).href, config: {provider:'native',nativeProvider:'test-offline',model:'script'} });
     await h.ctx.loader.await();
     await until(() => h.ctx.tools.get('task_plan'));
     assert.ok(h.ctx.tools.get('task_plan'));
-    const result = await tool(h.ctx, 'task_plan', { action: 'propose', requestId: 'optional-plan', title: 'Inspect whether work should persist' });
+    const result = await tool(h.ctx, 'task_plan', { requestId: 'optional-plan', title: 'Inspect whether work should persist' });
     assert.equal(result.isError, false, JSON.stringify(result));
     assert.equal(h.ledger.snapshot().tasks.length, 0);
     assert.ok(h.ledger.getDecision('optional-plan'));
     await h.ctx.loader.resolve('decisions').fiber.dispose();
     await h.ctx.loader.await();
     assert.ok(h.ctx.tools.get('task_plan'));
-    const after = await tool(h.ctx, 'task_plan', { action: 'propose', requestId: 'after-provider', title: 'Still available without a model' });
+    const after = await tool(h.ctx, 'task_plan', { requestId: 'after-provider', title: 'Still available without a model' });
     assert.equal(after.isError, false); assert.equal(h.ledger.getDecision('after-provider').receipt.kind, 'deterministic-planning-v1');
   } finally { await h.dispose(); }
 });

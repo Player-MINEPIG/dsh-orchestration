@@ -26,7 +26,7 @@ test('a native user message exposes orchestration tools and applies an executor/
     assert.deepEqual(discovery.value.find(row=>row.nodeId==='quality-worker').capabilities,['text'])
     for(const [index,text,nodeId,model,effort] of [[1,'帮我计算并提交一份简短报告','fast-worker','small','off'],[2,'帮我完成复杂的推理并提交分析报告','quality-worker','large','high']]) {
       const requestId=`message-${index}`
-      h.adapter.script.push({name:'task_nodes',args:{}},{name:'task_plan',args:{action:'propose',requestId,title:text,description:text}},{name:'task_plan',args:{action:'apply',requestId}},'已派发，等待执行端报告')
+      h.adapter.script.push({name:'task_nodes',args:{}},{name:'task_plan',args:{requestId,title:text,description:text}},{name:'task_dispatch',args:{commandId:requestId}},'已派发，等待执行端报告')
       const handle=await h.ctx.agents.create({sessionId:SessionId(`planner-${index}`),agentOptions:{provider:'test-offline',model:'script'}})
       try {
         handle.agent.followup(createUserMessage({source:{kind:'user'},content:[{type:'text',text}]}))
@@ -39,7 +39,7 @@ test('a native user message exposes orchestration tools and applies an executor/
         const applied=h.ledger.commandReceipt(`apply-decision:${requestId}`)
         assert.ok(applied,JSON.stringify(h.adapter.requests.at(-1).messages))
         const run=h.ledger.getRun(applied.value.runId)
-        assert.ok(run,'task_plan apply itself creates the assigned Run')
+        assert.ok(run,'task_dispatch itself creates the assigned Run')
         assert.equal(run.route.nodeId,nodeId)
         assert.equal(run.route.provider,'worker-provider')
         assert.equal(run.route.model,model)
@@ -51,9 +51,9 @@ test('a native user message exposes orchestration tools and applies an executor/
         assert.ok(request.tools.some(row=>row.name==='task_nodes'))
         const plan=request.tools.find(row=>row.name==='task_plan')
         assert.ok(plan)
-        assert.match(plan.description,/no caller-specified execution model/)
+        assert.match(plan.description,/No caller-specified execution model/)
         assert.match(plan.parameters.properties.model.description,/decision-model override/)
-        const replay=await h.ctx.tools.execute({name:'task_plan',callId:`replay-${index}`,arguments:{action:'apply',requestId},signal:new AbortController().signal})
+        const replay=await h.ctx.tools.execute({name:'task_dispatch',callId:`replay-${index}`,arguments:{commandId:requestId},signal:new AbortController().signal})
         assert.equal(replay.isError,false)
         assert.equal(h.ledger.snapshot().runs.length,index,'apply replay cannot duplicate dispatch')
       } finally {await handle.dispose()}
@@ -78,8 +78,8 @@ test('planner role exposes dispatch tools to its conversation model and hides wo
     handle.agent.followup(createUserMessage({source:{kind:'user'},content:[{type:'text',text:'你可以调度哪些执行端？'}]}))
     await handle.agent.whenIdle()
     const names=h.adapter.requests[0].tools.map(tool=>tool.name)
-    for(const name of ['task_nodes','task_plan','task_query','task_history','task_wait']) assert.ok(names.includes(name),name)
-    for(const name of ['task_settle','task_delegate']) assert.ok(!names.includes(name),name)
+    for(const name of ['task_nodes','task_plan','task_dispatch','task_query','task_history','task_wait']) assert.ok(names.includes(name),name)
+    for(const name of ['task_settle','task_delegate','task_run','task_children','codex_delegate']) assert.ok(!names.includes(name),name)
     assert.match(JSON.stringify(h.adapter.requests[0].messages.filter(row=>row.role==='system')),/prefer dispatching to a suitable executor/)
   } finally {await handle?.dispose();await h.dispose()}
 })

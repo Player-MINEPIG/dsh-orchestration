@@ -104,7 +104,7 @@ test("official /project activates skill for this session only; real tools sync/s
     assert.equal((await invokeTool("project_status",{},"before-start")).isError,true);
     const activated=await h.invoke("/project");
     assert.equal(activated.kind,"success",activated.text);
-    assert.match(await section(h.handle.agent),/project_dispatch/);
+    assert.match(await section(h.handle.agent),/task_dispatch/);
     const status=JSON.parse((await h.invoke("/project status")).text);
     assert.equal(status.collaboration.binding.state,"active");
     const other=await h.ctx.agents.create({sessionId:SessionId("unrelated-session"),meta:{cwd:h.dir},agentOptions:{provider:"command-test",model:"unused"}});
@@ -116,10 +116,10 @@ test("official /project activates skill for this session only; real tools sync/s
     assert.equal(nativeStatus.value.binding.state,"pending_review");
     h.ctx.taskSystem.ledger.registerWorkspace("test-worker-workspace", {workspaceId:"worker-workspace",nodeId:"worker",path:h.dir,label:"Test worker workspace",state:"ready",createdAt:new Date().toISOString()});
     h.ctx.taskSystem.ledger.registerNode("test-worker", {nodeId:"worker",roles:["executor"],enabled:true,capabilities:[],models:[{provider:"fixture",model:"fixture",reasoningEfforts:["low"]}],workspaceIds:["worker-workspace"]});
-    const dispatchArgs={requestId:"work-1",title:"One requested task",description:"Perform the authorized test task",routeJson:JSON.stringify({nodeId:"worker",provider:"fixture",model:"fixture",reasoningEffort:"low",workspaceId:"worker-workspace",requiredCapabilities:[]})};
-    const dispatched=await invokeTool("project_dispatch",dispatchArgs,"dispatch-first");
+    const dispatchArgs={commandId:"work-1",title:"One requested task",description:"Perform the authorized test task",route:{nodeId:"worker",provider:"fixture",model:"fixture",reasoningEffort:"low",workspaceId:"worker-workspace",requiredCapabilities:[]}};
+    const dispatched=await invokeTool("task_dispatch",dispatchArgs,"dispatch-first");
     assert.equal(dispatched.isError,false,JSON.stringify(dispatched));
-    const replay=await invokeTool("project_dispatch",dispatchArgs,"dispatch-new-tool-call");
+    const replay=await invokeTool("task_dispatch",dispatchArgs,"dispatch-new-tool-call");
     assert.equal(replay.isError,false,JSON.stringify(replay));
     assert.equal(replay.value.taskId,dispatched.value.taskId);
     assert.equal(h.ctx.taskSystem.ledger.snapshot().tasks.length,1);

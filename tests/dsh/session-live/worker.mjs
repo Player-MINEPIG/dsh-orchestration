@@ -79,7 +79,7 @@ await ctx.loader.root.update(
         databasePath: join(root, "local-task-service.sqlite"),
         keepAlive: false,
         leaseTtlMs: 180000,
-        executionTools: ["task_delegate", "task_note", "write", "read"],
+        executionTools: ["task_dispatch", "task_note", "write", "read"],
         officialBackends: [backend],
       },
     ],

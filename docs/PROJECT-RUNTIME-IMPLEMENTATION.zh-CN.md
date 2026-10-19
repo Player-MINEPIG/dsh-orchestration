@@ -7,7 +7,7 @@
 1. 打开「项目与任务」→ 项目设置，填入调度端上的绝对目录。
 2. 新建项目，填写名称与目标。宿主创建 `project-<UUID>` 子目录、`PROJECT.md`、`TOOLS.md`，以及以该目录为 cwd 的持久初始统筹会话。创建项目本身不调用模型。
 3. 进入项目详情，再打开项目对话。向统筹端说明工作，不必提供执行模型或路线。
-4. 统筹模型看到 `task_nodes`、`task_plan`、`task_query`、`task_history`、`task_children`。实际派发由 `task_plan` 的决策服务从已授权目录选择执行端、供应商、模型与思考强度；模型无法在项目会话中另填路线、模型或工作区，也没有文件或 shell 工具。
+4. 统筹模型看到 `task_nodes`、`task_plan`、`task_dispatch`、`task_query`、`task_history`、`task_wait`。实际派发由 `task_plan` 的决策服务从已授权目录选择执行端、供应商、模型与思考强度；模型无法在项目会话中另填路线、模型或工作区，也没有文件或 shell 工具。
 5. Task 先登记，候选执行端顺序持久保存。宿主依次检查授权、心跳、可用槽位；可以接单才创建 Run。全部不可用时保留 Task 的 `inbox` 状态，页面显示「待派发」，后续心跳自动触发派发。派发后未领取显示「待领取」。
 6. 执行端使用自身已授权的本地工作区和原生任务会话，提交 `task_settle` 后回传真实结果。纯 planner 的 VPS 不能接受或执行工作负载；其身份限制同时作用于路线校验和领取。
 
@@ -178,7 +178,7 @@ MBP 3082 已安装 typed-decisions settings-14、task-system project-runtime-20�
 
 ### 2026-10-07：临时任务工作区、独立规划对话与安全重试（runtime-22）
 
-任务中心新增「临时任务」入口，汇总没有项目归属的原任务。详情可进入该任务的独立规划对话。会话在既有 `pr_settings.root` 下的 `temporary-tasks/task-<digest>` 保存轻量上下文，没有新增普通用户项目、执行工作区授权或调度设置管理会话。会话首次打开不调用模型；规划工具限定在既有 task_nodes/task_plan/task_query/task_history/task_children。规划的 taskId 由宿主绑定，模型不能选择另一任务、另填路线或创建同名任务。已失败任务的重新执行须使用操作员重试入口，模型对话不能绕过此门槛。
+任务中心新增「临时任务」入口，汇总没有项目归属的原任务。详情可进入该任务的独立规划对话。会话在既有 `pr_settings.root` 下的 `temporary-tasks/task-<digest>` 保存轻量上下文，没有新增普通用户项目、执行工作区授权或调度设置管理会话。会话首次打开不调用模型；规划工具限定在既有 task_nodes/task_plan/task_dispatch/task_query/task_history/task_wait。规划的 taskId 由宿主绑定，模型不能选择另一任务、另填路线或创建同名任务。已失败任务的重新执行须使用操作员重试入口，模型对话不能绕过此门槛。
 
 原 `pr_sessions.project` 与 `pr_turns.project` 列迁移为 `owner`，既有项目和原生会话 ID 保持不变；临时任务归属存在独立 `pr_adhoc` 表。规划输入采用真实项目 ID 或明确的 taskId，不把临时任务标识传入 Workbench 的 projectId。已应用的同任务规划收据在重启时恢复派发候选；旧失败记录没有候选也可经新重试重新评估。确认按钮在评估期间禁用，防止重复请求。
 

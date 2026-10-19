@@ -331,14 +331,14 @@ declare module "@deepseek-ai/dsh-llm" {
 const READ_TOOLS = [
   "task_query",
   "task_history",
-  "task_children",
   "task_wait",
   "task_nodes",
 ];
 const PLANNING_TOOLS = [
   ...READ_TOOLS,
   "task_create",
-  "task_run",
+  "task_dispatch",
+  "task_repair_dispatch",
   "task_report",
   "task_cancel",
   "task_schedule",
@@ -806,6 +806,7 @@ export class NativeExecutionProvider {
         .filter(
           (tool) =>
             !tool.startsWith("task_") &&
+            tool !== "codex_delegate" &&
             tool !== "workflow_input_read" &&
             tool !== "run_code" &&
             (policyTools === undefined || policyTools.includes(tool)),
@@ -814,6 +815,7 @@ export class NativeExecutionProvider {
     return configured.filter(
       (tool) =>
         tool !== "workflow_input_read" &&
+        tool !== "codex_delegate" &&
         (policyTools === undefined || policyTools.includes(tool)) &&
         (this.owner.config.trustedUnconfinedTools ||
           [
@@ -822,8 +824,7 @@ export class NativeExecutionProvider {
             "write",
             "edit",
             "task_create",
-            "task_run",
-            "task_delegate",
+            "task_dispatch",
             "task_note",
           ].includes(tool)),
     );
@@ -1140,10 +1141,9 @@ export class NativeExecutionProvider {
         const toolOperation: Record<string, string> = {
           task_history: "taskHistory",
           task_query: "taskHistory",
-          task_children: "taskWait",
           task_wait: "taskWait",
           task_report: "taskReport",
-          task_delegate: "delegate",
+          task_dispatch: "delegate",
           task_note: "taskNote",
         };
         let allow: string[] = [];
@@ -1167,7 +1167,7 @@ export class NativeExecutionProvider {
                 (tool) =>
                   !tool.startsWith("task_") ||
                   (request.collaboration &&
-                    ["task_delegate", "task_note"].includes(tool)),
+                    ["task_dispatch", "task_note"].includes(tool)),
               ),
             ].filter(
               (tool) =>
@@ -2029,7 +2029,7 @@ export class NativeExecutionProvider {
         : this.owner.ledger.scopedAllSettled({ ...owned.ref, quietMs });
       if (state && !state.settled)
         throw new Error(
-          "child tasks have not all settled through the quiet window; inspect task_children or task_wait",
+          "child tasks have not all settled through the quiet window; inspect task_wait with timeoutMs=0",
         );
       exec.signal.throwIfAborted();
       if (owned.aborted || owned.pending)
@@ -2126,6 +2126,11 @@ export class TaskSystemService extends Service {
   private programStore?: RecoveryStore;
 
   projects?: ProjectRuntime;
+  sessionProjectDispatch?: (
+    agent: Agent | undefined,
+    input: { commandId: string; title?: string; description?: string; route?: unknown; nodeId?: string; executionModel?: unknown; taskId?: string; requestId?: string; workspaceId?: string; configuration?: unknown },
+    callId: string,
+  ) => Promise<{ handled: false } | { handled: true; value: Json }>;
   native?: NativeExecutionProvider;
   workspaces?: WorkspaceManager;
   private accepting = true;
@@ -2768,7 +2773,6 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
       "project_sync",
       "project_status",
       "project_nodes",
-      "project_dispatch",
       "project_progress",
       "project_finish",
     ]);
@@ -2779,6 +2783,10 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
     );
   }
 
+  let dispatchPlanned: ((args: {
+    commandId: string; requestId?: string; title?: string; description?: string;
+    route?: Claim["run"]["route"]; nodeId?: string; executionModel?: ExecutionModelChoice; workspaceId?: string;
+  }, exec: ToolRunContext) => Promise<Json>) | undefined;
   if (config.role !== "executor") {
     const planningCtx = ctx;
     planningCtx.inject(["systemPrompt"], (promptCtx) => {
@@ -2788,7 +2796,7 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
         interpolate: false,
         text: ({ agent }) =>
           agent && !service.native?.scopeFor(agent)
-            ? "You coordinate work across registered execution nodes. For an authorized user request that requires task execution, prefer dispatching to a suitable executor over doing the workload in this conversation. When available, use task_nodes to inspect executor capabilities and runtime health, then task_plan action=propose with the task title and complete instructions in description. The user need not specify an executor, provider, model, or reasoning effort: omit route to let the planning decision service choose an eligible executor; its configured node default supplies the workload model/effort. If the user explicitly requests an execution model, extract it into executionModel {provider,model,reasoningEffort?,backend?}; never use the decision-call fields or guess a model from unrelated context. task_plan provider/model/reasoningEffort configure the decision call itself, not the workload model; normally omit them. Review routingStatus and the recorded proposal; apply a ready proposal using task_plan action=apply with the same requestId when the user has authorized execution. Apply already creates the assigned Run; do not create a duplicate task_run. If routing is pending or the decision abstains, report the missing configuration or clarification instead of inventing a route or silently performing the workload locally. Follow host and channel tool permissions. Track the actual Run/report outcome with task_query, task_history or task_wait; an applied proposal or delivery ACK alone does not prove task success. Brief conversation and planning explanations can be answered here."
+            ? "You coordinate work across registered execution nodes. For an authorized user request that requires task execution, prefer dispatching to a suitable executor over doing the workload in this conversation. When available, use task_nodes to inspect executor capabilities and runtime health, then task_dispatch with a stable commandId, task title and complete instructions in description. The user need not specify an executor, provider, model, or reasoning effort: omit route to let the planning decision service choose an eligible executor; its configured node default supplies the workload model/effort. If the user explicitly requests an execution model, extract it into executionModel {provider,model,reasoningEffort?,backend?}; never use the decision-call fields or guess a model from unrelated context. task_plan provider/model/reasoningEffort configure the decision call itself, not the workload model; normally omit them. task_plan only proposes and never dispatches. To dispatch a reviewed proposal, call task_dispatch with commandId and requestId set to that proposal requestId. task_dispatch creates the assigned Run once. If routing is pending or the decision abstains, report the missing configuration or clarification instead of inventing a route or silently performing the workload locally. Follow host and channel tool permissions. Track the actual Run/report outcome with task_query, task_history or task_wait; an applied proposal or delivery ACK alone does not prove task success. Brief conversation and planning explanations can be answered here."
             : "",
       });
     });
@@ -2882,17 +2890,81 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
       if (!config.keepAlive) observationTick.unref();
       consider();
     }
+    dispatchPlanned = async (args, exec) => {
+      exec.signal.throwIfAborted();
+      lifecycle.signal.throwIfAborted();
+      const requestId = args.requestId ?? args.commandId;
+      const projectId = service.projects?.projectForSession(exec.agent?.id ?? "");
+      const taskIdScope = service.projects?.taskForSession(exec.agent?.id ?? "");
+      if (args.nodeId && (projectId || taskIdScope))
+        throw new TaskError(
+          "FORBIDDEN",
+          "Bound project planning uses the configured executor catalog",
+        );
+      if (
+        ledger.getDecision(requestId) &&
+        !args.title &&
+        (args.description !== undefined ||
+          args.route ||
+          args.nodeId ||
+          args.executionModel ||
+          args.workspaceId)
+      )
+        throw new TaskError(
+          "INVALID",
+          "A reviewed proposal already stores its execution intent; omit routing and description or replay the complete original title and intent",
+        );
+      if (!ledger.getDecision(requestId) || args.title) {
+        if (!args.title)
+          throw new TaskError(
+            "INVALID",
+            "Dispatch requires title or an existing proposal requestId",
+          );
+        service.projects?.assertProposalScope(exec.agent?.id ?? "", {
+          ...args,
+          requestId,
+        });
+        await track(
+          planner.plan(
+            {
+              requestId,
+              title: args.title,
+              description: args.description ?? "",
+              ...(projectId ? { projectId } : {}),
+              ...(taskIdScope ? { taskId: taskIdScope } : {}),
+              ...(args.route ? { route: args.route } : {}),
+              ...(args.nodeId ? { nodeId: args.nodeId } : {}),
+              ...(args.executionModel
+                ? { executionModel: args.executionModel }
+                : {}),
+              ...(args.workspaceId ? { workspaceId: args.workspaceId } : {}),
+            },
+            { signal: AbortSignal.any([exec.signal, lifecycle.signal]) },
+          ),
+        );
+      }
+      service.projects?.assertDecisionScope(exec.agent?.id ?? "", requestId);
+      const applied = planner.apply(requestId, {
+        deferExecution: !!(projectId || taskIdScope),
+      });
+      const value = applied.value as unknown as {
+        task?: { taskId: string };
+        taskId?: string;
+      };
+      const taskId = value.task?.taskId ?? value.taskId;
+      if (taskId) {
+        service.projects?.linkTask(exec.agent?.id ?? "", taskId);
+        if (projectId || taskIdScope)
+          service.projects?.enqueueDecision(requestId, taskId);
+      }
+      return json(applied);
+    };
     planningCtx.tools.register(
       defineTool({
         name: "task_plan",
         description:
-          "Prefer this tool to dispatch an authorized user task to an eligible executor. Propose with title/description; no caller-specified execution model or route is required when planning decisions are configured. Scheduler decisions select executor/provider/model/effort, never workspace/session. Apply the same requestId to create the assigned Run; do not dispatch it twice. With planning decisions disabled or unavailable, keep an explicit route or leave routing pending. Observation alone never invokes apply.",
+          "Propose a task plan for review without creating a task or Run. No caller-specified execution model or route is required when planning decisions are configured. Scheduler decisions select executor/provider/model/effort, never workspace/session. Use task_dispatch with this requestId to authorize execution. With planning decisions disabled or unavailable, preserve an explicit route or leave routing pending.",
         parameters: {
-          action: {
-            type: "string",
-            enum: ["propose", "apply"],
-            required: true,
-          },
           requestId: { type: "string", required: true },
           title: { type: "string" },
           description: { type: "string" },
@@ -2934,26 +3006,6 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
           const taskIdScope = service.projects?.taskForSession(
             exec.agent?.id ?? "",
           );
-          if (args.action === "apply") {
-            service.projects?.assertDecisionScope(
-              exec.agent?.id ?? "",
-              args.requestId,
-            );
-            const applied = planner.apply(args.requestId, {
-              deferExecution: !!(projectId || taskIdScope),
-            });
-            const value = applied.value as unknown as {
-              task?: { taskId: string };
-              taskId?: string;
-            };
-            const taskId = value.task?.taskId ?? value.taskId;
-            if (taskId) {
-              service.projects?.linkTask(exec.agent?.id ?? "", taskId);
-              if (projectId || taskIdScope)
-                service.projects?.enqueueDecision(args.requestId, taskId);
-            }
-            return json(applied);
-          }
           service.projects?.assertProposalScope(exec.agent?.id ?? "", args);
           if (!args.title) throw new Error("planning requires title");
           return json(
@@ -3129,7 +3181,7 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
       defineTool({
         name: "task_create",
         description:
-          "Create a durable task using a unique command id for safe replay. Owned agents can create only children with inherited or narrower policy.",
+          "Create a durable draft task without dispatching execution, using a unique command id for safe replay. Owned agents can create only children with inherited or narrower policy; task_dispatch creates and dispatches an owned child atomically.",
         parameters: {
           commandId: { type: "string", required: true },
           title: { type: "string", required: true },
@@ -3155,11 +3207,11 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
           policy: { type: "object", additionalProperties: true },
         },
         output,
-        execute: async (args, exec) => {
+        execute: async (args, exec) => service.withDispatchOrigin(exec.agent, async () => {
           const bound = service.native?.scopeFor(exec.agent);
           if (bound?.external)
-            throw new Error("external tasks must use scoped task_delegate");
-          return service.withDispatchOrigin(exec.agent,()=>json(
+            throw new Error("external tasks must use scoped task_dispatch");
+          return json(
             ledger.createTask(args.commandId, {
               title: args.title,
               description: args.description,
@@ -3195,127 +3247,273 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
                 ? { policy: args.policy as unknown as TaskPolicy }
                 : {}),
             }),
-          ));
-        },
+          );
+        }),
       }),
     );
   if (config.role !== "executor")
     ctx.tools.register(
       defineTool({
-        name: "task_run",
+        name: "task_repair_dispatch",
         description:
-          "Create one execution request for an existing task. Specify nodeId (or omit when one eligible executor exists); omit executionModel to use that node default. route is an explicit full assignment. Ordinary temporary tasks use temporary-tasks automatically. Owned agents may dispatch only descendants.",
+          "Repair the execution model of the same unclaimed Run. Retains node, context, configuration and Run identity; requires the current action version from task_query/history.",
         parameters: {
           commandId: { type: "string", required: true },
-          action:{type:"string",enum:["create","repair"],description:"Default create; repair updates the same unclaimed Run with runId and expectedActionVersion, never creates another attempt."},
-          runId:{type:"string"},
-          expectedActionVersion:{type:"string"},
           taskId: { type: "string", required: true },
-          nodeId:{type:"string"},
-          executionModel:{type:"object",additionalProperties:true,description:"Explicit user workload selection {provider,model,reasoningEffort?,backend?}; unrelated to the planning model."},
-          route: { type: "object", additionalProperties: true },
-          configuration: {
-            type: "json",
-            description:
-              "Optional execution configuration. Templates use an exact templateRef {templateId, version} and actual input; template rules and context reports are resolved by the authority.",
-          },
+          runId: { type: "string", required: true },
+          expectedActionVersion: { type: "string", required: true },
+          executionModel: { type: "object", additionalProperties: true },
         },
         output,
         execute: async (args, exec) => {
-          const bound = service.native?.scopeFor(exec.agent);
-          if (bound?.external)
-            throw new Error("external tasks must use scoped task_delegate");
-          if (
-            bound &&
-            (args.taskId === bound.claim.task.taskId ||
-              !taskWithin(ledger, args.taskId, bound.claim.task.taskId))
-          )
-            throw new Error(
-              "owned agent may dispatch only its descendant tasks",
+          if (service.native?.scopeFor(exec.agent))
+            throw new TaskError(
+              "FORBIDDEN",
+              "Owned execution cannot repair dispatch configuration",
             );
-          if(args.action==="repair") {
-            if(!args.runId||!args.expectedActionVersion)throw new TaskError("INVALID","repair requires runId and expectedActionVersion from task_query/history");
-            if(args.route||args.nodeId||args.configuration)throw new TaskError("INVALID","Repair keeps the current node, context and configuration; optionally provide executionModel only.");
-            return json(ledger.repairDispatch(args.commandId,{taskId:args.taskId,runId:args.runId,expectedActionVersion:args.expectedActionVersion,...(args.executionModel?{executionModel:ExecutionModelChoice.parse(args.executionModel)}:{})}));
-          }
-          const explicit=args.route ? args.route as unknown as Claim["run"]["route"] : args.executionModel ? ExecutionModelChoice.parse(args.executionModel) : undefined;
-          const candidates=ledger.decisionCatalog().nodes.filter(node=>node.enabled&&node.roles.some(role=>role==="executor"||role==="both")&&!(config.role==="planner"&&node.nodeId===config.nodeId));
-          const nodeId=args.route ? (args.route as Record<string,unknown>).nodeId : args.nodeId ?? (candidates.length===1?candidates[0]?.nodeId:undefined);
-          if(typeof nodeId!=="string")throw new TaskError("EXECUTOR_REQUIRED","Choose nodeId from task_nodes, then call task_run with that node. Do not provision a workspace for an ordinary temporary task.");
-          if(ledger.executionModels.view(nodeId).catalog.state!=="fresh")await ledger.refreshNodeModels(nodeId);
-          const selected=ledger.selectExecutionModel(nodeId,explicit);
-          const route=args.route ? args.route as unknown as Claim["run"]["route"] : {nodeId,...selected.choice,requiredCapabilities:[]};
           return json(
-            ledger.createRun(args.commandId, {
+            ledger.repairDispatch(args.commandId, {
               taskId: args.taskId,
-              route,
-              executionModel:selected.executionModel,
-              configuration: args.configuration as Json | undefined,
-              ...(bound ? { parentRunId: bound.ref.runId } : {}),
+              runId: args.runId,
+              expectedActionVersion: args.expectedActionVersion,
+              ...(args.executionModel
+                ? {
+                    executionModel: ExecutionModelChoice.parse(
+                      args.executionModel,
+                    ),
+                  }
+                : {}),
             }),
           );
         },
       }),
     );
+  ctx.tools.register(
+    defineTool({
+      name: "task_dispatch",
+      description:
+        "Dispatch one authorized task with a stable commandId. Ordinary callers create/apply a plan; requestId can identify a reviewed proposal, or taskId can dispatch an existing draft. Active /project sessions use their bound central project. Owned execution agents delegate a child through their authoritative ledger and fenced lease. Omit executionModel to use the chosen executor node default. Collect actual reports with task_query/history/wait; dispatch ACK is not completion.",
+      parameters: {
+        commandId: { type: "string", required: true },
+        requestId: {
+          type: "string",
+          description:
+            "Optional reviewed task_plan proposal ID. Defaults to commandId.",
+        },
+        title: { type: "string" },
+        description: { type: "string" },
+        taskId: {
+          type: "string",
+          description:
+            "Existing draft task to dispatch. Owned agents create children atomically and cannot select a taskId.",
+        },
+        nodeId: { type: "string" },
+        executionModel: {
+          type: "object",
+          additionalProperties: true,
+          description:
+            "Explicit user workload choice {provider,model,reasoningEffort?,backend?}; omit to use node policy.",
+        },
+        route: { type: "object", additionalProperties: true },
+        workspaceId: { type: "string" },
+        policy: { type: "object", additionalProperties: true },
+        configuration: { type: "json" },
+        display: { type: "object", additionalProperties: true },
+      },
+      output,
+      execute: async (args, exec) =>
+        service.withDispatchOrigin(exec.agent, async () => {
+          exec.signal.throwIfAborted();
+          const bound = service.native?.scopeFor(exec.agent);
+          if (args.route && (args.nodeId || args.executionModel))
+            throw new TaskError(
+              "INVALID",
+              "route cannot be combined with nodeId or executionModel",
+            );
+          if (bound) {
+            if (!args.title)
+              throw new TaskError("INVALID", "Child dispatch requires title");
+            if (
+              args.taskId ||
+              args.requestId ||
+              args.nodeId ||
+              args.executionModel ||
+              args.workspaceId
+            )
+              throw new TaskError(
+                "INVALID",
+                "Owned dispatch creates a child through its lease; use route for explicit execution assignment",
+              );
+            const input = {
+              title: args.title,
+              ...(args.description !== undefined
+                ? { description: args.description }
+                : {}),
+              ...(args.route
+                ? { route: args.route as unknown as Claim["run"]["route"] }
+                : {}),
+              ...(args.policy
+                ? { policy: args.policy as unknown as TaskPolicy }
+                : {}),
+              ...(args.configuration !== undefined
+                ? { configuration: json(args.configuration) }
+                : {}),
+              ...(args.display
+                ? {
+                    display:
+                      args.display as import("./delegation-presentation.js").DelegationDisplayInput,
+                  }
+                : {}),
+            };
+            if (bound.external) {
+              if (!bound.collaboration)
+                throw new Error("coordinator collaboration unavailable");
+              return json(
+                await bound.collaboration.delegate(args.commandId, input),
+              );
+            }
+            return json(
+              ledger.delegateTask(args.commandId, { ...bound.ref, ...input }),
+            );
+          }
+          if (args.policy || args.display)
+            throw new TaskError(
+              "INVALID",
+              "policy/display are available only for owned child dispatch",
+            );
+          const project = await service.sessionProjectDispatch?.(
+            exec.agent,
+            args,
+            String(exec.callId),
+          );
+          if (project?.handled) return project.value;
+          if (!dispatchPlanned)
+            throw new TaskError(
+              "FORBIDDEN",
+              "Executor dispatch requires an owned task or an active /project session",
+            );
+          if (args.taskId) {
+            if (
+              args.requestId ||
+              args.title ||
+              args.description ||
+              args.workspaceId
+            )
+              throw new TaskError(
+                "INVALID",
+                "Existing draft dispatch uses taskId and its stored intent; omit requestId/title/description/workspaceId",
+              );
+            if (
+              service.projects?.projectForSession(exec.agent?.id ?? "") ||
+              service.projects?.taskForSession(exec.agent?.id ?? "")
+            )
+              throw new TaskError(
+                "FORBIDDEN",
+                "Bound planning sessions dispatch their host-owned task through a proposal",
+              );
+            const candidates = ledger
+              .decisionCatalog()
+              .nodes.filter(
+                (node) =>
+                  node.enabled &&
+                  node.roles.some(
+                    (role) => role === "executor" || role === "both",
+                  ) &&
+                  !(config.role === "planner" && node.nodeId === config.nodeId),
+              );
+            const nodeId =
+              args.route?.nodeId ??
+              args.nodeId ??
+              (candidates.length === 1 ? candidates[0]?.nodeId : undefined);
+            if (typeof nodeId !== "string")
+              throw new TaskError(
+                "EXECUTOR_REQUIRED",
+                "Choose nodeId from task_nodes",
+              );
+            if (ledger.executionModels.view(nodeId).catalog.state !== "fresh")
+              await ledger.refreshNodeModels(nodeId);
+            const selected = ledger.selectExecutionModel(
+              nodeId,
+              args.route
+                ? ExecutionModelChoice.strip().parse(args.route)
+                : args.executionModel
+                  ? ExecutionModelChoice.parse(args.executionModel)
+                  : undefined,
+            );
+            return json(
+              ledger.createRun(args.commandId, {
+                taskId: args.taskId,
+                route: args.route
+                  ? (args.route as unknown as Claim["run"]["route"])
+                  : { nodeId, ...selected.choice, requiredCapabilities: [] },
+                executionModel: selected.executionModel,
+                configuration: args.configuration as Json | undefined,
+              }),
+            );
+          }
+          if (args.configuration !== undefined)
+            throw new TaskError(
+              "INVALID",
+              "configuration requires a stored draft taskId or owned child dispatch",
+            );
+          return dispatchPlanned(
+            {
+              commandId: args.commandId,
+              requestId: args.requestId,
+              title: args.title,
+              description: args.description,
+              route: args.route as unknown as Claim["run"]["route"] | undefined,
+              ...(args.nodeId ? { nodeId: args.nodeId } : {}),
+              ...(args.executionModel
+                ? {
+                    executionModel: ExecutionModelChoice.parse(
+                      args.executionModel,
+                    ),
+                  }
+                : {}),
+              workspaceId: args.workspaceId,
+            },
+            exec,
+          );
+        }),
+    }),
+  );
   if (config.role !== "planner")
     ctx.tools.register(
       defineTool({
-        name: "task_delegate",
+        name: "codex_delegate",
         description:
-          "Delegate work. In an ordinary local session, runs Desktop Codex in the current workspace (no scheduler); commandId is the idempotency key and description is the full prompt. reasoningEffort optionally overrides the local host default. Writable parents (workspace-write or full access) use automatic approval: approval=on-request, reviewer=auto_review, initial sandbox=workspace-write. Sandbox and approval are separate; workspace-write does NOT mean automatic approval is disabled. Read-only parents stay read-only with approval=never. Collect with job_output/codex_status, verify the result, then task_accept with evidence. In an owned execution, delegates a child through its authoritative ledger; configure effort through route.reasoningEffort instead.",
+          "Run local Desktop Codex in the ordinary caller's current workspace using a stable commandId and full description prompt. Uses the parent permissions and configured local model/effort; reasoningEffort optionally overrides effort. Collect with job_output/codex_status and verify before task_accept. Owned executions use task_dispatch.",
         parameters: {
           commandId: { type: "string", required: true },
           title: { type: "string", required: true },
-          description: { type: "string" },
-          backend: { type: "string", enum: ["codex"], description: "Optional explicit local backend for ordinary sessions; unavailable to scheduler-owned agents." },
-          reasoningEffort: { type: "string", description: "Local Codex reasoning effort supported by the configured model, e.g. low, medium, high, xhigh, max, ultra. Omit to use the host default (high unless configured otherwise). The receipt returns the selected value. For owned tasks use route.reasoningEffort." },
-          route: { type: "object", additionalProperties: true },
-          policy: { type: "object", additionalProperties: true },
-          configuration: { type: "json" },
-          display: { type: "object", additionalProperties: true },
+          description: { type: "string", required: true },
+          reasoningEffort: { type: "string" },
         },
         output,
         execute: async (args, exec) => {
-          const bound = service.native?.scopeFor(exec.agent);
-          if (!bound) {
-            const local = ctx.get("localCodex");
-            if (!exec.agent || !local) throw new Error("task_delegate requires an owned execution agent or the enabled local Codex backend");
-            if (args.route !== undefined || args.policy !== undefined || args.configuration !== undefined || args.display !== undefined)
-              throw new Error("Local Codex uses the parent workspace and permission mode; route/policy/configuration/display are only supported for owned task delegation");
-            return json(local.delegate(exec.agent, { requestId: args.commandId, title: args.title, prompt: args.description ?? "", reasoningEffort: args.reasoningEffort }, exec.signal));
-          }
-          if (args.backend) throw new Error("Owned execution agents must delegate through their authoritative ledger");
-          if (args.reasoningEffort !== undefined) throw new Error("Owned task delegation uses route.reasoningEffort, not the local reasoningEffort override");
-          const input = {
-            title: args.title,
-            ...(args.display !== undefined
-              ? {
-                  display:
-                    args.display as import("./delegation-presentation.js").DelegationDisplayInput,
-                }
-              : {}),
-            ...(args.description !== undefined
-              ? { description: args.description }
-              : {}),
-            ...(args.route !== undefined
-              ? { route: args.route as unknown as Claim["run"]["route"] }
-              : {}),
-            ...(args.policy !== undefined
-              ? { policy: args.policy as unknown as TaskPolicy }
-              : {}),
-            ...(args.configuration !== undefined
-              ? { configuration: json(args.configuration) }
-              : {}),
-          };
-          if (bound.external) {
-            if (!bound.collaboration)
-              throw new Error("coordinator collaboration unavailable");
-            return json(
-              await bound.collaboration.delegate(args.commandId, input),
+          if (service.native?.scopeFor(exec.agent))
+            throw new TaskError(
+              "FORBIDDEN",
+              "Owned executions use authoritative task_dispatch",
             );
-          }
+          const local = ctx.get("localCodex");
+          if (!exec.agent || !local)
+            throw new TaskError(
+              "UNAVAILABLE",
+              "codex_delegate requires an ordinary session and the enabled local Codex backend",
+            );
           return json(
-            ledger.delegateTask(args.commandId, { ...bound.ref, ...input }),
+            local.delegate(
+              exec.agent,
+              {
+                requestId: args.commandId,
+                title: args.title,
+                prompt: args.description,
+                reasoningEffort: args.reasoningEffort,
+              },
+              exec.signal,
+            ),
           );
         },
       }),
@@ -3371,46 +3569,9 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
   );
   ctx.tools.register(
     defineTool({
-      name: "task_children",
-      description:
-        "Inspect descendant task and run settlement, excluding the parent run itself.",
-      parameters: {
-        taskId: { type: "string", required: true },
-        quietMs: { type: "integer" },
-      },
-      output,
-      execute: async (args, exec) => {
-        const bound = service.native?.scopeFor(exec.agent);
-        if (bound?.external) {
-          if (!bound.collaboration)
-            throw new Error("coordinator collaboration unavailable");
-          return json(
-            await bound.collaboration.wait(args.taskId, args.quietMs ?? 1000),
-          );
-        }
-        if (
-          bound &&
-          !bound.external &&
-          !taskWithin(ledger, args.taskId, bound.claim.task.taskId)
-        )
-          throw new Error("owned agent cannot inspect outside its task tree");
-        return json(
-          bound
-            ? ledger.scopedAllSettled({
-                ...bound.ref,
-                taskId: args.taskId,
-                quietMs: args.quietMs ?? 1000,
-              })
-            : ledger.allSettled(args.taskId, args.quietMs ?? 1000),
-        );
-      },
-    }),
-  );
-  ctx.tools.register(
-    defineTool({
       name: "task_wait",
       description:
-        "Wait up to 30 seconds for the requested task and descendants (owned agents: descendants only). Return early with needsAction while settled=false when operator repair is required; ordinary offline/capacity waiting remains pending.",
+        "Inspect with timeoutMs=0 or wait up to 30 seconds for the requested task and descendants (owned agents: descendants only). Return early with needsAction while settled=false when operator repair is required; ordinary offline/capacity waiting remains pending.",
       parameters: {
         taskId: { type: "string", required: true },
         timeoutMs: { type: "integer" },

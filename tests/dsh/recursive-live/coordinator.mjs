@@ -97,7 +97,7 @@ const project = ledger.saveProject("live-project", {
 const policy = {
   allowedNodeIds: ["mbp"],
   allowedWorkspaceIds: ["mbp-workspace"],
-  allowedTools: ["task_delegate", "task_note", "write", "read"],
+  allowedTools: ["task_dispatch", "task_note", "write", "read"],
   allowedBackends: ["codex-luna-low"],
   maxRuntimeMs: 180000,
   maxDepth: 3,
@@ -114,17 +114,17 @@ const seeds = [
   [
     "independent",
     "独立 Codex 分析交付",
-    `Use task_delegate exactly once, with title "独立 Codex 风险分析", description "Return a markdown review with three concrete lease/fence risks and mitigations; no tools needed", route ${JSON.stringify(codex)}, display {"requested":"task","complexity":"independent"}. Then task_settle partial with report summarizing that execution is dispatched and final user acceptance is pending. Do not pretend child has completed.`,
+    `Use task_dispatch exactly once, with title "独立 Codex 风险分析", description "Return a markdown review with three concrete lease/fence risks and mitigations; no tools needed", route ${JSON.stringify(codex)}, display {"requested":"task","complexity":"independent"}. Then task_settle partial with report summarizing that execution is dispatched and final user acceptance is pending. Do not pretend child has completed.`,
   ],
   [
     "step",
     "Codex 小步骤",
-    `Use task_delegate exactly once, title "小步骤：核查验收边界", description "Return a three-row table distinguishing execution completion, director acceptance and user acceptance; no tools needed", route ${JSON.stringify(codex)}, display {"requested":"step","complexity":"small"}. Then task_settle partial with a report explaining delegated pending review. Do not create extra tasks.`,
+    `Use task_dispatch exactly once, title "小步骤：核查验收边界", description "Return a three-row table distinguishing execution completion, director acceptance and user acceptance; no tools needed", route ${JSON.stringify(codex)}, display {"requested":"step","complexity":"small"}. Then task_settle partial with a report explaining delegated pending review. Do not create extra tasks.`,
   ],
   [
     "recursive",
     "DSH → DSH → Codex 下一级",
-    `Use task_delegate exactly once to create a DSH child with title "下一级 DSH 协调", route ${JSON.stringify(route)}, display {"requested":"task"}, description: 'Use task_delegate exactly once with title 下一级Codex验证, description Return a concise Chinese checklist for safe result recovery, route ${JSON.stringify(codex)}, display {"requested":"step"}. Then task_settle partial with an honest summary of delegated pending review.' Then task_settle partial with a report.`,
+    `Use task_dispatch exactly once to create a DSH child with title "下一级 DSH 协调", route ${JSON.stringify(route)}, display {"requested":"task"}, description: 'Use task_dispatch exactly once with title 下一级Codex验证, description Return a concise Chinese checklist for safe result recovery, route ${JSON.stringify(codex)}, display {"requested":"step"}. Then task_settle partial with an honest summary of delegated pending review.' Then task_settle partial with a report.`,
   ],
   [
     "cancel",

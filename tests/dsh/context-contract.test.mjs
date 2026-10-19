@@ -109,13 +109,15 @@ test('native creation tools accept approved task intent and priority fields with
   };
   try {
     h.ledger.updateTemplate('tool-template', template);
+    h.ledger.registerNode('tool-node', {nodeId:'local',roles:['both'],enabled:true,capabilities:[],workspaceIds:[],models:[{provider:'test-offline',model:'script',reasoningEfforts:[]}]});
+
     const task = value(await call('task_create', { commandId: 'tool-create', title: 'Native approved fields', goal: 'Explicit work goal', acceptanceCriteria: [{ description: 'Review the actual output', kind: 'manual_check', requiredEvidence: 'A result report' }], priorityOverride: 'high', targetAt: '2026-12-01T00:00:00Z' }));
     assert.equal(task.goal, 'Explicit work goal');
     assert.equal(task.priorityOverride, 'high');
     assert.equal(task.targetAt, '2026-12-01T00:00:00.000Z');
     assert.equal(task.acceptanceCriteria[0].description, 'Review the actual output');
     for (const obsolete of ['userImmediacy', 'importance', 'urgency', 'admissionRevision']) assert.equal(task[obsolete], undefined);
-    const run = value(await call('task_run', { commandId: 'tool-run', taskId: task.taskId, configuration: { templateRef: { templateId: template.templateId, version: 1 }, input: {} } }));
+    const run = value(await call('task_dispatch', { commandId: 'tool-run', taskId: task.taskId, route:{nodeId:'local',provider:'test-offline',model:'script',requiredCapabilities:[]}, configuration: { templateRef: { templateId: template.templateId, version: 1 }, input: {} } }));
     assert.equal(run.intentSnapshot.goal, task.goal);
     assert.deepEqual(run.intentSnapshot.acceptanceCriteria, task.acceptanceCriteria);
     assert.deepEqual(run.configuration.templateRef, { templateId: template.templateId, version: 1 });

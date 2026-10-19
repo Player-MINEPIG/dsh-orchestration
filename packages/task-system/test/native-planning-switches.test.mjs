@@ -23,7 +23,7 @@ for (const planningDecisionEnabled of [false,true]) for(const sessionDecisionEna
     l.registerNode('node',{nodeId:'local',roles:['both'],models:[{provider:'test-offline',model:'script',reasoningEfforts:[]}],capabilities:[],workspaceIds:['default'],defaultWorkspaceId:'default',enabled:true,lastSeenAt:new Date().toISOString()})
     l.registerWorkspace('alternate-workspace',{workspaceId:'other',nodeId:'local',path:h.dir,label:'other fixture',state:'ready',createdAt:new Date().toISOString()});
     l.registerNode('expanded-node',{...l.getNode('local'),workspaceIds:['default','other']});
-    const invoke=async(action)=>h.ctx.tools.execute({callId:`plan-${action}`,name:'task_plan',arguments:{action,requestId:'plan',title:'Independent switches',description:''},signal:new AbortController().signal})
+    const invoke=async(action)=>h.ctx.tools.execute({callId:`plan-${action}`,name:action==='propose'?'task_plan':'task_dispatch',arguments:action==='propose'?{requestId:'plan',title:'Independent switches',description:''}:{commandId:'plan'},signal:new AbortController().signal})
     assert.equal((await invoke('propose')).isError,false)
     assert.equal(plannerCalls,planningDecisionEnabled?1:0)
     assert.equal((await invoke('apply')).isError,false)

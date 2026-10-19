@@ -28,7 +28,7 @@ await ctx.loader.root.update([
  ['registration',pathToFileURL(resolve('packages/task-system/dist/project-registration/plugin.js')).href,{namespaces:['local']}],
 ].map(([id,name,config])=>({id,name,config})));await ctx.loader.await();
 const sessionId=SessionId(process.env.DSH_TEST_SESSION_ID || 'session-collaboration-real-v2'),agentOptions={provider:'deepseek-official',model:'deepseek-flash',reasoningEffort:'low'};
-const options={agentOptions,setup:(agentCtx,agent)=>{let steps=0;agentCtx.on('agent/pre-step',async(_p,next)=>{if(++steps>18)throw Error('Acceptance turn step limit');return await next();});agentCtx.tools.restrict({allow:['project_nodes','project_status','project_dispatch','project_progress','project_finish']});}};
+const options={agentOptions,setup:(agentCtx,agent)=>{let steps=0;agentCtx.on('agent/pre-step',async(_p,next)=>{if(++steps>18)throw Error('Acceptance turn step limit');return await next();});agentCtx.tools.restrict({allow:['project_nodes','project_status','task_dispatch','project_progress','project_finish']});}};
 let handle;
 try{
  handle=stage==='start'?await ctx.agents.create({...options,sessionId,meta:{cwd:workspace}}):await ctx.agents.resume({...options,resumeSessionId:sessionId});

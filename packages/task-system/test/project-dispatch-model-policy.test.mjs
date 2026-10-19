@@ -19,7 +19,7 @@ function publish(ledger,models,tag,now=Date.now()){
 function defaults(ledger,choice,tag){const view=ledger.executionModels.view('worker');return ledger.executionModels.setDefault(tag,{nodeId:'worker',expectedRevision:view.policy.revision,expectedCatalogRevision:view.catalog.snapshot.revision,choice});}
 function worker(ledger){ledger.registerNode('worker',{nodeId:'worker',roles:['executor'],enabled:true,models:[],capabilities:[],workspaceIds:[],maxConcurrent:2});}
 
-test('real project_dispatch tools use bound context and node default or explicit workload without mandatory workspaces',async()=>{
+test('real task_dispatch tools use bound context and node default or explicit workload without mandatory workspaces',async()=>{
   const h=await createNativeHarness({config:{nodeId:'owner',localNode:null,planningDecisionEnabled:false,autoExecute:false,schedulerEnabled:false}});
   let handle;
   try{
@@ -34,19 +34,19 @@ test('real project_dispatch tools use bound context and node default or explicit
     const nodes=await invoke('project_nodes',{});assert.equal(nodes.isError,false,JSON.stringify(nodes));
     assert.equal(nodes.value.nodes[0].nodeId,'worker');assert.equal(nodes.value.nodes[0].catalog.state,'fresh');assert.equal(nodes.value.nodes[0].policy.choice.model,'preferred');
     assert.ok(nodes.value.routes.some(route=>route.model==='preferred' && route.workspaceId===undefined));
-    const args={requestId:'node-default-work',title:'Use the configured node model',description:'Authorized project work',nodeId:'worker'};
-    const normal=await invoke('project_dispatch',args);assert.equal(normal.isError,false,JSON.stringify(normal));
+    const args={commandId:'node-default-work',title:'Use the configured node model',description:'Authorized project work',nodeId:'worker'};
+    const normal=await invoke('task_dispatch',args);assert.equal(normal.isError,false,JSON.stringify(normal));
     const first=h.ledger.history(normal.value.taskId).runs[0];assert.equal(first.route.model,'preferred');assert.equal(first.executionModel.origin,'node_default');assert.equal(first.route.workspaceId,undefined);assert.ok(first.projectContext.project.projectId);
-    const replay=await invoke('project_dispatch',args);assert.equal(replay.isError,false,JSON.stringify(replay));assert.equal(replay.value.taskId,normal.value.taskId);
-    const selected=await invoke('project_dispatch',{requestId:'explicit-work',title:'Use the user model',description:'Execute with the explicit user selection',nodeId:'worker',executionModelJson:JSON.stringify(explicit)});assert.equal(selected.isError,false,JSON.stringify(selected));
+    const replay=await invoke('task_dispatch',args);assert.equal(replay.isError,false,JSON.stringify(replay));assert.equal(replay.value.taskId,normal.value.taskId);
+    const selected=await invoke('task_dispatch',{commandId:'explicit-work',title:'Use the user model',description:'Execute with the explicit user selection',nodeId:'worker',executionModel:explicit});assert.equal(selected.isError,false,JSON.stringify(selected));
     const second=h.ledger.history(selected.value.taskId).runs[0];assert.equal(second.route.model,'explicit');assert.equal(second.executionModel.origin,'explicit');
     const missing={provider:'workload',model:'removed',reasoningEffort:'low'};
-    const unavailable=await invoke('project_dispatch',{requestId:'missing-explicit',title:'Preserve explicit choice',description:'Retain the user model when unavailable',nodeId:'worker',executionModelJson:JSON.stringify(missing)});assert.equal(unavailable.isError,false,JSON.stringify(unavailable));
+    const unavailable=await invoke('task_dispatch',{commandId:'missing-explicit',title:'Preserve explicit choice',description:'Retain the user model when unavailable',nodeId:'worker',executionModel:missing});assert.equal(unavailable.isError,false,JSON.stringify(unavailable));
     const third=h.ledger.history(unavailable.value.taskId).runs[0];assert.equal(third.route.model,'removed');assert.equal(third.dispatchIssue.code,'EXPLICIT_EXECUTION_MODEL_UNAVAILABLE');
     const status=await invoke('project_status',{});assert.equal(status.isError,false,JSON.stringify(status));assert.equal(status.value.runs.find(run=>run.runId===third.runId).dispatchIssue.kind,'needs_action');
-    const invalid=await invoke('project_dispatch',{requestId:'two-model-sources',title:'Reject ambiguous route',description:'Reject conflicting model sources',routeJson:JSON.stringify(nodes.value.routes[0]),executionModelJson:JSON.stringify(explicit)});assert.equal(invalid.isError,true);
-    const unowned=await h.ctx.tools.execute({name:'project_dispatch',arguments:{requestId:'no-agent',title:'No bound caller',description:'Reject missing source identity',nodeId:'worker'},callId:ToolCallId('project-policy-no-agent'),signal:new AbortController().signal});assert.equal(unowned.isError,true);
-    assert.equal(h.ledger.snapshot().runs.length,3);assert.equal(h.ledger.snapshot().attempts.length,0);assert.equal(h.adapter.requests.length,0);
+    const invalid=await invoke('task_dispatch',{commandId:'two-model-sources',title:'Reject ambiguous route',description:'Reject conflicting model sources',route:nodes.value.routes[0],executionModel:explicit});assert.equal(invalid.isError,true);
+    const unowned=await h.ctx.tools.execute({name:'task_dispatch',arguments:{commandId:'no-agent',title:'No bound caller',description:'Reject missing source identity',nodeId:'worker'},callId:ToolCallId('project-policy-no-agent'),signal:new AbortController().signal});assert.equal(unowned.isError,false,JSON.stringify(unowned));
+    assert.equal(h.ledger.snapshot().runs.length,4);assert.equal(h.ledger.snapshot().attempts.length,0);assert.equal(h.adapter.requests.length,0);
   }finally{await handle?.dispose();await h.dispose();}
 });
 

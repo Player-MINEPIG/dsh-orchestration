@@ -16,7 +16,7 @@ test('binding persists in same SQLite, only acknowledged activation injects bund
   assert.equal(service.prompt({id:'no-workspace',session:{header:{}}}),'');
   await assert.rejects(service.invoke(agent(),'dispatch',{title:'x'},'call','r1'),/project/);
   await service.activate(agent(),'My project');
-  assert.match(service.prompt(agent()),/project_dispatch/);
+  assert.match(service.prompt(agent()),/task_dispatch/);
   assert.equal(calls.length,1);
   await service.activate(agent()); assert.equal(calls.length,1);
   ledger.close(); ledger=TaskLedger.open(file);
