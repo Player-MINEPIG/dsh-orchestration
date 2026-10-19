@@ -37,7 +37,7 @@ Claim 和 getRun 传输这份 Run 快照，sessionContext 也提供同一份项�
 
 带项目上下文的 Run 要求领取请求明确携带 `projectContextVersion: 1`。旧客户端缺少此字段时，Gateway 返回 `PROJECT_CONTEXT_UPGRADE_REQUIRED`，不创建 Attempt；新版 Worker 只对新格式 Run 发送该字段，旧格式任务仍兼容旧调度端。
 
-sessionContext 同时返回该执行端实际获准的 `availableOperations`。模型可见的历史、查询、子任务、辅助报告、委派和备注工具按这些权限过滤；最终结果仍由 `task_settle` 提交。隐藏工具不改变服务端权限检查，也不会自动扩大执行端授权。旧调度端不返回此字段时保留原有工具兼容行为。
+sessionContext 同时返回该执行端实际获准的 `availableOperations`。模型可见的历史、查询、子任务、辅助报告、委派和备注工具按这些权限过滤；最终结果仍由 `task_submit_result` 提交。隐藏工具不改变服务端权限检查，也不会自动扩大执行端授权。旧调度端不返回此字段时保留原有工具兼容行为。
 
 ## 兼容与产物
 
@@ -51,7 +51,7 @@ sessionContext 同时返回该执行端实际获准的 `availableOperations`。�
 
 ## 执行工具与未指定模型时的路线
 
-远程派发在 MBP 原生执行实例上应用任务插件的 executionTools 白名单，并与任务 allowedTools、远程操作 grants 和文件边界取交集；它与浏览器普通对话的宿主工具列表独立。执行实例结束后释放；普通对话恢复同一个 session 时不再持有原 Attempt，因此不能通过 task_settle 改写旧任务结果。切换 reasoningEffort 不授予权限。任务执行通过官方 agentPresets 服务先挂载默认工具预设，再应用任务白名单；新会话记录预设身份，恢复时沿用会话中记录的预设。未提供预设服务的独立宿主仍使用其已挂载的工具。继承的预设工具按白名单筛选，执行 guard 还会拒绝所有未列入白名单的调用。DSH 某些预设会在 Agent 自身作用域另行登记工具（例如 subagent），可能仍出现在工具列表中，但不会获得此任务的执行权限。
+远程派发在 MBP 原生执行实例上应用任务插件的 executionTools 白名单，并与任务 allowedTools、远程操作 grants 和文件边界取交集；它与浏览器普通对话的宿主工具列表独立。执行实例结束后释放；普通对话恢复同一个 session 时不再持有原 Attempt，因此不能通过 task_submit_result 改写旧任务结果。切换 reasoningEffort 不授予权限。任务执行通过官方 agentPresets 服务先挂载默认工具预设，再应用任务白名单；新会话记录预设身份，恢复时沿用会话中记录的预设。未提供预设服务的独立宿主仍使用其已挂载的工具。继承的预设工具按白名单筛选，执行 guard 还会拒绝所有未列入白名单的调用。DSH 某些预设会在 Agent 自身作用域另行登记工具（例如 subagent），可能仍出现在工具列表中，但不会获得此任务的执行权限。
 
 执行提示列出实际可用工具：需要的工具缺失时应报告 blocked；创建文件必须实际调用文件工具并验证，不能用报告文本代替。这个提示不等于通用产物校验；普通未声明结果契约的任务仍不能只凭模型的 success 保证文件或外部副作用真实发生。对文件验收应同时核对工具日志与磁盘，或使用已验证的结构化产物契约。
 

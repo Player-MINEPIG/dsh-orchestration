@@ -14,4 +14,8 @@ DMC 0.1.1 integration additionally passes two real DSH/PTC contracts against thi
 
 The intermediate 0.2.39 package was staged on both hosts before this cross-plugin correction and was not explicitly activated. The final release is 0.2.40.
 
-This records local/scripted external-model validation. Physical AWS–MBP deployment and smoke receipts are recorded separately after installation.
+The physical AWS–MBP smoke also passes against the installed 0.2.40 packages. AWS calls the public project/session/dispatcher tools, persists a child while queued and running, and disposes the original coordinator. The MBP native executor receives the signed remote request, waits four seconds, and submits its result. AWS then cold-resumes the original session, reads the child report, and commits the parent report. Both Runs succeed, the one result event is processed, and the outbox reaches `completed`. This smoke uses a scripted external model; actual-provider natural-language validation is recorded separately.
+
+Both production hosts run 0.2.40 from runtime source commit `4876564`, with the archive SHA-256 in `deployment.json`. Later commits contain documentation and validation artifacts only. DMC 0.1.1 runs on AWS; MBP had no DMC installation and receives no new DMC plugin. Default model policies, existing task business rows, directory settings, and DMC business rows are preserved. Current documentation uses `task_submit_result`; older names appear only in migration notes or immutable historical records.
+
+The default project parent is a fallback for future creation. An explicitly selected registered workspace outside that parent is accepted through its device workspace grant. A project owned by AWS can dispatch a child to MBP without transferring its AWS absolute path. The original WIP remains recoverable through stash commit `2b6330cecdba7eab3a1aab82f081686e2df85f3e`; main and origin/main contain the integrated release.
