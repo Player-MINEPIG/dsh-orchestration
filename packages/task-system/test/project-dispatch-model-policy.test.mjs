@@ -31,7 +31,7 @@ test('real task_dispatch tools use bound context and node default or explicit wo
     await session.activate(handle.agent,'Model policy project');
     let call=0;
     const invoke=(name,args)=>h.ctx.tools.execute({name,arguments:args,callId:ToolCallId(`project-policy-${++call}`),agent:handle.agent,signal:new AbortController().signal});
-    const nodes=await invoke('project_nodes',{});assert.equal(nodes.isError,false,JSON.stringify(nodes));
+    const nodes=await invoke('task_nodes',{});assert.equal(nodes.isError,false,JSON.stringify(nodes));
     assert.equal(nodes.value.nodes[0].nodeId,'worker');assert.equal(nodes.value.nodes[0].catalog.state,'fresh');assert.equal(nodes.value.nodes[0].policy.choice.model,'preferred');
     assert.ok(nodes.value.routes.some(route=>route.model==='preferred' && route.workspaceId===undefined));
     const args={commandId:'node-default-work',title:'Use the configured node model',description:'Authorized project work',nodeId:'worker'};

@@ -1,0 +1,64 @@
+TAP version 13
+# (node:70012) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: official /project activates skill for this session only; real tools sync/submit and leave revokes mode without model calls
+ok 1 - official /project activates skill for this session only; real tools sync/submit and leave revokes mode without model calls
+  ---
+  duration_ms: 3201.633125
+  type: 'test'
+  ...
+# (node:70013) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: external public task_dispatch applies a reviewed proposal and creates claimable temporary context without planner conversation metadata and real native session uses temporary-tasks
+ok 2 - external public task_dispatch applies a reviewed proposal and creates claimable temporary context without planner conversation metadata and real native session uses temporary-tasks
+  ---
+  duration_ms: 271.453167
+  type: 'test'
+  ...
+# Subtest: public task_dispatch uses node policy rather than global model and scheduling rejects an unbound temporary task
+ok 3 - public task_dispatch uses node policy rather than global model and scheduling rejects an unbound temporary task
+  ---
+  duration_ms: 44.262292
+  type: 'test'
+  ...
+# Subtest: public task tool contract has one formal dispatch entry and proposal calls never dispatch
+ok 4 - public task tool contract has one formal dispatch entry and proposal calls never dispatch
+  ---
+  duration_ms: 53.131542
+  type: 'test'
+  ...
+# Subtest: task_dispatch plans and dispatches once with a node default and rejects changed replay intent
+ok 5 - task_dispatch plans and dispatches once with a node default and rejects changed replay intent
+  ---
+  duration_ms: 52.9595
+  type: 'test'
+  ...
+# (node:70014) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: public tools bind an ordinary AWS project session, dispatch an MBP child, cold-return and formally complete its parent Task
+ok 6 - public tools bind an ordinary AWS project session, dispatch an MBP child, cold-return and formally complete its parent Task
+  ---
+  duration_ms: 308.441792
+  type: 'test'
+  ...
+# Subtest: a persisted inbox return after a crash is resumed and consumed once without duplicating its result payload
+ok 7 - a persisted inbox return after a crash is resumed and consumed once without duplicating its result payload
+  ---
+  duration_ms: 98.295792
+  type: 'test'
+  ...
+# Subtest: busy origin consumes the result in its next turn and acknowledgement waits for that turn
+ok 8 - busy origin consumes the result in its next turn and acknowledgement waits for that turn
+  ---
+  duration_ms: 65.647584
+  type: 'test'
+  ...
+1..8
+# tests 8
+# suites 0
+# pass 8
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 3331.03

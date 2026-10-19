@@ -1,0 +1,99 @@
+{
+  "taskSystemSource": "4876564",
+  "dmcSource": "e69818b",
+  "taskSystemVersion": "0.2.40",
+  "dmcVersion": "0.1.1",
+  "verification": {
+    "focusedIntegration": {
+      "pass": 46,
+      "fail": 0
+    },
+    "finalToolInventoryAndCoordinator": {
+      "pass": 8,
+      "fail": 0
+    },
+    "dmcFullSuite": {
+      "pass": 208,
+      "fail": 0
+    },
+    "realDmcCrossRepository": {
+      "pass": 2,
+      "fail": 0
+    },
+    "sequentialNativeDeliveries": 3,
+    "remainingAbortListeners": 0
+  },
+  "hosts": {
+    "mbp": {
+      "version": "0.2.40",
+      "filesMatched": 316,
+      "archiveSha256": "bf8bceac75f4bda004b1bfdc217bc9ec56802f98c406e75d85f748f9dbb290b1",
+      "service": {
+        "pid": 70163,
+        "active": true
+      },
+      "httpHealthy": true,
+      "businessDatabaseStateUnchanged": true,
+      "directorySettingsUnchanged": true,
+      "modelDefaultPoliciesUnchanged": true,
+      "backup": "/Users/pmp/.dsh/releases/task-system-0.2.40-origin-returns/backup",
+      "rollbackToOriginal038Backup": "/Users/pmp/.dsh/releases/task-system-0.2.39-origin-returns/backup",
+      "authorizedConfigurationChange": {
+        "change": "executionTools task_delegate -> task_dispatch",
+        "entries": 1,
+        "modelsAndOtherConfigurationUnchanged": true,
+        "beforeSha256": "cb73d8eaee188ab08c65e7bce5562e1e30839d958dc2c99182dd2bfa445231c8",
+        "afterSha256": "681c20523da65e395a88f44ee4a77ee758b7498dcf09b3c43b2197be8e3a7d78"
+      }
+    },
+    "aws": {
+      "version": "0.2.40",
+      "filesMatched": 316,
+      "archiveSha256": "bf8bceac75f4bda004b1bfdc217bc9ec56802f98c406e75d85f748f9dbb290b1",
+      "service": {
+        "MainPID": "104871",
+        "NRestarts": "0",
+        "ActiveState": "active",
+        "SubState": "running"
+      },
+      "httpHealthy": true,
+      "businessDatabaseStateUnchanged": true,
+      "directorySettingsUnchanged": true,
+      "modelDefaultPoliciesUnchanged": true,
+      "backup": "/home/ubuntu/.dsh/releases/task-system-0.2.40-origin-returns/backup",
+      "rollbackToOriginal038Backup": "/home/ubuntu/.dsh/releases/task-system-0.2.39-origin-returns/backup",
+      "dmc": {
+        "version": "0.1.1",
+        "filesMatched": 39,
+        "archiveSha256": "2255a3b3766ec8ae14937fb7793d25af25092508032b0c6c34dfd0dc51acd0ed",
+        "databaseAndBusinessRowsUnchanged": true,
+        "configurationAndCookieUnchanged": true,
+        "backup": "/home/ubuntu/.dsh/releases/dmc-0.1.1-origin-returns/backup",
+        "installedAt": "2026-10-19T17:57:31.923405+00:00"
+      },
+      "dmcPostcheck": {
+        "version": "0.1.1",
+        "businessDatabaseUnchangedAfterRestart": true,
+        "changedTables": [
+          "meta"
+        ],
+        "pluginLoadErrors": 0,
+        "servicePID": 104871,
+        "checkedAt": "2026-10-19T17:59:39.707961+00:00",
+        "unchangedBusinessTables": 15,
+        "metadataChange": {
+          "keys": [
+            "revision"
+          ],
+          "meaning": "monotonic UI store revision advanced on startup"
+        }
+      }
+    }
+  },
+  "wipPreservation": {
+    "stashCommit": "2b6330cecdba7eab3a1aab82f081686e2df85f3e",
+    "stashName": "preserve pre-latest checkout WIP 20261020 origin-return-tools-workspace",
+    "trackedPatch": "/private/tmp/dsh-main-wip-20261020.patch",
+    "untrackedArchive": "/private/tmp/dsh-main-untracked-20261020.tgz"
+  }
+}

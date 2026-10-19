@@ -1,0 +1,42 @@
+{
+  "saved": false,
+  "sessionId": "dmc-354b92b2-557e-4bde-a452-2e79feb1e184",
+  "runId": "ad793513-a2d7-4eec-903e-004e27725863",
+  "originContinuation": {
+    "data": {
+      "assemblyHash": "f3d16b4d5953c4444f5befce93e601b50ef57ba4299b9b7be322ffbb4dc967c2",
+      "assemblyId": "dmc-stage-v1",
+      "contextVersion": "4aee380c060932f5627bfef3459da275b85a49de103186e1051dd9bd767555a5",
+      "itemId": "33aac8c9-fa12-4d9d-9f3f-4a2c547a7e2b:issue:1",
+      "itemVersion": "fcd27de9dfdfeeaec53d3c95501458656f60da73e64aa1cc17daa1908c1fa55d",
+      "role": "investigate",
+      "runId": "0713a653-567f-4990-98ef-5dbab72dc478",
+      "sessionId": "dmc-354b92b2-557e-4bde-a452-2e79feb1e184",
+      "sourceId": "33aac8c9-fa12-4d9d-9f3f-4a2c547a7e2b",
+      "version": 1,
+      "workspaceId": "3c3ff2bc-fd72-4bbc-aa78-7111320ed14b"
+    },
+    "id": "dmc-analysis-v1"
+  },
+  "reportId": "b2915e8a-6d64-48f1-8c34-d1ad898d61b1",
+  "originalToolsRetained": true,
+  "pendingBeforeOutbox": true,
+  "analysis": {
+    "summary": "真实任务回报已消费，业务摘要已更新",
+    "importance": 1,
+    "urgent": false,
+    "urgencyReason": null,
+    "reason": "子任务报告证据",
+    "intervention": "none",
+    "evidence": "confirmed",
+    "processing": "analysis"
+  },
+  "analysisRevision": 1,
+  "runStatus": "completed",
+  "pendingAfterAck": [],
+  "returnModelCalls": 1,
+  "toolCalls": [
+    "task_dispatch",
+    "dmc_submit_result"
+  ]
+}

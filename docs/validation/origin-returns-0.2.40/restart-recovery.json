@@ -1,0 +1,25 @@
+{
+  "verifiedAt": "2026-10-19T17:45:35.073Z",
+  "workspace": "/private/tmp/dsh-origin-return-tools-workspace",
+  "status": "passed",
+  "cases": [
+    {
+      "mode": "pending",
+      "originalPayloads": 1,
+      "resultMessages": 1,
+      "modelRequests": 1,
+      "completed": true,
+      "returnedHandleDisposed": true,
+      "newRuns": 0
+    },
+    {
+      "mode": "consumed-interrupted",
+      "originalPayloads": 1,
+      "resultMessages": 2,
+      "modelRequests": 1,
+      "completed": true,
+      "returnedHandleDisposed": true,
+      "newRuns": 0
+    }
+  ]
+}

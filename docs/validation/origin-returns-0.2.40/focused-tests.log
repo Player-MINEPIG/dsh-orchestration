@@ -1,0 +1,306 @@
+TAP version 13
+# (node:71155) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: real task_dispatch tools use bound context and node default or explicit workload without mandatory workspaces
+ok 1 - real task_dispatch tools use bound context and node default or explicit workload without mandatory workspaces
+  ---
+  duration_ms: 273.895375
+  type: 'test'
+  ...
+# Subtest: scheduled node defaults follow policy for new occurrences while explicit route selections stay pinned
+ok 2 - scheduled node defaults follow policy for new occurrences while explicit route selections stay pinned
+  ---
+  duration_ms: 24.6405
+  type: 'test'
+  ...
+# Subtest: scheduled backend default replaced by a native default removes old backend and effort
+ok 3 - scheduled backend default replaced by a native default removes old backend and effort
+  ---
+  duration_ms: 5.98825
+  type: 'test'
+  ...
+# (node:71156) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: binding persists in same SQLite, only acknowledged activation injects bundled skill; leave and cwd/owned guards
+ok 4 - binding persists in same SQLite, only acknowledged activation injects bundled skill; leave and cwd/owned guards
+  ---
+  duration_ms: 13.032792
+  type: 'test'
+  ...
+# Subtest: uncertain activation retries same operation; new tool call with same business requestId never duplicates; central rejection is explicit
+ok 5 - uncertain activation retries same operation; new tool call with same business requestId never duplicates; central rejection is explicit
+  ---
+  duration_ms: 2.259292
+  type: 'test'
+  ...
+# Subtest: leave while activation in flight never silently reactivates session
+ok 6 - leave while activation in flight never silently reactivates session
+  ---
+  duration_ms: 0.512333
+  type: 'test'
+  ...
+# Subtest: both uses configured remote authority; paused or missing coordinator never falls back to local
+ok 7 - both uses configured remote authority; paused or missing coordinator never falls back to local
+  ---
+  duration_ms: 0.221125
+  type: 'test'
+  ...
+# (node:71157) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: official /project activates skill for this session only; real tools sync/submit and leave revokes mode without model calls
+ok 8 - official /project activates skill for this session only; real tools sync/submit and leave revokes mode without model calls
+  ---
+  duration_ms: 3242.108917
+  type: 'test'
+  ...
+# (node:71158) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: existing controlled local directory is adopted exactly, existing files retained, parent default affects only later new projects
+ok 9 - existing controlled local directory is adopted exactly, existing files retained, parent default affects only later new projects
+  ---
+  duration_ms: 243.16575
+  type: 'test'
+  ...
+# Subtest: remote workspace selection keeps device authority and real execution cwd without making a nested project
+ok 10 - remote workspace selection keeps device authority and real execution cwd without making a nested project
+  ---
+  duration_ms: 248.592416
+  type: 'test'
+  ...
+# Subtest: selection rejects foreign ownership, missing grants, unavailable workspace, traversal, symlinks and directories outside controlled roots
+ok 11 - selection rejects foreign ownership, missing grants, unavailable workspace, traversal, symlinks and directories outside controlled roots
+  ---
+  duration_ms: 111.26025
+  type: 'test'
+  ...
+# (node:71159) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: results sort by return time across sources, ahead of unfinished tasks; ties are stable
+ok 12 - results sort by return time across sources, ahead of unfinished tasks; ties are stable
+  ---
+  duration_ms: 0.743709
+  type: 'test'
+  ...
+# Subtest: dispatch receipts include plan apply, project, direct runs and delegation; queries, proposals, errors and retries do not inflate count
+ok 13 - dispatch receipts include plan apply, project, direct runs and delegation; queries, proposals, errors and retries do not inflate count
+  ---
+  duration_ms: 0.303542
+  type: 'test'
+  ...
+# Subtest: index skips fork-inherited history, invalidates on changes, caches only IDs and always closes read handles
+ok 14 - index skips fork-inherited history, invalidates on changes, caches only IDs and always closes read handles
+  ---
+  duration_ms: 0.497542
+  type: 'test'
+  ...
+# Subtest: durable operations isolate sessions even when they share a project, retain pending ACKs and survive paused mode
+ok 15 - durable operations isolate sessions even when they share a project, retain pending ACKs and survive paused mode
+  ---
+  duration_ms: 1.869708
+  type: 'test'
+  ...
+# Subtest: task-center categories are reused; descendants included once, siblings and private data excluded
+ok 16 - task-center categories are reused; descendants included once, siblings and private data excluded
+  ---
+  duration_ms: 0.483333
+  type: 'test'
+  ...
+# Subtest: empty and cyclic task graphs terminate without including unrelated tasks
+ok 17 - empty and cyclic task graphs terminate without including unrelated tasks
+  ---
+  duration_ms: 0.08225
+  type: 'test'
+  ...
+# (node:71160) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: dispatch origin is async-isolated; terminal outbox and exact replay survive restart
+ok 18 - dispatch origin is async-isolated; terminal outbox and exact replay survive restart
+  ---
+  duration_ms: 31.59325
+  type: 'test'
+  ...
+# Subtest: failed return is visible, retry only requeues the event and never creates another run
+ok 19 - failed return is visible, retry only requeues the event and never creates another run
+  ---
+  duration_ms: 11.367666
+  type: 'test'
+  ...
+# Subtest: owned child origin is derived from the exact lease and targets parent node/session
+ok 20 - owned child origin is derived from the exact lease and targets parent node/session
+  ---
+  duration_ms: 11.279916
+  type: 'test'
+  ...
+# Subtest: persisted admission is found in consumed messages or pending next-turn inbox
+ok 21 - persisted admission is found in consumed messages or pending next-turn inbox
+  ---
+  duration_ms: 0.176125
+  type: 'test'
+  ...
+# Subtest: remote result return retries the same event after an interrupted acknowledgement
+ok 22 - remote result return retries the same event after an interrupted acknowledgement
+  ---
+  duration_ms: 11.981333
+  type: 'test'
+  ...
+# (node:71161) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: signed remote claim carries fixed context to real native validated success
+ok 23 - signed remote claim carries fixed context to real native validated success
+  ---
+  duration_ms: 353.930584
+  type: 'test'
+  ...
+# Subtest: signed remote claim carries fixed context to real native fail-closed contract validation
+ok 24 - signed remote claim carries fixed context to real native fail-closed contract validation
+  ---
+  duration_ms: 219.132791
+  type: 'test'
+  ...
+# Subtest: local native refresh ignores forged context and uses the fixed intent snapshot
+ok 25 - local native refresh ignores forged context and uses the fixed intent snapshot
+  ---
+  duration_ms: 136.402792
+  type: 'test'
+  ...
+# Subtest: native creation tools accept approved task intent and priority fields with pinned Run configuration
+ok 26 - native creation tools accept approved task intent and priority fields with pinned Run configuration
+  ---
+  duration_ms: 41.410209
+  type: 'test'
+  ...
+# (node:71162) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: external public task_dispatch applies a reviewed proposal and creates claimable temporary context without planner conversation metadata and real native session uses temporary-tasks
+ok 27 - external public task_dispatch applies a reviewed proposal and creates claimable temporary context without planner conversation metadata and real native session uses temporary-tasks
+  ---
+  duration_ms: 409.250708
+  type: 'test'
+  ...
+# Subtest: public task_dispatch uses node policy rather than global model and scheduling rejects an unbound temporary task
+ok 28 - public task_dispatch uses node policy rather than global model and scheduling rejects an unbound temporary task
+  ---
+  duration_ms: 86.704292
+  type: 'test'
+  ...
+# Subtest: public task tool contract has one formal dispatch entry and proposal calls never dispatch
+ok 29 - public task tool contract has one formal dispatch entry and proposal calls never dispatch
+  ---
+  duration_ms: 81.940542
+  type: 'test'
+  ...
+# Subtest: task_dispatch plans and dispatches once with a node default and rejects changed replay intent
+ok 30 - task_dispatch plans and dispatches once with a node default and rejects changed replay intent
+  ---
+  duration_ms: 95.112291
+  type: 'test'
+  ...
+# (node:71163) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: signed remote native NO_ADAPTER returns a safe canonical code to authority without a result report or retry
+ok 31 - signed remote native NO_ADAPTER returns a safe canonical code to authority without a result report or retry
+  ---
+  duration_ms: 259.659792
+  type: 'test'
+  ...
+# Subtest: signed remote native MISSING_CREDENTIAL returns a safe canonical code to authority without a result report or retry
+ok 32 - signed remote native MISSING_CREDENTIAL returns a safe canonical code to authority without a result report or retry
+  ---
+  duration_ms: 222.65125
+  type: 'test'
+  ...
+# Subtest: signed remote native AUTH returns a safe canonical code to authority without a result report or retry
+ok 33 - signed remote native AUTH returns a safe canonical code to authority without a result report or retry
+  ---
+  duration_ms: 149.045041
+  type: 'test'
+  ...
+# Subtest: signed remote native TOKEN_SECRET_SENTINEL returns a safe canonical code to authority without a result report or retry
+ok 34 - signed remote native TOKEN_SECRET_SENTINEL returns a safe canonical code to authority without a result report or retry
+  ---
+  duration_ms: 84.038667
+  type: 'test'
+  ...
+# Subtest: signed remote discovery and worker execute through actual DSH AgentLoop; model and network are external fixtures
+ok 35 - signed remote discovery and worker execute through actual DSH AgentLoop; model and network are external fixtures
+  ---
+  duration_ms: 76.55175
+  type: 'test'
+  ...
+# Subtest: native observed text reaches signed planner intake within workspace scope and recovers a lost response without dispatch
+ok 36 - native observed text reaches signed planner intake within workspace scope and recovers a lost response without dispatch
+  ---
+  duration_ms: 104.9075
+  type: 'test'
+  ...
+# Subtest: two real native executor hosts delegate through the signed coordinator, enforce subtree scope, wait, and recover without replay
+ok 37 - two real native executor hosts delegate through the signed coordinator, enforce subtree scope, wait, and recover without replay
+  ---
+  duration_ms: 399.051041
+  type: 'test'
+  ...
+# Subtest: signed remote retry uses real native zero-tool evidence, recovers a lost transition receipt, and resumes the same session
+ok 38 - signed remote retry uses real native zero-tool evidence, recovers a lost transition receipt, and resumes the same session
+  ---
+  duration_ms: 223.447458
+  type: 'test'
+  ...
+# Subtest: signed native approval holds the live external call and rejects an allowed response arriving after expiry
+ok 39 - signed native approval holds the live external call and rejects an allowed response arriving after expiry
+  ---
+  duration_ms: 470.297334
+  type: 'test'
+  ...
+# Subtest: signed external native result preflight requires this execution source preparation before remote journaling
+ok 40 - signed external native result preflight requires this execution source preparation before remote journaling
+  ---
+  duration_ms: 170.333709
+  type: 'test'
+  ...
+# Subtest: signed completed-tool native continuation recovers its retry receipt and prevents exact prior dispatch replay
+ok 41 - signed completed-tool native continuation recovers its retry receipt and prevents exact prior dispatch replay
+  ---
+  duration_ms: 217.121625
+  type: 'test'
+  ...
+# Subtest: signed native status requests renew a long-running task without restarting the model; cancellation still stops it
+ok 42 - signed native status requests renew a long-running task without restarting the model; cancellation still stops it
+  ---
+  duration_ms: 744.217125
+  type: 'test'
+  ...
+# Subtest: direct session message reuses an open native session and retransmits only the reply, with no Run or Attempt
+ok 43 - direct session message reuses an open native session and retransmits only the reply, with no Run or Attempt
+  ---
+  duration_ms: 237.397625
+  type: 'test'
+  ...
+# (node:71164) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: public tools bind an ordinary AWS project session, dispatch an MBP child, cold-return and formally complete its parent Task
+ok 44 - public tools bind an ordinary AWS project session, dispatch an MBP child, cold-return and formally complete its parent Task
+  ---
+  duration_ms: 453.239125
+  type: 'test'
+  ...
+# Subtest: a persisted inbox return after a crash is resumed and consumed once without duplicating its result payload
+ok 45 - a persisted inbox return after a crash is resumed and consumed once without duplicating its result payload
+  ---
+  duration_ms: 175.991958
+  type: 'test'
+  ...
+# Subtest: busy origin consumes the result in its next turn and acknowledgement waits for that turn
+ok 46 - busy origin consumes the result in its next turn and acknowledgement waits for that turn
+  ---
+  duration_ms: 96.473625
+  type: 'test'
+  ...
+1..46
+# tests 46
+# suites 0
+# pass 46
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 3621.501542
