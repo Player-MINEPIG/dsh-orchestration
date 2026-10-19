@@ -1,0 +1,73 @@
+{
+  "status": "passed",
+  "runtimeSourceCommit": "4876564",
+  "version": "0.2.40",
+  "mode": "physical-host-scripted-llm",
+  "modelBoundary": "scripted external LLM; real installed DSH Loader, AgentLoop, tools, signed transport and ledgers",
+  "hosts": {
+    "coordinator": "ip-172-26-8-101",
+    "executor": "PlayerMINEPIGMacBook-Pro-M2.local"
+  },
+  "publicTools": [
+    "project_list",
+    "project_bind_session",
+    "task_create",
+    "task_bind_dispatcher",
+    "task_dispatch"
+  ],
+  "origin": {
+    "sessionId": "aws-original-coordinator",
+    "coldRestore": true,
+    "parentTaskId": "2c2f797e-5262-45eb-aa38-388afd2d6447",
+    "parentRunId": "f966978e-fd91-482c-b6c2-9c45187273b5"
+  },
+  "child": {
+    "taskId": "a8df2479-072c-4ab3-ace4-3bb44088fea7",
+    "runId": "dc1cebab-09c7-41d8-8a2c-1efd4f9784dd",
+    "attemptId": "cc987afb-4172-4871-9fed-655343785cb9",
+    "sum": 46,
+    "delayMs": 4000,
+    "workspaceIsolatedOnMbp": true,
+    "dispatchAcknowledged": true,
+    "nativeModelRequests": 1
+  },
+  "observations": [
+    {
+      "phase": "before-executor",
+      "elapsedMs": 858,
+      "state": "queued",
+      "parentSettled": false,
+      "pendingChild": true
+    },
+    {
+      "phase": "physical-worker-running",
+      "elapsedMs": 14433,
+      "state": "running",
+      "parentSettled": false,
+      "pendingChild": true
+    },
+    {
+      "phase": "child-result-before-cold-return",
+      "elapsedMs": 20830,
+      "returnState": "queued"
+    }
+  ],
+  "final": {
+    "parentState": "succeeded",
+    "childState": "succeeded",
+    "returnState": "completed",
+    "taskCount": 2,
+    "runCount": 2,
+    "attemptCount": 1,
+    "resultEvents": 1
+  },
+  "completedAt": "2026-10-19T18:05:27.135Z",
+  "evidencePaths": {
+    "combined": "/private/tmp/dsh-physical-return.Ejh6ST/physical-evidence.json",
+    "aws": "/private/tmp/dsh-physical-return.Ejh6ST/aws-result.json",
+    "mbp": "/private/tmp/dsh-physical-return.Ejh6ST/mbp/result.json"
+  },
+  "transport": "Ephemeral signed RemoteGateway on AWS loopback, SSH local forward from MBP; production listeners unchanged",
+  "isolation": "Fresh fixture databases, sessions, project, workspace roots and signing key; no production business data/config/model default changes",
+  "cleanup": "Runner removed both copies of its private key, signaled fixture gateway to stop and closed its own SSH tunnel"
+}

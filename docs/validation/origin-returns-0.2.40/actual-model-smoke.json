@@ -1,0 +1,127 @@
+{
+  "status": "passed",
+  "runtimeSourceCommit": "4876564",
+  "version": "0.2.40",
+  "mode": "physical-host-natural-language-coordinator",
+  "modelBoundary": "real small-model coordinator; scripted external child LLM; real installed DSH native and signed transport",
+  "coordinatorModel": {
+    "provider": "magpie",
+    "model": "deepseek/deepseek-flash",
+    "reasoningEffort": "off",
+    "maxTokens": 1536
+  },
+  "naturalLanguageInput": true,
+  "preprogrammedCoordinatorToolCalls": false,
+  "providerCredentialHandling": "Only the existing referenced credential was loaded into the fixture launch environment in memory. No credential values or provider configuration are in this receipt.",
+  "coordinatorSteps": 10,
+  "stepBudget": 14,
+  "elapsedMs": 44200,
+  "hosts": {
+    "coordinator": "ip-172-26-8-101",
+    "executor": "PlayerMINEPIGMacBook-Pro-M2.local"
+  },
+  "successfulInitialPublicCalls": [
+    "project_list",
+    "project_bind_session",
+    "task_nodes",
+    "task_create",
+    "task_bind_dispatcher",
+    "task_dispatch"
+  ],
+  "attemptedInitialPublicCalls": [
+    "project_list",
+    "project_bind_session",
+    "task_nodes",
+    "task_create",
+    "task_bind_dispatcher",
+    "task_dispatch",
+    "task_dispatch"
+  ],
+  "correctedInitialToolErrors": 1,
+  "correctionBoundary": "The first task_dispatch included an owned-only policy parameter and was rejected before creating any Run. The model corrected its arguments and dispatched once successfully.",
+  "coldContinuation": {
+    "sessionId": "aws-original-coordinator",
+    "coldRestore": true,
+    "turns": [
+      {
+        "turn": 1,
+        "outcome": "completed"
+      },
+      {
+        "turn": 2,
+        "outcome": "completed"
+      }
+    ],
+    "publicCalls": [
+      "task_history",
+      "task_submit_result"
+    ],
+    "resultEvents": 1
+  },
+  "origin": {
+    "parentTaskId": "a8cda3f0-390e-445e-9144-42e825635a1d",
+    "parentRunId": "f3319722-4e7a-4e68-8345-40b871ab1827"
+  },
+  "child": {
+    "taskId": "494ff1db-0f8a-4220-b727-7880a73bdc50",
+    "runId": "3e719c96-9890-4de6-b73f-fd008075adb2",
+    "attemptId": "30a4799d-ab09-4b5d-8d78-cbecb87602e5",
+    "sum": 46,
+    "delayMs": 4000,
+    "workspaceIsolatedOnMbp": true,
+    "dispatchAcknowledged": true,
+    "nativeModelRequests": 1
+  },
+  "observations": [
+    {
+      "phase": "before-executor",
+      "elapsedMs": 17501,
+      "state": "queued",
+      "parentSettled": false,
+      "pendingChild": true
+    },
+    {
+      "phase": "physical-worker-running",
+      "elapsedMs": 32057,
+      "state": "running",
+      "parentSettled": false,
+      "pendingChild": true
+    },
+    {
+      "phase": "child-result-before-cold-return",
+      "elapsedMs": 38447,
+      "returnState": "queued"
+    }
+  ],
+  "final": {
+    "parentState": "succeeded",
+    "childState": "succeeded",
+    "returnState": "completed",
+    "taskCount": 2,
+    "runCount": 2,
+    "attemptCount": 1,
+    "resultEvents": 1
+  },
+  "finalReport": {
+    "reportId": "58d4ce8d-0dce-47f5-b71a-d2d5c3b06c44",
+    "title": "Physical return smoke: parent final report",
+    "sourceSessionId": "aws-original-coordinator",
+    "verified": true,
+    "sum": 46,
+    "dispatchCount": 1,
+    "reruns": 0,
+    "recordedAt": "2026-10-19T18:10:19.629Z"
+  },
+  "evidencePaths": {
+    "combined": "/private/tmp/dsh-physical-return.8BABhm/physical-evidence.json",
+    "aws": "/private/tmp/dsh-physical-return.8BABhm/aws-result.json",
+    "mbp": "/private/tmp/dsh-physical-return.8BABhm/mbp/result.json"
+  },
+  "isolation": "Fresh fixture databases/sessions/project/workspace roots and ephemeral signing key. No production business data, config, listener, or model default changed. No DMC stage was created.",
+  "cleanup": "Runner removed both copies of its private key, signaled fixture gateway to stop and closed its own SSH tunnel",
+  "scope": "The coordinator uses the real configured Flash API. The MBP external LLM remains scripted; installed DSH AgentLoop, public tools, signed transport, native executor, ledgers and result delivery are real.",
+  "fixtureCorrectionsBeforeFinalRun": [
+    "Canonical launch-environment source required for memory credential resolution.",
+    "Successful tool calls are matched by callId; model-corrected tool validation errors remain visible and do not invalidate a successful workflow."
+  ]
+}
