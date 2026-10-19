@@ -3626,67 +3626,6 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
       },
     }),
   );
-  if (config.role !== "planner")
-    ctx.tools.register(
-      defineTool({
-        name: "task_claim",
-        description:
-          "Claim a run with a fenced attempt lease on this node. A claim is not task completion.",
-        parameters: {
-          commandId: { type: "string", required: true },
-          runId: { type: "string", required: true },
-        },
-        output,
-        execute: async (args) => {
-          service.assertExecuting();
-          return json(
-            ledger.claim(args.commandId, {
-              runId: args.runId,
-              nodeId: config.nodeId,
-              ttlMs: config.leaseTtlMs,
-            }),
-          );
-        },
-      }),
-    );
-  if (config.role !== "planner")
-    ctx.tools.register(
-      defineTool({
-        name: "task_execute",
-        description:
-          "Claim a routed run and execute through the native owned DSH agent. Cancelling this tool drains only that owned agent.",
-        parameters: {
-          commandId: { type: "string", required: true },
-          runId: { type: "string", required: true },
-        },
-        output,
-        execute: async (args, exec) => {
-          service.assertExecuting();
-          const provider = service.native;
-          if (!provider)
-            throw new Error("native execution provider unavailable");
-          if (exec.signal.aborted)
-            throw new Error("execution request cancelled");
-          const claim = ledger.claim(args.commandId, {
-            runId: args.runId,
-            nodeId: config.nodeId,
-            ttlMs: config.leaseTtlMs,
-          }).value;
-          const result = provider.execute(claim);
-          const stop = () => {
-            void provider
-              .cancelTask(claim.task.taskId, claim.run.runId)
-              .catch(() => undefined);
-          };
-          exec.signal.addEventListener("abort", stop, { once: true });
-          try {
-            return json(await result);
-          } finally {
-            exec.signal.removeEventListener("abort", stop);
-          }
-        },
-      }),
-    );
   ctx.tools.register(
     defineTool({
       name: "task_report",
