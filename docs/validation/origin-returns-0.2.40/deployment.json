@@ -121,5 +121,27 @@
     "resultEvents": 1,
     "usesIsolatedSmokeProject": true,
     "formalDshTavernCreated": false
+  },
+  "actualModelSmoke": {
+    "status": "passed",
+    "receipt": "actual-model-smoke.json",
+    "coordinatorModel": "deepseek/deepseek-flash",
+    "coordinatorUsesRealProvider": true,
+    "childModel": "scripted external model",
+    "naturalLanguageInitialToolPath": true,
+    "originalAwsSessionColdResumed": true,
+    "parentFinalReportSubmittedByRealModel": true,
+    "correctedDispatchParameterErrors": 1,
+    "successfulDispatches": 1,
+    "tasks": 2,
+    "runs": 2,
+    "attempts": 1,
+    "resultEvents": 1,
+    "parentState": "succeeded",
+    "childState": "succeeded",
+    "outboxState": "completed",
+    "productionModelDefaultsUnchanged": true,
+    "coordinatorProvider": "magpie",
+    "coordinatorReasoningEffort": "off"
   }
 }
