@@ -15,8 +15,9 @@ import {
   writeFileSync,
   existsSync,
   readFileSync,
+  lstatSync,
 } from "node:fs";
-import { isAbsolute, join } from "node:path";
+import { isAbsolute, join, relative, sep } from "node:path";
 import { TaskLedger, TaskError, canonical } from "./ledger.js";
 import { Workbench } from "./workbench.js";
 import { WorkspaceManager } from "./workspaces.js";
@@ -70,6 +71,12 @@ interface TurnRow {
   error: string | null;
   created: string;
 }
+export type ProjectWorkspaceSelection =
+  | { kind: "registered"; nodeId: string; workspaceId: string }
+  | { kind: "directory"; nodeId: string; path: string };
+type ProjectWorkspaceBinding = { workspaceId: string; nodeId: string; path: string };
+interface ProjectCreateInput { commandId: string; title: string; goal: string; selection?: ProjectAgentOptions; workspace?: ProjectWorkspaceSelection }
+
 export interface ProjectAgentOptions {
   provider: string;
   model: string;
@@ -110,6 +117,7 @@ export class ProjectRuntime {
     ledger.projectSnapshot = (nodeId) => this.snapshotForNode(nodeId) as unknown as import("./contracts.js").Json;
     this.db
       .exec(`CREATE TABLE IF NOT EXISTS pr_settings(id INTEGER PRIMARY KEY CHECK(id=1),root TEXT,revision INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS pr_project_workspaces(project TEXT PRIMARY KEY,workspace TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS pr_task_presentation(task TEXT PRIMARY KEY,visibility TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS pr_report_reads(report TEXT NOT NULL,version TEXT NOT NULL,read_at TEXT NOT NULL,PRIMARY KEY(report,version));
       CREATE TABLE IF NOT EXISTS pr_task_routes(task TEXT PRIMARY KEY,route TEXT NOT NULL);
@@ -197,6 +205,50 @@ export class ProjectRuntime {
     if (!result.changes)
       throw new TaskError("CONFLICT", "Project settings changed");
     return this.settings();
+  }
+  workspaceOptions() {
+    const roots = [...new Set([this.settings().root, ...(this.ctx.get("taskSystem")?.config.workspaceRoots ?? []).map(root => root.path)].filter((path): path is string => !!path))];
+    const nodes = this.ledger.decisionCatalog().nodes;
+    return { nodeId: this.nodeId, roots, workspaces: (this.ledger.snapshot().workspaces ?? []).filter(workspace => {
+      const node = nodes.find(node => node.nodeId === workspace.nodeId);
+      return workspace.state === "ready" && node?.enabled && node.workspaceIds.includes(workspace.workspaceId);
+    }).map(({workspaceId,nodeId,path,label}) => ({workspaceId,nodeId,path,label})) };
+  }
+  projectWorkspace(projectId: string): ProjectWorkspaceBinding | undefined {
+    const row = this.db.prepare("SELECT workspace FROM pr_project_workspaces WHERE project=?").get(projectId);
+    return row ? JSON.parse(String(row.workspace)) as ProjectWorkspaceBinding : undefined;
+  }
+  private selectedWorkspace(selection: ProjectWorkspaceSelection, projectId: string): ProjectWorkspaceBinding {
+    if (selection.kind === "registered") {
+      const workspace = this.ledger.getWorkspace(selection.workspaceId), node = this.ledger.getNode(selection.nodeId);
+      if (workspace.nodeId !== selection.nodeId || workspace.state !== "ready" || !node.enabled || !node.workspaceIds.includes(workspace.workspaceId))
+        throw new TaskError("WORKSPACE_POLICY", "Workspace is not ready and granted to its selected device");
+      if (selection.nodeId === this.nodeId) this.existingDirectory(workspace.path, [workspace.path]);
+      return {workspaceId:workspace.workspaceId,nodeId:workspace.nodeId,path:workspace.path};
+    }
+    if (selection.nodeId !== this.nodeId) throw new TaskError("WORKSPACE_POLICY", "Directory selection belongs to another device");
+    const path = this.existingDirectory(selection.path, this.workspaceOptions().roots);
+    return {workspaceId:`pr:${projectId}:selected`,nodeId:this.nodeId,path};
+  }
+  private existingDirectory(path: string, roots: string[]) {
+    if (!isAbsolute(path) || path.split(/[\\/]/).some(part => part === "..")) throw new TaskError("WORKSPACE_POLICY", "Expected an absolute existing directory within a controlled root");
+    const root = roots.find(root => {const rel = relative(root,path);return !isAbsolute(rel) && rel !== ".." && !rel.startsWith(`..${sep}`);});
+    if (!root) throw new TaskError("WORKSPACE_POLICY", "Directory is outside controlled roots");
+    let current = root;
+    try {
+      if (realpathSync(root) !== join(root)) throw new TaskError("WORKSPACE_POLICY", "Controlled root must retain its canonical physical directory");
+      for (const part of ["", ...relative(root,path).split(sep).filter(Boolean)]) {
+        current = join(current,part);
+        const stat = lstatSync(current);
+        if (stat.isSymbolicLink() || !stat.isDirectory()) throw new TaskError("WORKSPACE_POLICY", "Symlink or non-directory in selected workspace");
+      }
+      const actual = realpathSync(path), rel = relative(realpathSync(root),actual);
+      if (isAbsolute(rel) || rel === ".." || rel.startsWith(`..${sep}`)) throw new TaskError("WORKSPACE_POLICY", "Resolved directory escapes controlled root");
+      return actual;
+    } catch (error) {
+      if (error instanceof TaskError) throw error;
+      throw new TaskError("WORKSPACE_POLICY", "Selected directory does not exist or is unavailable");
+    }
   }
   private project(id: string): ProjectRow {
     const row = this.db
@@ -336,10 +388,10 @@ export class ProjectRuntime {
   private exclusiveFile(path: string, contents: string) {
     if (!existsSync(path))
       writeFileSync(path, contents, { flag: "wx", mode: 0o600 });
-    else if (readFileSync(path, "utf8") !== contents)
+    else if (lstatSync(path).isSymbolicLink() || !lstatSync(path).isFile() || readFileSync(path, "utf8") !== contents)
       throw new TaskError("CONFLICT", "Project context file already differs");
   }
-  create(input: { commandId: string; title: string; goal: string; selection?: ProjectAgentOptions }) {
+  create(input: ProjectCreateInput) {
     this.authorize();
     const key = text(input.commandId, 200),
       hash = digest(input),
@@ -355,18 +407,13 @@ export class ProjectRuntime {
     this.creations.set(key, { digest: hash, done });
     return done;
   }
-  private async createOwned(input: {
-    commandId: string;
-    title: string;
-    goal: string;
-    selection?: ProjectAgentOptions;
-  }) {
+  private async createOwned(input: ProjectCreateInput) {
     this.authorize();
     this.agents();
     const command = text(input.commandId, 200),
       title = text(input.title, 500),
       goal = text(input.goal, 20000);
-    const hash = digest({ title, goal, ...(input.selection ? {selection: input.selection} : {}) });
+    const hash = digest({ title, goal, ...(input.selection ? {selection: input.selection} : {}), ...(input.workspace ? {workspace:input.workspace} : {}) });
     let p = this.db
       .prepare("SELECT * FROM pr_projects WHERE command=?")
       .get(command) as unknown as ProjectRow | undefined;
@@ -383,16 +430,17 @@ export class ProjectRuntime {
           throw new TaskError("PROJECT_MODEL_UNAVAILABLE", "Selected project model or effort is unavailable");
       }
       this.authorize();
-      const root = this.settings().root;
+      const id = randomUUID(), binding = input.workspace ? this.selectedWorkspace(input.workspace, id) : undefined;
+      const root = binding?.nodeId === this.nodeId ? binding.path : this.settings().root;
       if (!root)
         throw new TaskError("PROJECT_ROOT_REQUIRED", "Set the project root first");
-      const id = randomUUID(),
-        session = `project-${randomUUID()}`,
-        cwd = join(root, `project-${id}`);
+      const session = `project-${randomUUID()}`,
+        cwd = binding?.nodeId === this.nodeId ? binding.path : join(root, `project-${id}`);
       this.db.exec("BEGIN IMMEDIATE");
       try {
         this.db.prepare("INSERT INTO pr_projects VALUES(?,?,?,?,?,?,?,?,1,?)")
           .run(id, command, hash, root, cwd, title, goal, session, "creating");
+        if (binding) this.db.prepare("INSERT INTO pr_project_workspaces VALUES(?,?)").run(id, canonical(binding));
         if (input.selection) this.db.prepare("INSERT INTO pr_models VALUES(?,?,?)").run(id, canonical(input.selection), 1);
         this.db.exec("COMMIT");
       } catch (error) {
@@ -420,27 +468,37 @@ export class ProjectRuntime {
       title: "项目任务",
       goal,
     });
-    const manager = new WorkspaceManager(this.ledger, this.nodeId, [
-      { id: "project-root", path: p.root, allowCreate: true },
-    ]);
-    const workspace = manager.provision(`pr:${p.id}:directory`, {
-      workspaceId: `pr:${p.id}:planner`,
-      rootId: "project-root",
-      relativePath: `project-${p.id}`,
-      label: title,
-      mode: "create",
-    });
-    this.workbench.manage(`pr:${p.id}:workspace`, "link_project_workspace", {
-      projectId: p.id,
-      workspaceId: workspace.workspaceId,
-      isDefault: true,
-    });
+    const binding = this.projectWorkspace(p.id);
+    let workspace;
+    if (binding?.nodeId === this.nodeId) {
+      this.existingDirectory(binding.path, [p.root]);
+      if (input.workspace?.kind === "registered") this.selectedWorkspace(input.workspace,p.id);
+      workspace = this.ledger.snapshot().workspaces?.find(workspace => workspace.workspaceId === binding.workspaceId)
+        ?? this.ledger.registerWorkspace(`pr:${p.id}:directory`, {...binding,label:title,state:"ready",createdAt:now()}).value;
+      const node: ReturnType<TaskLedger["getNode"]> = this.ledger.decisionCatalog().nodes.find(node => node.nodeId === this.nodeId) ?? {nodeId:this.nodeId,roles:[this.role],models:[],capabilities:[],workspaceIds:[],enabled:true,lastSeenAt:now()};
+      if (!node.workspaceIds.includes(workspace.workspaceId)) this.ledger.registerNode(`pr:${p.id}:grant`, {...node,workspaceIds:[...node.workspaceIds,workspace.workspaceId]});
+    } else {
+      const manager = new WorkspaceManager(this.ledger, this.nodeId, [{id:"project-root",path:p.root,allowCreate:true}]);
+      workspace = manager.provision(`pr:${p.id}:directory`, {workspaceId:`pr:${p.id}:planner`,rootId:"project-root",relativePath:`project-${p.id}`,label:title,mode:"create"});
+    }
+    if (binding && binding.nodeId !== this.nodeId) {
+      if (!input.workspace) throw new TaskError("WORKSPACE_POLICY", "Project workspace selection required");
+      this.selectedWorkspace(input.workspace,p.id);
+    }
+    this.workbench.manage(`pr:${p.id}:workspace`, "link_project_workspace", {projectId:p.id,workspaceId:binding?.workspaceId ?? workspace.workspaceId,isDefault:true});
+    const metadata = binding?.nodeId === this.nodeId ? join(p.cwd,".dsh-projects",p.id) : p.cwd;
+    if (metadata !== p.cwd) {
+      for (const part of [join(p.cwd,".dsh-projects"),metadata]) {
+        if (!existsSync(part)) mkdirSync(part,{mode:0o700});
+        this.existingDirectory(part,[p.cwd]);
+      }
+    }
     this.exclusiveFile(
-      join(p.cwd, "PROJECT.md"),
+      join(metadata, "PROJECT.md"),
       `# ${title}\n\n${goal}\n\nProject ID: ${p.id}\n`,
     );
     this.exclusiveFile(
-      join(p.cwd, "TOOLS.md"),
+      join(metadata, "TOOLS.md"),
       `# 统筹工具\n\n${TOOLS.join(", ")}\n\n优先将工作派发给合适的闲置执行端。没有在线执行端时持久排队，等待上线。此目录用于项目上下文；执行端使用其已授权的本地工作区。纯调度端不得执行工作负载。\n`,
     );
     if (
@@ -825,6 +883,7 @@ export class ProjectRuntime {
       ...(r.reasoningEffort ? { reasoningEffort: r.reasoningEffort } : {}),
       requiredCapabilities: [],
       ...(input.route && r === proposal.modelRoute ? input.route : {}),
+      ...(input.workspaceId ? {workspaceId:input.workspaceId} : {}),
     }));
     this.db
       .prepare(
@@ -1645,6 +1704,7 @@ export class ProjectRuntime {
     }
     const projects = wb.projects.map((p) => {
       const collaboration = projectCollaborations.find(c => c.projectId === p.projectId);
+      const binding = this.projectWorkspace(p.projectId);
       const runtime = runtimes.get(p.projectId),
         workspace = wb.projectWorkspaces.find(
           (w) => w.projectId === p.projectId && w.isDefault,
@@ -1661,8 +1721,10 @@ export class ProjectRuntime {
             : runtime
               ? "准备工作区"
               : collaboration ? "会话协作" : "历史项目",
+        workspaceNodeId: binding?.nodeId ?? this.nodeId,
+        coordinatorWorkspace: runtime?.cwd ?? null,
         workspace:
-          runtime?.cwd || collaboration?.cwd ||
+          binding?.path || runtime?.cwd || collaboration?.cwd ||
           (data.workspaces ?? []).find(
             (w) => w.workspaceId === workspace?.workspaceId,
           )?.path ||
@@ -2058,6 +2120,7 @@ export class ProjectRuntime {
       })),
       scheduleRuntime:{enabled:!!(this.ctx.get("taskSystem") as {config?:{schedulerEnabled?:boolean;keepAlive?:boolean}}|undefined)?.config?.schedulerEnabled,
         ticking:!!(this.ctx.get("taskSystem") as {config?:{keepAlive?:boolean}}|undefined)?.config?.keepAlive},
+      workspaceOptions: this.workspaceOptions(),
       sampledAt: now(),
     };
   }
@@ -2109,7 +2172,7 @@ export class ProjectRuntime {
     const tasks=all.tasks.filter(t=>ids.has(t.id)).map(t=>({...t,childAttention:t.childAttention.filter(row=>ids.has(row.taskId)),canHandle:false,canConfirm:false,canComplete:false,canRequestMaterials:false,canCancel:false,canRetry:false,canRestore:false,canReconcile:false,canRequestStatus:false}));
     for(const t of tasks)if(t.project!=="unassigned")projectIds.add(t.project);
     const runs=all.runs.filter(r=>ids.has(r.taskId)),runIds=new Set(runs.map(r=>r.id));
-    return {...all,settings:{enabled:false},projects:all.projects.filter(p=>projectIds.has(p.id)).map(p=>({...p,canChat:false,sessionId:null})),tasks,runs,
+    return {...all,workspaceOptions:{nodeId,roots:[],workspaces:[]},settings:{enabled:false},projects:all.projects.filter(p=>projectIds.has(p.id)).map(p=>({...p,canChat:false,sessionId:null})),tasks,runs,
       attempts:all.attempts.filter(a=>runIds.has(a.runId)),reports:all.reports.filter(r=>ids.has(r.taskId)),
       artifacts:all.artifacts.filter(a=>a.taskId&&ids.has(a.taskId)),milestones:all.milestones.filter(m=>projectIds.has(m.projectId)),schedules:all.schedules.filter(s=>ids.has(s.taskId)),
       projectCollaborations:all.projectCollaborations.filter(c=>c.ownerNodeId===nodeId),

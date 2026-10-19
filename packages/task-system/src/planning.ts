@@ -137,6 +137,13 @@ export class TaskPlanner {
     };
   }
   async plan(input: PlanningInput, options: { signal?: AbortSignal } = {}) {
+    const projectId = input.projectId ?? (input.taskId ? this.ledger.projectForTask(input.taskId) : undefined);
+    const workspaceId = projectId ? this.ledger.projectWorkspaceConstraint(projectId) : undefined;
+    if (workspaceId) {
+      if ((input.workspaceId && input.workspaceId !== workspaceId) || (input.route?.workspaceId && input.route.workspaceId !== workspaceId) || (input.route && input.route.nodeId !== this.ledger.getWorkspace(workspaceId).nodeId))
+        throw new TaskError("FORBIDDEN", "Execution cannot override the selected project workspace or device");
+      input = {...input,workspaceId};
+    }
     input = Object.fromEntries(
       Object.entries(input).filter(([, value]) => value !== undefined),
     ) as unknown as PlanningInput;

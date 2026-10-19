@@ -269,6 +269,26 @@ async function provisionExecutionWorkspace(
     store.rememberSessionWorkspace(key, { path: parent, projectId });
     return parent;
   }
+  if (claim.run.workspaceConstraint && projectId) {
+    const projectKey = `selected-project:${digest([context.schedulerId,claim.attempt.nodeId,projectId,claim.run.workspaceConstraint])}`;
+    const selected = store.sessionWorkspace(projectKey);
+    if (selected) insist(selected.path === parent,"PROJECT_WORKSPACE_ESCAPE",403);
+    await inside(parent, parent);
+    insist((await lstat(parent)).isDirectory(), "PROJECT_WORKSPACE_NOT_DIRECTORY");
+    store.rememberSessionWorkspace(projectKey,{path:parent,projectId,root:parent});
+    let path = parent;
+    if (claim.run.parentRunId) {
+      const runtime = await directory(parent, ".dsh", {kind:"task-runtime"});
+      const delegated = await directory(runtime,"delegated",{kind:"recursive-task-workspaces"});
+      path = await directory(delegated,`${component(claim.task.taskId,"task")}-${digest([context.schedulerId,sessionId]).slice(0,12)}`,{schedulerId:context.schedulerId,projectId,taskId:claim.task.taskId,sessionId,kind:"recursive-task"});
+    }
+    const contexts = await directory(path,".dsh-project-context",{kind:"selected-project-contexts"});
+    const metadata = await directory(contexts,component(projectId,"project"),{schedulerId:context.schedulerId,projectId});
+    await file(join(metadata,`revision-${context.project!.revision}.json`),canonical(context));
+    await file(join(metadata,"TOOLS.md"),"Execute only the authenticated task using configured tools. Submit task_settle to complete.\n");
+    store.rememberSessionWorkspace(key,{path,projectId,root:parent});
+    return path;
+  }
   if (input.projectRoot && !claim.run.workspaceConstraint)
     parent = await realpath(input.projectRoot);
   const projectKey = `project:${digest([context.schedulerId, claim.attempt.nodeId, projectId, claim.run.workspaceConstraint ?? null])}`;

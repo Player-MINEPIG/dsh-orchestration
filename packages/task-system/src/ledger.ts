@@ -2104,6 +2104,16 @@ export class TaskLedger {
     if(rows.length>1)fail("AMBIGUOUS_PROJECT","Task belongs to more than one project");
     return rows[0]?String(rows[0].project_id):undefined;
   }
+  projectWorkspaceConstraint(projectId: string): string | undefined {
+    if (!this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='pr_project_workspaces'").get()) return undefined;
+    const row = this.db.prepare("SELECT workspace FROM pr_project_workspaces WHERE project=?").get(projectId);
+    if (!row) return undefined;
+    const binding = JSON.parse(String(row.workspace)) as {workspaceId:string;nodeId:string;path:string};
+    const workspace = this.getWorkspace(binding.workspaceId), node = this.getNode(binding.nodeId);
+    if (workspace.nodeId !== binding.nodeId || workspace.path !== binding.path || workspace.state !== "ready" || !node.enabled || !node.workspaceIds.includes(binding.workspaceId))
+      fail("WORKSPACE_POLICY","The project's selected workspace is unavailable or no longer authorized");
+    return binding.workspaceId;
+  }
   private projectContextSnapshot(
     task: Task,
     parentRunId?: string,
@@ -2155,9 +2165,16 @@ export class TaskLedger {
   ): Run {
     input = structuredClone(input);
     const task = this.getTask(input.taskId);
+    const projectId = this.projectForTask(task.taskId);
+    const projectWorkspace = projectId ? this.projectWorkspaceConstraint(projectId) : undefined;
+    if (projectWorkspace && ((input.route?.workspaceId && input.route.workspaceId !== projectWorkspace) || (task.workspaceId && task.workspaceId !== projectWorkspace)))
+      fail("FORBIDDEN", "Execution cannot override the selected project workspace");
+    if (projectWorkspace && input.route && input.route.nodeId !== this.getWorkspace(projectWorkspace).nodeId)
+      fail("FORBIDDEN", "Execution must use the selected project device");
+    if (projectWorkspace && input.route) input.route.workspaceId = projectWorkspace;
     const workspaceConstraint = inherited
-      ? (inherited.workspaceConstraint ?? task.workspaceId)
-      : (input.route?.workspaceId ?? task.workspaceId);
+      ? (inherited.workspaceConstraint ?? projectWorkspace ?? task.workspaceId)
+      : (projectWorkspace ?? input.route?.workspaceId ?? task.workspaceId);
     if (
       task.workspaceId &&
       input.route?.workspaceId &&

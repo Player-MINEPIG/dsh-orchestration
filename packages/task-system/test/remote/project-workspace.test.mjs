@@ -58,7 +58,7 @@ test('plain recursive task sessions get independent directories and cannot resum
   assert.equal(await selected(f.claim('p','second'),'second',false,f.parent),first);
   const next=await selected(f.claim('new','third'),'third',false,f.parent); assert.ok(next.startsWith(f.parent+'/'));
   const restricted=f.claim('restricted','explicit');restricted.run.workspaceConstraint='allowed-workspace';
-  assert.ok((await selected(restricted,'explicit')).startsWith(f.parent+'/'));
+  assert.equal(await selected(restricted,'explicit'),f.parent);
  });
  test('existing project directories survive selecting a different parent before their next task',async t=>{
   const f=fixture(t), first=await f.workspace(f.claim(),'first');

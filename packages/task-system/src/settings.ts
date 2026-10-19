@@ -381,6 +381,10 @@ const projectInputs = {
       commandId: z.string().min(1).max(200),
       title: z.string().min(1).max(500),
       goal: z.string().min(1).max(20000),
+      workspace: z.discriminatedUnion("kind", [
+        z.object({kind:z.literal("registered"),nodeId:z.string().min(1),workspaceId:z.string().min(1)}).strict(),
+        z.object({kind:z.literal("directory"),nodeId:z.string().min(1),path:z.string().min(1).max(4096)}).strict(),
+      ]).optional(),
       selection: z.object({provider:z.string().min(1),model:z.string().min(1),reasoningEffort:z.string().min(1).optional()}).strict().optional(),
     })
     .strict(),
