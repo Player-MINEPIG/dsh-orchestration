@@ -62,3 +62,40 @@ test('busy origin consumes the result in its next turn and acknowledgement waits
   const events=await read(h,String(id));const source=events.find(event=>event.type==='user/message'&&event.data.source.kind==='dsh-task-result');assert.ok(source);assert.equal(events.filter(event=>event.type==='turn/end'&&event.data.reason.kind==='completed').length,2);
  }finally{release?.();await h.dispose();}
 });
+
+test('cold return rejects unknown or malformed retired adapters without running the model',async()=>{
+ const h=await createNativeHarness();
+ try{
+  const id=SessionId('invalid-adapter-origin'),parent=await h.ctx.agents.create({sessionId:id,meta:{cwd:h.dir},agentOptions:{provider:'test-offline',model:'script'}});
+  const origin={kind:'session',nodeId:'local',sessionId:String(id),cwd:h.dir,composition:{provider:'test-offline',model:'script',tools:[]}};await h.ctx.sessions.flush(parent.agent.session);await parent.dispose();
+  for(const continuation of [{id:'unknown-adapter',data:{}},{id:'dmc-analysis-v1',data:{version:1,sessionId:String(id)}}]){
+   await assert.rejects(h.ctx.taskSystem.taskReturns.deliver({messageId:'invalid-event',taskId:'child',nodeId:'local',sessionId:String(id),completion:{eventId:'invalid-event',origin:{...origin,continuation}},text:'Synthetic report'}),/adapter unavailable/);
+   assert.equal(h.ctx.agents.get(id),undefined);assert.equal(h.adapter.requests.length,0);
+  }
+ }finally{await h.dispose();}
+});
+
+test('missing tools after creation retain the report and dispose the resumed handle',async()=>{
+ const h=await createNativeHarness();
+ try{
+  const id=SessionId('missing-tool-origin'),parent=await h.ctx.agents.create({sessionId:id,meta:{cwd:h.dir},agentOptions:{provider:'test-offline',model:'script'}});
+  const origin={kind:'session',nodeId:'local',sessionId:String(id),cwd:h.dir,composition:{provider:'test-offline',model:'script',tools:['removed-plugin-tool']}};await h.ctx.sessions.flush(parent.agent.session);await parent.dispose();
+  await assert.rejects(h.ctx.taskSystem.taskReturns.deliver({messageId:'missing-event',taskId:'child',nodeId:'local',sessionId:String(id),completion:{eventId:'missing-event',origin},text:'Synthetic report'}),/tools unavailable/);
+  assert.equal(h.ctx.agents.get(id),undefined);assert.equal(h.adapter.requests.length,0);
+  assert.equal((await read(h,String(id))).filter(event=>event.type==='user/message').length,0);
+ }finally{await h.dispose();}
+});
+
+test('cold persisted inbox cannot escape the original mask or revive its expired parent lease',async()=>{
+ const h=await createNativeHarness({script:[{name:'task_create',args:{commandId:'forbidden',title:'Must not exist'}},{name:'task_query',args:{}},'Controlled report consumed']});
+ try{
+  const id=SessionId('guarded-pending-origin'),parent=await h.ctx.agents.create({sessionId:id,meta:{cwd:h.dir},agentOptions:{provider:'test-offline',model:'script'}});
+  const origin={kind:'session',nodeId:'local',sessionId:String(id),cwd:h.dir,composition:{provider:'test-offline',model:'script',tools:['task_query']},parentLease:{runId:'expired-run',attemptId:'expired-attempt',nodeId:'local',fence:1}};
+  const message={messageId:'guarded-event',taskId:'child',nodeId:'local',sessionId:String(id),completion:{eventId:'guarded-event',origin},text:'Synthetic report queued before a restart'};
+  parent.agent.inbox.append('next-turn',createUserMessage({source:{kind:'dsh-task-result',eventId:message.messageId,taskId:'child'},content:[{type:'text',text:message.text}]}));await h.ctx.sessions.flush(parent.agent.session);await parent.dispose();
+  await h.ctx.taskSystem.taskReturns.deliver(message);
+  const events=await read(h,String(id)),results=events.filter(event=>event.type==='tool/result');
+  assert.match(JSON.stringify(results),/outside the original session capability mask/);assert.match(JSON.stringify(results),/original task lease expired/);assert.equal(h.ledger.snapshot().tasks.length,0);
+  assert.equal(events.filter(event=>event.type==='user/message'&&event.data.source.kind==='dsh-task-result').length,1);
+ }finally{await h.dispose();}
+});

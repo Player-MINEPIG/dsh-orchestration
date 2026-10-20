@@ -5,6 +5,15 @@ import { createUserMessage, ReasoningEffortId } from "@deepseek-ai/dsh-llm";
 import type { SessionEvent } from "@deepseek-ai/dsh-session";
 import type { DispatchOrigin, Json } from "./contracts.js";
 import type { SessionMessage } from "./remote/ports.js";
+import { z } from "zod";
+
+const retiredDmcContinuation = z.object({
+  version: z.literal(1), sessionId: z.string().min(1), runId: z.string().min(1),
+  role: z.enum(["writer", "review", "investigate"]), workspaceId: z.string().min(1),
+  sourceId: z.string().min(1), itemId: z.string().min(1), itemVersion: z.string().min(1),
+  contextVersion: z.string().min(1), assemblyId: z.string().min(1),
+  assemblyHash: z.string().regex(/^[a-f0-9]{64}$/),
+}).strict();
 
 /** The durable inbox is the receipt. Reconcile it before retrying an outbox event. */
 export function containsTaskReturn(events: readonly unknown[], eventId: string): boolean {
@@ -80,10 +89,14 @@ export class TaskReturnDelivery {
     if (taskReturnCompleted(events,eventId)) return "Task result processed in the original session";
     let agent = this.ctx.agents.get(SessionId(origin.sessionId));
     let handle: AgentHandle | undefined;
+    let originalTools: string[] | undefined;
     if (!agent) {
       const header=foldRequestHeader(events);
       const composition = origin.composition ?? (header?.config.provider && header.config.model ? {provider:header.config.provider,model:header.config.model,...(header.config.reasoningEffort?{reasoningEffort:String(header.config.reasoningEffort)}:{}),tools:header.tools?.map(tool=>tool.name)} : undefined);
       if (!composition?.provider || !composition.model) throw new Error("Original session model binding unavailable; task result retained for retry");
+      originalTools=composition.tools ?? header?.tools?.map(tool=>tool.name);
+      if(!originalTools)throw new Error("Original session tool composition unavailable");
+      const allowed=new Set(originalTools);
       handle = await this.ctx.agents.resume({
         resumeSessionId: SessionId(origin.sessionId),
         agentOptions: { provider: composition.provider, model: composition.model, ...(composition.reasoningEffort ? {reasoningEffort: ReasoningEffortId(composition.reasoningEffort)} : {}) },
@@ -98,14 +111,13 @@ export class TaskReturnDelivery {
           }
           if(origin.continuation) {
             const adapter=this.adapters.get(origin.continuation.id);
-            if(!adapter)throw new Error("Original session continuation adapter unavailable");
-            await adapter.resume(ctx,resumed,structuredClone(origin.continuation.data));
+            if(adapter)await adapter.resume(ctx,resumed,structuredClone(origin.continuation.data));
+            else {
+              const retired=retiredDmcContinuation.safeParse(origin.continuation.data);
+              if(origin.continuation.id!=="dmc-analysis-v1" || !retired.success || retired.data.sessionId!==origin.sessionId)
+                throw new Error("Original session continuation adapter unavailable");
+            }
           }
-          const tools=composition.tools ?? header?.tools?.map(tool=>tool.name);
-          if(!tools)throw new Error("Original session tool composition unavailable");
-          const available=new Set(ctx.tools.schemas(resumed).map(tool=>tool.name));
-          if(tools.some(tool=>!available.has(tool)))throw new Error("Original session tools unavailable; retained for retry");
-          const allowed=new Set(tools);
           ctx.tools.guard(exec=>allowed.has(exec.name) ? undefined : "Tool is outside the original session capability mask");
           if (origin.parentLease) {
             ctx.tools.guard(exec => exec.name.startsWith("task_") ? "The original task lease expired; this result continuation does not grant a lease" : undefined);
@@ -117,6 +129,10 @@ export class TaskReturnDelivery {
       agent = handle.agent;
     }
     try {
+      if(originalTools) {
+        const available=new Set(agent.ctx.tools.schemas(agent).map(tool=>tool.name));
+        if(originalTools.some(tool=>!available.has(tool)))throw new Error("Original session tools unavailable; retained for retry");
+      }
       if (origin.cwd && agent.session.header.cwd !== origin.cwd) throw new Error("Original session workspace changed");
       await this.ctx.sessions.flush(agent.session);
       const current=await this.read(origin.sessionId);
