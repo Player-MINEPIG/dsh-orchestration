@@ -1,0 +1,95 @@
+{
+  "codeCommit": "1042902",
+  "taskSystemVersion": "0.2.41",
+  "dmcCodeCommit": "851e9a7",
+  "dmcVersion": "0.1.2",
+  "dmcBusinessBaseline": "9ab56c8",
+  "changes": [
+    "DMC waiting/adapter flow reverted; analysis revision and receipts retained",
+    "Cold tools checked after agent/created; capability and parent-lease guards installed during setup",
+    "Known retired dmc-analysis-v1 v1/session shape accepted; unknown adapters rejected"
+  ],
+  "localVerification": {
+    "dmcFullSuite": {
+      "pass": 205,
+      "fail": 0,
+      "skip": 0
+    },
+    "realDshPtcRevisionMatrix": {
+      "pass": 4,
+      "fail": 0,
+      "warmAndCold": true,
+      "nativeAndLegacyOrigins": true
+    },
+    "affectedTaskTests": {
+      "pass": 11,
+      "fail": 0
+    },
+    "buildAndPack": "passed"
+  },
+  "realModelVerification": {
+    "status": "passed",
+    "provider": "existing Magpie Flash route",
+    "model": "deepseek/deepseek-flash",
+    "steps": 8,
+    "coldOriginalSession": true,
+    "autonomousPublicDispatchReadAndRevision": true,
+    "rejectedRevisionCalls": 4,
+    "successfulRevisionCalls": 1,
+    "analysisRevision": 2,
+    "originalReceiptUnchanged": true,
+    "listUpdated": true,
+    "duplicateDeliveryAddsNoRevision": true,
+    "childReport": "explicit controlled synthetic fixture, not a real project reproduction",
+    "fixtureToolGuardDeniedTaskWait": true
+  },
+  "installedPhysicalVerification": {
+    "status": "passed",
+    "physicalHosts": true,
+    "installedVersion": "0.2.41",
+    "modelBoundary": "scripted external LLM; real installed DSH Loader, AgentLoop, tools, signed transport and ledgers",
+    "parentState": "succeeded",
+    "childState": "succeeded",
+    "returnState": "completed",
+    "resultEvents": 1
+  },
+  "deployment": {
+    "aws": {
+      "host": "AWS",
+      "at": "2026-10-20T01:04:56.024330+00:00",
+      "packages": {
+        "@dsh-task/task-system": {
+          "version": "0.2.41",
+          "filesMatched": 316,
+          "archiveSha256": "de7b52021d497718d87a86f801deb471f73d79eb2cb9a944508ad719306251fe"
+        },
+        "dsh-message-console": {
+          "version": "0.1.2",
+          "filesMatched": 39,
+          "archiveSha256": "f079fa00b65eb83579a1420ffecc0359ec6cc4ddb42971514a171b7cb7b03d91"
+        }
+      },
+      "backup": "/home/ubuntu/.dsh/releases/origin-rollback-20261020/backup",
+      "businessDatabaseStateUnchanged": true,
+      "configurationAndCredentialsUnchanged": true,
+      "effectiveControlsUnchanged": true,
+      "httpHealthy": true
+    },
+    "mbp": {
+      "host": "MBP",
+      "at": "2026-10-20T01:05:29.682287+00:00",
+      "packages": {
+        "@dsh-task/task-system": {
+          "version": "0.2.41",
+          "filesMatched": 316,
+          "archiveSha256": "de7b52021d497718d87a86f801deb471f73d79eb2cb9a944508ad719306251fe"
+        }
+      },
+      "backup": "/Users/pmp/.dsh/releases/origin-rollback-20261020/backup",
+      "businessDatabaseStateUnchanged": true,
+      "configurationAndCredentialsUnchanged": true,
+      "effectiveControlsUnchanged": true,
+      "httpHealthy": true
+    }
+  }
+}
