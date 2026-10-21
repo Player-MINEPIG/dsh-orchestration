@@ -74,7 +74,7 @@ interface TurnRow {
 export type ProjectWorkspaceSelection =
   | { kind: "registered"; nodeId: string; workspaceId: string }
   | { kind: "directory"; nodeId: string; path: string };
-type ProjectWorkspaceBinding = { workspaceId: string; nodeId: string; path: string };
+type ProjectWorkspaceBinding = { workspaceId: string; nodeId: string; path: string; scope?: "coordinator" };
 interface ProjectCreateInput { commandId: string; title: string; goal: string; selection?: ProjectAgentOptions; workspace?: ProjectWorkspaceSelection }
 
 export interface ProjectAgentOptions {
@@ -208,27 +208,52 @@ export class ProjectRuntime {
   }
   workspaceOptions() {
     const roots = [...new Set([this.settings().root, ...(this.ctx.get("taskSystem")?.config.workspaceRoots ?? []).map(root => root.path)].filter((path): path is string => !!path))];
-    const nodes = this.ledger.decisionCatalog().nodes;
-    return { nodeId: this.nodeId, roots, workspaces: (this.ledger.snapshot().workspaces ?? []).filter(workspace => {
-      const node = nodes.find(node => node.nodeId === workspace.nodeId);
-      return workspace.state === "ready" && node?.enabled && node.workspaceIds.includes(workspace.workspaceId);
-    }).map(({workspaceId,nodeId,path,label}) => ({workspaceId,nodeId,path,label})) };
+    const workspaces: { workspaceId: string; nodeId: string; path: string; label: string }[] = [];
+    let error: string | null = null;
+    const registry = this.ctx.get("workspaceRegistry") as unknown as
+      { list(): readonly { id: string; path: string; title?: string }[] } | undefined;
+    if (registry) {
+      try {
+        for (const item of registry.list()) {
+          try {
+            const path = this.existingDirectory(item.path, [item.path]);
+            workspaces.push({ workspaceId: `registry:${item.id}`, nodeId: this.nodeId, path, label: item.title?.trim() || path });
+          } catch (failure) {
+            if (!(failure instanceof TaskError) || failure.code !== "WORKSPACE_POLICY") throw failure;
+          }
+        }
+      } catch {
+        workspaces.length = 0;
+        error = "本机工作区读取失败，请刷新重试；若仍失败，请检查 DSH 工作区服务。";
+      }
+    }
+    // Legacy task grants remain valid local authorization, independent of remote heartbeat inventory.
+    const node = this.ledger.decisionCatalog().nodes.find(node => node.nodeId === this.nodeId);
+    for (const item of this.ledger.registeredWorkspaces(this.nodeId)) {
+      if (item.workspaceId.startsWith("registry:") || item.state !== "ready" || !node?.enabled || !node.workspaceIds.includes(item.workspaceId) || workspaces.some(workspace => workspace.path === item.path)) continue;
+      try {
+        const path = this.existingDirectory(item.path, [item.path]);
+        workspaces.push({ workspaceId: item.workspaceId, nodeId: this.nodeId, path, label: item.label?.trim() || path });
+      } catch (failure) {
+        if (!(failure instanceof TaskError) || failure.code !== "WORKSPACE_POLICY") throw failure;
+      }
+    }
+    if (!registry && !workspaces.length) error = "本机工作区服务尚未加载，请启用 DSH 工作区服务后刷新，或选择已有目录。";
+    return { nodeId: this.nodeId, roots, workspaces, error };
   }
   projectWorkspace(projectId: string): ProjectWorkspaceBinding | undefined {
     const row = this.db.prepare("SELECT workspace FROM pr_project_workspaces WHERE project=?").get(projectId);
     return row ? JSON.parse(String(row.workspace)) as ProjectWorkspaceBinding : undefined;
   }
   private selectedWorkspace(selection: ProjectWorkspaceSelection, projectId: string): ProjectWorkspaceBinding {
+    if (selection.nodeId !== this.nodeId) throw new TaskError("WORKSPACE_POLICY", "Project workspace must belong to this scheduler");
     if (selection.kind === "registered") {
-      const workspace = this.ledger.getWorkspace(selection.workspaceId), node = this.ledger.getNode(selection.nodeId);
-      if (workspace.nodeId !== selection.nodeId || workspace.state !== "ready" || !node.enabled || !node.workspaceIds.includes(workspace.workspaceId))
-        throw new TaskError("WORKSPACE_POLICY", "Workspace is not ready and granted to its selected device");
-      if (selection.nodeId === this.nodeId) this.existingDirectory(workspace.path, [workspace.path]);
-      return {workspaceId:workspace.workspaceId,nodeId:workspace.nodeId,path:workspace.path};
+      const workspace = this.workspaceOptions().workspaces.find(workspace => workspace.workspaceId === selection.workspaceId);
+      if (!workspace) throw new TaskError("WORKSPACE_POLICY", "Local workspace is unavailable or its registration/grant changed; refresh and select again");
+      return {workspaceId:workspace.workspaceId,nodeId:this.nodeId,path:workspace.path,scope:"coordinator"};
     }
-    if (selection.nodeId !== this.nodeId) throw new TaskError("WORKSPACE_POLICY", "Directory selection belongs to another device");
     const path = this.existingDirectory(selection.path, this.workspaceOptions().roots);
-    return {workspaceId:`pr:${projectId}:selected`,nodeId:this.nodeId,path};
+    return {workspaceId:`pr:${projectId}:selected`,nodeId:this.nodeId,path,scope:"coordinator"};
   }
   private existingDirectory(path: string, roots: string[]) {
     if (!isAbsolute(path) || path.split(/[\\/]/).some(part => part === "..")) throw new TaskError("WORKSPACE_POLICY", "Expected an absolute existing directory within a controlled root");
@@ -472,18 +497,17 @@ export class ProjectRuntime {
     let workspace;
     if (binding?.nodeId === this.nodeId) {
       this.existingDirectory(binding.path, [p.root]);
-      if (input.workspace?.kind === "registered") this.selectedWorkspace(input.workspace,p.id);
+      if (input.workspace?.kind === "registered" && this.selectedWorkspace(input.workspace,p.id).path !== binding.path)
+        throw new TaskError("WORKSPACE_POLICY", "Local workspace path changed; refresh and select again");
       workspace = this.ledger.snapshot().workspaces?.find(workspace => workspace.workspaceId === binding.workspaceId)
         ?? this.ledger.registerWorkspace(`pr:${p.id}:directory`, {...binding,label:title,state:"ready",createdAt:now()}).value;
-      const node: ReturnType<TaskLedger["getNode"]> = this.ledger.decisionCatalog().nodes.find(node => node.nodeId === this.nodeId) ?? {nodeId:this.nodeId,roles:[this.role],models:[],capabilities:[],workspaceIds:[],enabled:true,lastSeenAt:now()};
-      if (!node.workspaceIds.includes(workspace.workspaceId)) this.ledger.registerNode(`pr:${p.id}:grant`, {...node,workspaceIds:[...node.workspaceIds,workspace.workspaceId]});
+      if (binding.scope !== "coordinator") {
+        const node = this.ledger.decisionCatalog().nodes.find(node => node.nodeId === this.nodeId);
+        if (node && !node.workspaceIds.includes(workspace.workspaceId)) this.ledger.registerNode(`pr:${p.id}:grant`, {...node,workspaceIds:[...node.workspaceIds,workspace.workspaceId]});
+      }
     } else {
       const manager = new WorkspaceManager(this.ledger, this.nodeId, [{id:"project-root",path:p.root,allowCreate:true}]);
       workspace = manager.provision(`pr:${p.id}:directory`, {workspaceId:`pr:${p.id}:planner`,rootId:"project-root",relativePath:`project-${p.id}`,label:title,mode:"create"});
-    }
-    if (binding && binding.nodeId !== this.nodeId) {
-      if (!input.workspace) throw new TaskError("WORKSPACE_POLICY", "Project workspace selection required");
-      this.selectedWorkspace(input.workspace,p.id);
     }
     this.workbench.manage(`pr:${p.id}:workspace`, "link_project_workspace", {projectId:p.id,workspaceId:binding?.workspaceId ?? workspace.workspaceId,isDefault:true});
     const metadata = binding?.nodeId === this.nodeId ? join(p.cwd,".dsh-projects",p.id) : p.cwd;

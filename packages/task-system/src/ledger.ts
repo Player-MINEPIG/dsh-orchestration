@@ -2117,7 +2117,8 @@ export class TaskLedger {
     if (!this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='pr_project_workspaces'").get()) return undefined;
     const row = this.db.prepare("SELECT workspace FROM pr_project_workspaces WHERE project=?").get(projectId);
     if (!row) return undefined;
-    const binding = JSON.parse(String(row.workspace)) as {workspaceId:string;nodeId:string;path:string};
+    const binding = JSON.parse(String(row.workspace)) as {workspaceId:string;nodeId:string;path:string;scope?:"coordinator"};
+    if (binding.scope === "coordinator") return undefined;
     const workspace = this.getWorkspace(binding.workspaceId), node = this.getNode(binding.nodeId);
     if (workspace.nodeId !== binding.nodeId || workspace.path !== binding.path || workspace.state !== "ready" || !node.enabled || !node.workspaceIds.includes(binding.workspaceId))
       fail("WORKSPACE_POLICY","The project's selected workspace is unavailable or no longer authorized");

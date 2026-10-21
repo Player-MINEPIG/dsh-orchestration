@@ -14,11 +14,13 @@ const call=async(h,agent,name,args)=>{
 const read=async(h,id)=>{const handle=await h.ctx.sessionPersistence.open(SessionId(id),'read');try{return (await handle.read()).events;}finally{await handle.close();}};
 const catalog=(l,nodeId)=>{const req=l.executionModels.request('catalog-'+ ++seq,{nodeId}).catalog.request;l.completeExecutionModels('catalog-result-'+ ++seq,{nodeId,requestId:req.requestId,generation:req.generation,result:{state:'success',complete:true,observedAt:Date.now(),models:[{provider:'test-offline',model:'script'}]}});};
 
-test('public tools bind an ordinary AWS project session, dispatch an MBP child, cold-return and formally complete its parent Task',async()=>{
+test('public tools bind a planner official workspace without a self Node, dispatch an MBP child, cold-return and formally complete its parent Task',async()=>{
  const h=await createNativeHarness({config:{role:'planner',projectAgentOptions:{provider:'test-offline',model:'script'}}});
  try {
-  const runtime=h.ctx.taskSystem.projects,root=join(h.dir,'projects'),existing=join(root,'aws-repo');mkdirSync(existing,{recursive:true});runtime.saveSettings({root,expectedRevision:0});
-  const project=await runtime.create({commandId:'smoke-project',title:'Smoke project',goal:'One parent with one MBP child',workspace:{kind:'directory',nodeId:'local',path:existing}});
+  const runtime=h.ctx.taskSystem.projects,root=join(h.dir,'projects'),existing=join(h.dir,'aws-repo');mkdirSync(existing,{recursive:true});runtime.saveSettings({root,expectedRevision:0});
+  const {attachWorkspaceRegistry}=await import('../settings/local-workspace-harness.mjs');const registry=await attachWorkspaceRegistry(h),official=await registry.create(existing,'AWS local repository');
+  const project=await runtime.create({commandId:'smoke-project',title:'Smoke project',goal:'One parent with one MBP child',workspace:{kind:'registered',nodeId:'local',workspaceId:'registry:'+official.id}});
+  assert.throws(()=>h.ledger.getNode('local'),error=>error.code==='NOT_FOUND');
   h.ledger.registerNode('mbp-node',{nodeId:'mbp',roles:['executor'],enabled:true,models:[{provider:'test-offline',model:'script'}],capabilities:[],workspaceIds:[],maxConcurrent:2});catalog(h.ledger,'mbp');
   const parent=await h.ctx.agents.create({sessionId:SessionId('aws-original-coordinator'),meta:{cwd:existing},agentOptions:{provider:'test-offline',model:'script'}});
   let taskId;
