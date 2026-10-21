@@ -1,0 +1,142 @@
+{
+  "sourceCommit": "7b3e101",
+  "version": "0.2.42",
+  "baseline": "48dc0bb",
+  "focusedTests": {
+    "pass": 11,
+    "fail": 0
+  },
+  "browser": {
+    "officialRegistry": true,
+    "realTaskPluginSettingsRpc": true,
+    "plannerWithoutSelfNode": true,
+    "registeredOutsideFallbackAdopted": true,
+    "cwdIsOriginalPath": true,
+    "noNestedProjectDirectory": true,
+    "existingFilesAndParentSettingUnchanged": true,
+    "emptyFailureRefreshFeedback": true
+  },
+  "hosts": {
+    "aws": {
+      "install": {
+        "host": "AWS",
+        "version": "0.2.42",
+        "sourceCommit": "7b3e101",
+        "archiveSha256": "8bd1c30aa2d9d26e83648d8dc6714d040e9de6f7595bc3516e80454d4716fc13",
+        "filesMatched": 316,
+        "dependencyGraphUnchanged": true,
+        "profileChange": "Only @dsh-task/task-system archive reference updated",
+        "configurationAndCredentialsUnchanged": true,
+        "taskBusinessDatabaseUnchanged": true,
+        "effectiveControlsUnchanged": true,
+        "dmcPresent": true,
+        "dmcFilesUnchanged": true,
+        "dmcFileCount": 41,
+        "backup": "/home/ubuntu/.dsh/releases/local-project-workspaces-0.2.42/backup",
+        "installedAt": "2026-10-21T05:51:42.013200+00:00",
+        "restartPending": true
+      },
+      "restart": {
+        "host": "AWS",
+        "at": "2026-10-21T05:52:13.063875+00:00",
+        "oldPid": "141641",
+        "service": {
+          "MainPID": "142316",
+          "NRestarts": "0",
+          "ActiveState": "active",
+          "SubState": "running"
+        },
+        "httpHealthy": true,
+        "serviceRestartRequested": true,
+        "productionParameterSaves": 0
+      },
+      "postcheck": {
+        "host": "AWS",
+        "version": "0.2.42",
+        "filesMatched": 316,
+        "configurationAndCredentialsUnchanged": true,
+        "taskBusinessDatabaseUnchanged": true,
+        "effectiveControlsUnchanged": true,
+        "dmcFilesUnchanged": true,
+        "dmcFileCount": 41,
+        "checkedAt": "2026-10-21T05:53:08.045444+00:00"
+      }
+    },
+    "mbp": {
+      "install": {
+        "host": "MBP",
+        "version": "0.2.42",
+        "sourceCommit": "7b3e101",
+        "archiveSha256": "8bd1c30aa2d9d26e83648d8dc6714d040e9de6f7595bc3516e80454d4716fc13",
+        "filesMatched": 316,
+        "dependencyGraphUnchanged": true,
+        "profileChange": "Only @dsh-task/task-system archive reference updated",
+        "configurationAndCredentialsUnchanged": true,
+        "taskBusinessDatabaseUnchanged": true,
+        "effectiveControlsUnchanged": true,
+        "dmcPresent": false,
+        "dmcFilesUnchanged": true,
+        "dmcFileCount": 0,
+        "backup": "/Users/pmp/.dsh/releases/local-project-workspaces-0.2.42/backup",
+        "installedAt": "2026-10-21T05:51:21.972367+00:00",
+        "restartPending": true
+      },
+      "restart": {
+        "at": "2026-10-21T05:52:09.913529+00:00",
+        "host": "MBP",
+        "oldPid": 13036,
+        "pid": 77303,
+        "command": [
+          "/Users/pmp/.hermes/node/bin/node",
+          "/Users/pmp/.local/bin/dsh",
+          "web"
+        ],
+        "cwd": "/Users/pmp/.local/bin",
+        "originalEnvironmentInheritedInMemory": true,
+        "serviceRestartRequested": true,
+        "httpHealthy": true,
+        "productionParameterSaves": 0
+      },
+      "postcheck": {
+        "host": "MBP",
+        "version": "0.2.42",
+        "filesMatched": 316,
+        "configurationAndCredentialsUnchanged": true,
+        "taskBusinessDatabaseUnchanged": true,
+        "effectiveControlsUnchanged": true,
+        "dmcFilesUnchanged": true,
+        "dmcFileCount": 0,
+        "checkedAt": "2026-10-21T05:53:01.161928+00:00"
+      }
+    }
+  },
+  "productionUi": {
+    "aws": {
+      "verifiedThrough": "Existing Chrome session, actual installed project page and public RPC",
+      "registeredWorkspaces": [
+        "dsh-tavern",
+        "bilibili-comments",
+        "deepseek-harness-release",
+        "test"
+      ],
+      "registeredCount": 4,
+      "selectedExistingPath": "/home/ubuntu/dsh-workspace/dsh-tavern",
+      "fallbackParent": "/home/ubuntu/dsh-workspace/scheduler",
+      "outsideFallbackParent": true,
+      "workspaceLabel": "工作区",
+      "placeholder": "请选择工作区",
+      "deviceSelector": false,
+      "projectCreated": false,
+      "testWritesToDmc": false
+    },
+    "mbp": {
+      "configuredRole": "executor",
+      "remoteProjectPanel": "still reports internal project service error",
+      "baselineComparisonPerformed": false,
+      "scope": "Remote forwarding path and configuration were not modified in this change. The error remains unresolved; it is not claimed to predate this release."
+    }
+  },
+  "deploymentMethod": "Task directory staged and atomically replaced; dependencies and other plugin packages not re-resolved. Only task archive reference in profile package.json updated; existing lockfiles retained.",
+  "dmcBoundary": "No DMC source, configuration, deployment or business tests touched. AWS installed DMC package 41 files/links byte-identical before/after. MBP had no DMC and still has none.",
+  "wip": "Main checkout was clean before work. Previous WIP stash commit 2b6330cecdba7eab3a1aab82f081686e2df85f3e remains untouched."
+}

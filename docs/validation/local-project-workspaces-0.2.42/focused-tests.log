@@ -1,0 +1,80 @@
+TAP version 13
+# (node:77013) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: existing controlled local directory is adopted exactly, existing files retained, parent default affects only later new projects
+ok 1 - existing controlled local directory is adopted exactly, existing files retained, parent default affects only later new projects
+  ---
+  duration_ms: 201.461709
+  type: 'test'
+  ...
+# Subtest: new project selection rejects remote workspaces and never imports executor heartbeat directories
+ok 2 - new project selection rejects remote workspaces and never imports executor heartbeat directories
+  ---
+  duration_ms: 103.553875
+  type: 'test'
+  ...
+# Subtest: selection rejects foreign ownership, missing grants, unavailable workspace, traversal, symlinks and directories outside controlled roots
+ok 3 - selection rejects foreign ownership, missing grants, unavailable workspace, traversal, symlinks and directories outside controlled roots
+  ---
+  duration_ms: 40.842792
+  type: 'test'
+  ...
+# Subtest: planner adopts a real official local workspace outside fallback parent without a self executor or heartbeat inventory
+ok 4 - planner adopts a real official local workspace outside fallback parent without a self executor or heartbeat inventory
+  ---
+  duration_ms: 261.666125
+  type: 'test'
+  ...
+# Subtest: official registration removal, missing paths and registry read errors remain distinct from an empty catalog
+ok 5 - official registration removal, missing paths and registry read errors remain distinct from an empty catalog
+  ---
+  duration_ms: 129.582125
+  type: 'test'
+  ...
+# (node:77014) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: public tools bind a planner official workspace without a self Node, dispatch an MBP child, cold-return and formally complete its parent Task
+ok 6 - public tools bind a planner official workspace without a self Node, dispatch an MBP child, cold-return and formally complete its parent Task
+  ---
+  duration_ms: 392.948458
+  type: 'test'
+  ...
+# Subtest: a persisted inbox return after a crash is resumed and consumed once without duplicating its result payload
+ok 7 - a persisted inbox return after a crash is resumed and consumed once without duplicating its result payload
+  ---
+  duration_ms: 97.780292
+  type: 'test'
+  ...
+# Subtest: busy origin consumes the result in its next turn and acknowledgement waits for that turn
+ok 8 - busy origin consumes the result in its next turn and acknowledgement waits for that turn
+  ---
+  duration_ms: 121.759916
+  type: 'test'
+  ...
+# Subtest: cold return rejects unknown or malformed retired adapters without running the model
+ok 9 - cold return rejects unknown or malformed retired adapters without running the model
+  ---
+  duration_ms: 89.729708
+  type: 'test'
+  ...
+# Subtest: missing tools after creation retain the report and dispose the resumed handle
+ok 10 - missing tools after creation retain the report and dispose the resumed handle
+  ---
+  duration_ms: 95.28225
+  type: 'test'
+  ...
+# Subtest: cold persisted inbox cannot escape the original mask or revive its expired parent lease
+ok 11 - cold persisted inbox cannot escape the original mask or revive its expired parent lease
+  ---
+  duration_ms: 73.423625
+  type: 'test'
+  ...
+1..11
+# tests 11
+# suites 0
+# pass 11
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 943.472291

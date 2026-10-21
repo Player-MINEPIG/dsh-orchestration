@@ -15,3 +15,9 @@ DSH_OFFICIAL_ROOT=/path/to/installed/dsh PLAYWRIGHT_MODULE_PATH=/path/to/playwri
 ```
 
 DMC 代码、配置、安装包不变，也未运行 DMC 业务测试。部署回执记录任务包文件、配置与业务数据、DMC 全包字节、服务健康和主机本机工作区列表验证。
+
+上线后的 AWS 真实页面列出四个本机注册工作区：dsh-tavern、bilibili-comments、deepseek-harness-release、test。只读选择 dsh-tavern 后显示原路径 `/home/ubuntu/dsh-workspace/dsh-tavern`，该路径在默认父目录 `/home/ubuntu/dsh-workspace/scheduler` 之外。未创建正式项目。
+
+MBP 当前为 executor，其远端项目面板仍显示内部服务错误。本轮没有修改远端转发路径或配置，也未对照 0.2.41 实测；因此不判断该问题是否由此前版本引入。本轮 AWS 本机新建项目路径已验证。
+
+[发布与生产页面回执](local-project-workspaces-0.2.42/release.json)记录两端316文件匹配、服务健康、配置/任务业务数据/effective设置不变，以及AWS现有DMC41项文件或链接完全不变。MBP没有DMC安装，本轮未新增。回退包位于各端 `~/.dsh/releases/local-project-workspaces-0.2.42/backup/task-system`。

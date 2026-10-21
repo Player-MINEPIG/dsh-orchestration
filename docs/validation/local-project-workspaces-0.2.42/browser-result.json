@@ -1,0 +1,54 @@
+{
+  "local": {
+    "nodeId": "local",
+    "path": "/private/var/folders/1p/0r3r_j49633fr1f0r0q6wyt80000gn/T/dsh-native-fixture-QmrIh1/projects/existing-repository"
+  },
+  "registered": {
+    "nodeId": "local",
+    "path": "/private/var/folders/1p/0r3r_j49633fr1f0r0q6wyt80000gn/T/dsh-native-fixture-QmrIh1/registered-repository"
+  },
+  "calls": [
+    {
+      "method": "createProject",
+      "input": {
+        "commandId": "f09417a0-ba64-4657-ae83-39ec49eb508c",
+        "title": "Adopt local repository",
+        "goal": "Use the existing code in place",
+        "selection": {
+          "provider": "test-offline",
+          "model": "script"
+        },
+        "workspace": {
+          "kind": "directory",
+          "nodeId": "local",
+          "path": "/private/var/folders/1p/0r3r_j49633fr1f0r0q6wyt80000gn/T/dsh-native-fixture-QmrIh1/projects/existing-repository"
+        }
+      }
+    },
+    {
+      "method": "createProject",
+      "input": {
+        "commandId": "ca55687d-bf65-4c24-8dba-f84a95033033",
+        "title": "Adopt registered local repository",
+        "goal": "Use the existing code in place",
+        "selection": {
+          "provider": "test-offline",
+          "model": "script"
+        },
+        "workspace": {
+          "kind": "registered",
+          "nodeId": "local",
+          "workspaceId": "registry:2df7c3d8-f06c-48aa-b7c5-96f0db21b137"
+        }
+      }
+    }
+  ],
+  "parentSettings": {
+    "root": "/private/var/folders/1p/0r3r_j49633fr1f0r0q6wyt80000gn/T/dsh-native-fixture-QmrIh1/projects",
+    "revision": 1
+  },
+  "purePlannerWithoutSelfNode": true,
+  "officialRegistry": true,
+  "emptyAndFailureFeedback": true,
+  "errors": []
+}
