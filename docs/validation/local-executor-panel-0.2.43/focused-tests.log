@@ -1,0 +1,131 @@
+TAP version 13
+# (node:65143) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: local queue, durable claim uncertainty, acknowledged history and parents survive coordinator outage
+ok 1 - local queue, durable claim uncertainty, acknowledged history and parents survive coordinator outage
+  ---
+  duration_ms: 4.236792
+  type: 'test'
+  ...
+# Subtest: executor session view uses exact local assignment with no remote snapshot or sibling leak
+ok 2 - executor session view uses exact local assignment with no remote snapshot or sibling leak
+  ---
+  duration_ms: 1.710583
+  type: 'test'
+  ...
+# Subtest: both session view uses exact local assignment with no remote snapshot or sibling leak
+ok 3 - both session view uses exact local assignment with no remote snapshot or sibling leak
+  ---
+  duration_ms: 1.385
+  type: 'test'
+  ...
+# Subtest: recovery panel bounds history and returns claim metadata without payloads
+ok 4 - recovery panel bounds history and returns claim metadata without payloads
+  ---
+  duration_ms: 6.0355
+  type: 'test'
+  ...
+# Subtest: projection de-duplicates queue and attempts by Run while retaining other Runs of the Task
+ok 5 - projection de-duplicates queue and attempts by Run while retaining other Runs of the Task
+  ---
+  duration_ms: 0.25575
+  type: 'test'
+  ...
+# (node:65144) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: results sort by return time across sources, ahead of unfinished tasks; ties are stable
+ok 6 - results sort by return time across sources, ahead of unfinished tasks; ties are stable
+  ---
+  duration_ms: 0.720792
+  type: 'test'
+  ...
+# Subtest: dispatch receipts include plan apply, project, direct runs and delegation; queries, proposals, errors and retries do not inflate count
+ok 7 - dispatch receipts include plan apply, project, direct runs and delegation; queries, proposals, errors and retries do not inflate count
+  ---
+  duration_ms: 0.301458
+  type: 'test'
+  ...
+# Subtest: index skips fork-inherited history, invalidates on changes, caches only IDs and always closes read handles
+ok 8 - index skips fork-inherited history, invalidates on changes, caches only IDs and always closes read handles
+  ---
+  duration_ms: 0.479334
+  type: 'test'
+  ...
+# Subtest: durable operations isolate sessions even when they share a project, retain pending ACKs and survive paused mode
+ok 9 - durable operations isolate sessions even when they share a project, retain pending ACKs and survive paused mode
+  ---
+  duration_ms: 1.850459
+  type: 'test'
+  ...
+# Subtest: task-center categories are reused; descendants included once, siblings and private data excluded
+ok 10 - task-center categories are reused; descendants included once, siblings and private data excluded
+  ---
+  duration_ms: 0.510542
+  type: 'test'
+  ...
+# Subtest: empty and cyclic task graphs terminate without including unrelated tasks
+ok 11 - empty and cyclic task graphs terminate without including unrelated tasks
+  ---
+  duration_ms: 0.081791
+  type: 'test'
+  ...
+# Subtest: conversation tab is registered with session identity and is disposed with the plugin
+ok 12 - conversation tab is registered with session identity and is disposed with the plugin
+  ---
+  duration_ms: 0.468875
+  type: 'test'
+  ...
+# Subtest: refresh is single-flight, preserves previous data on failure and ignores responses after leaving the session
+ok 13 - refresh is single-flight, preserves previous data on failure and ignores responses after leaving the session
+  ---
+  duration_ms: 0.240833
+  type: 'test'
+  ...
+# Subtest: a response for another session is never displayed
+ok 14 - a response for another session is never displayed
+  ---
+  duration_ms: 0.080209
+  type: 'test'
+  ...
+# Subtest: local refresh failure retains local evidence and never requests a project snapshot
+ok 15 - local refresh failure retains local evidence and never requests a project snapshot
+  ---
+  duration_ms: 0.482667
+  type: 'test'
+  ...
+# Subtest: local cards preserve concrete result-return labels and actual task/run/session parent evidence
+ok 16 - local cards preserve concrete result-return labels and actual task/run/session parent evidence
+  ---
+  duration_ms: 13.205208
+  type: 'test'
+  ...
+# Subtest: status filtering and identifier search keep parent associations without exposing unrelated cards
+ok 17 - status filtering and identifier search keep parent associations without exposing unrelated cards
+  ---
+  duration_ms: 2.887042
+  type: 'test'
+  ...
+# Subtest: snapshots without optional view context retain the scheduler labels and omit absent session evidence
+ok 18 - snapshots without optional view context retain the scheduler labels and omit absent session evidence
+  ---
+  duration_ms: 0.914959
+  type: 'test'
+  ...
+# (node:65146) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# actual Remote→Gateway calls passed: taskPluginSettings/projectSnapshot,taskPluginSettings/projectSnapshot,taskPluginSettings/projectSnapshot,taskPluginSettings/sessionTasks
+# Subtest: actual browser Remote descriptors and host Typert Gateway agree for initial and selected task views and session tasks
+ok 19 - actual browser Remote descriptors and host Typert Gateway agree for initial and selected task views and session tasks
+  ---
+  duration_ms: 131.186084
+  type: 'test'
+  ...
+1..19
+# tests 19
+# suites 0
+# pass 19
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 283.505708

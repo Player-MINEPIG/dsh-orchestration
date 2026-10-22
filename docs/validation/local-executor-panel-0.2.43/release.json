@@ -1,0 +1,163 @@
+{
+  "sourceCommit": "c6505564c62d4a40d51a1f5ce0fe2c53815a998f",
+  "baseline": "1106f29c6ac80f16c3ac67123e944730fd3c9145",
+  "version": "0.2.43",
+  "archiveSha256": "6b331a535015b0f7d1996df8cf2dd3ebde383234c74f6a5a910be3e2a202d4e1",
+  "focusedChecks": {
+    "integratedPass": 19,
+    "viewPass": 5,
+    "buildPassed": true
+  },
+  "initialCandidate": {
+    "sourceCommit": "fba516e",
+    "archiveSha256": "ad775965c6990b0729ac486fef36b016c719b97390a878e646e397f9ce101e89",
+    "totalPanelPassed": false,
+    "sessionPanelPassed": true,
+    "reason": "Browser projectSnapshot descriptor still declared zero parameters after host added view input. Fixed in c650556 and verified through actual browser Remote and host Typert Gateway."
+  },
+  "hosts": {
+    "aws": {
+      "installation": {
+        "host": "AWS",
+        "version": "0.2.43",
+        "sourceCommit": "c650556",
+        "archiveSha256": "6b331a535015b0f7d1996df8cf2dd3ebde383234c74f6a5a910be3e2a202d4e1",
+        "filesMatched": 319,
+        "dependencyGraphUnchanged": true,
+        "profileChange": "Only @dsh-task/task-system archive reference updated",
+        "configurationAndCredentialsUnchanged": true,
+        "taskBusinessDatabaseUnchanged": true,
+        "effectiveControlsUnchanged": true,
+        "dmcPresent": true,
+        "dmcFilesUnchanged": true,
+        "dmcFileCount": 47,
+        "backup": "/home/ubuntu/.dsh/releases/local-executor-panel-0.2.43-final/backup",
+        "installedAt": "2026-10-22T08:09:26.526017+00:00",
+        "restartPending": true
+      },
+      "activation": {
+        "host": "AWS",
+        "at": "2026-10-22T08:09:32.185032+00:00",
+        "oldPid": "172020",
+        "service": {
+          "MainPID": "172358",
+          "NRestarts": "0",
+          "ActiveState": "active",
+          "SubState": "running"
+        },
+        "httpHealthy": true,
+        "serviceRestartRequested": true,
+        "productionParameterSaves": 0
+      },
+      "postcheck": {
+        "host": "AWS",
+        "version": "0.2.43",
+        "filesMatched": 319,
+        "configurationAndCredentialsUnchanged": true,
+        "dmcFilesUnchanged": true,
+        "dmcFileCount": 47,
+        "defaultPoliciesAndDirectorySettingsUnchanged": true,
+        "taskBusinessEntitiesAddedOrRemoved": false,
+        "taskBusinessStateUnchanged": true,
+        "backgroundRunUpdatedAtChanges": [
+          {
+            "kind": "run",
+            "record": "74cf25c0-4fa3-4d0c-8ac9-af1a83e3c70e",
+            "columns": [
+              "data"
+            ],
+            "dataFields": [
+              "updatedAt"
+            ],
+            "beforeState": "queued",
+            "afterState": "queued"
+          }
+        ],
+        "checkedAt": "2026-10-22T08:13:23.408369+00:00"
+      },
+      "livePage": {
+        "actualRole": "both",
+        "plannerLoaded": true,
+        "executorSwitchLoaded": true,
+        "executorPaused": true,
+        "executorLocalRecords": 0,
+        "identityStaysSelectableWhilePaused": true
+      }
+    },
+    "mbp": {
+      "installation": {
+        "host": "MBP",
+        "version": "0.2.43",
+        "sourceCommit": "c650556",
+        "archiveSha256": "6b331a535015b0f7d1996df8cf2dd3ebde383234c74f6a5a910be3e2a202d4e1",
+        "filesMatched": 319,
+        "dependencyGraphUnchanged": true,
+        "profileChange": "Only @dsh-task/task-system archive reference updated",
+        "configurationAndCredentialsUnchanged": true,
+        "taskBusinessDatabaseUnchanged": true,
+        "effectiveControlsUnchanged": true,
+        "dmcPresent": false,
+        "dmcFilesUnchanged": true,
+        "dmcFileCount": 0,
+        "backup": "/Users/pmp/.dsh/releases/local-executor-panel-0.2.43-final/backup",
+        "installedAt": "2026-10-22T08:09:05.338331+00:00",
+        "restartPending": true
+      },
+      "activation": {
+        "at": "2026-10-22T08:09:08.209037+00:00",
+        "host": "MBP",
+        "oldPid": 64732,
+        "pid": 65188,
+        "command": [
+          "/Users/pmp/.hermes/node/bin/node",
+          "/Users/pmp/.local/bin/dsh",
+          "web"
+        ],
+        "cwd": "/Users/pmp/.local/bin",
+        "originalEnvironmentInheritedInMemory": true,
+        "serviceRestartRequested": true,
+        "httpHealthy": true,
+        "productionParameterSaves": 0
+      },
+      "postcheck": {
+        "host": "MBP",
+        "version": "0.2.43",
+        "filesMatched": 319,
+        "configurationAndCredentialsUnchanged": true,
+        "taskBusinessDatabaseUnchanged": true,
+        "effectiveControlsUnchanged": true,
+        "dmcFilesUnchanged": true,
+        "dmcFileCount": 0,
+        "checkedAt": "2026-10-22T08:10:25.397640+00:00"
+      },
+      "livePage": {
+        "actualRole": "executor",
+        "defaultView": "executor",
+        "plannerDisabled": true,
+        "localTaskRecords": 12,
+        "unresolvedClaimRuns": 2,
+        "executionSessionTaskCount": 1,
+        "executionSessionStateLabel": "结果已回传"
+      }
+    }
+  },
+  "knownLimitations": [
+    {
+      "kind": "existing-ptc-session-index",
+      "sessionId": "dmc-22f2a9a1-ed58-4072-bd5b-f4a4859c1b84",
+      "liveSessionTaskCount": 0,
+      "panelReadSucceeded": true,
+      "causeBoundary": "dispatchedTaskIds indexes tool/call and tool/result, not PTC child dispatch events; this change does not extend that index.",
+      "changed": false
+    },
+    {
+      "kind": "existing-claim-uncertain",
+      "changed": false,
+      "action": "Read-only display; no claim, redispatch or receipt cleanup."
+    }
+  ],
+  "productionTaskMutations": 0,
+  "dmcBusinessTestsRun": false,
+  "runtimeModelDefaultsChanged": false,
+  "recordedAt": "2026-10-22T08:15:26.137014+00:00"
+}
