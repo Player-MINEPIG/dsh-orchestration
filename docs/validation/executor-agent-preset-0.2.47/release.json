@@ -1,0 +1,181 @@
+{
+  "version": "0.2.47",
+  "sourceCommit": "17065ccf10a5681e5202c1c4d1219792cc0fcadf",
+  "branch": "codex/executor-agent-preset",
+  "baselineCommit": "c4b2ca4d36b23e4347d63dbf25cdb66be41a94d2",
+  "archiveSha256": "b421cefad13796b91f772f7843769fca91cc0a9b0cc98b54c40bba1172df5b18",
+  "archiveFiles": 325,
+  "validation": {
+    "build": "passed",
+    "focusedChecks": {
+      "passed": 39,
+      "failed": 0,
+      "nativeAndStartup": 38,
+      "samePresetMaskAndClientDescriptor": 1
+    },
+    "legacySettingsSuite": {
+      "baselineCommit": "c4b2ca4",
+      "baselinePassed": 16,
+      "baselineFailed": 15,
+      "newPresetCase": "passed",
+      "note": "Old full-file assertions/stubs already failed with the baseline client and original tests. No unrelated repair."
+    },
+    "realBrowser": {
+      "officialTypertGateway": true,
+      "officialConfigEditor": true,
+      "officialRc2React": true,
+      "savedPreset": "files",
+      "savedExecutionTools": null,
+      "reloaded": true,
+      "catalogRequestsHaveZeroArguments": true
+    },
+    "nativeToolSmoke": {
+      "officialPresetRegistry": true,
+      "selectedFilesPresetReadActualFile": true,
+      "alternatePresetChangesNewSessionToolset": true,
+      "taskRouteBeatsPresetModelOverride": true,
+      "coldResumeRetainsRecordedPresetId": true,
+      "missingPresetFailsClearly": true,
+      "externalModel": "isolated scripted adapter; no external model calls"
+    }
+  },
+  "deployment": {
+    "AWS": {
+      "installation": {
+        "host": "AWS",
+        "version": "0.2.47",
+        "sourceCommit": "17065ccf10a5681e5202c1c4d1219792cc0fcadf",
+        "archiveSha256": "b421cefad13796b91f772f7843769fca91cc0a9b0cc98b54c40bba1172df5b18",
+        "filesMatched": 325,
+        "dependencyGraphUnchanged": true,
+        "profileChange": "Only @dsh-task/task-system archive reference updated",
+        "configurationAndCredentialsUnchanged": true,
+        "taskBusinessDatabaseUnchanged": true,
+        "effectiveControlsUnchanged": true,
+        "dmcPresent": true,
+        "dmcFilesUnchanged": true,
+        "dmcFileCount": 47,
+        "backup": "/home/ubuntu/.dsh/releases/executor-agent-preset-0.2.47/backup",
+        "installedAt": "2026-10-22T16:25:05.549850+00:00",
+        "restartPending": true
+      },
+      "restart": {
+        "host": "AWS",
+        "at": "2026-10-22T16:25:29.565813+00:00",
+        "oldPid": "181066",
+        "service": {
+          "MainPID": "182430",
+          "NRestarts": "0",
+          "ActiveState": "active",
+          "SubState": "running"
+        },
+        "httpHealthy": true,
+        "serviceRestartRequested": true,
+        "productionParameterSaves": 0
+      },
+      "final": {
+        "at": "2026-10-22T16:27:30.842485+00:00",
+        "host": "AWS",
+        "version": "0.2.47",
+        "filesMatched": 325,
+        "archiveSha256": "b421cefad13796b91f772f7843769fca91cc0a9b0cc98b54c40bba1172df5b18",
+        "configurationAndCredentialsUnchanged": true,
+        "dmcFilesUnchanged": true,
+        "dmcFileCount": 47,
+        "dmcVersion": "0.1.8"
+      }
+    },
+    "MBP": {
+      "installation": {
+        "host": "MBP",
+        "version": "0.2.47",
+        "sourceCommit": "17065ccf10a5681e5202c1c4d1219792cc0fcadf",
+        "archiveSha256": "b421cefad13796b91f772f7843769fca91cc0a9b0cc98b54c40bba1172df5b18",
+        "filesMatched": 325,
+        "dependencyGraphUnchanged": true,
+        "profileChange": "Only @dsh-task/task-system archive reference updated",
+        "configurationAndCredentialsUnchanged": true,
+        "taskBusinessDatabaseUnchanged": true,
+        "effectiveControlsUnchanged": true,
+        "dmcPresent": false,
+        "dmcFilesUnchanged": true,
+        "dmcFileCount": 0,
+        "backup": "/Users/pmp/.dsh/releases/executor-agent-preset-0.2.47/backup",
+        "installedAt": "2026-10-22T16:24:52.286250+00:00",
+        "restartPending": true
+      },
+      "restart": {
+        "at": "2026-10-22T16:25:08.080677+00:00",
+        "host": "MBP",
+        "oldPid": 28661,
+        "pid": 40067,
+        "command": [
+          "/Users/pmp/.hermes/node/bin/node",
+          "/Users/pmp/.local/bin/dsh",
+          "web"
+        ],
+        "cwd": "/Users/pmp/.local/bin",
+        "originalEnvironmentInheritedInMemory": true,
+        "serviceRestartRequested": true,
+        "httpHealthy": true,
+        "productionParameterSaves": 0
+      },
+      "finalPackageBeforeIntentionalPresetSave": {
+        "at": "2026-10-22T16:26:19.944335+00:00",
+        "host": "MBP",
+        "version": "0.2.47",
+        "filesMatched": 325,
+        "archiveSha256": "b421cefad13796b91f772f7843769fca91cc0a9b0cc98b54c40bba1172df5b18",
+        "configurationAndCredentialsUnchanged": true,
+        "dmcFilesUnchanged": true,
+        "dmcFileCount": 0,
+        "dmcVersion": null
+      },
+      "presetSave": {
+        "method": "New production task settings selector, same ptc choice; official ConfigEditor CAS/HMR",
+        "before": {
+          "selection": {
+            "executionAgentPreset": "ptc",
+            "executionTools": [
+              "activity_sources_read",
+              "activity_report_prepare",
+              "legacy_sources_read",
+              "legacy_report_prepare",
+              "activity_report_submit",
+              "task_dispatch"
+            ]
+          },
+          "otherProfileFieldsSha256": "320c25151214699b4fc492fb4d0efd13a5ed5b3b8f24ee37c8d6395cb0523f4b"
+        },
+        "after": {
+          "selection": {
+            "executionAgentPreset": "ptc",
+            "executionTools": null
+          },
+          "otherProfileFieldsSha256": "320c25151214699b4fc492fb4d0efd13a5ed5b3b8f24ee37c8d6395cb0523f4b"
+        },
+        "otherProfileFieldsUnchanged": true,
+        "modelDefaultsUnchanged": {
+          "tasks.sqlite": true
+        },
+        "officialCatalog": [
+          "standard",
+          "ptc",
+          "minimal",
+          "cordis"
+        ],
+        "productionTasksCreatedOrRerun": 0
+      }
+    }
+  },
+  "limits": [
+    "No production execution session or PR task was created or rerun.",
+    "Production PTC declaration includes filesystem and bash plugins with no profile/home declaration override. This is catalog/declaration evidence, not a production PR access test.",
+    "Resume retains the recorded preset ID. Official cold mount uses the currently available revision of that ID; historical plugin revisions and host-mask snapshots are not frozen."
+  ],
+  "wip": {
+    "preservedStashCommit": "2b6330cecdba7eab3a1aab82f081686e2df85f3e",
+    "location": "stash@{0}"
+  },
+  "localEvidence": "/private/tmp/dsh-executor-agent-preset"
+}
