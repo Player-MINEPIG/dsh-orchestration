@@ -1,0 +1,138 @@
+{
+  "version": "0.2.48",
+  "sourceCommit": "67662d2522a053471b9e1a0711751790d7b1b904",
+  "baselineCommit": "12237e3ff90c23de2cf4f25f8532dde9b56a3dbe",
+  "branch": "codex/external-dispatch-scope",
+  "archiveSha256": "7a6e4d67af9c16d0770f3e56182a1eb17d7a14665d2f156ca3ba245a89302f28",
+  "archiveFiles": 325,
+  "validation": {
+    "completeBuild": "passed",
+    "realDshPublicToolChecks": {
+      "passed": 3,
+      "failed": 0,
+      "inlineDispatch": true,
+      "planThenDispatch": true,
+      "correctParentAndProject": true,
+      "crossProjectUnboundAndForeignAttachRejected": true,
+      "builtInCurrentTurnGuardRetained": true,
+      "externalModel": "scripted isolated fixture; no production model or PR work"
+    },
+    "baselineReproduction": {
+      "inline": "Decision belongs to another project",
+      "explicitPlan": "Catalog changed",
+      "builtInTurn": "passed"
+    },
+    "olderSuite": "exploratory run stopped after legacy fixture/expectation failures; two selected failures also reproduced against installed 0.2.47 artifacts in the same initial dependency environment; not reported as a passing suite"
+  },
+  "deployment": {
+    "AWS": {
+      "installation": {
+        "host": "AWS",
+        "version": "0.2.48",
+        "sourceCommit": "67662d2",
+        "archiveSha256": "7a6e4d67af9c16d0770f3e56182a1eb17d7a14665d2f156ca3ba245a89302f28",
+        "filesMatched": 325,
+        "dependencyGraphUnchanged": true,
+        "profileChange": "Only @dsh-task/task-system archive reference updated",
+        "configurationAndCredentialsUnchanged": true,
+        "taskBusinessDatabaseUnchanged": true,
+        "effectiveControlsUnchanged": true,
+        "dmcPresent": true,
+        "dmcFilesUnchanged": true,
+        "dmcFileCount": 47,
+        "backup": "/home/ubuntu/.dsh/releases/external-dispatch-scope-0.2.48/backup",
+        "installedAt": "2026-10-22T17:12:02.727551+00:00",
+        "restartPending": true
+      },
+      "activation": {
+        "host": "AWS",
+        "at": "2026-10-22T17:12:16.252578+00:00",
+        "oldPid": "182430",
+        "service": {
+          "MainPID": "184481",
+          "NRestarts": "0",
+          "ActiveState": "active",
+          "SubState": "running"
+        },
+        "httpHealthy": true,
+        "serviceRestartRequested": true,
+        "productionParameterSaves": 0
+      },
+      "finalPackage": {
+        "at": "2026-10-22T17:12:35.872277+00:00",
+        "host": "AWS",
+        "version": "0.2.48",
+        "filesMatched": 325,
+        "archiveSha256": "7a6e4d67af9c16d0770f3e56182a1eb17d7a14665d2f156ca3ba245a89302f28",
+        "configurationAndCredentialsUnchanged": true,
+        "dmcFilesUnchanged": true,
+        "dmcFileCount": 47,
+        "dmcVersion": "0.1.8"
+      }
+    },
+    "MBP": {
+      "installation": {
+        "host": "MBP",
+        "version": "0.2.48",
+        "sourceCommit": "67662d2",
+        "archiveSha256": "7a6e4d67af9c16d0770f3e56182a1eb17d7a14665d2f156ca3ba245a89302f28",
+        "filesMatched": 325,
+        "dependencyGraphUnchanged": true,
+        "profileChange": "Only @dsh-task/task-system archive reference updated",
+        "configurationAndCredentialsUnchanged": true,
+        "taskBusinessDatabaseUnchanged": true,
+        "effectiveControlsUnchanged": true,
+        "dmcPresent": false,
+        "dmcFilesUnchanged": true,
+        "dmcFileCount": 0,
+        "backup": "/Users/pmp/.dsh/releases/external-dispatch-scope-0.2.48/backup",
+        "installedAt": "2026-10-22T17:12:21.460023+00:00",
+        "restartPending": true
+      },
+      "activation": {
+        "at": "2026-10-22T17:12:26.910402+00:00",
+        "host": "MBP",
+        "oldPid": 40067,
+        "pid": 57423,
+        "command": [
+          "/Users/pmp/.hermes/node/bin/node",
+          "/Users/pmp/.local/bin/dsh",
+          "web"
+        ],
+        "cwd": "/Users/pmp/.local/bin",
+        "originalEnvironmentInheritedInMemory": true,
+        "serviceRestartRequested": true,
+        "httpHealthy": true,
+        "productionParameterSaves": 0
+      },
+      "finalPackage": {
+        "at": "2026-10-22T17:13:01.706350+00:00",
+        "host": "MBP",
+        "version": "0.2.48",
+        "filesMatched": 325,
+        "archiveSha256": "7a6e4d67af9c16d0770f3e56182a1eb17d7a14665d2f156ca3ba245a89302f28",
+        "configurationAndCredentialsUnchanged": true,
+        "dmcFilesUnchanged": true,
+        "dmcFileCount": 0,
+        "dmcVersion": null
+      }
+    }
+  },
+  "targetAfter": {
+    "at": "2026-10-22T17:13:04.501686+00:00",
+    "taskId": "8f91c26a-eebb-47f3-8056-fb6e7a0277f5",
+    "taskState": "waiting",
+    "runId": "4ee88031-c21b-40c9-a70f-f12f56288f70",
+    "runState": "blocked",
+    "childTasks": 0,
+    "childRuns": 0,
+    "attempts": 0
+  },
+  "productionBusinessRetries": 0,
+  "dmcModified": false,
+  "wip": {
+    "stashCommit": "2b6330cecdba7eab3a1aab82f081686e2df85f3e",
+    "location": "stash@{0}"
+  },
+  "privateEvidence": "/private/tmp/dsh-new-task-check-20261023"
+}

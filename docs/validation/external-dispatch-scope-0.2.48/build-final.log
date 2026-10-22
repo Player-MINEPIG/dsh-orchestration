@@ -1,0 +1,4 @@
+
+> @dsh-task/task-system@0.2.48 build
+> tsc -p tsconfig.json && node ../../scripts/build-task-pack.mjs && node ../../scripts/build-task-settings.mjs
+
