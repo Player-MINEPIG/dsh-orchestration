@@ -1,0 +1,150 @@
+{
+  "packageVersion": "0.2.44",
+  "sourceCommit": "a13cc57c48b97e2edfda67c5b60576fbc9df6411",
+  "branch": "codex/project-execution-settings",
+  "archiveSha256": "7c084b4116d47e4314698828221b43bffe0218a8250d9458e7934f6bcba5e5b5",
+  "archiveFileCount": 325,
+  "targetedTests": {
+    "passed": 44,
+    "failed": 0,
+    "knownBaselineFixtureExcluded": "actual Cordis opt-in heartbeat reports native presence and actual execution count; timer drains on unload (network/native mocked)"
+  },
+  "productionReadOnly": {
+    "awsProjectSettings": {
+      "loadedViaActualChromeAndRemoteRPC": true,
+      "project": "dsh-tavern",
+      "settingsRevision": 0,
+      "coordinatorGeneration": 1,
+      "coordinatorCwd": "/home/ubuntu/dsh-workspace/dsh-tavern",
+      "allowedNodeIds": null,
+      "settingsSaved": false,
+      "selectableExecutorWorkspace": {
+        "nodeId": "MBP",
+        "workspaceId": "prod-mbp",
+        "path": "/Users/pmp/.dsh/workspaces/production"
+      }
+    },
+    "mbpWorkspaceGrantCatalog": {
+      "loadedViaActualChromeAndRemoteRPC": true,
+      "officialRegistryUnGrantedCount": 7,
+      "configurationAuthorizedCount": 1,
+      "localGrantsAddedOrRevoked": 0
+    },
+    "newTasksCreated": 0,
+    "manualClaimsOrRedispatches": 0,
+    "dmcBusinessWrites": 0
+  },
+  "hosts": {
+    "aws": {
+      "installation": {
+        "host": "AWS",
+        "version": "0.2.44",
+        "sourceCommit": "a13cc57",
+        "archiveSha256": "7c084b4116d47e4314698828221b43bffe0218a8250d9458e7934f6bcba5e5b5",
+        "filesMatched": 325,
+        "dependencyGraphUnchanged": true,
+        "profileChange": "Only @dsh-task/task-system archive reference updated",
+        "configurationAndCredentialsUnchanged": true,
+        "taskBusinessDatabaseUnchanged": true,
+        "effectiveControlsUnchanged": true,
+        "dmcPresent": true,
+        "dmcFilesUnchanged": true,
+        "dmcFileCount": 47,
+        "backup": "/home/ubuntu/.dsh/releases/project-execution-settings-0.2.44/backup",
+        "installedAt": "2026-10-22T12:06:41.338314+00:00",
+        "restartPending": true
+      },
+      "restart": {
+        "host": "AWS",
+        "at": "2026-10-22T12:07:07.719344+00:00",
+        "oldPid": "172358",
+        "service": {
+          "MainPID": "175820",
+          "NRestarts": "0",
+          "ActiveState": "active",
+          "SubState": "running"
+        },
+        "httpHealthy": true,
+        "serviceRestartRequested": true,
+        "productionParameterSaves": 0
+      },
+      "postcheck": {
+        "host": "AWS",
+        "version": "0.2.44",
+        "filesMatched": 325,
+        "configurationAndCredentialsUnchanged": true,
+        "effectiveControlsUnchanged": true,
+        "dmcFilesUnchanged": true,
+        "dmcFileCount": 47,
+        "taskBusinessDatabaseUnchanged": false,
+        "changedSnapshotPaths": [
+          "/taskDatabases/tasks.sqlite/businessSha256"
+        ],
+        "businessRecordChanges": [
+          {
+            "database": "tasks.sqlite",
+            "newOrRemovedBusinessRecords": 0,
+            "changes": [
+              {
+                "kind": "run",
+                "changedPaths": [
+                  "/updatedAt"
+                ]
+              }
+            ]
+          }
+        ],
+        "checkedAt": "2026-10-22T12:09:28.261243+00:00"
+      }
+    },
+    "mbp": {
+      "installation": {
+        "host": "MBP",
+        "version": "0.2.44",
+        "sourceCommit": "a13cc57",
+        "archiveSha256": "7c084b4116d47e4314698828221b43bffe0218a8250d9458e7934f6bcba5e5b5",
+        "filesMatched": 325,
+        "dependencyGraphUnchanged": true,
+        "profileChange": "Only @dsh-task/task-system archive reference updated",
+        "configurationAndCredentialsUnchanged": true,
+        "taskBusinessDatabaseUnchanged": true,
+        "effectiveControlsUnchanged": true,
+        "dmcPresent": false,
+        "dmcFilesUnchanged": true,
+        "dmcFileCount": 0,
+        "backup": "/Users/pmp/.dsh/releases/project-execution-settings-0.2.44/backup",
+        "installedAt": "2026-10-22T12:07:23.471603+00:00",
+        "restartPending": true
+      },
+      "restart": {
+        "at": "2026-10-22T12:07:43.401549+00:00",
+        "host": "MBP",
+        "oldPid": 65188,
+        "pid": 96128,
+        "command": [
+          "/Users/pmp/.hermes/node/bin/node",
+          "/Users/pmp/.local/bin/dsh",
+          "web"
+        ],
+        "cwd": "/Users/pmp/.local/bin",
+        "originalEnvironmentInheritedInMemory": true,
+        "serviceRestartRequested": true,
+        "httpHealthy": true,
+        "productionParameterSaves": 0
+      },
+      "postcheck": {
+        "host": "MBP",
+        "version": "0.2.44",
+        "filesMatched": 325,
+        "configurationAndCredentialsUnchanged": true,
+        "taskBusinessDatabaseUnchanged": true,
+        "effectiveControlsUnchanged": true,
+        "dmcFilesUnchanged": true,
+        "dmcFileCount": 0,
+        "checkedAt": "2026-10-22T12:08:25.166584+00:00"
+      }
+    }
+  },
+  "rollback": "Each host retains ~/.dsh/releases/project-execution-settings-0.2.44/backup/task-system and the exact pre-install profile manifests; restore only the task directory/reference if needed, never restore other plugin declarations or DMC.",
+  "wipStashCommit": "2b6330cecdba7eab3a1aab82f081686e2df85f3e"
+}

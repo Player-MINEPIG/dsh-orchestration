@@ -25,3 +25,13 @@ DSH_OFFICIAL_ROOT=/path/to/installed/@deepseek-ai/dsh node --test --test-skip-pa
 ## Scope
 
 DMC code, configuration, package and business state are outside this change. No PTC-index or claim-uncertain repair and no default model changes. Production acceptance is read-only: do not change the formal project's settings, grant its real repositories, or create/re-dispatch tasks. Deployment receipt will record task-only atomic replacement, preserved current profile references for other plugins, DMC file checks and HTTP/RPC health.
+
+## Deployment and read-only acceptance
+
+Source release commit: `a13cc57c48b97e2edfda67c5b60576fbc9df6411`. Archive SHA256: `7c084b4116d47e4314698828221b43bffe0218a8250d9458e7934f6bcba5e5b5` (325 files). Both hosts installed exactly this archive. AWS gateway was activated first, followed by MBP; HTTP health passed on both. Only the task package directory and its current profile archive reference were replaced, without recalculating dependencies. The source tree after this release differs only by delivery documentation; no second package installation is needed.
+
+The actual AWS project settings page loaded through the new RPC. The formal dsh-tavern project remains settings revision 0 / coordinator generation 1 / its original cwd. It shows the executor's genuine configured `prod-mbp` directory as selectable. No production project setting was saved. The MBP owner settings page loaded its official registry: seven native directories are explicitly ungranted, and the one configuration-owned task workspace remains authorized. No directory was registered/granted on the user's behalf.
+
+Both installations match all 325 archive file hashes. Current DMC 0.1.7 on AWS has the same 47 file/link hashes before and after; MBP has no DMC package. Original configuration/credential hashes, model-default policies and directory settings are unchanged. MBP task business rows are unchanged. AWS task business identity counts are unchanged, but one existing Run.updatedAt changed during restart/background maintenance; the minimal changed-path evidence is recorded in `release-receipt.json`. No new Task/Run/Attempt/Report was created by acceptance. Do not describe the entire AWS business database as byte-unchanged.
+
+The per-host backups are `~/.dsh/releases/project-execution-settings-0.2.44/backup`. Rollback must restore only the task directory and task profile reference; unrelated live profile declarations and DMC must not be replaced. Raw production screenshots and the isolated browser receipt are local supplementary evidence under `/private/tmp/dsh-project-execution-settings`; private native-registry names are not copied into this repository.
