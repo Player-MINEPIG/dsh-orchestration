@@ -1,3 +1,5 @@
+import { ProjectExecutionSettingsStore } from "./project-execution-settings.js";
+import { z } from "zod";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { ExecutionModels, ExecutionModelChoice, sameExecutionModel } from "./execution-models.js";
 import type { CompleteExecutionModels } from "./execution-models.js";
@@ -40,6 +42,8 @@ import {
 } from "node:fs";
 import { dirname } from "node:path";
 import type {
+  ExecutorWorkspaceAnnouncement,
+  ExecutorWorkspaceCatalog,
   DispatchOrigin,
   Artifact,
   Alert,
@@ -76,6 +80,16 @@ function withExecutionModel(base:ExecutionRoute,choice:ExecutionModelChoice):Exe
   const {provider:_provider,model:_model,reasoningEffort:_effort,backend:_backend,...scope}=base;
   return {...scope,provider:choice.provider,model:choice.model,...(choice.reasoningEffort?{reasoningEffort:choice.reasoningEffort}:{}),...(choice.backend?{backend:choice.backend}:{})};
 }
+const ExecutorWorkspaceSnapshot = z.object({
+  nodeId: z.string().min(1).max(200),
+  sampledAt: z.number().int().nonnegative().max(8_640_000_000_000_000),
+  workspaces: z.array(z.object({
+    workspaceId: z.string().min(1).max(200), nodeId: z.string().min(1).max(200),
+    label: z.string().max(500), path: z.string().min(1).max(4000),
+    state: z.enum(["ready", "unavailable", "revoked"]),
+  }).strict()).max(64),
+}).strict();
+type ExecutorWorkspaceAuthority = {workspaceIds: string[]; grantIds: string[]};
 export class TaskError extends Error {
   constructor(
     public readonly code: string,
@@ -344,7 +358,7 @@ export class TaskLedger {
       if(this.dispatcherForSession(input.nodeId,input.sessionId))fail("CONFLICT","This session already coordinates an active task");
       if(this.list<Run>("run",task.taskId).length || !["ready","waiting"].includes(task.state))fail("CONFLICT","Dispatcher registration requires a new unexecuted draft");
       new Workbench(this).linkDispatcherTask(`pr:${input.projectId}`,task.taskId);
-      const run=this.newRun({taskId:input.taskId});
+      const run=this.newRun({taskId:input.taskId}, {coordinatorSession:{nodeId:input.nodeId,sessionId:input.sessionId}});
       run.coordinatorSession={nodeId:input.nodeId,sessionId:input.sessionId};run.state="running";
       run.dispatchOrigin={kind:"system",nodeId:input.nodeId};
       this.saveRun(run);this.projectTaskState(task,run);
@@ -371,6 +385,7 @@ export class TaskLedger {
       return run;
     });
   }
+  readonly projectExecutionSettings: ProjectExecutionSettingsStore;
   private readonly db: DatabaseSync;
   readonly executionModels: ExecutionModels;
   executionDirectoryReady?:()=>boolean;
@@ -455,6 +470,7 @@ export class TaskLedger {
     this.db = new DatabaseSync(path, { readOnly: options.readOnly ?? false });
     this.db.exec("PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON;");
     this.executionModels = new ExecutionModels(this.db,{now:this.clock,readOnly:options.readOnly});
+    this.projectExecutionSettings = new ProjectExecutionSettingsStore(this.db, {readOnly: options.readOnly});
     if (!options.readOnly) {
       this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
       CREATE TABLE IF NOT EXISTS schema_meta(version INTEGER NOT NULL);
@@ -2105,15 +2121,49 @@ export class TaskLedger {
       fail("TOO_LARGE", "Resolved execution context exceeds 1 MB");
     return context;
   }
-  projectForTask(taskId:string):string|undefined {
-    this.getTask(taskId);
-    const exists=this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='wb_projects'").get();
-    if(!exists)return undefined;
-    const rows=this.db.prepare("SELECT DISTINCT p.project_id FROM wb_projects p JOIN wb_backlogs b ON b.project_id=p.project_id JOIN wb_backlog_tasks t ON t.backlog_id=b.backlog_id WHERE t.task_id=?").all(taskId);
-    if(rows.length>1)fail("AMBIGUOUS_PROJECT","Task belongs to more than one project");
-    return rows[0]?String(rows[0].project_id):undefined;
+  private projectSettingsId(projectId: string): string {
+    if (projectId.startsWith("pr:") && this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='pr_projects'").get() && this.db.prepare("SELECT 1 FROM pr_projects WHERE id=?").get(projectId.slice(3))) return projectId.slice(3);
+    return projectId;
+  }
+  projectForTask(taskId: string, parentRunId?: string): string | undefined {
+    const projects = new Set<string>(), visited = new Set<string>();
+    const add = (projectId: string | undefined) => { if (projectId) projects.add(this.projectSettingsId(projectId)); };
+    const hasWorkbench = this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='wb_projects'").get();
+    let task: Task | undefined = this.getTask(taskId);
+    if (parentRunId) add(this.getRun(parentRunId).projectContext?.project?.projectId);
+    while (task && !visited.has(task.taskId)) {
+      visited.add(task.taskId);
+      if (hasWorkbench) for (const row of this.db.prepare("SELECT DISTINCT p.project_id FROM wb_projects p JOIN wb_backlogs b ON b.project_id=p.project_id JOIN wb_backlog_tasks t ON t.backlog_id=b.backlog_id WHERE t.task_id=?").all(task.taskId)) add(String(row.project_id));
+      if (task.parentRunId) add(this.getRun(task.parentRunId).projectContext?.project?.projectId);
+      task = task.parentTaskId ? this.getTask(task.parentTaskId) : undefined;
+    }
+    add(this.dispatchProjectId());
+    if (projects.size > 1) fail("AMBIGUOUS_PROJECT", "Task ancestry and current coordinator must belong to one project");
+    return projects.values().next().value;
+  }
+  dispatchProjectId(): string | undefined {
+    const caller = this.dispatchOrigins.getStore();
+    if (caller?.kind !== "session" || caller.parentLease) return undefined;
+    const bound = this.dispatcherForSession(caller.nodeId, caller.sessionId)?.projectId;
+    const row = this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='dispatcher_projects'").get()
+      ? this.db.prepare("SELECT project FROM dispatcher_projects WHERE node=? AND session=?").get(caller.nodeId, caller.sessionId) : undefined;
+    if (bound && row && this.projectSettingsId(bound) !== this.projectSettingsId(String(row.project))) fail("AMBIGUOUS_PROJECT", "Current coordinator bindings disagree");
+    return bound ? this.projectSettingsId(bound) : row ? this.projectSettingsId(String(row.project)) : undefined;
+  }
+  projectExecutionPolicy(projectId: string, nodeId?: string) {
+    const settings = this.projectExecutionSettings.read(this.projectSettingsId(projectId));
+    if (nodeId && settings.allowedNodeIds !== null && !settings.allowedNodeIds.includes(nodeId)) fail("PROJECT_NODE_NOT_ALLOWED", "Project settings no longer allow this executor; create a new Run on an allowed executor");
+    const binding = nodeId && Object.hasOwn(settings.executionBindings, nodeId) ? settings.executionBindings[nodeId] : undefined;
+    const workspaceId = binding ?? this.projectWorkspaceConstraint(settings.projectId);
+    if (workspaceId && nodeId) {
+      const workspace = this.getWorkspace(workspaceId), node = this.getNode(nodeId);
+      if (workspace.nodeId !== nodeId || workspace.state !== "ready" || !node.workspaceIds.includes(workspaceId) || !node.enabled) fail("WORKSPACE_POLICY", "Project execution workspace is unavailable or no longer authorized for this executor");
+    }
+    return {...settings, ...(workspaceId ? {workspaceId} : {})};
   }
   projectWorkspaceConstraint(projectId: string): string | undefined {
+    projectId = this.projectSettingsId(projectId);
+    if (this.projectExecutionSettings.read(projectId).revision > 0) return undefined;
     if (!this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='pr_project_workspaces'").get()) return undefined;
     const row = this.db.prepare("SELECT workspace FROM pr_project_workspaces WHERE project=?").get(projectId);
     if (!row) return undefined;
@@ -2127,28 +2177,16 @@ export class TaskLedger {
   private projectContextSnapshot(
     task: Task,
     parentRunId?: string,
+    selectedProjectId?: string,
   ): ProjectExecutionContext | undefined {
     if (parentRunId) {
       const parent = this.getRun(parentRunId).projectContext;
-      if (parent) return projectContext(parent);
+      if (parent && (parent.project || !selectedProjectId)) return projectContext(parent);
     }
-    const hasProjects = this.db
-      .prepare(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='wb_projects'",
-      )
-      .get();
-    const projects = hasProjects
-      ? this.db
-          .prepare(
-            `SELECT DISTINCT p.* FROM wb_projects p
-      JOIN wb_backlogs b ON b.project_id=p.project_id
-      JOIN wb_backlog_tasks t ON t.backlog_id=b.backlog_id WHERE t.task_id=?`,
-          )
-          .all(task.taskId)
-      : [];
-    if (projects.length > 1)
-      fail("AMBIGUOUS_PROJECT", "A dispatched task must belong to one project");
-    const p = projects[0];
+    const projectId = selectedProjectId ?? this.projectForTask(task.taskId, parentRunId);
+    const p = projectId && this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='wb_projects'").get()
+      ? this.db.prepare("SELECT * FROM wb_projects WHERE project_id=? OR project_id=?").get(projectId, `pr:${projectId}`)
+      : undefined;
     // Ordinary independently dispatched work has authority-owned temporary scope.
     // Conversation provisioning is optional; external tools do not create pr_adhoc rows.
     return projectContext({
@@ -2171,6 +2209,8 @@ export class TaskLedger {
     inherited?: {
       workspaceConstraint?: string;
       projectContext?: ProjectExecutionContext;
+      projectId?: string;
+      coordinatorSession?: Run["coordinatorSession"];
     },
   ): Run {
     input = structuredClone(input);
@@ -2178,8 +2218,14 @@ export class TaskLedger {
     const caller=this.dispatchOrigins.getStore();
     const coordinator=caller?.kind==="session" ? this.dispatcherForSession(caller.nodeId,caller.sessionId) : undefined;
     if(coordinator && (task.taskId===coordinator.taskId || !this.descendants(coordinator.taskId).some(child=>child.taskId===task.taskId)))fail("FORBIDDEN","Coordinator may dispatch only its descendant tasks");
-    const projectId = this.projectForTask(task.taskId);
-    const projectWorkspace = projectId ? this.projectWorkspaceConstraint(projectId) : undefined;
+    const parentRunId = this.inferParentRun(task.parentTaskId, input.parentRunId);
+    const relatedProject = this.projectForTask(task.taskId, parentRunId);
+    const selectedProject = inherited?.projectId ? this.projectSettingsId(inherited.projectId) : undefined;
+    if (relatedProject && selectedProject && relatedProject !== selectedProject) fail("AMBIGUOUS_PROJECT", "Recorded planning scope differs from Task project");
+    const projectId = relatedProject ?? selectedProject;
+    const projectPolicy = projectId ? this.projectExecutionPolicy(projectId, input.route?.nodeId) : undefined;
+    if (projectPolicy?.allowedNodeIds?.length === 0 && !inherited?.coordinatorSession) fail("PROJECT_NODE_NOT_ALLOWED", "Project settings disable new execution dispatches");
+    const projectWorkspace = projectPolicy?.workspaceId;
     if (projectWorkspace && ((input.route?.workspaceId && input.route.workspaceId !== projectWorkspace) || (task.workspaceId && task.workspaceId !== projectWorkspace)))
       fail("FORBIDDEN", "Execution cannot override the selected project workspace");
     if (projectWorkspace && input.route && input.route.nodeId !== this.getWorkspace(projectWorkspace).nodeId)
@@ -2197,10 +2243,6 @@ export class TaskLedger {
         "FORBIDDEN",
         "Explicit route cannot override the Task workspace constraint",
       );
-    const parentRunId = this.inferParentRun(
-      task.parentTaskId,
-      input.parentRunId,
-    );
     if (parentRunId) this.checkExecutionBudget(parentRunId, task.taskId);
     if (task.kind === "observed")
       fail("OBSERVE_ONLY", "Observed work cannot be dispatched");
@@ -2215,7 +2257,7 @@ export class TaskLedger {
         "UNRESOLVED_EFFECTS",
         "Reconcile uncertain prior execution before another run",
       );
-    const scopedContext = inherited?.projectContext ?? this.projectContextSnapshot(task,parentRunId);
+    const scopedContext = inherited?.projectContext ?? this.projectContextSnapshot(task,parentRunId,projectId);
     const project = scopedContext?.project===null && workspaceConstraint ? undefined : scopedContext;
     if (input.route) {
       const workspaceId =
@@ -2307,7 +2349,9 @@ export class TaskLedger {
     const run: Run = {
       runId: key,
       taskId: task.taskId,
-      ...(parentRunId ? { parentRunId } : {}),
+      ...(parentRunId ? { parentRunId, executionParentKind: this.getRun(parentRunId).coordinatorSession ? "coordinator" : "executor", ...(!this.getRun(parentRunId).coordinatorSession ? {executionParentRunId: parentRunId} : {}) } : {}),
+      ...(inherited?.coordinatorSession ? {coordinatorSession: inherited.coordinatorSession} : {}),
+      ...(projectPolicy ? {projectSettingsRevision: projectPolicy.revision, ...(input.route && projectPolicy.workspaceId ? {projectExecutionBinding: projectPolicy.workspaceId} : {})} : {}),
       state: "queued",
       createdAt: this.now(),
       updatedAt: this.now(),
@@ -2397,6 +2441,57 @@ export class TaskLedger {
     if(!node)return;
     return this.command(commandId,"deactivatePairedExecutor",{nodeId},()=>{node.enabled=false;this.put("node",nodeId,node);return node;});
   }
+  executorWorkspaceCatalog(nodeId: string): ExecutorWorkspaceCatalog {
+    return this.get<ExecutorWorkspaceAnnouncement>("executorWorkspaceCatalog", nodeId) ?? {nodeId, sampledAt: null, workspaces: []};
+  }
+  /** Only the authenticated transport/host may submit this physically verified full snapshot. */
+  recordExecutorWorkspaces(commandId: string, input: ExecutorWorkspaceAnnouncement) {
+    this.planner();
+    const parsed = ExecutorWorkspaceSnapshot.safeParse(input);
+    const snapshot = parsed.success ? parsed.data : fail("INVALID", "Invalid executor workspace announcement");
+    if (snapshot.workspaces.some(workspace => workspace.nodeId !== snapshot.nodeId || !/^(\/|[A-Za-z]:[\\/])/.test(workspace.path)) || new Set(snapshot.workspaces.map(workspace => workspace.workspaceId)).size !== snapshot.workspaces.length || new Set(snapshot.workspaces.map(workspace => workspace.path)).size !== snapshot.workspaces.length) fail("INVALID", "Executor snapshot must contain distinct workspace identities and absolute local paths for its own node");
+    return this.command(commandId, "recordExecutorWorkspaces", snapshot, () => {
+      const node = this.getNode(snapshot.nodeId), prior = this.executorWorkspaceCatalog(snapshot.nodeId);
+      if (prior.sampledAt !== null && snapshot.sampledAt < prior.sampledAt) fail("STALE_WORKSPACE_CATALOG", "Executor workspace announcement is older than the current snapshot");
+      if (prior.sampledAt === snapshot.sampledAt) {
+        if (canonical(prior.workspaces) !== canonical(snapshot.workspaces)) fail("CONFLICT", "Workspace snapshot changed at the same observation time");
+        return prior;
+      }
+      const authority = this.get<ExecutorWorkspaceAuthority>("executorWorkspaceAuthority", node.nodeId) ?? {workspaceIds: [], grantIds: []};
+      const workspaceIds = new Set(authority.workspaceIds), grantIds = new Set(authority.grantIds), grants = new Set(node.workspaceIds);
+      const registered = this.list<Workspace>("workspace");
+      for (const announced of snapshot.workspaces) {
+        const existing = this.get<Workspace>("workspace", announced.workspaceId);
+        if (existing && (existing.nodeId !== announced.nodeId || existing.path !== announced.path)) fail("CONFLICT", "Executor workspace identity cannot be rebound to another node or directory");
+        if (registered.some(workspace => workspace.nodeId === announced.nodeId && workspace.path === announced.path && workspace.workspaceId !== announced.workspaceId && workspace.state === "ready" && node.workspaceIds.includes(workspace.workspaceId))) fail("CONFLICT", "Executor directory already has another workspace identity");
+        if (!existing) workspaceIds.add(announced.workspaceId);
+        if (!existing || workspaceIds.has(announced.workspaceId)) this.put("workspace", announced.workspaceId, {
+          workspaceId: announced.workspaceId, nodeId: announced.nodeId, path: announced.path, label: announced.label,
+          state: announced.state === "ready" ? "ready" : "failed", createdAt: existing?.createdAt ?? new Date(snapshot.sampledAt).toISOString(),
+        } satisfies Workspace);
+        const effective = this.getWorkspace(announced.workspaceId);
+        if (announced.state === "ready" && effective.state === "ready" && !grants.has(announced.workspaceId)) { grants.add(announced.workspaceId); grantIds.add(announced.workspaceId); }
+      }
+      const ready = new Set(snapshot.workspaces.filter(workspace => workspace.state === "ready").map(workspace => workspace.workspaceId));
+      for (const workspaceId of grantIds) if (!ready.has(workspaceId)) { grants.delete(workspaceId); grantIds.delete(workspaceId); }
+      for (const workspaceId of workspaceIds) if (!ready.has(workspaceId)) {
+        const workspace = this.getWorkspace(workspaceId);
+        workspace.state = "failed"; this.put("workspace", workspaceId, workspace);
+      }
+      node.workspaceIds = [...grants];
+      this.put("node", node.nodeId, node);
+      this.put("executorWorkspaceAuthority", node.nodeId, {workspaceIds: [...workspaceIds], grantIds: [...grantIds]});
+      this.put("executorWorkspaceCatalog", node.nodeId, snapshot);
+      this.event("executor.workspaces_observed", {nodeId: node.nodeId, sampledAt: snapshot.sampledAt, count: snapshot.workspaces.length});
+      return snapshot;
+    });
+  }
+  private adoptWorkspaceGrants(nodeId: string, workspaceIds: string[], source: "workspace" | "grant") {
+    const authority = this.get<ExecutorWorkspaceAuthority>("executorWorkspaceAuthority", nodeId);
+    if (!authority) return;
+    const adopted = new Set(workspaceIds);
+    this.put("executorWorkspaceAuthority", nodeId, {workspaceIds: source === "workspace" ? authority.workspaceIds.filter(workspaceId => !adopted.has(workspaceId)) : authority.workspaceIds, grantIds: source === "grant" ? authority.grantIds.filter(workspaceId => !adopted.has(workspaceId)) : authority.grantIds});
+  }
   registerNode(commandId: string, node: NodeCapability) {
     if (
       this.role === "executor" &&
@@ -2438,6 +2533,7 @@ export class TaskLedger {
         text(m.provider, "provider", 100);
         text(m.model, "model", 200);
       }
+      this.adoptWorkspaceGrants(node.nodeId, node.workspaceIds, "grant");
       this.put("node", node.nodeId, node);
       return node;
     });
@@ -2475,6 +2571,7 @@ export class TaskLedger {
         (prior.nodeId !== workspace.nodeId || prior.path !== workspace.path)
       )
         fail("CONFLICT", "Workspace identity cannot be rebound");
+      this.adoptWorkspaceGrants(workspace.nodeId, [workspace.workspaceId], "workspace");
       this.put("workspace", workspace.workspaceId, workspace);
       return workspace;
     });
@@ -2871,17 +2968,19 @@ export class TaskLedger {
         parentLease:{runId:input.runId,attemptId:input.attemptId,nodeId:input.nodeId,fence:input.fence,...(input.executionId ? {executionId:input.executionId} : {})},
       } : {kind:"system",nodeId:input.nodeId};
       const display = delegationDisplay(input.display, this.options.delegationDefaultDisplay ?? "task");
+      const inheritedRoute = parentRun.route && !this.getTask(parentRun.taskId).workspaceId && parentRun.route.workspaceId === parentRun.projectExecutionBinding
+        ? {...parentRun.route, workspaceId: undefined} : parentRun.route;
       const task = this.newTask({
         title: input.title,
         description: input.description,
         parentTaskId: parentRun.taskId,
         parentRunId: parentRun.runId,
         policy: input.policy,
-        workspaceId: (input.route ?? parentRun.route)?.workspaceId,
+        workspaceId: (input.route ?? inheritedRoute)?.workspaceId,
       });
-      const inherited=!parentRun.executionModel || parentRun.executionModel.origin==="explicit" ? parentRun.route : undefined;
+      const inherited=!parentRun.executionModel || parentRun.executionModel.origin==="explicit" ? inheritedRoute : undefined;
       const selected=this.selectExecutionModel((input.route ?? parentRun.route)!.nodeId,input.route ?? inherited);
-      const route=input.route ?? withExecutionModel(parentRun.route!,selected.choice);
+      const route=input.route ?? withExecutionModel(inheritedRoute!,selected.choice);
       const run = this.newRun({
         taskId: task.taskId,
         parentRunId: parentRun.runId,
@@ -4240,6 +4339,19 @@ export class TaskLedger {
     const run=this.getRun(runId);
     if(run.state!=="queued" || run.currentAttemptId || run.historyOnly || run.observationOnly)return run;
     if(!run.route)return this.setDispatchIssue(run,{kind:"needs_action",code:"EXECUTOR_REQUIRED",message:"Select an executor before dispatching this task.",action:"review_assignment"});
+    const projectId = run.projectContext?.project?.projectId ?? this.projectForTask(run.taskId, run.parentRunId);
+    if (projectId) {
+      try {
+        const policy = this.projectExecutionPolicy(projectId, run.route.nodeId);
+        if (run.projectSettingsRevision !== undefined && policy.workspaceId !== run.projectExecutionBinding)
+          return this.setDispatchIssue(run, {kind:"needs_action", code:"PROJECT_WORKSPACE_CHANGED", message:"Project execution workspace changed after dispatch. Return this unclaimed Run to the inbox and create a new Run; its directory was not changed.", action:"review_assignment"});
+        if (policy.workspaceId && (run.route.workspaceId !== policy.workspaceId || (run.workspaceConstraint && run.workspaceConstraint !== policy.workspaceId)))
+          return this.setDispatchIssue(run, {kind:"needs_action", code:"PROJECT_WORKSPACE_CHANGED", message:"This queued Run does not match the selected project execution workspace. Create a new Run to use the new settings.", action:"review_assignment"});
+      } catch (error) {
+        if (!(error instanceof TaskError)) throw error;
+        return this.setDispatchIssue(run, {kind:"needs_action", code:error.code, message:error.message, action:"review_assignment"});
+      }
+    }
     if(run.projectContext && !run.route.workspaceId && run.route.nodeId===this.nodeId && this.executionDirectoryReady?.()===false)return this.setDispatchIssue(run,{kind:"needs_action",code:"EXECUTION_ROOT_REQUIRED",message:"Configure this executor execution parent directory before starting the task.",action:"review_assignment"});
     if(!run.route.workspaceId && !run.projectContext)return this.setDispatchIssue(run,{kind:"needs_action",code:"TEMPORARY_CONTEXT_REQUIRED",message:"Repair this unclaimed request to attach its temporary task context.",action:"repair_context"});
     if(!run.executionModel && !run.route.execution && this.get("pairedExecutor",run.route.nodeId)) {
@@ -4268,7 +4380,7 @@ export class TaskLedger {
       if(!available(run.route))return this.setDispatchIssue(run,{kind:"needs_action",code:run.executionModel.origin==="explicit"?"EXPLICIT_EXECUTION_MODEL_UNAVAILABLE":"EXECUTION_DEFAULT_AND_FALLBACK_UNAVAILABLE",message:run.executionModel.origin==="explicit"?"The explicitly requested execution model or effort is unavailable. Select a supported model explicitly; it was not replaced.":"The executor default and deepseek-official/deepseek-flash high are unavailable. Update the node default or restore the model on the executor.",action:"choose_execution_model"});
     }
     if(run.dispatchIssue?.code==="EXECUTION_ROOT_REQUIRED" && run.route.nodeId!==this.nodeId && !run.route.workspaceId && this.executionModels.view(run.route.nodeId).catalog.positiveSnapshot?.temporaryWorkspaceReady!==true)return run;
-    if(run.dispatchIssue && !["TEMPORARY_CONTEXT_REQUIRED","EXECUTOR_REQUIRED","EXECUTION_CATALOG_PENDING","EXPLICIT_EXECUTION_MODEL_UNAVAILABLE","EXECUTION_DEFAULT_AND_FALLBACK_UNAVAILABLE","EXECUTION_ROOT_REQUIRED"].includes(run.dispatchIssue.code))return run;
+    if(run.dispatchIssue && !["TEMPORARY_CONTEXT_REQUIRED","EXECUTOR_REQUIRED","EXECUTION_CATALOG_PENDING","EXPLICIT_EXECUTION_MODEL_UNAVAILABLE","EXECUTION_DEFAULT_AND_FALLBACK_UNAVAILABLE","EXECUTION_ROOT_REQUIRED","PROJECT_NODE_NOT_ALLOWED","PROJECT_WORKSPACE_CHANGED","WORKSPACE_POLICY"].includes(run.dispatchIssue.code))return run;
     return this.setDispatchIssue(run,undefined);
   }
   private assertTaskActionVersion(taskId: string, expected?: string) {
@@ -5097,7 +5209,7 @@ export class TaskLedger {
                 decisionId: input.decisionId,
                 reporting: input.reporting,
               },
-            })
+            }, typeof originalInput.projectId === "string" ? {projectId: originalInput.projectId} : undefined)
           : undefined;
       this.event(
         "decision.applied",

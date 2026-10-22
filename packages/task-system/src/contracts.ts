@@ -164,6 +164,12 @@ export interface Run {
   runId: string;
   taskId: string;
   parentRunId?: string;
+  /** New runs distinguish coordination ancestry from actual execution recursion. Absent on legacy runs. */
+  executionParentKind?: "coordinator" | "executor";
+  executionParentRunId?: string;
+  /** Project policy snapshot at dispatch; never re-pins an existing Run. */
+  projectSettingsRevision?: number;
+  projectExecutionBinding?: string;
   state: RunState;
   createdAt: string;
   updatedAt: string;
@@ -501,4 +507,15 @@ export interface Receipt<T = Json> {
   commandId: string;
   acceptedAt: string;
   value: T;
+}
+
+export interface ExecutorWorkspaceAnnouncement {
+  nodeId: string;
+  sampledAt: number;
+  workspaces: {workspaceId: string; nodeId: string; label: string; path: string; state: "ready" | "unavailable" | "revoked"}[];
+}
+export interface ExecutorWorkspaceCatalog {
+  nodeId: string;
+  sampledAt: number | null;
+  workspaces: ExecutorWorkspaceAnnouncement["workspaces"];
 }

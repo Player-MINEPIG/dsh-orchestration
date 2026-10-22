@@ -85,7 +85,10 @@ export class TaskPlanner {
     );
   }
   private snapshot(input: PlanningInput) {
-    const base = this.catalog();
+    const catalog = this.catalog();
+    const projectId = input.projectId ?? (input.taskId ? this.ledger.projectForTask(input.taskId) : this.ledger.dispatchProjectId());
+    const projectPolicy = projectId ? this.ledger.projectExecutionPolicy(projectId) : undefined;
+    const base = {...catalog, executors: catalog.executors.filter(node => projectPolicy?.allowedNodeIds == null || projectPolicy.allowedNodeIds.includes(node.id))};
     // The decision may choose an executor, never override the caller/default workload policy.
     const modelRoutes=base.executors.filter(node=>node.eligible).map(node=>{
       const selected=this.ledger.selectExecutionModel(node.id,input.executionModel);
@@ -96,7 +99,7 @@ export class TaskPlanner {
       : undefined;
     return {
       ...base,
-      stateHash: digest({base:base.stateHash,modelRoutes,policies:base.executors.map(node=>this.ledger.executionModels.view(node.id).policy)}),
+      stateHash: digest({base:base.stateHash,projectPolicy:projectPolicy ?? null,modelRoutes,policies:base.executors.map(node=>this.ledger.executionModels.view(node.id).policy)}),
       modelRoutes,
       workspaceSelection: "executor" as const,
       ...(input.projectId || input.taskId ? { rankExecutors: true } : {}),
@@ -137,7 +140,13 @@ export class TaskPlanner {
     };
   }
   async plan(input: PlanningInput, options: { signal?: AbortSignal } = {}) {
-    const projectId = input.projectId ?? (input.taskId ? this.ledger.projectForTask(input.taskId) : undefined);
+    const projectId = input.projectId ?? (input.taskId ? this.ledger.projectForTask(input.taskId) : this.ledger.dispatchProjectId());
+    const projectPolicy = projectId ? this.ledger.projectExecutionPolicy(projectId, input.route?.nodeId ?? input.nodeId) : undefined;
+    if (projectPolicy) {
+      input = {...input, projectId: projectPolicy.projectId};
+      const explicitWorkspace = input.route?.workspaceId ?? input.workspaceId;
+      if (projectPolicy.workspaceId && explicitWorkspace && projectPolicy.workspaceId !== explicitWorkspace) throw new TaskError("FORBIDDEN", "Execution cannot override the selected project workspace");
+    }
     const workspaceId = projectId ? this.ledger.projectWorkspaceConstraint(projectId) : undefined;
     if (workspaceId) {
       if ((input.workspaceId && input.workspaceId !== workspaceId) || (input.route?.workspaceId && input.route.workspaceId !== workspaceId) || (input.route && input.route.nodeId !== this.ledger.getWorkspace(workspaceId).nodeId))
@@ -154,7 +163,7 @@ export class TaskPlanner {
         throw new TaskError("CONFLICT", "Decision request ID reused");
       return this.view(existing);
     }
-    if(!input.observationCandidateId)await Promise.all(this.ledger.decisionCatalog().nodes.filter(node=>node.enabled&&node.roles.some(role=>role==="executor"||role==="both")&&this.ledger.executionModels.view(node.nodeId).catalog.state!=="fresh").map(node=>this.ledger.refreshNodeModels(node.nodeId)));
+    if(!input.observationCandidateId)await Promise.all(this.ledger.decisionCatalog().nodes.filter(node=>node.enabled&&(projectPolicy?.allowedNodeIds == null || projectPolicy.allowedNodeIds.includes(node.nodeId))&&node.roles.some(role=>role==="executor"||role==="both")&&this.ledger.executionModels.view(node.nodeId).catalog.state!=="fresh").map(node=>this.ledger.refreshNodeModels(node.nodeId)));
     const snapshot = this.snapshot(input);
     const decisions = this.enabled()
       ? typeof this.decisions === "function"
