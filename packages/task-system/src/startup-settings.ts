@@ -35,6 +35,8 @@ export const TaskStartupValues = z
           .strict(),
       )
       .optional(),
+    executionAgentPreset: z.string().min(1).max(256).optional(),
+    executionTools: z.array(z.string()).nullable().optional(),
     sessionDecisionEnabled: z.boolean(),
     planningDecisionEnabled: z.boolean(),
   })
@@ -86,7 +88,7 @@ export const SaveStartupInput = z.discriminatedUnion("target", [
     .object({
       target: z.literal("task"),
       expected: TaskStartupValues,
-      changes: TaskStartupValues.omit({nodeId:true}).partial().strict(),
+      changes: TaskStartupValues.omit({nodeId:true}).partial().extend({executionTools:z.null().optional()}).strict(),
     })
     .strict(),
   z
@@ -180,6 +182,8 @@ function publicEndpoint(value: unknown): string | null {
 }
 function taskValues(raw: Raw, task: TaskSystemService | undefined) {
   return TaskStartupValues.parse({
+    executionAgentPreset: typeof raw.executionAgentPreset === "string" ? raw.executionAgentPreset : task?.config.executionAgentPreset ?? "ptc",
+    executionTools: Array.isArray(raw.executionTools) ? raw.executionTools : raw.executionTools === null ? null : task?.config.executionTools ?? null,
     databasePath: resolve(typeof raw.databasePath==="string" ? raw.databasePath : task?.config.databasePath ?? ".dsh-task/tasks.sqlite"),
     nodeId: task?.config.nodeId ?? (typeof raw.nodeId==="string" ? raw.nodeId : "local"),
     role:
@@ -387,6 +391,17 @@ export async function saveStartupSettings(ctx: Context, value: unknown) {
       "STARTUP_DECISION_REQUIRED",
       "Install and enable dsh-jev-plugin before enabling decisions",
     );
+  if (input.target === "task" && (input.changes.executionAgentPreset !== undefined || input.changes.executionTools !== undefined)) {
+    if ((input.changes.role ?? task.config.role) === "planner") reject("STARTUP_EXECUTOR_REQUIRED", "Select an execution preset on an executor");
+    if (input.changes.executionAgentPreset === undefined) reject("STARTUP_PRESET_REQUIRED", "Select a DSH agent preset before clearing the tool mask");
+    const presets = ctx.get("agentPresets");
+    if (!presets) reject("STARTUP_PRESET_UNAVAILABLE", "DSH agent preset registry is unavailable");
+    try {
+      const selected = await presets.resolve(input.changes.executionAgentPreset);
+      if (selected.broken) reject("STARTUP_PRESET_UNAVAILABLE", selected.broken.slice(0, 500));
+    } catch { reject("STARTUP_PRESET_UNAVAILABLE", "The selected DSH agent preset is missing or unavailable; reload its catalog"); }
+    input.changes.executionTools = null;
+  }
   const restart = Object.keys(input.changes).some(key => !(input.target === "task" ? ["nodeCapacities", "planningDecisionEnabled", "sessionDecisionEnabled"] : ["concurrency", "pollIntervalMs"]).includes(key));
   if(input.target==="task" && input.changes.databasePath!==undefined) {
     const role=input.changes.role ?? task.config.role;

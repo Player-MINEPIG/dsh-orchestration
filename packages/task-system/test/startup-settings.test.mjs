@@ -35,7 +35,7 @@ test('startup read/save descriptors use exact public service methods and a singl
 test('startup read excludes credentials, node grants and full raw config',t=>{
   const f=fixture(t),view=readStartupSettings(f.ctx)
   assert.equal(view.task.values.role,'both');assert.equal(view.applies,'plugin-restart')
-  assert.ok(!JSON.stringify(view).includes('NOT_A_REAL_SECRET'));assert.equal(view.task.values.databasePath,'/tmp/private.sqlite');assert.equal(view.task.values.nodeId,'worker');assert.ok(!JSON.stringify(view).includes('executionTools'))
+  assert.ok(!JSON.stringify(view).includes('NOT_A_REAL_SECRET'));assert.equal(view.task.values.databasePath,'/tmp/private.sqlite');assert.equal(view.task.values.nodeId,'worker');assert.deepEqual(view.task.values.executionTools,[]);assert.equal(view.task.values.executionAgentPreset,'ptc')
 })
 test('public ConfigEditor merge persists only selected startup fields and preserves unknown data',async t=>{
   const f=fixture(t),result=await saveStartupSettings(f.ctx,input(f,'task',{sessionDecisionEnabled:true}))
@@ -261,4 +261,24 @@ test('role preflight protects an independent active listener even when executor 
 });
 test('a legacy both listener without an upstream projects executor as disabled',t=>{
  const f=fixture(t);Object.assign(f.remoteRow.options.config,{paused:false,exposeHttp:true,coordinator:null});assert.equal(readStartupSettings(f.ctx).remote.values.paused,true);
+});
+
+function withPresetRegistry(f,registry){const get=f.ctx.get;f.ctx.get=key=>key==='agentPresets'?registry:get(key);}
+test('execution preset selection clears the old tool mask in the same profile transaction',async t=>{
+ const f=fixture(t);f.taskRow.options.config.executionTools=['activity_sources_read'];f.task.config.executionTools=['activity_sources_read'];
+ withPresetRegistry(f,{resolve:async id=>({id,name:'Official preset'})});
+ const before=structuredClone(f.taskRow.options.config);
+ await saveStartupSettings(f.ctx,input(f,'task',{executionAgentPreset:'standard'}));
+ assert.equal(f.writes.length,1);assert.equal(f.taskRow.options.config.executionAgentPreset,'standard');assert.equal(f.taskRow.options.config.executionTools,null);
+ const {executionTools,executionAgentPreset,...rest}=f.taskRow.options.config;const {executionTools:oldTools,...oldRest}=before;assert.deepEqual(rest,oldRest);
+});
+test('missing or broken execution presets reject without a profile write',async t=>{
+ for(const registry of [undefined,{resolve:async()=>{throw Error('not found')}},{resolve:async()=>({id:'broken',broken:'failed plugin'})}]){
+  const f=fixture(t);withPresetRegistry(f,registry);await assert.rejects(saveStartupSettings(f.ctx,input(f,'task',{executionAgentPreset:'broken'})),error=>error.code==='STARTUP_PRESET_UNAVAILABLE');assert.equal(f.writes.length,0);
+ }
+});
+test('execution preset CAS protects a concurrently changed old tool mask',async t=>{
+ const f=fixture(t);withPresetRegistry(f,{resolve:async id=>({id})});const request=input(f,'task',{executionAgentPreset:'ptc',executionTools:null});
+ f.host.before=()=>{f.taskRow.options.config.executionTools=['read']};
+ await assert.rejects(saveStartupSettings(f.ctx,request),error=>error.code==='STARTUP_CONFLICT');assert.equal(f.writes.length,0);assert.deepEqual(f.taskRow.options.config.executionTools,['read']);
 });

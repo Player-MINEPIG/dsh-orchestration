@@ -104,6 +104,7 @@ export interface Config {
   keepAlive?: boolean;
   maintenanceIntervalMs?: number;
   leaseTtlMs?: number;
+  executionAgentPreset?: string;
   executionTools?: string[] | null;
   officialBackends?: OfficialBackend[];
   delegationDefaultDisplay?: "task" | "step";
@@ -176,6 +177,7 @@ const PlainConfig: z<Config> = z.object({
   keepAlive: z.boolean().default(true),
   maintenanceIntervalMs: z.number().min(100).step(1).default(1000),
   leaseTtlMs: z.number().min(1000).step(1).default(60000),
+  executionAgentPreset: z.string().default("ptc"),
   executionTools: z.union([z.const(null), z.array(z.string())]).default(null),
   delegationDefaultDisplay: z
     .union([z.const("task"), z.const("step")])
@@ -591,7 +593,7 @@ export class NativeExecutionProvider {
     const abort = () =>
       agent?.cancel({ kind: "hook", reason: "Direct message interrupted" });
     try {
-      const composition = await this.executionComposition(false);
+      const composition = await this.executionComposition(false, false);
       const setup = async (ctx: Context, a: Agent) => {
         if (a.inbox.nextTurn.length || a.inbox.nextStep.length)
           throw new TaskError("SESSION_BUSY", "Session has pending work");
@@ -1159,6 +1161,7 @@ export class NativeExecutionProvider {
           },
           setup: async (agentCtx: Context, agent: Agent) => {
             await composition.mount(agentCtx, agent);
+            this.pinExecutionRoute(agentCtx, route);
             allow = [
               "task_submit_result",
               ...this.transportTools(agentCtx, agent),
@@ -1488,41 +1491,7 @@ export class NativeExecutionProvider {
           apply: async (ctx) => {
             // The WebUI may have its own model-selection listeners. The leased
             // route owns both the prompt variables and this attempt's requests.
-            const route = owned.claim.run.route!;
-            ctx.on(
-              "system-prompt/assemble",
-              async (_assembly, _context, next) => {
-                const prompt = await next();
-                return {
-                  ...prompt,
-                  variables: {
-                    ...prompt.variables,
-                    provider: route.provider,
-                    model: route.model,
-                  },
-                };
-              },
-              { prepend: true },
-            );
-            ctx.on(
-              "agent/request",
-              async (_payload, next) => {
-                const { reasoningEffort: _effort, ...config } = await next();
-                return {
-                  ...config,
-                  provider: route.provider,
-                  model: route.model,
-                  ...(route.reasoningEffort
-                    ? {
-                        reasoningEffort: ReasoningEffortId(
-                          route.reasoningEffort,
-                        ),
-                      }
-                    : {}),
-                };
-              },
-              { prepend: true },
-            );
+            this.pinExecutionRoute(ctx, owned.claim.run.route!);
             await options.setup?.(ctx, live);
             ctx.on("agent/pre-step", async ({ messages }, next) => {
               if (
@@ -1566,26 +1535,39 @@ export class NativeExecutionProvider {
     }
   }
 
+  private pinExecutionRoute(ctx: Context, route: NonNullable<NativeClaim["run"]["route"]>) {
+    ctx.on("system-prompt/assemble", async (_assembly, _context, next) => {
+      const prompt = await next();
+      return {...prompt,variables:{...prompt.variables,provider:route.provider,model:route.model}};
+    }, {prepend:true});
+    ctx.on("agent/request", async (_payload, next) => {
+      const {reasoningEffort:_inheritedEffort,...config} = await next();
+      return {...config,provider:route.provider,model:route.model,...(route.reasoningEffort ? {reasoningEffort:ReasoningEffortId(route.reasoningEffort)} : {})};
+    }, {prepend:true});
+  }
   /** Native agents do not implicitly mount the WebUI's default tool preset.
    * Compose it through DSH's official service. Follow its capabilities by
    * default; explicit task/host lists remain narrower masks; on resume keep the preset recorded by that session. */
-  private async executionComposition(newSession: boolean) {
+  private async executionComposition(newSession: boolean, requireRecordedPreset = true) {
     const presets = this.ctx.get("agentPresets") as unknown as
       | {
-          resolve(id?: string): Promise<{ id: string }>;
+          resolve(id?: string): Promise<{ id: string; broken?: string }>;
           mount(ctx: Context, id: string): Promise<unknown>;
         }
       | undefined;
+    if (!presets && !requireRecordedPreset) return {meta:{},mount:async (_ctx:Context,_agent:Agent)=>{}};
     if (!presets)
-      return { meta: {}, mount: async (_ctx: Context, _agent: Agent) => {} };
+      throw new TaskError("EXECUTION_PRESET_UNAVAILABLE", "DSH agent preset registry is unavailable");
     let id: string | undefined;
     if (newSession) {
       try {
-        id = (await presets.resolve("ptc")).id;
+        const selected = await presets.resolve(this.owner.config.executionAgentPreset ?? "ptc");
+        if (selected.broken) throw new Error(selected.broken);
+        id = selected.id;
       } catch {
         throw new TaskError(
-          "PTC_UNAVAILABLE",
-          "New task sessions require the host's registered PTC preset (ptc)",
+          "EXECUTION_PRESET_UNAVAILABLE",
+          `Selected DSH agent preset is unavailable: ${this.owner.config.executionAgentPreset ?? "ptc"}`,
         );
       }
     }
@@ -1601,7 +1583,8 @@ export class NativeExecutionProvider {
           : typeof recorded === "string"
             ? recorded
             : agent.session.header.agentPreset ?? id;
-        if (!wanted) return;
+        if (!wanted && !requireRecordedPreset) return;
+        if (!wanted) throw new TaskError("EXECUTION_PRESET_UNAVAILABLE", "Resumed execution session has no recorded DSH agent preset");
         const composed = agentCtx
           .get("agentPresets")
           ?.composedPreset(agent.ctx);
@@ -1610,7 +1593,13 @@ export class NativeExecutionProvider {
             throw new TaskError("SESSION_BUSY", "Session preset changed");
           return;
         }
-        await presets.mount(agentCtx, wanted);
+        try {
+          const selected = await presets.resolve(wanted);
+          if (selected.broken) throw new Error(selected.broken);
+          await presets.mount(agentCtx, wanted);
+        } catch {
+          throw new TaskError("EXECUTION_PRESET_UNAVAILABLE", `Recorded DSH agent preset is unavailable: ${wanted}`);
+        }
       },
     };
   }
@@ -1642,6 +1631,7 @@ export class NativeExecutionProvider {
     let composition: Awaited<ReturnType<NativeExecutionProvider["executionComposition"]>>;
     const setup = async (agentCtx: Context, agent: Agent) => {
       await composition.mount(agentCtx, agent);
+      this.pinExecutionRoute(agentCtx, route);
       owned.agent = agent;
       this.bySession.set(sessionId, owned);
       this.observeTerminal(agentCtx, agent, owned);

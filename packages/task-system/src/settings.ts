@@ -98,6 +98,13 @@ export const workspaceCatalogDescriptor: InvocationDescriptor = {
     create: () => WorkspaceCatalog,
   },
 };
+export const ExecutionPresetCatalog = z.object({
+  items:z.array(z.object({id:z.string(),label:z.string(),description:z.string(),available:z.boolean(),diagnostic:z.string().nullable()})),
+});
+export const executionPresetsDescriptor: InvocationDescriptor = {
+  id:"@dsh-task/task-system#taskPluginSettings/executionPresets",service:"taskPluginSettings",namespace:"taskPluginSettings",method:"executionPresets",invocation:{kind:"direct"},parameters:[],
+  result:{mode:"strict",typeSymbol:"@dsh-task/task-system#ExecutionPresetCatalog",create:()=>ExecutionPresetCatalog},
+};
 interface OfficialWorkspaceMetadata {
   // rc.2 entities expose title/path; sparse descriptors can omit them.
   path?: string;
@@ -779,6 +786,12 @@ export class TaskPluginSettings extends TypertRemoteService {
   async saveDecisionSettings(input: unknown) {
     return await saveDecisionSettings(this.ctx, input);
   }
+  async executionPresets() {
+    const registry = this.ctx.get("agentPresets");
+    if (!registry) throw new RemoteError("task/startup", "DSH agent preset registry is unavailable", {reason:"STARTUP_PRESET_UNAVAILABLE"});
+    const items = z.array(z.object({id:z.string(),name:z.string().optional(),description:z.string().optional(),broken:z.string().optional()})).parse(await registry.list());
+    return ExecutionPresetCatalog.parse({items:items.map(item=>({id:item.id,label:item.name ?? item.id,description:(item.description ?? "").slice(0,1000),available:!item.broken,diagnostic:item.broken?.slice(0,500) ?? null}))});
+  }
   async startup() {
     return readStartupSettings(this.ctx);
   }
@@ -1009,6 +1022,7 @@ export function apply(ctx: Context): void {
             workspaceCatalogDescriptor,
             executorIdentityDescriptor,
             startupDescriptor,
+            executionPresetsDescriptor,
             saveStartupDescriptor,
             checkConnectionDescriptor,
             ...decisionPresetDescriptors,

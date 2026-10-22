@@ -1,6 +1,6 @@
 {
   "name": "@dsh-task/task-system",
-  "version": "0.2.46",
+  "version": "0.2.47",
   "type": "module",
   "license": "MIT",
   "description": "Durable task management and authenticated multi-device execution inside DSH",

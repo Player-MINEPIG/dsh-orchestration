@@ -273,6 +273,7 @@ window.__ModuleLoader__.load({
       keepAlive: "Maintenance enabled",
       maintenanceIntervalMs: "Maintenance tick (ms)",
       leaseTtlMs: "Lease TTL (ms)",
+      executionAgentPreset: "Execution-session Agent preset",
       executionTools: "Execution-tool allowlist",
       remoteTitle: "Remote worker · read only",
       remoteNone: "No remote-execution service is loaded in this profile.",
@@ -532,6 +533,7 @@ window.__ModuleLoader__.load({
       keepAlive: "维护轮询",
       maintenanceIntervalMs: "维护轮询间隔（毫秒）",
       leaseTtlMs: "租约时长（毫秒）",
+      executionAgentPreset: "执行会话 Agent preset",
       executionTools: "允许的执行工具",
       remoteTitle: "远程执行器 · 只读",
       remoteNone: "当前 profile 未加载远程执行服务。",
@@ -875,6 +877,8 @@ window.__ModuleLoader__.load({
         "databasePath",
         "nodeId",
         "nodeCapacities",
+        "executionAgentPreset",
+        "executionTools",
         "planningDecisionEnabled",
         "sessionDecisionEnabled",
       ],
@@ -897,10 +901,12 @@ window.__ModuleLoader__.load({
         typeof value !== "object" ||
         Array.isArray(value) ||
         Object.keys(value).some((key) => !keys.includes(key)) ||
-        (!partial && keys.some((key) => !["nodeCapacities","databasePath","nodeId"].includes(key) && !Object.hasOwn(value, key)))
+        (!partial && keys.some((key) => !["nodeCapacities","databasePath","nodeId","executionAgentPreset","executionTools"].includes(key) && !Object.hasOwn(value, key)))
       )
         throw new Error("Invalid startup values");
       for (const [key, entry] of Object.entries(value)) {
+        if (key === "executionTools" && entry !== null && (!Array.isArray(entry) || entry.some(name=>typeof name!=="string"))) throw new Error("Invalid execution tool mask");
+        if (key === "executionAgentPreset" && (typeof entry!=="string" || !entry.trim())) throw new Error("Invalid execution agent preset");
         if (key === "nodeCapacities" && (!Array.isArray(entry) || entry.some(node =>
           !node || Object.keys(node).some(field => !["nodeId", "maxConcurrent"].includes(field)) ||
           typeof node.nodeId !== "string" || !node.nodeId || !Number.isSafeInteger(node.maxConcurrent) || node.maxConcurrent < 1 || node.maxConcurrent > 32)))
@@ -1583,6 +1589,8 @@ window.__ModuleLoader__.load({
       return target === "task"
         ? {
             role: values.role,
+            executionAgentPreset:values.executionAgentPreset ?? "ptc",
+            followExecutionPreset:values.executionTools === null,
             databasePath: values.databasePath ?? "",
             ...(values.nodeCapacities ? {nodeCapacities: values.nodeCapacities.map(node => ({nodeId: node.nodeId, maxConcurrent: String(node.maxConcurrent)}))} : {}),
             planningDecisionEnabled: values.planningDecisionEnabled,
@@ -1605,6 +1613,11 @@ window.__ModuleLoader__.load({
       if (target==="task" && !["planner", "executor", "both"].includes(draft.role))
         invalid.push("role");
       if (target === "task") {
+        if(role!=="planner" && draft.followExecutionPreset) {
+          next.executionAgentPreset=String(draft.executionAgentPreset ?? "").trim();
+          next.executionTools=null;
+          if(!next.executionAgentPreset) invalid.push("executionAgentPreset");
+        }
         if(role!=="executor" && values.databasePath!==undefined){next.databasePath=String(draft.databasePath).trim();if(!next.databasePath.startsWith("/") || next.databasePath.includes("\0"))invalid.push("databasePath");}
         if (values.nodeCapacities) {
           next.nodeCapacities = (draft.nodeCapacities ?? []).map(node => ({nodeId: node.nodeId, maxConcurrent: Number(node.maxConcurrent)}));
@@ -1694,6 +1707,7 @@ window.__ModuleLoader__.load({
             JSON.stringify(value) !== JSON.stringify(values[key]),
         ),
       );
+      if (target === "task" && Object.hasOwn(changes,"executionTools")) changes.executionAgentPreset=next.executionAgentPreset;
       return { changes, invalid, retainedDirty, dirty: Object.keys(changes).length > 0 };
     }
     function SettingsArea({ id, title, description, children }) {
@@ -1711,6 +1725,7 @@ window.__ModuleLoader__.load({
       visible = true,
       onRoleChange,
       renderExecutionDirectory,
+      readExecutionPresets,
       renderProjectDirectory,
       renderConnection,
       connectionRole,
@@ -1727,6 +1742,7 @@ window.__ModuleLoader__.load({
       const [draft, setDraft] = React.useState(() =>
         ({...startupDraft(target, row.values),...initialDraft}),
       );
+      const presetCatalog = useReadSnapshot(readExecutionPresets, target === "task" && draft.role !== "planner" && !!readExecutionPresets);
       const [status, setStatus] = React.useState({ saving: false });
       const [connection, setConnection] = React.useState({ checking: false });
       const edit = (key, value) => {
@@ -2068,6 +2084,19 @@ h(
           field("role"),
           row.values.nodeId ? h("div",{"data-local-node-identity":true},h("h3",null,executor?"执行端 ID（本机实例）":"本机节点 ID"),h("code",{style:{overflowWrap:"anywhere"}},row.values.nodeId),h("p",{style:hintStyle},"此稳定身份不随连接地址或调度端改变；节点昵称单独设置。")) : null,
           h("div",{hidden:!planner,"data-task-database-settings":true},h("h3",null,"调度端任务数据库"),h("label",{className:"task-connection-field"},h("span",null,"SQLite 数据库文件路径"),h("input",{id:"task-startup-task-databasePath",style:controlStyle,value:draft.databasePath,disabled,onChange:event=>edit("databasePath",event.target.value)})),h("p",{style:hintStyle},"填写此设备上的绝对文件路径。保存后重建任务服务并加载目标库，不搬移旧数据，也不覆盖目标库；不存在的文件将创建新账本及新的调度端身份。原数据库保留。")),
+          executor ? h("section",{"data-execution-agent-preset":true,className:"task-directory-card"},
+            h("h3",null,"执行端 · DSH Agent preset"),
+            h("p",{style:hintStyle},"为新的任务执行会话选择本机已注册的插件组合。工具、提示词和权限由该 preset 提供；任务权限仍可收窄。执行模型继续采用任务路由，已有会话保留其记录的 preset。"),
+            h("label",{htmlFor:"task-execution-agent-preset"},"新执行会话的 Agent preset"),
+            h("select",{id:"task-execution-agent-preset",style:controlStyle,value:draft.executionAgentPreset,disabled:disabled || !presetCatalog.state.value,onChange:event=>setDraft(value=>({...value,executionAgentPreset:event.target.value,followExecutionPreset:true}))},
+              !presetCatalog.state.value?.items.some(item=>item.id===draft.executionAgentPreset) ? h("option",{value:draft.executionAgentPreset,disabled:true},`${draft.executionAgentPreset}（当前目录不可用）`) : null,
+              ...(presetCatalog.state.value?.items ?? []).map(item=>h("option",{key:item.id,value:item.id,disabled:!item.available},`${item.label} (${item.id})${item.available ? "" : " · 不可用"}`))),
+            presetCatalog.state.loading ? h("p",{role:"status"},"正在读取本机 preset…") : null,
+            presetCatalog.state.failed ? h("p",{role:"alert"},"无法读取 DSH agent preset，请刷新后重试。") : null,
+            presetCatalog.state.value?.items.find(item=>item.id===draft.executionAgentPreset)?.description ? h("p",{style:hintStyle},presetCatalog.state.value.items.find(item=>item.id===draft.executionAgentPreset).description) : null,
+            presetCatalog.state.value?.items.find(item=>item.id===draft.executionAgentPreset)?.diagnostic ? h("p",{role:"alert"},presetCatalog.state.value.items.find(item=>item.id===draft.executionAgentPreset).diagnostic) : null,
+            row.values.executionTools != null ? h("div",{role:"note"},h("p",{style:hintStyle},draft.followExecutionPreset ? "保存时将移除旧执行工具白名单，改为跟随所选 preset；已有会话不会换代。" : `旧执行工具白名单仍在生效（${row.values.executionTools.length} 项），会覆盖 preset 的常规工具。`),h(Button,{variant:"outline",disabled:disabled || !presetCatalog.state.value?.items.some(item=>item.id===draft.executionAgentPreset && item.available),onClick:()=>edit("followExecutionPreset",true)},"使用此 preset，移除旧白名单")) : h("p",{style:hintStyle},"当前跟随所选 preset，未附加旧工具白名单。"),
+            h(Button,{variant:"outline",disabled:status.saving,onClick:presetCatalog.refresh},"刷新 preset 目录")) : null,
           h("div", {className:"task-directory-grid"},
             h("div",null,renderProjectDirectory?.()),
             h("div",null,renderExecutionDirectory?.())),
@@ -2318,6 +2347,7 @@ h(
       saveStartup,
       readWorkspaces,
       renderExecutionDirectory,
+      readExecutionPresets,
       renderProjectDirectory,
       renderConnection,
       onSaved,
@@ -2379,6 +2409,7 @@ h(
                     renderDecisionModels,
                     onRoleChange: setTaskRole,
                     renderExecutionDirectory,
+                    readExecutionPresets,
                     renderProjectDirectory,
                     renderConnection: () => h("div",{className:"task-collaboration-settings"},
                       state.value.remote ? h(StartupRow,{key:state.value.remote.entryId,t,target:"remote",connectionRole:role,connectionAuthMode,initialDraft:createdRemoteDraft,checkConnection,visible:true,row:state.value.remote,writable:state.value.writable,saveStartup,saveCoordinator,onSaved:afterSave}) : null,
@@ -3042,6 +3073,7 @@ h(
               readConnectionSettings:props.readConnectionSettings,
               saveConnectionSettings:props.saveConnectionSettings,
               nodeModelApi:props.nodeModelApi,
+              readExecutionPresets:props.readExecutionPresets,
               startup: props.startup,
               readWorkspaces: props.readWorkspaces,
               renderProjectDirectory:()=>h(ProjectWorkspaceSettings,{readProjectSettings:props.readProjectSettings,saveProjectSettings:props.saveProjectSettings,saveCoordinator,directoryApi:props.directoryApi}),
@@ -3206,6 +3238,7 @@ h(
     const openPlugins = (ctx) => openSettingsSection(ctx, "plugins");
     const openModels = (ctx) => openSettingsSection(ctx, "models");
     const projectMethods = [
+      "executionPresets",
       "connectionSettings","saveConnectionSettings",
       "nodeModelSettings","refreshNodeModels","saveNodeModelDefault",
       "workflowView", "setTaskPresentation", "readProjectReport", "getProjectReportPresentation",
@@ -3244,7 +3277,7 @@ h(
       namespace: "taskPluginSettings",
       method,
       invocation: { kind: "direct" },
-      parameters: ["workflowPage", "workflowSnapshot", "connectionSettings", "executionDirectorySettings", "executorWorkspaceGrants", "projectSettings", "projectPage", "conversationModels", "scheduleOptions"].includes(method)
+      parameters: ["executionPresets", "workflowPage", "workflowSnapshot", "connectionSettings", "executionDirectorySettings", "executorWorkspaceGrants", "projectSettings", "projectPage", "conversationModels", "scheduleOptions"].includes(method)
         ? []
         : [
             {
@@ -3756,6 +3789,7 @@ h(
               saveConnectionSettings:input=>invoke("saveConnectionSettings",input),
               nodeModelApi:{read:input=>invoke("nodeModelSettings",input),refresh:input=>invoke("refreshNodeModels",input),save:input=>invoke("saveNodeModelDefault",input)},
               readProjectSettings: () => invoke("projectSettings"),
+              readExecutionPresets: () => invoke("executionPresets"),
               readExecutionDirectorySettings: () => invoke("executionDirectorySettings"),
               readExecutorWorkspaceGrants:()=>invoke("executorWorkspaceGrants"),
               setExecutorWorkspaceGrant:input=>invoke("setExecutorWorkspaceGrant",input),

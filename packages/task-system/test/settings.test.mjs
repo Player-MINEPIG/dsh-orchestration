@@ -35,6 +35,7 @@ function client(primitives = {}, react = {}) {
               name === "react"
                 ? {
                     useRef: (initial) => ({ current: initial }),
+                    useCallback: callback => callback,
                     createElement: (type, props, ...children) => ({
                       type,
                       props,
@@ -1576,3 +1577,11 @@ test('scheduler node capacity draft stays clean and validates each registered no
   api.pick=async()=>null;find(render(),'选择目录').props.onClick();await new Promise(resolve=>setImmediate(resolve));
   assert.equal(changes.length,2,'native cancellation must retain the previous draft');
  });
+
+test('selecting the same execution preset explicitly clears a legacy mask in one startup request',()=>{
+ const ui=client(),values={role:'executor',planningDecisionEnabled:false,sessionDecisionEnabled:false,executionAgentPreset:'ptc',executionTools:['activity_sources_read']};
+ const draft=ui.startupDraft('task',values);assert.equal(ui.startupChanges('task',values,draft).dirty,false);
+ draft.followExecutionPreset=true;const change=ui.startupChanges('task',values,draft);
+ assert.deepEqual(JSON.parse(JSON.stringify(change.changes)),{executionTools:null,executionAgentPreset:'ptc'});
+ const descriptor=ui.projectDescriptors.find(x=>x.method==='executionPresets');assert.ok(descriptor);assert.deepEqual(Array.from(descriptor.parameters),[]);
+});
