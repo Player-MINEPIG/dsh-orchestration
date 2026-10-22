@@ -1,0 +1,65 @@
+[
+  {
+    "seq": 145,
+    "at": "2026-10-22T16:42:43.483000+00:00",
+    "name": "project_bind_session",
+    "isError": false,
+    "arguments": {
+      "projectId": "b2bba7a6-e414-4434-968d-1e7c9cd3fcef"
+    }
+  },
+  {
+    "seq": 153,
+    "at": "2026-10-22T16:42:54.133000+00:00",
+    "name": "task_create",
+    "isError": true,
+    "arguments": {
+      "commandId": "pr23-project-round-20261022T164231Z-parent",
+      "title": "整理 PR #23 归档与可恢复清理的只读审查"
+    },
+    "error": "Error: Criterion checks are read-only; unexpected criterion field"
+  },
+  {
+    "seq": 169,
+    "at": "2026-10-22T16:43:07.715000+00:00",
+    "name": "task_create",
+    "isError": false,
+    "arguments": {
+      "commandId": "pr23-project-round-20261022T164231Z-parent-valid",
+      "title": "整理 PR #23 归档与可恢复清理的只读审查"
+    }
+  },
+  {
+    "seq": 177,
+    "at": "2026-10-22T16:43:11.013000+00:00",
+    "name": "task_bind_dispatcher",
+    "isError": false,
+    "arguments": {
+      "commandId": "pr23-project-round-20261022T164231Z-bind",
+      "taskId": "8f91c26a-eebb-47f3-8056-fb6e7a0277f5"
+    }
+  },
+  {
+    "seq": 247,
+    "at": "2026-10-22T16:49:11.284000+00:00",
+    "name": "task_dispatch",
+    "isError": true,
+    "arguments": {
+      "commandId": "pr23-project-round-20261022T164231Z-review-mbp",
+      "nodeId": "MBP",
+      "workspaceId": "wg-b294d713179ef43bbf59af397456b23af54bcf0ad05d7756",
+      "title": "审查 PR #23 归档与可恢复清理的正确性"
+    },
+    "error": "Error: Decision belongs to another project"
+  },
+  {
+    "seq": 284,
+    "at": "2026-10-22T16:53:21.024000+00:00",
+    "name": "task_wait",
+    "isError": false,
+    "arguments": {
+      "taskId": "8f91c26a-eebb-47f3-8056-fb6e7a0277f5",
+      "timeoutMs": 0
+    }
+  }
+]

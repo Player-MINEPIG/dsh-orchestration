@@ -1,0 +1,40 @@
+{
+  "observedAt": "2026-10-22T17:09:59.960039+00:00",
+  "sessionId": "dmc-22f2a9a1-ed58-4072-bd5b-f4a4859c1b84",
+  "projectId": "b2bba7a6-e414-4434-968d-1e7c9cd3fcef",
+  "taskId": "8f91c26a-eebb-47f3-8056-fb6e7a0277f5",
+  "taskState": "waiting",
+  "runId": "4ee88031-c21b-40c9-a70f-f12f56288f70",
+  "runState": "blocked",
+  "decisionId": "pr23-project-round-20261022T164231Z-review-mbp",
+  "decisionInput": {
+    "projectId": "b2bba7a6-e414-4434-968d-1e7c9cd3fcef",
+    "taskId": null,
+    "nodeId": "MBP",
+    "workspaceId": "wg-b294d713179ef43bbf59af397456b23af54bcf0ad05d7756",
+    "title": "审查 PR #23 归档与可恢复清理的正确性"
+  },
+  "builtInSessionRows": 0,
+  "externalProjectBinding": [
+    {
+      "nodeId": "local",
+      "sessionId": "dmc-22f2a9a1-ed58-4072-bd5b-f4a4859c1b84",
+      "projectId": "b2bba7a6-e414-4434-968d-1e7c9cd3fcef",
+      "cwd": "/home/ubuntu/dsh-workspace/dsh-tavern"
+    }
+  ],
+  "dispatcherBinding": [
+    {
+      "cwd": "/home/ubuntu/dsh-workspace/dsh-tavern",
+      "nodeId": "local",
+      "projectId": "b2bba7a6-e414-4434-968d-1e7c9cd3fcef",
+      "runId": "4ee88031-c21b-40c9-a70f-f12f56288f70",
+      "sessionId": "dmc-22f2a9a1-ed58-4072-bd5b-f4a4859c1b84",
+      "taskId": "8f91c26a-eebb-47f3-8056-fb6e7a0277f5"
+    }
+  ],
+  "childTasks": [],
+  "childRuns": [],
+  "attempts": [],
+  "appliedReceiptPresent": false
+}

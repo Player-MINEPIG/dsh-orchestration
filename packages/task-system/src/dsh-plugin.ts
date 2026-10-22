@@ -2994,7 +2994,7 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
           },
         },
         output,
-        execute: async (args, exec) => {
+        execute: async (args, exec) => service.withDispatchOrigin(exec.agent, async () => {
           exec.signal.throwIfAborted();
           lifecycle.signal.throwIfAborted();
           const projectId = service.projects?.projectForSession(
@@ -3031,7 +3031,7 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
               ),
             ),
           );
-        },
+        }),
       }),
     );
   }

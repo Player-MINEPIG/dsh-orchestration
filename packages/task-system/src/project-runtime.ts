@@ -855,7 +855,8 @@ export class ProjectRuntime {
   }
   /** Final deterministic ownership check before dispatch, including attach decisions. */
   assertDecisionScope(session: string, requestId: string) {
-    const projectId = this.projectForSession(session);
+    const managedProjectId = this.projectForSession(session);
+    const projectId = managedProjectId ?? this.ledger.dispatchProjectId();
     const input = this.ledger.getDecision(requestId)?.input as unknown as
       | PlanningInput
       | undefined;
@@ -867,7 +868,7 @@ export class ProjectRuntime {
         "FORBIDDEN",
         "Decision belongs to another temporary task",
       );
-    if (projectId || taskId) {
+    if (managedProjectId || taskId) {
       const turn = this.db
         .prepare(
           "SELECT command FROM pr_turns WHERE session=? AND state='running'",
@@ -875,14 +876,18 @@ export class ProjectRuntime {
         .get(session) as { command: string } | undefined;
       if (!turn || requestId !== `project-message:${turn.command}`)
         throw new TaskError("FORBIDDEN", "Use the current message request ID");
+    }
+    if (projectId || taskId) {
       const proposal = this.ledger.getDecision(requestId)?.proposal as
         | { attachTaskId?: string }
         | undefined;
       if (
         proposal?.attachTaskId &&
-        !(taskId ? [taskId] : this.projectTaskIds(projectId!)).includes(
-          proposal.attachTaskId,
-        )
+        !(taskId
+          ? proposal.attachTaskId === taskId
+          : managedProjectId
+            ? this.projectTaskIds(managedProjectId).includes(proposal.attachTaskId)
+            : this.ledger.projectForTask(proposal.attachTaskId) === projectId)
       )
         throw new TaskError(
           "FORBIDDEN",
