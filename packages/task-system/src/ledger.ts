@@ -2652,6 +2652,18 @@ export class TaskLedger {
         fail("FORBIDDEN", "Workspace unavailable to executor");
     }
   }
+  /** Native claim + receipt share command()'s BEGIN IMMEDIATE transaction. */
+  recoverClaim(commandId: string, input: import("./remote/ports.js").ClaimInput): import("./remote/ports.js").ClaimRecovery {
+    try {
+      return { kind: "committed", receipt: this.claim(commandId, input) };
+    } catch (error) {
+      // A rolled-back native TaskError is definite non-admission. Never infer this
+      // for arbitrary adapters/errors, or mask a conflicting durable command.
+      if (error instanceof TaskError && !this.commandReceipt(commandId))
+        return { kind: "rejected", code: error.code, message: error.message };
+      throw error;
+    }
+  }
   claim(
     commandId: string,
     input: {

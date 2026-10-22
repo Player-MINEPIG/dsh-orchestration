@@ -25,6 +25,7 @@ export interface ExecutorPanelRecord {
 function presentation(row: ExecutorPanelRecord) {
   switch (row.state) {
     case "queued": return { status: "queued", stateLabel: "最近观察到等待领取" };
+    case "claim_rejected": return { status: "error", stateLabel: "尚未领取 · 调度端拒绝" };
     case "claim_pending": return { status: "error", stateLabel: "领取待确认" };
     case "claim_uncertain": return { status: "error", stateLabel: "领取未确认" };
     case "dispatching": return { status: "running", stateLabel: "已领取 · 本机处理中" };

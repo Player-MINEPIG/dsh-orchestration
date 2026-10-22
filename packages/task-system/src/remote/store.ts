@@ -436,6 +436,18 @@ export class RecoveryStore {
       .run(serialized, node, commandId);
     insist(update.changes === 1, "RECEIPT_STATE", 409);
   }
+  /** Native transaction owner proved no claim committed; retain same command for retry. */
+  rejectClaim(node: string, commandId: string, code: string, message: string): CommandReceipt {
+    const result = { claimRejected: { code: code.slice(0, 100), message: message.slice(0, 1000) } };
+    const serialized = canonical(result);
+    return this.transaction(() => {
+      this.db.prepare("UPDATE commands SET state='pending',result=? WHERE node=? AND id=? AND state IN ('pending','uncertain')")
+        .run(serialized, node, commandId);
+      const current = this.receipt(node, commandId);
+      insist(current, "RECEIPT_STATE", 409);
+      return current;
+    });
+  }
   uncertain(node: string, commandId: string): void {
     this.db
       .prepare(
@@ -472,7 +484,7 @@ export class RecoveryStore {
     return this.transaction(() => {
       const update = this.db
         .prepare(
-          "UPDATE commands SET state='done',result=? WHERE node=? AND id=? AND state='uncertain'",
+          "UPDATE commands SET state='done',result=? WHERE node=? AND id=? AND state IN ('pending','uncertain')",
         )
         .run(serialized, node, commandId);
       if (update.changes !== 1) {
@@ -544,8 +556,8 @@ export class RecoveryStore {
   /** Project only receipt metadata, never outbound payloads or business content. */
   panelClaims(limit = 201) {
     insist(Number.isSafeInteger(limit) && limit >= 1 && limit <= 201, "INVALID_RECOVERY_LIMIT");
-    return this.db.prepare("SELECT json_extract(data,'$.payload.runId') AS runId,json_extract(data,'$.state') AS state FROM outbound WHERE json_extract(data,'$.operation')='claim' AND json_extract(data,'$.state') IN ('sending','pending','uncertain') ORDER BY rowid DESC LIMIT ?")
-      .all(limit).flatMap(row => typeof row.runId === "string" && typeof row.state === "string" ? [{runId:row.runId,state:row.state}] : []);
+    return this.db.prepare("SELECT json_extract(data,'$.payload.runId') AS runId,json_extract(data,'$.state') AS state,json_extract(data,'$.endpoint') AS endpoint,json_extract(data,'$.audience') AS audience,json_extract(data,'$.receipt.result.claimRejected.code') AS code,json_extract(data,'$.receipt.result.claimRejected.message') AS message FROM outbound WHERE json_extract(data,'$.operation')='claim' AND json_extract(data,'$.state') IN ('sending','pending','uncertain') ORDER BY rowid DESC LIMIT ?")
+      .all(limit).flatMap(row => typeof row.runId === "string" && typeof row.state === "string" ? [{runId:row.runId,state:row.state,endpoint:String(row.endpoint ?? ""),audience:String(row.audience ?? ""),...(typeof row.code === "string" ? {code:row.code,message:String(row.message ?? "")} : {})}] : []);
   }
   /** A durable dispatch without a result is an uncertain side effect, never executable again. */
   recover(): DispatchRecord[] {

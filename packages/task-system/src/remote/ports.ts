@@ -343,6 +343,16 @@ export interface ExecutionCollaboration {
     input: { requestId: string; reason: string },
   ): Promise<Receipt<ApprovalRequest>>;
 }
+export interface ClaimInput {
+  runId: string;
+  nodeId: string;
+  ttlMs: number;
+  maxClaimBytes?: number;
+  projectContextVersion?: 1;
+}
+export type ClaimRecovery =
+  | { kind: "committed"; receipt: Receipt<Claim> }
+  | { kind: "rejected"; code: string; message: string };
 type MaybePromise<T> = T | Promise<T>;
 /** An adapter must preserve the ledger's transaction, idempotency, lease and fencing guarantees. */
 export interface LedgerPort {
@@ -388,17 +398,12 @@ export interface LedgerPort {
     commandId: string,
     input: LeaseRef & TaskSessionChoice,
   ): MaybePromise<Receipt<SelectedTaskSession>>;
+  /** Opt-in proof: claim and its exact receipt commit atomically; rejected means no claim committed.
+   * Unknown exceptions must be thrown. Retrying the same ID must return the original lease.
+   */
+  recoverClaim?(commandId: string, input: ClaimInput): MaybePromise<ClaimRecovery>;
   /** maxClaimBytes is a host transport budget, never a peer-supplied command field. */
-  claim(
-    commandId: string,
-    input: {
-      runId: string;
-      nodeId: string;
-      ttlMs: number;
-      maxClaimBytes?: number;
-      projectContextVersion?: 1;
-    },
-  ): MaybePromise<Receipt<Claim>>;
+  claim(commandId: string, input: ClaimInput): MaybePromise<Receipt<Claim>>;
   renew(
     commandId: string,
     input: LeaseRef & {

@@ -496,6 +496,13 @@ export class RemoteLedgerClient implements LedgerPort {
       payload,
       options,
     );
+    if (operation === "claim" && response.state === "pending" && isRecord(response.result) && isRecord(response.result.claimRejected)) {
+      const rejection = response.result.claimRejected;
+      insist(typeof rejection.code === "string" && typeof rejection.message === "string", "INVALID_RECEIPT");
+      const error = new ProtocolError(rejection.code, 409);
+      error.message = `${rejection.code}: ${rejection.message}`;
+      throw error;
+    }
     insist(
       response.state === "done" && response.result !== undefined,
       "REMOTE_OUTCOME_UNCERTAIN",

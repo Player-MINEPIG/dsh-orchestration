@@ -674,13 +674,15 @@ export class RemoteExecutionService extends Service {
   /** Local recovery and last observed work only; this method performs no RPC. */
   executorPanel() {
     const settings = this.settingsSnapshot();
-    const claims = this.store?.panelClaims() ?? [];
-    const claimByRun = new Map(claims.map(row => [row.runId, row.state]));
+    const currentEndpoint = this.config.coordinator ? new URL(this.config.coordinator.endpoint).href : null;
+    const claims = (this.store?.panelClaims() ?? []).map(row => ({...row, recoveryNote:row.endpoint && row.endpoint !== currentEndpoint ? "原调度端记录，当前连接无法恢复" : undefined}));
+    const claimByRun = new Map(claims.map(row => [row.runId, row]));
     const dispatches = this.store?.panelDispatches() ?? [];
     const records: ExecutorPanelRecord[] = [];
     for (const worker of this.workers) for (const run of worker.queueSnapshot()) {
       records.push({taskId:run.taskId,runId:run.runId,title:run.intentSnapshot?.title ?? run.taskId,
-        description:run.intentSnapshot?.description ?? "",state:claimByRun.has(run.runId) ? claimByRun.get(run.runId)==="uncertain" ? "claim_uncertain" : "claim_pending" : run.state,
+        description:run.intentSnapshot?.description ?? "",state:claimByRun.has(run.runId) ? claimByRun.get(run.runId)?.code ? "claim_rejected" : claimByRun.get(run.runId)?.state==="uncertain" ? "claim_uncertain" : "claim_pending" : run.state,
+        detail:[claimByRun.get(run.runId)?.recoveryNote, claimByRun.get(run.runId)?.code ? `${claimByRun.get(run.runId)!.code}: ${claimByRun.get(run.runId)!.message}` : undefined, claimByRun.get(run.runId)?.endpoint ? `原调度端 ${claimByRun.get(run.runId)!.endpoint}` : undefined].filter(Boolean).join(" · ") || undefined,
         source:"local-queue",nodeId:this.config.nodeId,time:worker.queueObservedAt ?? run.updatedAt ?? "",sessionIds:[],
         parentTaskId:dispatches.find(row=>row.claim.task.taskId===run.taskId)?.claim.task.parentTaskId,parentRunId:run.parentRunId,projectId:run.projectContext?.project?.projectId,projectTitle:run.projectContext?.project?.title,
         model:run.route?.model,workspaceId:run.route?.workspaceId});

@@ -751,8 +751,16 @@ export class RemoteGateway {
       !recorded || envelope.operation === "approvalStatus",
     );
     const old = store.admit(envelope, now);
+    if (old && envelope.operation === "claim" && ledger.recoverClaim && old.state !== "done") {
+      const recovered = await this.reconcile(peer.nodeId, old, envelope.operation);
+      if (recovered.state === "done") return recovered;
+      // Exact committed receipt may be read after expiry, but a new transaction
+      // still requires current node/workspace authorization.
+      await this.authorize(envelope, peer, true);
+    }
     if (
       old &&
+      !(envelope.operation === "claim" && ledger.recoverClaim && old.state !== "done") &&
       !(
         envelope.operation === "projectCollaborate" && old.state === "uncertain"
       )
@@ -1038,17 +1046,20 @@ export class RemoteGateway {
         }
         // Leave room for receipt/envelope metadata; the ledger rejects an oversized
         // claim before committing its lease. Payload validation forbids peer overrides.
-        case "claim":
-          result = await ledger.claim(commandId, {
-            runId: id(p, "runId"),
-            nodeId: peer.nodeId,
-            ttlMs: ttl(p),
-            maxClaimBytes: Math.max(
-              1024,
-              this.options.maxResponseBytes! - 4096,
-            ),
-          });
+        case "claim": {
+          const input = {
+            runId: id(p, "runId"), nodeId: peer.nodeId, ttlMs: ttl(p),
+            maxClaimBytes: Math.max(1024, this.options.maxResponseBytes! - 4096),
+          };
+          if (ledger.recoverClaim) {
+            const outcome = await ledger.recoverClaim(commandId, input);
+            if (outcome.kind === "rejected")
+              return store.rejectClaim(peer.nodeId, envelope.commandId, outcome.code, outcome.message);
+            return store.resolve(peer.nodeId, envelope.commandId, outcome.receipt, this.options.maxResponseBytes);
+          }
+          result = await ledger.claim(commandId, input);
           break;
+        }
         case "renew":
           result = await ledger.renew(commandId, {
             ...lease(p, peer.nodeId),
@@ -1364,7 +1375,7 @@ export class RemoteGateway {
     receipt: CommandReceipt,
     operation?: import("./protocol.js").Operation,
   ): Promise<CommandReceipt> {
-    if (receipt.state !== "uncertain" || !this.options.ledger.commandReceipt)
+    if (receipt.state === "done" || !this.options.ledger.commandReceipt)
       return receipt;
     try {
       const durable = await this.options.ledger.commandReceipt(
