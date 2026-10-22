@@ -3223,7 +3223,7 @@ h(
       namespace: "taskPluginSettings",
       method,
       invocation: { kind: "direct" },
-      parameters: ["workflowPage", "workflowSnapshot", "connectionSettings", "executionDirectorySettings", "projectSettings", "projectSnapshot", "projectPage", "conversationModels", "scheduleOptions"].includes(method)
+      parameters: ["workflowPage", "workflowSnapshot", "connectionSettings", "executionDirectorySettings", "projectSettings", "projectPage", "conversationModels", "scheduleOptions"].includes(method)
         ? []
         : [
             {
@@ -3794,6 +3794,7 @@ h(
       descriptor,
       readRemote,
       queueDescriptor,
+      projectDescriptors,
       workspaceCatalogDescriptor,
       executorIdentityDescriptor,
       startupDescriptor,

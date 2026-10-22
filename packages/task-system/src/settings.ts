@@ -369,7 +369,7 @@ const projectInputs = {
   executionDirectorySettings: null,
   saveExecutionDirectorySettings: z.object({root: z.string().min(1).max(4096), expectedRevision: z.number().int().nonnegative()}).strict(),
   setReportRetryLimit:z.object({commandId:z.string().min(1).max(200),taskId:z.string().min(1),expectedRevision:z.number().int().positive(),maxRetries:z.number().int().min(0).max(5)}).strict(),
-  projectSnapshot: z.object({view:z.enum(["planner","executor"]).optional()}).strict().optional(),
+  projectSnapshot: z.object({view:z.enum(["planner","executor"]).optional()}).strict(),
   projectPage: null,
   saveProjectSettings: z
     .object({
@@ -602,7 +602,7 @@ export class TaskPluginSettings extends TypertRemoteService {
         unresolvedClaims:observed?.unresolvedClaims??[],truncated:ownRuns.length>200 || observed?.truncated===true}};
   }
   async projectSnapshot(input?: unknown) {
-    const requested = projectInputs.projectSnapshot.parse(input)?.view;
+    const requested = projectInputs.projectSnapshot.parse(input ?? {}).view;
     const task = this.ctx.get("taskSystem") as TaskSystemService | undefined;
     if(!task) throw new RemoteError("task/project","Task service unavailable",{reason:"PROJECT_UNAVAILABLE"});
     const view=requested ?? (task.config.role==="executor" ? "executor" : "planner");
