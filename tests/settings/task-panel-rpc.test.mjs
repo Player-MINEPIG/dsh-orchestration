@@ -1,7 +1,10 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
-import {readFileSync,realpathSync} from 'node:fs';
+import {readFileSync,realpathSync,mkdirSync} from 'node:fs';
+import {join} from 'node:path';
+import {attachWorkspaceRegistry} from './local-workspace-harness.mjs';
+import {Config,RemoteExecutionService} from '../../packages/task-system/dist/remote/index.js';
 import vm from 'node:vm';
 import {createNativeHarness} from '../dsh/native-harness.mjs';
 import * as settings from '../../packages/task-system/dist/settings.js';
@@ -27,4 +30,28 @@ test('actual browser Remote descriptors and host Typert Gateway agree for initia
   assert.equal((await read('sessionTasks',{sessionId:'nonexistent-isolated-session'})).tasks.length,0);
   assert.equal(calls.length,4);console.log('actual Remote→Gateway calls passed:',calls.map(x=>x.method).join(','));
  } finally {await h.dispose();}
+});
+
+test('actual Typert contracts read/save project settings and owner local grants, including zero-argument catalogue',async()=>{
+ const h=await createNativeHarness({config:{role:'both',nodeId:'local',schedulerEnabled:false,autoExecute:false,projectAgentOptions:{provider:'test-offline',model:'script'}}}),ctx=h.ctx;
+ let remote;
+ try {
+  const registry=await attachWorkspaceRegistry(h),cwd=join(h.dir,'coordinator');mkdirSync(cwd);const workspace=await registry.create(cwd,'Official registry workspace');
+  const project=await ctx.taskSystem.projects.create({commandId:'rpc-project',title:'RPC fixture',goal:'Only isolated configuration',workspace:{kind:'registered',nodeId:'local',workspaceId:'registry:'+workspace.id}});
+  remote=new RemoteExecutionService(ctx,Config({role:'executor',nodeId:'local',statePath:join(h.dir,'rpc-remote.sqlite'),paused:true,pollIntervalMs:0,workspaces:[]}),h.ledger);
+  for(const name of ['@deepseek-ai/dsh-typert-registry','@deepseek-ai/dsh-api-remote-access','@deepseek-ai/dsh-api-gateway'])await (await ctx.plugin(req(name).default)).await();
+  await (await ctx.plugin(settings)).await();
+  const {Peer}=req('@deepseek-ai/dsh-client-connection'),peer=new Peer(ctx,{principal:{kind:'owner'}}),calls=[];
+  ctx.provide('connection',{rpc:{async call(path,method,payload){calls.push({method,args:payload.args});try{return {ok:true,value:await ctx.typertGateway.invoke({peer,namespace:'taskPluginSettings',method:method.split('/')[1],args:payload.args})};}catch(error){return {ok:false,error};}},open(){}},registerGenerationSource:()=>()=>{},start:()=>()=>{},generation:{getSnapshot:()=>undefined},isLoopback:true});
+  const browser=load(req.resolve('@deepseek-ai/dsh-api-gateway/client').replace('client.node.js','client.browser.js'),name=>req(name));await (await ctx.plugin(browser)).await();
+  const ui=load(new URL('../../packages/task-system/dist/settings-client.js',import.meta.url),()=>({}));await ctx.remote.$mount({package:'@dsh-task/task-system',descriptors:ui.projectDescriptors});
+  const invoke=(method,...args)=>ui.readRemote(ctx,method,ui.projectDescriptors.find(d=>d.method===method).result.create(),...args);
+  for(const name of ['projectExecutionSettings','saveProjectExecutionSettings','executorWorkspaceGrants','setExecutorWorkspaceGrant'])assert.equal(ui.projectDescriptors.find(d=>d.method===name).parameters.length,settings.projectDescriptors.find(d=>d.method===name).parameters.length,name);
+  const original=await invoke('projectExecutionSettings',{projectId:project.projectId});assert.equal(original.revision,0);assert.equal(original.coordinatorWorkspace.path,cwd);
+  const saved=await invoke('saveProjectExecutionSettings',{projectId:project.projectId,expectedRevision:0,allowedNodeIds:[],executionBindings:{}});assert.equal(saved.revision,1);assert.deepEqual(saved.allowedNodeIds,[]);
+  const grants=await invoke('executorWorkspaceGrants');assert.equal(grants.enabled,true);const item=grants.items.find(i=>i.registryId===workspace.id);assert.equal(item.enabled,false);
+  const authorized=await invoke('setExecutorWorkspaceGrant',{registryId:workspace.id,enabled:true,expectedRevision:grants.revision});assert.equal(authorized.items.find(i=>i.registryId===workspace.id).enabled,true);
+  assert.equal(Object.keys(calls.find(c=>c.method.endsWith('/executorWorkspaceGrants')).args).length,0);assert.equal(h.ledger.snapshot().tasks.length,0);
+  console.log('actual Remote→Gateway project settings/grant contracts passed:',calls.map(c=>c.method).join(','));
+ } finally {await remote?.dispose();await h.dispose();}
 });

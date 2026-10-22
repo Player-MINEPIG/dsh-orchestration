@@ -178,11 +178,10 @@ test('signed heartbeat carries only explicit grants through the real client and 
   assert.equal(f.calls.length, 5); assert.equal(f.calls[4][0], 'heartbeat')
 })
 
-test('gateway rejects foreign node, unauthorized IDs, duplicate IDs, path escape spelling, unknown fields and oversized snapshots before mutation', async t => {
+test('gateway rejects foreign node, duplicate IDs, path escape spelling, unknown fields and oversized snapshots before mutation', async t => {
   const f = transport(t)
   for (const [values, code] of [
     [[{ ...metadata, nodeId: 'victim' }], 'WORKSPACE_NODE_MISMATCH'],
-    [[{ ...metadata, workspaceId: 'ungranted' }], 'WORKSPACE_CATALOG_DENIED'],
     [[metadata, metadata], 'DUPLICATE_EXECUTOR_WORKSPACE'],
     [[{ ...metadata, path: '/controlled/../private' }], 'INVALID_EXECUTOR_WORKSPACES'],
     [[{ ...metadata, allowedRoot: '/' }], 'INVALID_EXECUTOR_WORKSPACES'],
@@ -197,3 +196,11 @@ test('gateway rejects foreign node, unauthorized IDs, duplicate IDs, path escape
   assert.equal(managed.calls[0][2].workspaces[0].workspaceId, 'new-local-grant')
   await assert.rejects(managed.gateway.handle(managed.raw([{ ...metadata, nodeId: 'victim' }])), { code: 'WORKSPACE_NODE_MISMATCH' })
 })
+
+test('static peer workspace allowlist filters advertisements without expanding grants and later authorized snapshots remain visible',async t=>{
+ const f=transport(t);
+ await f.gateway.handle(f.raw([{...metadata,workspaceId:'not-allowed-by-static-peer'}]));
+ assert.deepEqual(f.calls[0][2].workspaces,[]);
+ await f.gateway.handle(f.raw([metadata]));
+ assert.deepEqual(f.calls[2][2].workspaces,[metadata]);
+});

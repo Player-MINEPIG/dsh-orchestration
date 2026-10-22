@@ -1,0 +1,303 @@
+TAP version 13
+# (node:95278) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: settings default, strict boundary, CAS, transaction rollback and durable reopen
+ok 1 - settings default, strict boundary, CAS, transaction rollback and durable reopen
+  ---
+  duration_ms: 24.352834
+  type: 'test'
+  ...
+# Subtest: direct routes honor allowed nodes and per-node execution directories without copying coordinator paths
+ok 2 - direct routes honor allowed nodes and per-node execution directories without copying coordinator paths
+  ---
+  duration_ms: 9.609125
+  type: 'test'
+  ...
+# Subtest: queued policies invalidate without route mutation or extra execution; admitted old lease can still report
+ok 3 - queued policies invalidate without route mutation or extra execution; admitted old lease can still report
+  ---
+  duration_ms: 9.329958
+  type: 'test'
+  ...
+# Subtest: coordinator-only revision changes do not invalidate matching queued policy
+ok 4 - coordinator-only revision changes do not invalidate matching queued policy
+  ---
+  duration_ms: 6.206125
+  type: 'test'
+  ...
+# Subtest: project ancestry and trusted dispatcher session are enforced, with system caller isolation
+ok 5 - project ancestry and trusted dispatcher session are enforced, with system caller isolation
+  ---
+  duration_ms: 6.882041
+  type: 'test'
+  ...
+# Subtest: new coordination child Run distinguishes coordination ancestry from real executor recursion
+ok 6 - new coordination child Run distinguishes coordination ancestry from real executor recursion
+  ---
+  duration_ms: 8.468541
+  type: 'test'
+  ...
+# Subtest: planner only offers allowed executors; project CAS changes make an unapplied decision stale
+ok 7 - planner only offers allowed executors; project CAS changes make an unapplied decision stale
+  ---
+  duration_ms: 11.902208
+  type: 'test'
+  ...
+# Subtest: legacy execution workspace constrains revision zero only; saved policy becomes authoritative without repinning an old Run
+ok 8 - legacy execution workspace constrains revision zero only; saved policy becomes authoritative without repinning an old Run
+  ---
+  duration_ms: 5.248958
+  type: 'test'
+  ...
+# Subtest: real executor A can delegate to project-bound B without inheriting A project directory
+ok 9 - real executor A can delegate to project-bound B without inheriting A project directory
+  ---
+  duration_ms: 6.797
+  type: 'test'
+  ...
+# Subtest: authenticated workspace snapshots preserve independent manual grants and withdraw runtime grants on missing/unavailable/revoked entries
+ok 10 - authenticated workspace snapshots preserve independent manual grants and withdraw runtime grants on missing/unavailable/revoked entries
+  ---
+  duration_ms: 4.677958
+  type: 'test'
+  ...
+# Subtest: workspace snapshots reject stale data, foreign ownership, identity rebinding and active directory overlap atomically
+ok 11 - workspace snapshots reject stale data, foreign ownership, identity rebinding and active directory overlap atomically
+  ---
+  duration_ms: 5.783583
+  type: 'test'
+  ...
+# Subtest: later explicit management adoption has its own grant source and survives announcement withdrawal
+ok 12 - later explicit management adoption has its own grant source and survives announcement withdrawal
+  ---
+  duration_ms: 3.341458
+  type: 'test'
+  ...
+# Subtest: one full snapshot can withdraw a runtime identity and enroll its directory under a new ready identity in either order
+ok 13 - one full snapshot can withdraw a runtime identity and enroll its directory under a new ready identity in either order
+  ---
+  duration_ms: 17.058333
+  type: 'test'
+  ...
+# Subtest: same-snapshot replacement cannot withdraw a manual grant or change an existing identity directory
+ok 14 - same-snapshot replacement cannot withdraw a manual grant or change an existing identity directory
+  ---
+  duration_ms: 6.99075
+  type: 'test'
+  ...
+# (node:95279) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: days of idle polling and heartbeats retain a bounded window on both peers and the ledger
+ok 15 - days of idle polling and heartbeats retain a bounded window on both peers and the ledger
+  ---
+  duration_ms: 3479.948083
+  type: 'test'
+  ...
+# Subtest: expired read cache refreshes after restart, while a recent exact retry stays identical
+ok 16 - expired read cache refreshes after restart, while a recent exact retry stays identical
+  ---
+  duration_ms: 13.932375
+  type: 'test'
+  ...
+# Subtest: actual TaskLedger signed heartbeat tracks finite stale/recovery, own-only status, capacity, and preserves all grants
+ok 17 - actual TaskLedger signed heartbeat tracks finite stale/recovery, own-only status, capacity, and preserves all grants
+  ---
+  duration_ms: 20.505458
+  type: 'test'
+  ...
+# Subtest: health wire rejects spoofed identity, arbitrary health URLs, grant fields, invalid provider flags, and stale new samples
+ok 18 - health wire rejects spoofed identity, arbitrary health URLs, grant fields, invalid provider flags, and stale new samples
+  ---
+  duration_ms: 12.934209
+  type: 'test'
+  ...
+# Subtest: actual TaskLedger accepts informational provider observations without granting an unknown model vendor
+ok 19 - actual TaskLedger accepts informational provider observations without granting an unknown model vendor
+  ---
+  duration_ms: 12.737542
+  type: 'test'
+  ...
+# Subtest: offline notification follows the last in-flight heartbeat and stops future heartbeats
+ok 20 - offline notification follows the last in-flight heartbeat and stops future heartbeats
+  ---
+  duration_ms: 22.489541
+  type: 'test'
+  ...
+# (node:95280) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: projects and schedulers are isolated; temporary tasks share one selected directory
+ok 21 - projects and schedulers are isolated; temporary tasks share one selected directory
+  ---
+  duration_ms: 122.403041
+  type: 'test'
+  ...
+# Subtest: managed parents and leaf directories cannot be replaced by links, including links inside the authorized root
+ok 22 - managed parents and leaf directories cannot be replaced by links, including links inside the authorized root
+  ---
+  duration_ms: 31.352541
+  type: 'test'
+  ...
+# Subtest: existing legacy sessions keep their original authorized cwd and cannot be adopted without a durable task/session witness
+ok 23 - existing legacy sessions keep their original authorized cwd and cannot be adopted without a durable task/session witness
+  ---
+  duration_ms: 7.884625
+  type: 'test'
+  ...
+# hint: Using 'master' as the name for the initial branch. This default branch name
+# hint: will change to "main" in Git 3.0. To configure the initial branch name
+# hint: to use in all of your new repositories, which will suppress this warning,
+# hint: call:
+# hint:
+# hint: \\tgit config --global init.defaultBranch <name>
+# hint:
+# hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+# hint: 'development'. The just-created branch can be renamed via this command:
+# hint:
+# hint: \\tgit branch -m <name>
+# hint:
+# hint: Disable this message with "git config set advice.defaultBranchName false"
+# Subtest: a Git project gives subsequent task sessions independent detached worktrees instead of modifying the shared checkout
+ok 24 - a Git project gives subsequent task sessions independent detached worktrees instead of modifying the shared checkout
+  ---
+  duration_ms: 212.956459
+  type: 'test'
+  ...
+# Subtest: plain recursive task sessions get independent directories and cannot resume an old shared project mapping
+ok 25 - plain recursive task sessions get independent directories and cannot resume an old shared project mapping
+  ---
+  duration_ms: 94.455208
+  type: 'test'
+  ...
+# Subtest: operator-selected parent persists for projects and sessions; new projects follow later selections
+ok 26 - operator-selected parent persists for projects and sessions; new projects follow later selections
+  ---
+  duration_ms: 130.065334
+  type: 'test'
+  ...
+# Subtest: existing project directories survive selecting a different parent before their next task
+ok 27 - existing project directories survive selecting a different parent before their next task
+  ---
+  duration_ms: 108.5165
+  type: 'test'
+  ...
+# Subtest: an explicit workspace constraint cannot resume outside a replaced route binding
+ok 28 - an explicit workspace constraint cannot resume outside a replaced route binding
+  ---
+  duration_ms: 33.033375
+  type: 'test'
+  ...
+# Subtest: upgrade adopts selected existing temporary folder without touching old task files; context namespaces never collide
+ok 29 - upgrade adopts selected existing temporary folder without touching old task files; context namespaces never collide
+  ---
+  duration_ms: 50.273625
+  type: 'test'
+  ...
+# (node:95281) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: owner selects an existing registry directory explicitly; CAS, durable identity and revocation survive restart
+ok 30 - owner selects an existing registry directory explicitly; CAS, durable identity and revocation survive restart
+  ---
+  duration_ms: 14.093125
+  type: 'test'
+  ...
+# Subtest: live executor authorization rejects revoked, missing, moved and symlink-replaced local grants
+ok 31 - live executor authorization rejects revoked, missing, moved and symlink-replaced local grants
+  ---
+  duration_ms: 12.255333
+  type: 'test'
+  ...
+# Subtest: re-authorizing a changed registry path creates a new ID and leaves the original grant revoked
+ok 32 - re-authorizing a changed registry path creates a new ID and leaves the original grant revoked
+  ---
+  duration_ms: 7.389541
+  type: 'test'
+  ...
+# Subtest: owner edits are rejected while native work or worker dispatch is active; configured grants remain configuration owned
+ok 33 - owner edits are rejected while native work or worker dispatch is active; configured grants remain configuration owned
+  ---
+  duration_ms: 7.890417
+  type: 'test'
+  ...
+# Subtest: the live service worker observes local grants, blocks edits during execution and rejects the same route after revocation
+ok 34 - the live service worker observes local grants, blocks edits during execution and rejects the same route after revocation
+  ---
+  duration_ms: 20.613458
+  type: 'test'
+  ...
+# Subtest: service heartbeat automatically publishes only configured and persisted grants with physical availability
+ok 35 - service heartbeat automatically publishes only configured and persisted grants with physical availability
+  ---
+  duration_ms: 13.654916
+  type: 'test'
+  ...
+# Subtest: signed heartbeat carries only explicit grants through the real client and gateway; omissions remain compatible
+ok 36 - signed heartbeat carries only explicit grants through the real client and gateway; omissions remain compatible
+  ---
+  duration_ms: 6.959458
+  type: 'test'
+  ...
+# Subtest: gateway rejects foreign node, duplicate IDs, path escape spelling, unknown fields and oversized snapshots before mutation
+ok 37 - gateway rejects foreign node, duplicate IDs, path escape spelling, unknown fields and oversized snapshots before mutation
+  ---
+  duration_ms: 6.240791
+  type: 'test'
+  ...
+# Subtest: static peer workspace allowlist filters advertisements without expanding grants and later authorized snapshots remain visible
+ok 38 - static peer workspace allowlist filters advertisements without expanding grants and later authorized snapshots remain visible
+  ---
+  duration_ms: 2.70325
+  type: 'test'
+  ...
+# (node:95282) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: trusted managed workspace announcement → project settings → coordinator child claim creates native session in the selected executor repository
+ok 39 - trusted managed workspace announcement → project settings → coordinator child claim creates native session in the selected executor repository
+  ---
+  duration_ms: 686.349459
+  type: 'test'
+  ...
+# (node:95283) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: changing coordinator cwd creates a real next generation, preserves history across resync and updates default tool projection
+ok 40 - changing coordinator cwd creates a real next generation, preserves history across resync and updates default tool projection
+  ---
+  duration_ms: 407.552
+  type: 'test'
+  ...
+# Subtest: an active managed dispatcher blocks coordinator relocation, while policy-only edits and unrelated external sessions remain independent
+ok 41 - an active managed dispatcher blocks coordinator relocation, while policy-only edits and unrelated external sessions remain independent
+  ---
+  duration_ms: 355.060875
+  type: 'test'
+  ...
+# Subtest: legacy remote execution binding is not displayed as scheduler cwd and first save makes new per-node policy authoritative
+ok 42 - legacy remote execution binding is not displayed as scheduler cwd and first save makes new per-node policy authoritative
+  ---
+  duration_ms: 184.150584
+  type: 'test'
+  ...
+# (node:95284) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# actual Remote→Gateway calls passed: taskPluginSettings/projectSnapshot,taskPluginSettings/projectSnapshot,taskPluginSettings/projectSnapshot,taskPluginSettings/sessionTasks
+# Subtest: actual browser Remote descriptors and host Typert Gateway agree for initial and selected task views and session tasks
+ok 43 - actual browser Remote descriptors and host Typert Gateway agree for initial and selected task views and session tasks
+  ---
+  duration_ms: 231.169916
+  type: 'test'
+  ...
+# actual Remote→Gateway project settings/grant contracts passed: taskPluginSettings/projectExecutionSettings,taskPluginSettings/saveProjectExecutionSettings,taskPluginSettings/executorWorkspaceGrants,taskPluginSettings/setExecutorWorkspaceGrant
+# Subtest: actual Typert contracts read/save project settings and owner local grants, including zero-argument catalogue
+ok 44 - actual Typert contracts read/save project settings and owner local grants, including zero-argument catalogue
+  ---
+  duration_ms: 284.417833
+  type: 'test'
+  ...
+1..44
+# tests 44
+# suites 0
+# pass 44
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 3782.958792

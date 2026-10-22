@@ -1,0 +1,28 @@
+TAP version 13
+# (node:93019) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:93019) ExperimentalWarning: The MockTimers API is an experimental feature and might change at any time
+# Subtest: actual Cordis opt-in heartbeat reports native presence and actual execution count; timer drains on unload (network/native mocked)
+not ok 1 - actual Cordis opt-in heartbeat reports native presence and actual execution count; timer drains on unload (network/native mocked)
+  ---
+  duration_ms: 35.440917
+  type: 'test'
+  location: '/Users/pmp/.codex/worktrees/project-execution-settings/dsh-orchestration/packages/task-system/test/remote/.health-baseline-review.test.mjs:119:1'
+  failureType: 'unhandledRejection'
+  error: 'PROVIDER_ROUTE_DENIED'
+  code: 'PROVIDER_ROUTE_DENIED'
+  name: 'ProtocolError'
+  stack: |-
+    insist (file:///Users/pmp/.codex/worktrees/project-execution-settings/dsh-orchestration/packages/task-system/dist/remote/protocol.js:69:15)
+    authorizedWorkspace (file:///Users/pmp/.codex/worktrees/project-execution-settings/dsh-orchestration/packages/task-system/dist/remote/policy.js:18:5)
+    ExecutorWorker.executeOwned (file:///Users/pmp/.codex/worktrees/project-execution-settings/dsh-orchestration/packages/task-system/dist/remote/worker.js:293:35)
+  ...
+1..1
+# tests 1
+# suites 0
+# pass 0
+# fail 1
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 197.759958

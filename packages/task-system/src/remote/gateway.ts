@@ -1013,7 +1013,7 @@ export class RemoteGateway {
             await ledger.recordExecutorWorkspaces(`${commandId}:workspaces`, {
               nodeId: peer.nodeId,
               sampledAt: Number(p.sampledAt),
-              workspaces: executorWorkspaces(p.workspaces, peer.nodeId),
+              workspaces: executorWorkspaces(p.workspaces, peer.nodeId).filter(workspace => peer.managedAccess || peer.workspaces.includes(workspace.workspaceId)),
             });
           }
           result = await ledger.recordNodeHeartbeat(commandId, {
@@ -1421,18 +1421,7 @@ export class RemoteGateway {
     ) {
       insist(this.options.ledger.nodeStatuses, "NODE_STATUS_UNSUPPORTED", 503);
       if (e.operation === "heartbeat" && e.payload.workspaces !== undefined) {
-        const workspaces = executorWorkspaces(
-          e.payload.workspaces,
-          peer.nodeId,
-        );
-        insist(
-          peer.managedAccess ||
-            workspaces.every((workspace) =>
-              peer.workspaces.includes(workspace.workspaceId),
-            ),
-          "WORKSPACE_CATALOG_DENIED",
-          403,
-        );
+        executorWorkspaces(e.payload.workspaces, peer.nodeId);
         insist(
           this.options.ledger.recordExecutorWorkspaces,
           "WORKSPACE_CATALOG_UNSUPPORTED",

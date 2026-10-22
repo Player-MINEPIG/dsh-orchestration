@@ -2922,6 +2922,23 @@ h(
           notice ? h("p",{role:"status",style:hintStyle},notice) : null));
     }
 
+    function ExecutorWorkspaceGrantSettings({readGrants,setGrant}) {
+      const {state,replace,refresh}=useReadSnapshot(readGrants);
+      const [saving,setSaving]=React.useState(false),[notice,setNotice]=React.useState("");
+      if(state.value?.enabled===false)return null;
+      const change=async item=>{setSaving(true);setNotice("");try {const value=await setGrant({registryId:item.registryId,enabled:!item.enabled,expectedRevision:state.value.revision});replace(value);setNotice(item.enabled?"本机目录授权已撤销；已运行任务保留原上下文。":"本机目录已明确授权；调度端收到公告且通过连接授权后可选择。");}catch(reason){const failure=reason?.rpcError??reason;setNotice(["CONFLICT","WORKSPACE_GRANT_CONFLICT"].includes(failure?.details?.reason)?"授权已被其他操作更改，请刷新后重试。":failure?.details?.reason==="CONFIGURATION_BUSY"?"本机仍有活动执行或待回传结果，暂不能更改授权。":"目录授权保存失败，请检查目录是否存在并刷新；没有自动授权其他目录。");}finally {setSaving(false);}};
+      return h("section",{"data-executor-workspace-grants":true,className:"task-directory-card"},
+        h("h3",{style:headingStyle},"执行端 · 已授权工作区"),
+        h("p",{style:hintStyle},"只管理当前执行端的本机目录。DSH 工作区登记不等于执行授权；点击授权后，此设备可在该目录内执行调度端任务。目录元数据仅向已连接的受信调度端公告。"),
+        state.loading&&!state.value?h("p",{role:"status"},"正在读取本机工作区…"):null,
+        state.failed?h("p",{role:"alert"},"本机工作区读取失败，请刷新重试。"):null,
+        ...(state.value?.items??[]).map(item=>h("div",{key:item.workspaceId,style:{borderTop:"1px solid var(--dsw-alias-border-l3,#8884)",padding:"12px 0",display:"flex",gap:12,alignItems:"center"}},
+          h("div",{style:{flex:1,minWidth:0}},h("strong",null,item.label),h("p",{style:{...hintStyle,overflowWrap:"anywhere",margin:"4px 0"}},item.path),h("small",null,item.source==="configuration"?"插件配置授权":item.enabled?(item.state==="ready"?"已授权":"已授权 · 目录不可用"):"未授权")),
+          h(Button,{variant:"outline",disabled:saving||!item.registryId||item.source==="configuration"||!item.enabled&&item.state!=="ready",onClick:()=>change(item)},item.source==="configuration"?"由插件配置管理":item.enabled?"撤销授权":"授权此工作区"))),
+        state.value&&!state.value.items.length?h("p",{role:"status"},"没有本机工作区登记。请先在此执行端的 DSH 工作区中添加已有目录，再刷新；调度端不能替本机填写任意路径。"):null,
+        notice?h("p",{role:"status",style:hintStyle},notice):null,
+        h(Button,{variant:"outline",disabled:saving,onClick:()=>{setNotice("");refresh();}},"刷新本机工作区"));
+    }
     function Page(props) {
       const { t } = props;
       const registryRef=React.useRef(null);if (!registryRef.current) registryRef.current=new SettingsSaveCoordinator();
@@ -3028,7 +3045,7 @@ h(
               startup: props.startup,
               readWorkspaces: props.readWorkspaces,
               renderProjectDirectory:()=>h(ProjectWorkspaceSettings,{readProjectSettings:props.readProjectSettings,saveProjectSettings:props.saveProjectSettings,saveCoordinator,directoryApi:props.directoryApi}),
-              renderExecutionDirectory:()=>h(ProjectWorkspaceSettings,{executor:true,readProjectSettings:props.readExecutionDirectorySettings,saveProjectSettings:props.saveExecutionDirectorySettings,saveCoordinator,directoryApi:props.directoryApi}),
+              renderExecutionDirectory:()=>h(React.Fragment,null,h(ProjectWorkspaceSettings,{executor:true,readProjectSettings:props.readExecutionDirectorySettings,saveProjectSettings:props.saveExecutionDirectorySettings,saveCoordinator,directoryApi:props.directoryApi}),h(ExecutorWorkspaceGrantSettings,{readGrants:props.readExecutorWorkspaceGrants,setGrant:props.setExecutorWorkspaceGrant})),
               saveStartup: props.saveStartup,
               onSaved: () => setRefreshKey((value) => value + 1),
               openPlugins: props.openPlugins,
@@ -3194,6 +3211,10 @@ h(
       "workflowView", "setTaskPresentation", "readProjectReport", "getProjectReportPresentation",
       "workflowPage", "workflowSnapshot", "saveWorkflow", "startWorkflow", "retryWorkflowStep", "cancelWorkflow", "configureWorkflowTask", "adoptWorkflow", "createProjectTask", "runProjectTask",
       "sessionTasks",
+      "projectExecutionSettings",
+      "saveProjectExecutionSettings",
+      "executorWorkspaceGrants",
+      "setExecutorWorkspaceGrant",
       "projectSettings",
       "executionDirectorySettings",
       "saveExecutionDirectorySettings",
@@ -3223,7 +3244,7 @@ h(
       namespace: "taskPluginSettings",
       method,
       invocation: { kind: "direct" },
-      parameters: ["workflowPage", "workflowSnapshot", "connectionSettings", "executionDirectorySettings", "projectSettings", "projectPage", "conversationModels", "scheduleOptions"].includes(method)
+      parameters: ["workflowPage", "workflowSnapshot", "connectionSettings", "executionDirectorySettings", "executorWorkspaceGrants", "projectSettings", "projectPage", "conversationModels", "scheduleOptions"].includes(method)
         ? []
         : [
             {
@@ -3390,7 +3411,10 @@ h(
               PROJECT_MODEL_UNAVAILABLE: "所选统筹模型或思考强度已不可用，请刷新模型目录后重新选择。",
               FORBIDDEN: "此节点或会话没有操作权限",
               NOT_FOUND: "找不到对应记录",
-              WORKSPACE_POLICY: "目录不符合工作区规则",
+              WORKSPACE_POLICY: "工作区已失效或不再授权，请刷新后重新选择。",
+              EXECUTOR_REQUIRED: "请在执行端 DSH 的任务设置中登记本机工作区。",
+              CONFIGURATION_BUSY: "执行端仍有活动任务，请等执行与回传结束后更改目录授权。",
+              PROJECT_SETTINGS_CHANGED: "项目设置已变化，请刷新并处理尚未领取的旧请求。",
             };
             source.postMessage(
               {
@@ -3733,6 +3757,8 @@ h(
               nodeModelApi:{read:input=>invoke("nodeModelSettings",input),refresh:input=>invoke("refreshNodeModels",input),save:input=>invoke("saveNodeModelDefault",input)},
               readProjectSettings: () => invoke("projectSettings"),
               readExecutionDirectorySettings: () => invoke("executionDirectorySettings"),
+              readExecutorWorkspaceGrants:()=>invoke("executorWorkspaceGrants"),
+              setExecutorWorkspaceGrant:input=>invoke("setExecutorWorkspaceGrant",input),
               saveExecutionDirectorySettings: input => invoke("saveExecutionDirectorySettings",input),
               directoryApi: {
                 pick: () => {const service=ctx.get("uiWorkspace"); if(!service) throw new Error("DSH 目录选择服务尚未加载"); return service.pickDirectory();},
@@ -3806,6 +3832,7 @@ h(
       StartupRow,
       DirectoryField,
       ProjectWorkspaceSettings,
+      ExecutorWorkspaceGrantSettings,
       StartupSettings,
       QueueContents,
       LocalQueue,

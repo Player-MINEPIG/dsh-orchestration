@@ -170,7 +170,7 @@ type WorkspaceInput = {
     task: Pick<Claim["task"], "taskId">;
     run: Pick<
       Claim["run"],
-      "projectContext" | "parentRunId" | "workspaceConstraint"
+      "projectContext" | "parentRunId" | "workspaceConstraint" | "executionParentKind" | "executionParentRunId"
     >;
     attempt: Pick<Claim["attempt"], "nodeId">;
   };
@@ -217,6 +217,7 @@ async function provisionExecutionWorkspace(
   input: WorkspaceInput,
 ): Promise<string> {
   const { claim, sessionId, resume, store } = input;
+  const recursive = claim.run.executionParentKind === "coordinator" ? false : !!(claim.run.executionParentRunId ?? claim.run.parentRunId);
   let parent = input.parent;
   if (!claim.run.projectContext) return parent;
   const context = projectContext(claim.run.projectContext),
@@ -227,7 +228,7 @@ async function provisionExecutionWorkspace(
     if (claim.run.workspaceConstraint) await inside(input.parent, prior.path);
     parent = prior.root ?? parent;
     insist(prior.projectId === projectId, "TASK_PROJECT_CHANGED", 409);
-    if (claim.run.parentRunId) {
+    if (recursive) {
       const shared = projectId
         ? join(
             parent,
@@ -246,7 +247,7 @@ async function provisionExecutionWorkspace(
   }
   if (resume) {
     insist(
-      !claim.run.parentRunId,
+      !recursive,
       "RECURSIVE_WORKSPACE_REQUIRES_NEW_SESSION",
       409,
     );
@@ -277,7 +278,7 @@ async function provisionExecutionWorkspace(
     insist((await lstat(parent)).isDirectory(), "PROJECT_WORKSPACE_NOT_DIRECTORY");
     store.rememberSessionWorkspace(projectKey,{path:parent,projectId,root:parent});
     let path = parent;
-    if (claim.run.parentRunId) {
+    if (recursive) {
       const runtime = await directory(parent, ".dsh", {kind:"task-runtime"});
       const delegated = await directory(runtime,"delegated",{kind:"recursive-task-workspaces"});
       path = await directory(delegated,`${component(claim.task.taskId,"task")}-${digest([context.schedulerId,sessionId]).slice(0,12)}`,{schedulerId:context.schedulerId,projectId,taskId:claim.task.taskId,sessionId,kind:"recursive-task"});
@@ -369,7 +370,7 @@ async function provisionExecutionWorkspace(
       await inside(parent, path);
     }
   }
-  if (claim.run.parentRunId && path === project) {
+  if (recursive && path === project) {
     const children = projectId
       ? await directory(scheduler, "delegated-tasks", {
           schedulerId: context.schedulerId,

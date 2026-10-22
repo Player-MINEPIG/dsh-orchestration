@@ -365,6 +365,13 @@ const projectInputs = {
   scheduleOptions:null,
   createScheduledPlan:scheduledPlanInput,
   controlScheduledPlan:scheduledPlanControl,
+  projectExecutionSettings: z.object({projectId:z.string().min(1).max(200)}).strict(),
+  saveProjectExecutionSettings: z.object({projectId:z.string().min(1).max(200),expectedRevision:z.number().int().nonnegative(),allowedNodeIds:z.array(z.string().min(1).max(200)).max(128).nullable(),executionBindings:z.record(z.string().min(1).max(200),z.string().min(1).max(200)).refine(value=>Object.keys(value).length<=128),coordinatorWorkspace:z.discriminatedUnion("kind",[
+    z.object({kind:z.literal("registered"),nodeId:z.string().min(1),workspaceId:z.string().min(1)}).strict(),
+    z.object({kind:z.literal("directory"),nodeId:z.string().min(1),path:z.string().min(1).max(4096)}).strict(),
+  ]).optional()}).strict(),
+  executorWorkspaceGrants: null,
+  setExecutorWorkspaceGrant: z.object({registryId:z.string().min(1).max(256),enabled:z.boolean(),expectedRevision:z.number().int().nonnegative()}).strict(),
   projectSettings: null,
   executionDirectorySettings: null,
   saveExecutionDirectorySettings: z.object({root: z.string().min(1).max(4096), expectedRevision: z.number().int().nonnegative()}).strict(),
@@ -563,6 +570,23 @@ export class TaskPluginSettings extends TypertRemoteService {
     return task?.projects && task.config.role !== "executor"
       ? { enabled: true, ...task.projects.settings() }
       : { enabled: false };
+  }
+  async projectExecutionSettings(input:unknown) {const value=projectInputs.projectExecutionSettings.parse(input);return this.projectOperation(()=>this.projects().executionSettings(value.projectId));}
+  async saveProjectExecutionSettings(input:unknown) {return this.projectOperation(()=>this.projects().saveExecutionSettings(projectInputs.saveProjectExecutionSettings.parse(input)));}
+  private executorGrantService() {
+    const task=this.ctx.get("taskSystem"),remote=this.ctx.get("remoteExecution");
+    if(!task || task.config.role==="planner" || !remote)throw new RemoteError("task/project","This host has no executor workspace grant service",{reason:"EXECUTOR_REQUIRED"});
+    return remote;
+  }
+  async executorWorkspaceGrants() {
+    const task=this.ctx.get("taskSystem"),remote=this.ctx.get("remoteExecution");
+    if(!task || task.config.role==="planner" || !remote)return {enabled:false,nodeId:task?.config.nodeId??null,revision:0,items:[]};
+    return {enabled:true,...await remote.workspaceGrantCatalog()};
+  }
+  async setExecutorWorkspaceGrant(input:unknown) {
+    const value=projectInputs.setExecutorWorkspaceGrant.parse(input);
+    try {return {enabled:true,...await this.executorGrantService().setLocalWorkspaceGrant(value)};}
+    catch(error) {if(error instanceof Error&&'code' in error&&typeof error.code==='string')throw new RemoteError("task/project","Workspace grant change rejected",{reason:error.code});throw error;}
   }
   async scheduleOptions() { return this.projectOperation(()=>this.projects().scheduleOptions()); }
   async createScheduledPlan(input:unknown) { return this.projectOperation(()=>this.projects().createScheduledPlan(projectInputs.createScheduledPlan.parse(input))); }

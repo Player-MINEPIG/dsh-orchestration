@@ -255,6 +255,79 @@ export class ProjectRuntime {
     const path = this.existingDirectory(selection.path, this.workspaceOptions().roots);
     return {workspaceId:`pr:${projectId}:selected`,nodeId:this.nodeId,path,scope:"coordinator"};
   }
+  executionSettings(projectId: string) {
+    this.authorize();
+    const p=this.project(projectId), settings=this.ledger.projectExecutionSettings.read(projectId), old=this.projectWorkspace(projectId);
+    // Pre-settings bindings described an execution workspace. They are not the coordinator's cwd.
+    const legacy=old && old.scope!=="coordinator" ? old : undefined;
+    const executionBindings=settings.revision===0 && legacy ? {[legacy.nodeId]:legacy.workspaceId,...settings.executionBindings} : settings.executionBindings;
+    const nodes=this.ledger.decisionCatalog().nodes.filter(node=>node.roles.some(role=>role==="executor"||role==="both"));
+    return {...settings,executionBindings,coordinatorWorkspace:old?.scope==="coordinator" ? old : {workspaceId:`pr:${p.id}:planner`,nodeId:this.nodeId,path:p.cwd,scope:"coordinator" as const},
+      coordinatorSession:{sessionId:p.session,generation:p.generation},coordinatorOptions:this.workspaceOptions(),
+      executors:nodes.map(node=>({...this.ledger.executorWorkspaceCatalog(node.nodeId),enabled:node.enabled,state:this.ledger.nodeStatuses().find(status=>status.nodeId===node.nodeId)?.state ?? "unknown"})),
+      effect:"新执行使用保存的限制；已领取继续原上下文，尚未领取且设置失效的请求需人工处理，不自动换目录。"};
+  }
+  private validateExecutionBindings(allowedNodeIds:string[]|null,executionBindings:Record<string,string>) {
+    const nodes=this.ledger.decisionCatalog().nodes;
+    for(const nodeId of allowedNodeIds ?? []) if(!nodes.some(node=>node.nodeId===nodeId&&node.roles.some(role=>role==="executor"||role==="both")))throw new TaskError("FORBIDDEN","Unknown executor in project policy");
+    for(const [nodeId,workspaceId] of Object.entries(executionBindings)) {
+      const node=nodes.find(node=>node.nodeId===nodeId),workspace=this.ledger.executorWorkspaceCatalog(nodeId).workspaces.find(workspace=>workspace.workspaceId===workspaceId);
+      if(!node?.enabled || !node.workspaceIds.includes(workspaceId) || workspace?.state!=="ready")throw new TaskError("WORKSPACE_POLICY","Executor workspace is unavailable or its grant changed; refresh and select again");
+    }
+  }
+  async saveExecutionSettings(input: {projectId:string;expectedRevision:number;allowedNodeIds:string[]|null;executionBindings:Record<string,string>;coordinatorWorkspace?:ProjectWorkspaceSelection}) {
+    this.authorize();
+    const p=this.project(input.projectId);
+    if(p.state!=="ready")throw new TaskError("BUSY","Project is changing its coordinator session");
+    if(this.ledger.projectExecutionSettings.read(p.id).revision!==input.expectedRevision)throw new TaskError("CONFLICT","Project settings changed; reload before saving");
+    this.validateExecutionBindings(input.allowedNodeIds,input.executionBindings);
+    const selected=input.coordinatorWorkspace ? this.selectedWorkspace(input.coordinatorWorkspace,p.id) : undefined;
+    const cwd=selected?.path ?? p.cwd,moving=cwd!==p.cwd;
+    // A path-specific coordinator identity keeps historical workspace entities immutable.
+    const binding:ProjectWorkspaceBinding={workspaceId:`pr:${p.id}:coordinator:${digest({nodeId:this.nodeId,cwd}).slice(0,24)}`,nodeId:this.nodeId,path:cwd,scope:"coordinator"};
+    if(moving)this.lockCoordinator(p);
+    try {
+      const next=moving ? await this.prepareCoordinatorGeneration(p,cwd) : undefined;
+      this.authorize();
+      this.validateExecutionBindings(input.allowedNodeIds,input.executionBindings);
+      if(input.coordinatorWorkspace && this.selectedWorkspace(input.coordinatorWorkspace,p.id).path!==cwd)throw new TaskError("WORKSPACE_POLICY","Coordinator registration changed while preparing the session");
+      // Metadata creates no executor grant. Its immutable identity is safe even if the settings CAS later loses.
+      if(!this.ledger.registeredWorkspaces(this.nodeId).some(workspace=>workspace.workspaceId===binding.workspaceId))
+        this.ledger.registerWorkspace(`project-coordinator-workspace:${digest(binding)}`,{...binding,label:p.title,state:"ready",createdAt:now()});
+      this.db.exec("BEGIN IMMEDIATE");
+      try {
+        this.ledger.projectExecutionSettings.save({projectId:p.id,expectedRevision:input.expectedRevision,allowedNodeIds:input.allowedNodeIds,executionBindings:input.executionBindings});
+        this.db.prepare("INSERT INTO pr_project_workspaces(project,workspace) VALUES(?,?) ON CONFLICT(project) DO UPDATE SET workspace=excluded.workspace").run(p.id,canonical(binding));
+        // Workbench consumers share the coordinator authority; keep old links as non-default history.
+        this.db.prepare("UPDATE wb_project_workspaces SET is_default=0,revision=revision+1 WHERE project_id=? AND is_default=1 AND workspace_id<>?").run(p.id,binding.workspaceId);
+        this.db.prepare("INSERT INTO wb_project_workspaces(project_id,workspace_id,node_id,is_default,revision) VALUES(?,?,?,1,1) ON CONFLICT(project_id,workspace_id) DO UPDATE SET is_default=1,revision=revision+1").run(p.id,binding.workspaceId,this.nodeId);
+        if(next) {
+          this.db.prepare("INSERT INTO pr_sessions VALUES(?,?,?,?,?)").run(next.sessionId,p.id,next.generation,next.summary,now());
+          this.db.prepare("UPDATE pr_projects SET root=?,cwd=?,session=?,generation=?,state='ready' WHERE id=? AND session=?").run(cwd,cwd,next.sessionId,next.generation,p.id,p.session);
+        }
+        this.db.exec("COMMIT");
+      }catch(error){this.db.exec("ROLLBACK");if(error instanceof Error&&'code' in error&&error.code==='CONFLICT')throw new TaskError("CONFLICT","Project settings changed; reload before saving");throw error;}
+      let workspaceNotice:string|undefined;
+      if(next)try{await this.syncWorkspacesFor(this.project(p.id));}catch{workspaceNotice="设置与新会话已保存；工作区侧栏同步失败，可刷新后重试。";}
+      return {...this.executionSettings(p.id),coordinatorSessionChanged:!!next,...(workspaceNotice?{workspaceNotice}:{})};
+    } finally {
+      if(moving)this.db.prepare("UPDATE pr_projects SET state='ready' WHERE id=? AND state='handoff'").run(p.id);
+    }
+  }
+  private lockCoordinator(p:ProjectRow) {
+    const live=this.ctx.get("agents")?.get(SessionId(p.session));
+    if(this.db.prepare("SELECT command FROM pr_turns WHERE owner=? AND state IN ('running','queued')").get(p.id) || live && (live.status!=="idle" || live.inbox.nextTurn.length || live.inbox.nextStep.length) || this.ledger.dispatcherForSession(this.nodeId,p.session))
+      throw new TaskError("BUSY","Wait for the managed coordinator turn/dispatcher task to settle before changing its workspace");
+    if(p.state!=="ready" || !this.db.prepare("UPDATE pr_projects SET state='handoff' WHERE id=? AND state='ready'").run(p.id).changes)throw new TaskError("BUSY","Project is changing its session");
+  }
+  private async prepareCoordinatorGeneration(p:ProjectRow,cwd:string) {
+    const history=await this.conversation(p.id),tasks=this.snapshot().tasks.filter(task=>p.taskId?task.id===p.taskId:task.project===p.id);
+    const summary=`项目目标：${p.goal}\n原统筹会话：${p.session}\n未完成任务（沿用原任务，不要重复创建）：${JSON.stringify(tasks.filter(task=>!["done","accepted"].includes(task.status)))}\n已完成或已验收任务的报告引用：${JSON.stringify(tasks.filter(task=>["done","accepted"].includes(task.status)).map(task=>({taskId:task.id,run:task.run,reportId:task.reportId})))}\n近期对话：${JSON.stringify(history.messages.slice(-16)).slice(-24000)}`;
+    const sessionId=`project-${randomUUID()}`,generation=p.generation+1;
+    const handle=await this.agents().create({sessionId:SessionId(sessionId),meta:{cwd},agentOptions:this.options(p.id)});
+    try {await (this.ctx.get("sessions") as Context["sessions"]).flush(handle.agent.session);} finally {await handle.dispose();}
+    return {sessionId,generation,summary};
+  }
   private existingDirectory(path: string, roots: string[]) {
     if (!isAbsolute(path) || path.split(/[\\/]/).some(part => part === "..")) throw new TaskError("WORKSPACE_POLICY", "Expected an absolute existing directory within a controlled root");
     const root = roots.find(root => {const rel = relative(root,path);return !isAbsolute(rel) && rel !== ".." && !rel.startsWith(`..${sep}`);});
@@ -580,13 +653,15 @@ export class ProjectRuntime {
         }
       | undefined;
     if (!registry) return;
-    const workspace = await registry.create(row.cwd, row.title);
-    for (const session of this.db
-      .prepare(
-        "SELECT session FROM pr_sessions WHERE owner=? ORDER BY generation",
-      )
-      .all(row.id))
-      await workspace.attachSession(SessionId(String(session.session)));
+    const persistence = this.ctx.get("sessionPersistence");
+    for (const session of this.db.prepare("SELECT session FROM pr_sessions WHERE owner=? ORDER BY generation").all(row.id)) {
+      const sessionId = SessionId(String(session.session));
+      const stored = await persistence?.stat(sessionId);
+      const cwd = stored?.header.cwd;
+      if (!cwd || !existsSync(cwd)) continue;
+      const workspace = await registry.create(cwd, row.title);
+      await workspace.attachSession(sessionId);
+    }
   }
   createTemporary(input: {
     commandId: string;
@@ -1420,62 +1495,18 @@ export class ProjectRuntime {
     };
   }
   async handoff(projectId: string) {
-    this.authorize();
-    const p = this.project(projectId);
-    if (
-      this.db
-        .prepare(
-          "SELECT command FROM pr_turns WHERE owner=? AND state IN ('running','queued')",
-        )
-        .get(p.id)
-    )
-      throw new TaskError("BUSY", "Wait for the current response");
-    if (p.state !== "ready")
-      throw new TaskError("BUSY", "Project is changing its session");
-    const locked = this.db
-      .prepare(
-        "UPDATE pr_projects SET state='handoff' WHERE id=? AND state='ready'",
-      )
-      .run(p.id);
-    if (!locked.changes)
-      throw new TaskError("BUSY", "Project is changing its session");
+    this.authorize();const p=this.project(projectId);this.lockCoordinator(p);
     try {
-      const history = await this.conversation(p.id);
-      const tasks = this.snapshot().tasks.filter((t) =>
-        p.taskId ? t.id === p.taskId : t.project === p.id,
-      );
-      const summary = `项目目标：${p.goal}\n原统筹会话：${p.session}\n未完成任务（沿用原任务，不要重复创建）：${JSON.stringify(tasks.filter((t) => !["done", "accepted"].includes(t.status)))}\n已完成或已验收任务的报告引用：${JSON.stringify(tasks.filter((t) => ["done", "accepted"].includes(t.status)).map((t) => ({ taskId: t.id, run: t.run, reportId: t.reportId })))}\n近期对话（用于审查约束与下一步）：${JSON.stringify(history.messages.slice(-16)).slice(-24000)}`;
-      const session = `project-${randomUUID()}`,
-        generation = p.generation + 1;
-      const handle = await this.agents().create({
-        sessionId: SessionId(session),
-        meta: { cwd: p.cwd },
-        agentOptions: this.options(),
-      });
+      const next=await this.prepareCoordinatorGeneration(p,p.cwd);
+      this.db.exec("BEGIN IMMEDIATE");
       try {
-        await (this.ctx.get("sessions") as Context["sessions"]).flush(
-          handle.agent.session,
-        );
-      } finally {
-        await handle.dispose();
-      }
-      this.db
-        .prepare("INSERT INTO pr_sessions VALUES(?,?,?,?,?)")
-        .run(session, p.id, generation, summary, now());
-      this.db
-        .prepare(
-          "UPDATE pr_projects SET session=?,generation=? WHERE id=? AND session=?",
-        )
-        .run(session, generation, p.id, p.session);
-      await this.syncWorkspacesFor(p);
-      return { sessionId: session, generation };
-    } finally {
-      this.db
-        .prepare(
-          "UPDATE pr_projects SET state='ready' WHERE id=? AND state='handoff'",
-        )
-        .run(p.id);
-    }
+        this.db.prepare("INSERT INTO pr_sessions VALUES(?,?,?,?,?)").run(next.sessionId,p.id,next.generation,next.summary,now());
+        this.db.prepare("UPDATE pr_projects SET session=?,generation=?,state='ready' WHERE id=? AND session=?").run(next.sessionId,next.generation,p.id,p.session);
+        this.db.exec("COMMIT");
+      }catch(error){this.db.exec("ROLLBACK");throw error;}
+      await this.syncWorkspacesFor(this.project(p.id));
+      return {sessionId:next.sessionId,generation:next.generation};
+    }finally {this.db.prepare("UPDATE pr_projects SET state='ready' WHERE id=? AND state='handoff'").run(p.id);}
   }
   review(input: { commandId: string; taskId: string }) {
     this.authorize();
@@ -1759,6 +1790,8 @@ export class ProjectRuntime {
         phase: p.state,
         messages: [],
         canChat: runtime?.state === "ready",
+        canConfigure: !!runtime,
+        executionSettings: runtime ? this.ledger.projectExecutionSettings.read(p.projectId) : null,
       };
     });
     const dispatches = new Map(
