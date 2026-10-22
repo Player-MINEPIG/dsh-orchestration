@@ -204,3 +204,45 @@ test('static peer workspace allowlist filters advertisements without expanding g
  await f.gateway.handle(f.raw([metadata]));
  assert.deepEqual(f.calls[2][2].workspaces,[metadata]);
 });
+
+function trustedRegistry(f) {
+ f.service.config.coordinator={endpoint:'http://127.0.0.1:49152/commands',audience:'planner',authMode:'trusted-network',trustedNetwork:{address:'127.0.0.1',port:49152,localAddress:'127.0.0.1',allowHttp:true},nativeRoutes:[]};
+ const provider={id:'fixture',capabilities:[],supports:()=>true};
+ const claim=workspaceId=>({task:{taskId:'task',workspaceId},run:{runId:'run',taskId:'task',route:{nodeId:'worker',workspaceId,requiredCapabilities:[]}},attempt:{nodeId:'worker',taskId:'task',runId:'run'}});
+ const policy={role:'executor',nodeId:'worker',capabilities:[],get workspaces(){return f.service.workspaceBindings()}};
+ return {authorize:id=>authorizedWorkspace(claim(id),policy,provider)};
+}
+
+test('trusted registry directories are discoverable and executable from the same live source without creating local grants',async t=>{
+ const f=local(t,{paused:false}),g=trustedRegistry(f),samples=[];
+ const catalog=await f.service.workspaceGrantCatalog();
+ assert.deepEqual(catalog.items.map(i=>[i.source,i.enabled,i.available]),[['registry',true,true],['registry',true,true]]);
+ assert.deepEqual(f.store.workspaceGrantState(),{revision:0,grants:[]});
+ f.service.coordinatorLedger={recordNodeHeartbeat:(id,sample)=>{samples.push(sample);return {commandId:id,value:{}}}};
+ await f.service.heartbeatNow();assert.deepEqual(samples[0].workspaces.map(i=>i.workspaceId),catalog.items.map(i=>i.workspaceId));
+ assert.equal(await g.authorize(catalog.items[0].workspaceId),f.first);
+ f.entries.splice(0,1);await assert.rejects(g.authorize(catalog.items[0].workspaceId),{code:'WORKSPACE_DENIED'});
+ await f.service.heartbeatNow();assert.equal(samples.at(-1).workspaces.some(i=>i.workspaceId===catalog.items[0].workspaceId),false);
+});
+
+test('registry path changes get new identities; explicit disabled directories stay disabled and can be re-enabled',async t=>{
+ const f=local(t,{paused:false}),g=trustedRegistry(f),first=(await f.service.workspaceGrantCatalog()).items[0];
+ const disabled=await f.service.setLocalWorkspaceGrant({registryId:'registry-one',enabled:false,expectedRevision:0});
+ assert.equal(disabled.items[0].enabled,false);assert.equal(disabled.items[0].state,'revoked');assert.equal(disabled.items[0].available,true);
+ await assert.rejects(g.authorize(first.workspaceId),{code:'WORKSPACE_DENIED'});
+ const next=join(f.root,'changed');mkdirSync(next);f.entries[0].path=next;
+ const changed=(await f.service.workspaceGrantCatalog()).items[0];assert.notEqual(changed.workspaceId,first.workspaceId);assert.equal(changed.enabled,false);
+ const enabled=await f.service.setLocalWorkspaceGrant({registryId:'registry-one',enabled:true,expectedRevision:1});
+ const current=enabled.items.find(i=>i.registryId==='registry-one');assert.equal(current.enabled,true);assert.equal(await g.authorize(current.workspaceId),next);
+ await assert.rejects(g.authorize(first.workspaceId),{code:'WORKSPACE_DENIED'});
+ renameSync(next,next+'-missing');assert.equal((await f.service.workspaceGrantCatalog()).items[0].available,false);await assert.rejects(g.authorize(current.workspaceId),{code:'WORKSPACE_DENIED'});
+});
+
+test('configuration roots take precedence and signed connections do not auto-adopt native registry directories',async t=>{
+ const f=local(t,{paused:false});assert.equal((await f.service.workspaceGrantCatalog()).items.every(i=>!i.enabled),true);assert.deepEqual(f.service.workspaceBindings(),[]);
+ trustedRegistry(f);f.service.config.workspaces.push({workspaceId:'configured',nodeId:'worker',path:f.first,allowedRoot:f.second});
+ const catalog=await f.service.workspaceGrantCatalog();assert.equal(catalog.items[0].source,'configuration');assert.equal(catalog.items[0].state,'unavailable');assert.equal(catalog.items[0].available,false);
+ assert.equal(f.service.workspaceBindings().some(w=>w.path===f.first),false);
+ const staticPeer=transport(t);await staticPeer.gateway.handle(staticPeer.raw([{workspaceId:catalog.items[1].workspaceId,nodeId:'worker',label:'Registry',path:f.second,state:'ready'}]));assert.deepEqual(staticPeer.calls[0][2].workspaces,[]);
+ const managed=transport(t,{managedAccess:true});await managed.gateway.handle(managed.raw([{workspaceId:catalog.items[1].workspaceId,nodeId:'worker',label:'Registry',path:f.second,state:'ready'}]));assert.equal(managed.calls[0][2].workspaces[0].workspaceId,catalog.items[1].workspaceId);
+});

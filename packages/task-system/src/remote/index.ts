@@ -1,7 +1,6 @@
 import {
   workspaceGrantCatalog,
   selectedWorkspaceGrant,
-  localWorkspaceBindings,
   executorWorkspaceSnapshot,
   SetLocalWorkspaceGrant,
   type LocalWorkspaceRegistry,
@@ -442,6 +441,7 @@ export class RemoteExecutionService extends Service {
         | LocalWorkspaceRegistry
         | undefined,
       configured: this.config.workspaces,
+      includeRegistered: this.registryWorkspacesEnabled(),
     });
   }
   async setLocalWorkspaceGrant(input: unknown) {
@@ -503,17 +503,16 @@ export class RemoteExecutionService extends Service {
     }
     return { ...(await this.workspaceGrantCatalog()), publication };
   }
+  private registryWorkspacesEnabled() {
+    return this.config.coordinator?.authMode === "trusted-network" && !!this.config.coordinator.trustedNetwork;
+  }
   private workspaceBindings(): WorkspaceBinding[] {
-    return [
-      ...this.config.workspaces,
-      ...localWorkspaceBindings(
-        this.config.nodeId,
-        this.store,
-        this.ctx.get("workspaceRegistry") as unknown as
-          | LocalWorkspaceRegistry
-          | undefined,
-      ),
-    ];
+    return workspaceGrantCatalog({nodeId:this.config.nodeId,store:this.store,configured:this.config.workspaces,
+      registry:this.ctx.get("workspaceRegistry") as unknown as LocalWorkspaceRegistry | undefined,
+      includeRegistered:this.registryWorkspacesEnabled()}).items
+      .filter(item=>item.enabled && item.state==="ready")
+      .map(item=>this.config.workspaces.find(binding=>binding.workspaceId===item.workspaceId && binding.path===item.path)
+        ?? {workspaceId:item.workspaceId,nodeId:item.nodeId,path:item.path,allowedRoot:item.path});
   }
   /** Read-only settings projection, deliberately excludes keys, grants and credentials. */
   coordinatorPanelUrl(): string | null {
@@ -1055,6 +1054,7 @@ export class RemoteExecutionService extends Service {
           this.ctx.get("workspaceRegistry") as unknown as
             | LocalWorkspaceRegistry
             | undefined,
+          this.registryWorkspacesEnabled(),
         ),
       },
     );

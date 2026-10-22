@@ -1,0 +1,146 @@
+TAP version 13
+# (node:4499) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: days of idle polling and heartbeats retain a bounded window on both peers and the ledger
+ok 1 - days of idle polling and heartbeats retain a bounded window on both peers and the ledger
+  ---
+  duration_ms: 3114.721792
+  type: 'test'
+  ...
+# Subtest: expired read cache refreshes after restart, while a recent exact retry stays identical
+ok 2 - expired read cache refreshes after restart, while a recent exact retry stays identical
+  ---
+  duration_ms: 13.918083
+  type: 'test'
+  ...
+# Subtest: actual TaskLedger signed heartbeat tracks finite stale/recovery, own-only status, capacity, and preserves all grants
+ok 3 - actual TaskLedger signed heartbeat tracks finite stale/recovery, own-only status, capacity, and preserves all grants
+  ---
+  duration_ms: 21.608125
+  type: 'test'
+  ...
+# Subtest: health wire rejects spoofed identity, arbitrary health URLs, grant fields, invalid provider flags, and stale new samples
+ok 4 - health wire rejects spoofed identity, arbitrary health URLs, grant fields, invalid provider flags, and stale new samples
+  ---
+  duration_ms: 13.20875
+  type: 'test'
+  ...
+# Subtest: actual TaskLedger accepts informational provider observations without granting an unknown model vendor
+ok 5 - actual TaskLedger accepts informational provider observations without granting an unknown model vendor
+  ---
+  duration_ms: 12.96475
+  type: 'test'
+  ...
+# Subtest: offline notification follows the last in-flight heartbeat and stops future heartbeats
+ok 6 - offline notification follows the last in-flight heartbeat and stops future heartbeats
+  ---
+  duration_ms: 19.642833
+  type: 'test'
+  ...
+# (node:4500) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: owner selects an existing registry directory explicitly; CAS, durable identity and revocation survive restart
+ok 7 - owner selects an existing registry directory explicitly; CAS, durable identity and revocation survive restart
+  ---
+  duration_ms: 15.706209
+  type: 'test'
+  ...
+# Subtest: live executor authorization rejects revoked, missing, moved and symlink-replaced local grants
+ok 8 - live executor authorization rejects revoked, missing, moved and symlink-replaced local grants
+  ---
+  duration_ms: 10.710208
+  type: 'test'
+  ...
+# Subtest: re-authorizing a changed registry path creates a new ID and leaves the original grant revoked
+ok 9 - re-authorizing a changed registry path creates a new ID and leaves the original grant revoked
+  ---
+  duration_ms: 9.465125
+  type: 'test'
+  ...
+# Subtest: owner edits are rejected while native work or worker dispatch is active; configured grants remain configuration owned
+ok 10 - owner edits are rejected while native work or worker dispatch is active; configured grants remain configuration owned
+  ---
+  duration_ms: 8.608708
+  type: 'test'
+  ...
+# Subtest: the live service worker observes local grants, blocks edits during execution and rejects the same route after revocation
+ok 11 - the live service worker observes local grants, blocks edits during execution and rejects the same route after revocation
+  ---
+  duration_ms: 11.688958
+  type: 'test'
+  ...
+# Subtest: service heartbeat automatically publishes only configured and persisted grants with physical availability
+ok 12 - service heartbeat automatically publishes only configured and persisted grants with physical availability
+  ---
+  duration_ms: 8.055209
+  type: 'test'
+  ...
+# Subtest: signed heartbeat carries only explicit grants through the real client and gateway; omissions remain compatible
+ok 13 - signed heartbeat carries only explicit grants through the real client and gateway; omissions remain compatible
+  ---
+  duration_ms: 6.654958
+  type: 'test'
+  ...
+# Subtest: gateway rejects foreign node, duplicate IDs, path escape spelling, unknown fields and oversized snapshots before mutation
+ok 14 - gateway rejects foreign node, duplicate IDs, path escape spelling, unknown fields and oversized snapshots before mutation
+  ---
+  duration_ms: 5.337792
+  type: 'test'
+  ...
+# Subtest: static peer workspace allowlist filters advertisements without expanding grants and later authorized snapshots remain visible
+ok 15 - static peer workspace allowlist filters advertisements without expanding grants and later authorized snapshots remain visible
+  ---
+  duration_ms: 1.307708
+  type: 'test'
+  ...
+# Subtest: trusted registry directories are discoverable and executable from the same live source without creating local grants
+ok 16 - trusted registry directories are discoverable and executable from the same live source without creating local grants
+  ---
+  duration_ms: 7.185625
+  type: 'test'
+  ...
+# Subtest: registry path changes get new identities; explicit disabled directories stay disabled and can be re-enabled
+ok 17 - registry path changes get new identities; explicit disabled directories stay disabled and can be re-enabled
+  ---
+  duration_ms: 8.447167
+  type: 'test'
+  ...
+# Subtest: configuration roots take precedence and signed connections do not auto-adopt native registry directories
+ok 18 - configuration roots take precedence and signed connections do not auto-adopt native registry directories
+  ---
+  duration_ms: 9.882584
+  type: 'test'
+  ...
+# (node:4501) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: trusted managed workspace announcement → project settings → coordinator child claim creates native session in the selected executor repository
+ok 19 - trusted managed workspace announcement → project settings → coordinator child claim creates native session in the selected executor repository
+  ---
+  duration_ms: 479.353042
+  type: 'test'
+  ...
+# (node:4502) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# actual Remote→Gateway calls passed: taskPluginSettings/projectSnapshot,taskPluginSettings/projectSnapshot,taskPluginSettings/projectSnapshot,taskPluginSettings/sessionTasks
+# Subtest: actual browser Remote descriptors and host Typert Gateway agree for initial and selected task views and session tasks
+ok 20 - actual browser Remote descriptors and host Typert Gateway agree for initial and selected task views and session tasks
+  ---
+  duration_ms: 246.131708
+  type: 'test'
+  ...
+# actual Remote→Gateway project settings/grant contracts passed: taskPluginSettings/projectExecutionSettings,taskPluginSettings/saveProjectExecutionSettings,taskPluginSettings/executorWorkspaceGrants,taskPluginSettings/setExecutorWorkspaceGrant
+# Subtest: actual Typert contracts read/save project settings and owner local grants, including zero-argument catalogue
+ok 21 - actual Typert contracts read/save project settings and owner local grants, including zero-argument catalogue
+  ---
+  duration_ms: 203.834209
+  type: 'test'
+  ...
+1..21
+# tests 21
+# suites 0
+# pass 21
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 3371.509708

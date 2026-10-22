@@ -13,7 +13,8 @@ export interface WorkspaceGrantCatalog {
   items: (ExecutorWorkspaceMetadata & {
     registryId: string;
     enabled: boolean;
-    source: "local" | "configuration";
+    source: "local" | "configuration" | "registry";
+    available: boolean;
   })[];
 }
 export const SetLocalWorkspaceGrant = z
@@ -104,6 +105,7 @@ export function workspaceGrantCatalog(input: {
   store?: RecoveryStore;
   registry?: LocalWorkspaceRegistry;
   configured: readonly WorkspaceBinding[];
+  includeRegistered?: boolean;
 }): WorkspaceGrantCatalog {
   const state = input.store?.workspaceGrantState() ?? {
       revision: 0,
@@ -118,7 +120,8 @@ export function workspaceGrantCatalog(input: {
         (binding) =>
           binding.nodeId === input.nodeId && binding.path === entry.path,
       );
-    const path = grant?.path ?? entry.path;
+    const disabled = grant ? !grant.enabled : state.grants.some(saved => (saved.registryId === entry.id || saved.path === entry.path) && !saved.enabled);
+    const path = entry.path;
     return {
       registryId: entry.id,
       workspaceId:
@@ -128,10 +131,11 @@ export function workspaceGrantCatalog(input: {
       nodeId: input.nodeId,
       label: entry.title || grant?.label || entry.id,
       path,
-      enabled: !!configuration || !!grant?.enabled,
-      source: configuration ? "configuration" : "local",
+      available: configuration ? configurationAvailable(configuration) : available(path),
+      enabled: !!configuration || !!grant?.enabled || !!input.includeRegistered && !disabled,
+      source: configuration ? "configuration" : grant ? "local" : input.includeRegistered ? "registry" : "local",
       state:
-        grant && !grant.enabled && !configuration
+        disabled && !configuration
           ? "revoked"
           : (
                 configuration
@@ -150,6 +154,7 @@ export function workspaceGrantCatalog(input: {
           ? ""
           : grant.registryId,
         source: "local",
+        available: false,
         state: grant.enabled ? "unavailable" : "revoked",
       });
   for (const binding of input.configured)
@@ -165,6 +170,7 @@ export function workspaceGrantCatalog(input: {
         path: binding.path,
         enabled: true,
         source: "configuration",
+        available: configurationAvailable(binding),
         state: configurationAvailable(binding) ? "ready" : "unavailable",
       });
   return { nodeId: input.nodeId, revision: state.revision, items };
@@ -190,19 +196,16 @@ export function selectedWorkspaceGrant(input: {
         grant.registryId === input.selection.registryId && grant.enabled,
     ) ??
     grants.find((grant) => grant.registryId === input.selection.registryId);
-  if (!input.selection.enabled) {
-    insist(previous, "WORKSPACE_GRANT_NOT_FOUND", 404);
-    return { ...previous, enabled: false };
-  }
+  if (!input.selection.enabled && previous) return { ...previous, enabled: false };
   insist(selected, "WORKSPACE_REGISTRY_ENTRY_REQUIRED", 404);
-  const path = physicalWorkspace(selected.path);
+  const path = input.selection.enabled ? physicalWorkspace(selected.path) : selected.path;
   return {
     registryId: selected.id,
     workspaceId: `wg-${digest([input.store.instanceId, input.nodeId, selected.id, path]).slice(0, 48)}`,
     nodeId: input.nodeId,
     label: selected.title || selected.id,
     path,
-    enabled: true,
+    enabled: input.selection.enabled,
   };
 }
 export function executorWorkspaceSnapshot(
@@ -210,29 +213,11 @@ export function executorWorkspaceSnapshot(
   store: RecoveryStore | undefined,
   configured: readonly WorkspaceBinding[],
   registry: LocalWorkspaceRegistry | undefined,
+  includeRegistered = false,
 ): ExecutorWorkspaceMetadata[] {
-  const items: ExecutorWorkspaceMetadata[] = configured
-    .filter((binding) => binding.nodeId === nodeId)
-    .map((binding) => ({
-      workspaceId: binding.workspaceId,
-      nodeId,
-      label: binding.workspaceId,
-      path: binding.path,
-      state: configurationAvailable(binding) ? "ready" : "unavailable",
-    }));
-  for (const grant of store?.workspaceGrantState().grants ?? [])
-    if (grant.nodeId === nodeId)
-      items.push({
-        workspaceId: grant.workspaceId,
-        nodeId,
-        label: grant.label,
-        path: grant.path,
-        state: !grant.enabled
-          ? "revoked"
-          : grantAvailable(grant, registry)
-            ? "ready"
-            : "unavailable",
-      });
+  const items = workspaceGrantCatalog({nodeId,store,configured,registry,includeRegistered}).items
+    .filter(item => item.enabled || item.state === "revoked")
+    .map(({workspaceId,nodeId,label,path,state}) => ({workspaceId,nodeId,label,path,state}));
   insist(items.length <= 64, "WORKSPACE_CATALOG_LIMIT", 409);
   return items;
 }

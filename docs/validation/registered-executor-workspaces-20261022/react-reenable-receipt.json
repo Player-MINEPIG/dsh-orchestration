@@ -1,0 +1,42 @@
+{
+  "calls": [
+    {
+      "method": "executorWorkspaceGrants"
+    },
+    {
+      "method": "setExecutorWorkspaceGrant",
+      "input": {
+        "registryId": "680fd56f-72cf-46ee-8359-3cf262911ae7",
+        "enabled": false,
+        "expectedRevision": 0
+      }
+    },
+    {
+      "method": "setExecutorWorkspaceGrant",
+      "input": {
+        "registryId": "680fd56f-72cf-46ee-8359-3cf262911ae7",
+        "enabled": true,
+        "expectedRevision": 1
+      }
+    }
+  ],
+  "catalog": {
+    "nodeId": "local",
+    "revision": 2,
+    "items": [
+      {
+        "registryId": "680fd56f-72cf-46ee-8359-3cf262911ae7",
+        "workspaceId": "wg-38f7d6df9251746bed1eb19b1d9b11009c20124020958004",
+        "nodeId": "local",
+        "label": "已有项目目录",
+        "path": "/private/var/folders/1p/0r3r_j49633fr1f0r0q6wyt80000gn/T/dsh-native-fixture-k6GaZz/existing-repository",
+        "available": true,
+        "enabled": true,
+        "source": "local",
+        "state": "ready"
+      }
+    ]
+  },
+  "tasks": 0,
+  "modelCalls": 0
+}
