@@ -2449,7 +2449,7 @@ export class TaskLedger {
     this.planner();
     const parsed = ExecutorWorkspaceSnapshot.safeParse(input);
     const snapshot = parsed.success ? parsed.data : fail("INVALID", "Invalid executor workspace announcement");
-    if (snapshot.workspaces.some(workspace => workspace.nodeId !== snapshot.nodeId || !/^(\/|[A-Za-z]:[\\/])/.test(workspace.path)) || new Set(snapshot.workspaces.map(workspace => workspace.workspaceId)).size !== snapshot.workspaces.length || new Set(snapshot.workspaces.map(workspace => workspace.path)).size !== snapshot.workspaces.length) fail("INVALID", "Executor snapshot must contain distinct workspace identities and absolute local paths for its own node");
+    if (snapshot.workspaces.some(workspace => workspace.nodeId !== snapshot.nodeId || !/^(\/|[A-Za-z]:[\\/])/.test(workspace.path)) || new Set(snapshot.workspaces.map(workspace => workspace.workspaceId)).size !== snapshot.workspaces.length || new Set(snapshot.workspaces.filter(workspace => workspace.state === "ready").map(workspace => workspace.path)).size !== snapshot.workspaces.filter(workspace => workspace.state === "ready").length) fail("INVALID", "Executor snapshot must contain distinct workspace identities and absolute local paths for its own node");
     return this.command(commandId, "recordExecutorWorkspaces", snapshot, () => {
       const node = this.getNode(snapshot.nodeId), prior = this.executorWorkspaceCatalog(snapshot.nodeId);
       if (prior.sampledAt !== null && snapshot.sampledAt < prior.sampledAt) fail("STALE_WORKSPACE_CATALOG", "Executor workspace announcement is older than the current snapshot");
@@ -2459,11 +2459,17 @@ export class TaskLedger {
       }
       const authority = this.get<ExecutorWorkspaceAuthority>("executorWorkspaceAuthority", node.nodeId) ?? {workspaceIds: [], grantIds: []};
       const workspaceIds = new Set(authority.workspaceIds), grantIds = new Set(authority.grantIds), grants = new Set(node.workspaceIds);
+      const ready = new Set(snapshot.workspaces.filter(workspace => workspace.state === "ready").map(workspace => workspace.workspaceId));
+      for (const workspaceId of grantIds) if (!ready.has(workspaceId)) { grants.delete(workspaceId); grantIds.delete(workspaceId); }
+      for (const workspaceId of workspaceIds) if (!ready.has(workspaceId)) {
+        const workspace = this.getWorkspace(workspaceId);
+        workspace.state = "failed"; this.put("workspace", workspaceId, workspace);
+      }
       const registered = this.list<Workspace>("workspace");
       for (const announced of snapshot.workspaces) {
         const existing = this.get<Workspace>("workspace", announced.workspaceId);
         if (existing && (existing.nodeId !== announced.nodeId || existing.path !== announced.path)) fail("CONFLICT", "Executor workspace identity cannot be rebound to another node or directory");
-        if (registered.some(workspace => workspace.nodeId === announced.nodeId && workspace.path === announced.path && workspace.workspaceId !== announced.workspaceId && workspace.state === "ready" && node.workspaceIds.includes(workspace.workspaceId))) fail("CONFLICT", "Executor directory already has another workspace identity");
+        if (announced.state === "ready" && registered.some(workspace => workspace.nodeId === announced.nodeId && workspace.path === announced.path && workspace.workspaceId !== announced.workspaceId && workspace.state === "ready" && grants.has(workspace.workspaceId))) fail("CONFLICT", "Executor directory already has another workspace identity");
         if (!existing) workspaceIds.add(announced.workspaceId);
         if (!existing || workspaceIds.has(announced.workspaceId)) this.put("workspace", announced.workspaceId, {
           workspaceId: announced.workspaceId, nodeId: announced.nodeId, path: announced.path, label: announced.label,
@@ -2471,12 +2477,6 @@ export class TaskLedger {
         } satisfies Workspace);
         const effective = this.getWorkspace(announced.workspaceId);
         if (announced.state === "ready" && effective.state === "ready" && !grants.has(announced.workspaceId)) { grants.add(announced.workspaceId); grantIds.add(announced.workspaceId); }
-      }
-      const ready = new Set(snapshot.workspaces.filter(workspace => workspace.state === "ready").map(workspace => workspace.workspaceId));
-      for (const workspaceId of grantIds) if (!ready.has(workspaceId)) { grants.delete(workspaceId); grantIds.delete(workspaceId); }
-      for (const workspaceId of workspaceIds) if (!ready.has(workspaceId)) {
-        const workspace = this.getWorkspace(workspaceId);
-        workspace.state = "failed"; this.put("workspace", workspaceId, workspace);
       }
       node.workspaceIds = [...grants];
       this.put("node", node.nodeId, node);

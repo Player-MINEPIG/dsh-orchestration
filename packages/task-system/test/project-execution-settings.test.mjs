@@ -185,3 +185,29 @@ test('later explicit management adoption has its own grant source and survives a
  assert.ok(f.ledger.getNode('a').workspaceIds.includes('adopted'));assert.equal(f.ledger.getWorkspace('adopted').state,'ready');
  assert.deepEqual(f.ledger.executorWorkspaceCatalog('a').workspaces,[]);
 });
+
+test('one full snapshot can withdraw a runtime identity and enroll its directory under a new ready identity in either order',t=>{
+ for(const state of ['revoked','unavailable'])for(const reverse of [false,true]) {
+  const f=fixture(t),path='/executor-a/re-enrolled';announce(f,1000,[workspace('old','a','ready',path)]);
+  const rows=[workspace('old','a',state,path),workspace('replacement','a','ready',path)];
+  const final=announce(f,2000,reverse?rows.reverse():rows);
+  assert.equal(final.sampledAt,2000);assert.equal(f.ledger.getWorkspace('old').state,'failed');
+  assert.equal(f.ledger.getWorkspace('replacement').state,'ready');
+  assert.ok(!f.ledger.getNode('a').workspaceIds.includes('old'));assert.ok(f.ledger.getNode('a').workspaceIds.includes('replacement'));
+  assert.ok(f.ledger.getNode('a').workspaceIds.includes('a1'));
+ }
+ const omitted=fixture(t),path='/executor-a/omitted';announce(omitted,1000,[workspace('old','a','ready',path)]);
+ announce(omitted,2000,[workspace('replacement','a','ready',path)]);
+ assert.ok(!omitted.ledger.getNode('a').workspaceIds.includes('old'));assert.ok(omitted.ledger.getNode('a').workspaceIds.includes('replacement'));
+});
+
+test('same-snapshot replacement cannot withdraw a manual grant or change an existing identity directory',t=>{
+ const f=fixture(t),manualPath='/executor-a/existing-1';
+ assert.throws(()=>announce(f,1000,[workspace('a1','a','revoked',manualPath),workspace('replacement','a','ready',manualPath)]),{code:'CONFLICT'});
+ assert.equal(f.ledger.getWorkspace('a1').state,'ready');assert.ok(f.ledger.getNode('a').workspaceIds.includes('a1'));
+ assert.throws(()=>f.ledger.getWorkspace('replacement'),{code:'NOT_FOUND'});
+ announce(f,1000,[workspace('old','a','ready','/executor-a/old')]);
+ assert.throws(()=>announce(f,2000,[workspace('old','a','revoked','/executor-a/changed'),workspace('replacement','a','ready','/executor-a/old')]),{code:'CONFLICT'});
+ assert.equal(f.ledger.executorWorkspaceCatalog('a').sampledAt,1000);assert.equal(f.ledger.getWorkspace('old').state,'ready');assert.ok(f.ledger.getNode('a').workspaceIds.includes('old'));
+ assert.throws(()=>announce(f,2000,[workspace('old','a','ready','/executor-a/old'),workspace('replacement','a','ready','/executor-a/old')]),{code:'INVALID'});
+});
