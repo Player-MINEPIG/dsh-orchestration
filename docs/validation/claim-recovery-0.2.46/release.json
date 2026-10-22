@@ -1,0 +1,162 @@
+{
+  "sourceCommit": "2878bbbb4eff81ec7109ce047c770c9cdd284813",
+  "version": "0.2.46",
+  "archiveSha256": "1f4f42a8b9d89d58c5d1924f40727f7d545a199b2fb508c250d4d72078d73cb8",
+  "archiveFiles": 325,
+  "validation": {
+    "build": "passed",
+    "newClaimRegressionTests": {
+      "passed": 7,
+      "failed": 0
+    },
+    "existingRemoteAndClientOrderingTests": {
+      "passed": 34,
+      "failed": 0
+    },
+    "independentReview": "passed; original endpoint display finding resolved"
+  },
+  "deployment": {
+    "order": [
+      "MBP",
+      "AWS"
+    ],
+    "method": "Independent task directory atomic swap; latest profile CAS only task archive reference; no dependency recalculation",
+    "hosts": {
+      "MBP": {
+        "version": "0.2.46",
+        "httpHealthy": true,
+        "filesMatched": 325,
+        "configurationAndCredentialsUnchanged": true,
+        "dmcPresent": false,
+        "backup": "/Users/pmp/.dsh/releases/claim-receipt-recovery-0.2.46/backup"
+      },
+      "AWS": {
+        "version": "0.2.46",
+        "httpHealthy": true,
+        "filesMatched": 325,
+        "configurationAndCredentialsUnchanged": true,
+        "dmcVersion": "0.1.8",
+        "dmcFilesUnchanged": true,
+        "dmcFileCount": 47,
+        "backup": "/home/ubuntu/.dsh/releases/claim-receipt-recovery-0.2.46/backup"
+      }
+    }
+  },
+  "recoveredCurrentAuthority": {
+    "commandId": "claim-ee64c2f93c94a3dc4fe7c789955f48a3f2f7593e40656d7333e5db458780bf94",
+    "runId": "74cf25c0-4fa3-4d0c-8ac9-af1a83e3c70e",
+    "taskId": "6b47d5be-0825-4919-b5d0-c6fbd83bcd21",
+    "before": {
+      "runState": "queued",
+      "attemptCount": 0,
+      "gatewayReceipt": "uncertain",
+      "nativeReceiptPresent": false
+    },
+    "after": {
+      "run": {
+        "taskId": "6b47d5be-0825-4919-b5d0-c6fbd83bcd21",
+        "state": "blocked",
+        "currentAttemptId": "676d3169-68a4-4d64-b93a-6188aa031ab0",
+        "route": {
+          "model": "group/gpt-ds-eco",
+          "nodeId": "MBP",
+          "provider": "aws-vps-magpie",
+          "requiredCapabilities": []
+        },
+        "dispatchIssue": null,
+        "settlement": null,
+        "updatedAt": "2026-10-22T15:39:45.099Z",
+        "summary": null
+      },
+      "taskState": "waiting",
+      "attempts": [
+        {
+          "attemptId": "676d3169-68a4-4d64-b93a-6188aa031ab0",
+          "state": "settled",
+          "sessionId": "task-de37a0b7-d681-4c1a-8649-e575310ca147",
+          "executionId": "exec-893b60046f8ab3ef258a5182d4e51538b5b8c38b8c161241c1a2d4dc12d08849",
+          "leaseExpiresAt": "2026-10-22T15:42:44.700Z",
+          "fence": 1,
+          "outcome": null,
+          "summary": null
+        }
+      ],
+      "reports": [
+        {
+          "reportId": "7b02d30b-fd2e-4130-8add-b330f5705f39",
+          "kind": "result",
+          "summary": null,
+          "createdAt": "2026-10-22T15:39:45.099Z"
+        }
+      ],
+      "nativeReceiptPresent": true,
+      "receiptAttemptId": "676d3169-68a4-4d64-b93a-6188aa031ab0"
+    },
+    "gateway": {
+      "state": "done",
+      "resultPresent": true,
+      "rejection": null
+    },
+    "executor": {
+      "state": "acknowledged",
+      "attemptId": "676d3169-68a4-4d64-b93a-6188aa031ab0",
+      "sessionId": "task-de37a0b7-d681-4c1a-8649-e575310ca147",
+      "executionDirectory": "/Users/pmp/AI/deepseek-harness/workspace/worker/temporary-tasks",
+      "outcome": "blocked",
+      "summary": "已核实 MBP 注册节点及默认模型，并诊断 owned 派发需使用 route；修正路由后远程结果不确定，无法获取 PR 代码，未完成代码审查。"
+    },
+    "originReturn": {
+      "eventId": "task-result:398ad91ebea1202183e44e5851a2d07a27c0314d3d3dfa1e1a0d48700fc0afc4",
+      "state": "completed",
+      "sessionId": "dmc-22f2a9a1-ed58-4072-bd5b-f4a4859c1b84",
+      "reply": "Task result processed in the original session",
+      "completedAt": "2026-10-22T15:40:13.190Z"
+    },
+    "childRecordsFromExecutorAttempt": {
+      "tasks": 0,
+      "runs": 0
+    },
+    "businessLimitation": "The existing execution tool scope lacked repository/PR read tools; model reported blocked. Non-claim child-dispatch/query uncertainty was observed but not changed."
+  },
+  "historicalCancelledTarget": {
+    "commandId": "claim-4f8e5ed75b0c360da134a0c7a37eb3ccb6e53119056a2abf8eac36df6b7ae330",
+    "runId": "7ba34673-e5c3-4edb-8d85-2c6de4581987",
+    "authority": "http://100.123.230.75:18441/dsh-task/v1/commands",
+    "authorityInstalledTaskVersion": "0.2.27",
+    "authenticatedObservation": {
+      "at": "2026-10-22T15:42:46.394Z",
+      "mode": "authenticated read-only getRun, original authority",
+      "endpoint": "http://100.123.230.75:18441/dsh-task/v1/commands",
+      "commandId": "claim-recovery-observe:14c4e2c258301fc8d9609d104be13aa87164f021783ebffd77cc9fea46749a0a",
+      "receiptState": "done",
+      "run": {
+        "runId": "7ba34673-e5c3-4edb-8d85-2c6de4581987",
+        "taskId": "daily-agent-dsh-codex",
+        "state": "cancelled",
+        "cancellationRequested": true,
+        "currentAttemptId": null,
+        "route": {
+          "model": "gpt-6-luna",
+          "nodeId": "MBP",
+          "provider": "codex",
+          "reasoningEffort": "low",
+          "requiredCapabilities": [
+            "activity.reports.v1"
+          ],
+          "workspaceId": "prod-mbp"
+        },
+        "updatedAt": "2026-10-12T16:40:48.856Z"
+      }
+    },
+    "taskState": "archived",
+    "attemptCount": 0,
+    "nativeClaimReceiptPresent": false,
+    "claimGatewayAndOutboundReceiptRetained": "uncertain",
+    "action": "Not resurrected or retargeted. Current panel preserves original endpoint and marks current connection cannot recover this old authority record. No safe separate close API was added.",
+    "correction": "Initial read-only investigation erroneously queried run-prefixed IDs; that missing-run conclusion was withdrawn. Pure UUID was rechecked in the original ledger and authenticated original-authority RPC."
+  },
+  "wip": {
+    "mainBefore": "8974f26955279d7d6d24c6326c3104555227297e",
+    "preservedStashCommit": "2b6330cecdba7eab3a1aab82f081686e2df85f3e"
+  }
+}

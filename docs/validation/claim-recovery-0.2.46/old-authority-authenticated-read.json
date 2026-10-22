@@ -1,0 +1,25 @@
+{
+  "at": "2026-10-22T15:42:46.394Z",
+  "mode": "authenticated read-only getRun, original authority",
+  "endpoint": "http://100.123.230.75:18441/dsh-task/v1/commands",
+  "commandId": "claim-recovery-observe:14c4e2c258301fc8d9609d104be13aa87164f021783ebffd77cc9fea46749a0a",
+  "receiptState": "done",
+  "run": {
+    "runId": "7ba34673-e5c3-4edb-8d85-2c6de4581987",
+    "taskId": "daily-agent-dsh-codex",
+    "state": "cancelled",
+    "cancellationRequested": true,
+    "currentAttemptId": null,
+    "route": {
+      "model": "gpt-6-luna",
+      "nodeId": "MBP",
+      "provider": "codex",
+      "reasoningEffort": "low",
+      "requiredCapabilities": [
+        "activity.reports.v1"
+      ],
+      "workspaceId": "prod-mbp"
+    },
+    "updatedAt": "2026-10-12T16:40:48.856Z"
+  }
+}
