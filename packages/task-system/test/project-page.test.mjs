@@ -5,15 +5,15 @@ import { readFileSync } from 'node:fs';
 import { TaskPluginSettings } from '../dist/settings.js';
 import { TaskError } from '../dist/ledger.js';
 
-const service = task => Object.assign(Object.create(TaskPluginSettings.prototype), {ctx: {get: key => key === 'taskSystem' ? task : undefined}});
+const service = task => Object.assign(Object.create(TaskPluginSettings.prototype), {ctx: {get: key => key === 'taskSystem' ? {ledger:{snapshot:()=>({tasks:[],runs:[],reports:[],attempts:[]})},...task} : undefined}});
 test('project RPC distinguishes executor role, unavailable planner service and business failures', async () => {
   const executor = service({config: {role: 'executor'}});
   const roleError = error => error.isDSHRemoteError === true && error.code === 'task/project' && error.details.reason === 'PLANNER_REQUIRED';
-  await assert.rejects(executor.projectSnapshot(), error => error.code === 'task/project' && error.details.reason === 'COORDINATOR_UNAVAILABLE');
+  assert.equal((await executor.projectSnapshot()).viewContext.scope,'local');
   await assert.rejects(executor.createProject({commandId: 'no-grant', title: 'test', goal: 'test'}), roleError);
   await assert.rejects(service({config:{role:'planner'}}).projectSnapshot(), error => error.details.reason === 'PROJECT_UNAVAILABLE');
   const snapshot = {projects:[],tasks:[]};
-  assert.equal(await service({config:{role:'planner'},projects:{snapshot:()=>snapshot}}).projectSnapshot(), snapshot);
+  assert.deepEqual(await service({config:{role:'planner'},projects:{snapshot:()=>snapshot}}).projectSnapshot(), {...snapshot,viewCapabilities:{planner:true,executor:false}});
   await assert.rejects(service({config:{role:'both'},projects:{create:async()=>{throw new TaskError('CONFLICT','PRIVATE PATH MUST NOT LEAK');}}}).createProject({commandId:'conflict',title:'test',goal:'test'}),error=>error.code==='task/project'&&error.details.reason==='CONFLICT'&&!error.message.includes('PRIVATE PATH'));
 });
 
@@ -665,4 +665,26 @@ test('result attention entry selects visible provenance history, preserves both 
  let scrolled=0;p.context.document.querySelectorAll=()=>[{dataset:{historyTask:t.id},scrollIntoView:()=>scrolled++}];await p.action('attention-open',t.id);assert.equal(scrolled,1);assert.match(p.overlay(),/data-action="history-filter"[^>]+filter&quot;:&quot;attention&quot;[^>]+aria-pressed="true"/);assert.match(p.overlay(),/data-action="schedule-run" data-id="r0"/);
  await p.action('history-filter',JSON.stringify({taskId:t.id,filter:'all'}));await p.action('history-older',t.id);assert.match(p.overlay(),/当前第 2 \/ 2 页/);await p.action('attention-open',t.id);await p.action('history-filter',JSON.stringify({taskId:t.id,filter:'all'}));assert.match(p.overlay(),/当前第 2 \/ 2 页/);await p.action('detail-fullscreen');assert.match(p.overlay(),/title="缩小" aria-label="缩小详情"/);
  await p.action('schedule-run','r0');assert.match(p.overlay(),/Hidden old report 0/);assert.doesNotMatch(p.overlay(),/Latest formal result/);
+});
+
+const executorSnapshot={...snapshot,runs:[],viewCapabilities:{planner:false,executor:true},viewContext:{role:'executor',scope:'local',nodeId:'mbp',pollState:'failed',queueObservedAt:'2026-10-22T01:00:00Z',heartbeat:{state:'acknowledged'},unresolvedClaims:[{runId:'claim-run',state:'uncertain'}]}};
+test('executor view stays local while disconnected and cannot select an absent scheduler identity',async()=>{
+ const p=page();await p.answer({value:executorSnapshot});
+ assert.match(p.content(),/data-id="planner"[^>]*disabled/);assert.match(p.content(),/data-id="executor" aria-pressed="true"/);
+ assert.match(p.content(),/本机没有记录不能证明调度端没有任务/);assert.match(p.content(),/领取回执尚未确认/);assert.match(p.content(),/心跳已确认/);
+ await p.action('task-view','planner');assert.equal(p.requests.length,0);
+ const poll=p.startPoll();assert.deepEqual(JSON.parse(JSON.stringify(p.requests[0].input)),{view:'executor'});await p.answer({value:executorSnapshot});await poll;
+ assert.match(p.content(),/data-id="executor" aria-pressed="true"/);
+});
+test('both identities switch read views without settings writes and retain selection on refresh',async()=>{
+ const p=page();await p.answer({value:{...snapshot,viewContext:{role:'planner'},viewCapabilities:{planner:true,executor:true}}});
+ const switching=p.action('task-view','executor');assert.equal(p.requests[0].method,'projectSnapshot');assert.equal(p.requests[0].input.view,'executor');
+ await p.answer({value:{...executorSnapshot,viewCapabilities:{planner:true,executor:true}}});await switching;
+ assert.match(p.content(),/data-id="executor" aria-pressed="true"/);assert.doesNotMatch(p.content(),/data-id="planner"[^>]*disabled/);
+ const poll=p.startPoll();assert.equal(p.requests[0].input.view,'executor');await p.answer({error:'local read failure'});await poll;
+ assert.match(p.content(),/保留上次/);assert.match(p.content(),/data-id="executor" aria-pressed="true"/);
+});
+test('scheduler-only page disables executor without treating network failure as identity change',async()=>{
+ const p=page();await p.answer({value:{...snapshot,viewContext:{role:'planner'},viewCapabilities:{planner:true,executor:false}}});
+ assert.match(p.content(),/data-id="executor"[^>]*disabled/);await p.action('task-view','executor');assert.equal(p.requests.length,0);
 });

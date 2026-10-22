@@ -207,10 +207,10 @@ async function setup(t) {
   };
 }
 
-test("executor original panel exposes its recursive branch and ancestor context without same-project sibling leakage", async (t) => {
+test("remote protocol projection retains its recursive branch and ancestor context without same-project sibling leakage", async (t) => {
   const f = await setup(t);
   const before = f.ledger.snapshot();
-  const snapshot = await f.settings.projectSnapshot();
+  const snapshot = await f.executor.ctx.remoteExecution.coordinatorLedger.projectSnapshot();
   assert.deepEqual(
     new Set(snapshot.tasks.map((x) => x.id)),
     new Set([f.parentTask.taskId, f.own.task.taskId, f.grandchild.task.taskId]),
@@ -237,7 +237,6 @@ test("executor original panel exposes its recursive branch and ancestor context 
     scope: "node",
     nodeId: "mbp",
     observedAt: snapshot.sampledAt,
-    coordinatorUrl: "https://central.example/tasks",
   });
   assert.deepEqual(snapshot.settings, { enabled: false });
   for (const row of snapshot.tasks)
@@ -253,7 +252,7 @@ test("executor original panel exposes its recursive branch and ancestor context 
   );
 });
 
-test("executor view includes its registered source project as observation only and forbids planner mutation", async (t) => {
+test("remote protocol projection includes its registered source project as observation only and forbids planner mutation", async (t) => {
   const f = await setup(t);
   for (const nodeId of ["mbp", "other"]) {
     const p = registrationPacket();
@@ -264,7 +263,7 @@ test("executor view includes its registered source project as observation only a
     f.ledger.registerProject(f.key(), p, [p.namespace]);
   }
   const before = f.ledger.snapshot();
-  const snapshot = await f.settings.projectSnapshot();
+  const snapshot = await f.executor.ctx.remoteExecution.coordinatorLedger.projectSnapshot();
   const imported = snapshot.tasks.find((x) => x.title === "Imported task mbp");
   assert.ok(imported);
   assert.equal(imported.observationOnly, true);

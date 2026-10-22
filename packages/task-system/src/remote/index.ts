@@ -1,3 +1,4 @@
+import type { ExecutorPanelRecord } from "../executor-panel.js";
 import { independentRemoteControls } from "./controls.js";
 import { ExecutionModelInventory } from "../executor-models.js";
 import type { OfficialBackend } from "../official-execution.js";
@@ -572,6 +573,34 @@ export class RemoteExecutionService extends Service {
       items: [...byRun.values()].slice(0, 100),
       truncated: byRun.size > 100,
     };
+  }
+  /** Local recovery and last observed work only; this method performs no RPC. */
+  executorPanel() {
+    const settings = this.settingsSnapshot();
+    const claims = this.store?.panelClaims() ?? [];
+    const claimByRun = new Map(claims.map(row => [row.runId, row.state]));
+    const dispatches = this.store?.panelDispatches() ?? [];
+    const records: ExecutorPanelRecord[] = [];
+    for (const worker of this.workers) for (const run of worker.queueSnapshot()) {
+      records.push({taskId:run.taskId,runId:run.runId,title:run.intentSnapshot?.title ?? run.taskId,
+        description:run.intentSnapshot?.description ?? "",state:claimByRun.has(run.runId) ? claimByRun.get(run.runId)==="uncertain" ? "claim_uncertain" : "claim_pending" : run.state,
+        source:"local-queue",nodeId:this.config.nodeId,time:worker.queueObservedAt ?? run.updatedAt ?? "",sessionIds:[],
+        parentTaskId:dispatches.find(row=>row.claim.task.taskId===run.taskId)?.claim.task.parentTaskId,parentRunId:run.parentRunId,projectId:run.projectContext?.project?.projectId,projectTitle:run.projectContext?.project?.title,
+        model:run.route?.model,workspaceId:run.route?.workspaceId});
+    }
+    // Reverse so the newest attempt for each Run wins in the public projection.
+    for (const row of dispatches.slice(0,200).reverse()) records.push({
+      taskId:row.claim.task.taskId,runId:row.claim.run.runId,title:row.claim.task.title,description:row.claim.task.description,
+      state:row.state,source:"local-recovery",nodeId:this.config.nodeId,time:row.receipt?.acceptedAt ?? row.claim.run.updatedAt ?? "",
+      sessionIds:row.sessionId ? [row.sessionId] : [],parentTaskId:row.claim.task.parentTaskId,parentRunId:row.claim.run.parentRunId,
+      projectId:row.claim.run.projectContext?.project?.projectId,projectTitle:row.claim.run.projectContext?.project?.title,
+      model:row.claim.run.route?.model,workspaceId:row.claim.run.route?.workspaceId,executionDirectory:row.workspacePath,
+      report:row.result?.report?.body ?? row.result?.summary,detail:row.detail,outcome:row.result?.outcome,attemptId:row.attemptId,
+    });
+    const observed = [...this.workers].map(worker=>worker.queueObservedAt).filter((at): at is string=>!!at).sort().at(-1) ?? null;
+    return {records,unresolvedClaims:claims.filter(claim=>!records.some(row=>row.runId===claim.runId)).slice(0,200),truncated:dispatches.length>200 || claims.length>200 || [...this.workers].some(worker=>worker.queueSnapshot().length>=128),
+      queueObservedAt:observed,pollState:settings.paused ? "paused" : [...this.workers].some(worker=>worker.lastPollFailed) ? "failed" : observed ? "ready" : "never",
+      connection:settings,heartbeat:this.heartbeatSnapshot()};
   }
   async executorIdentity() {
     insist(this.config.paused !== true, "REMOTE_PAUSED", 409);

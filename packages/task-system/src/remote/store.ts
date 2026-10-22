@@ -464,6 +464,18 @@ export class RecoveryStore {
       .all()
       .map((row) => JSON.parse(String(row.data)) as DispatchRecord);
   }
+  /** Bounded operator view: active recovery first, then recently admitted local attempts. */
+  panelDispatches(limit = 201): DispatchRecord[] {
+    insist(Number.isSafeInteger(limit) && limit >= 1 && limit <= 201, "INVALID_RECOVERY_LIMIT");
+    return this.db.prepare("SELECT data FROM dispatches ORDER BY CASE WHEN json_extract(data,'$.state') IN ('acknowledged','cancelled','retry_scheduled') THEN 1 ELSE 0 END, rowid DESC LIMIT ?")
+      .all(limit).map(row => JSON.parse(String(row.data)) as DispatchRecord);
+  }
+  /** Project only receipt metadata, never outbound payloads or business content. */
+  panelClaims(limit = 201) {
+    insist(Number.isSafeInteger(limit) && limit >= 1 && limit <= 201, "INVALID_RECOVERY_LIMIT");
+    return this.db.prepare("SELECT json_extract(data,'$.payload.runId') AS runId,json_extract(data,'$.state') AS state FROM outbound WHERE json_extract(data,'$.operation')='claim' AND json_extract(data,'$.state') IN ('sending','pending','uncertain') ORDER BY rowid DESC LIMIT ?")
+      .all(limit).flatMap(row => typeof row.runId === "string" && typeof row.state === "string" ? [{runId:row.runId,state:row.state}] : []);
+  }
   /** A durable dispatch without a result is an uncertain side effect, never executable again. */
   recover(): DispatchRecord[] {
     return this.transaction(() => {

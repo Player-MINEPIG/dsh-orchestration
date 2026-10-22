@@ -70,6 +70,7 @@ export class ExecutorWorker {
   private pollingTimer?: ReturnType<typeof setInterval>;
   private polling?: Promise<unknown>;
   lastPollFailed = false;
+  queueObservedAt: string | null = null;
   private observedQueue: import("./ports.js").Run[] = [];
   private projectRuns = new Map<
     string,
@@ -180,6 +181,7 @@ export class ExecutorWorker {
       this.options.policy.nodeId,
     );
     this.observedQueue = pending.slice(0, 128);
+    this.queueObservedAt = new Date(this.now()).toISOString();
     if (
       pending.length &&
       this.options.prepareForWork &&

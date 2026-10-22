@@ -1,3 +1,4 @@
+import { executorPanelSnapshot, type ExecutorPanelRecord } from "./executor-panel.js";
 import { ExecutionModelChoice, ExecutionModelsError, sameExecutionModel } from "./execution-models.js";
 import { randomUUID } from "node:crypto";
 import {readConnectionSettings,saveConnectionSettings,SaveConnectionInput} from "./connection-settings.js";
@@ -368,7 +369,7 @@ const projectInputs = {
   executionDirectorySettings: null,
   saveExecutionDirectorySettings: z.object({root: z.string().min(1).max(4096), expectedRevision: z.number().int().nonnegative()}).strict(),
   setReportRetryLimit:z.object({commandId:z.string().min(1).max(200),taskId:z.string().min(1),expectedRevision:z.number().int().positive(),maxRetries:z.number().int().min(0).max(5)}).strict(),
-  projectSnapshot: null,
+  projectSnapshot: z.object({view:z.enum(["planner","executor"]).optional()}).strict().optional(),
   projectPage: null,
   saveProjectSettings: z
     .object({
@@ -573,18 +574,42 @@ export class TaskPluginSettings extends TypertRemoteService {
       ),
     );
   }
-  async projectSnapshot() {
-    const task = this.ctx.get("taskSystem") as TaskSystemService | undefined;
-    if(task?.config.role === "executor") {
-      const remote = this.ctx.get("remoteExecution") as RemoteExecutionService | undefined;
-      if(!remote?.coordinatorLedger) throw new RemoteError("task/project", "Coordinator unavailable", {reason:"COORDINATOR_UNAVAILABLE"});
-      return this.projectOperation(async () => {
-        const result = await remote.coordinatorLedger!.projectSnapshot();
-        const view = result as unknown as {viewContext?:Record<string,unknown>};
-        return {...view,viewContext:{...view.viewContext,coordinatorUrl:remote.coordinatorPanelUrl()}};
-      });
+  private localExecutorSnapshot(task: TaskSystemService) {
+    const remote = this.ctx.get("remoteExecution") as RemoteExecutionService | undefined;
+    const observed = remote?.executorPanel();
+    const data = task.ledger.snapshot(), nodeId = task.config.nodeId;
+    const ownRuns = data.runs.filter(run=>run.route?.nodeId===nodeId && !run.observationOnly && !run.historyOnly)
+      .sort((a,b)=>Number(["queued","running"].includes(b.state))-Number(["queued","running"].includes(a.state)) || b.updatedAt.localeCompare(a.updatedAt));
+    const records: ExecutorPanelRecord[] = ownRuns.slice(0,200).map(run=>{
+      const task = data.tasks.find(task=>task.taskId===run.taskId);
+      const attempt = data.attempts?.find(attempt=>attempt.attemptId===run.currentAttemptId);
+      const report = data.reports.findLast(report=>report.runId===run.runId && report.kind==="result");
+      return {taskId:run.taskId,runId:run.runId,title:task?.title ?? run.intentSnapshot?.title ?? run.taskId,
+        description:task?.description ?? run.intentSnapshot?.description ?? "",state:run.state,source:"local-ledger",nodeId,time:run.updatedAt,
+        sessionIds:[...new Set([...(run.sessionIds??[]),...(attempt?.sessionId?[attempt.sessionId]:[])])],
+        parentTaskId:task?.parentTaskId,parentRunId:run.parentRunId,projectId:run.projectContext?.project?.projectId,
+        projectTitle:run.projectContext?.project?.title,model:run.route?.model,workspaceId:run.route?.workspaceId,
+        report:report?.body,outcome:run.outcome};
+    });
+    for (const entry of task.results?.pending() ?? []) {
+      const row = records.find(row=>row.runId===entry.ref.runId);
+      if(row) {row.state="result";row.report=entry.settlement.report?.body ?? entry.settlement.summary;row.detail=entry.reasonCode;row.sessionIds=[...new Set([...row.sessionIds,entry.sessionId])];}
     }
-    return this.projectOperation(() => this.projects().snapshot());
+    const snapshot=executorPanelSnapshot(nodeId,[...records,...(observed?.records??[])]);
+    return {...snapshot,viewCapabilities:{planner:task.config.role!=="executor",executor:task.config.role!=="planner"},
+      viewContext:{role:"executor",scope:"local",nodeId,observedAt:snapshot.sampledAt,queueObservedAt:observed?.queueObservedAt??null,
+        pollState:observed?.pollState??"never",connection:observed?.connection??null,heartbeat:observed?.heartbeat??null,
+        unresolvedClaims:observed?.unresolvedClaims??[],truncated:ownRuns.length>200 || observed?.truncated===true}};
+  }
+  async projectSnapshot(input?: unknown) {
+    const requested = projectInputs.projectSnapshot.parse(input)?.view;
+    const task = this.ctx.get("taskSystem") as TaskSystemService | undefined;
+    if(!task) throw new RemoteError("task/project","Task service unavailable",{reason:"PROJECT_UNAVAILABLE"});
+    const view=requested ?? (task.config.role==="executor" ? "executor" : "planner");
+    if(view==="executor" && task.config.role==="planner" || view==="planner" && task.config.role==="executor")
+      throw new RemoteError("task/project","This host does not have the selected role",{reason:"VIEW_UNAVAILABLE"});
+    if(view==="executor") return this.localExecutorSnapshot(task);
+    return this.projectOperation(()=>({...this.projects().snapshot(),viewCapabilities:{planner:true,executor:task.config.role==="both"}}));
   }
   private sessionDispatchIndex = new SessionDispatchIndex();
   async sessionTasks(input: unknown) {
@@ -595,15 +620,21 @@ export class TaskPluginSettings extends TypertRemoteService {
     const operations = sessionDispatchOperations(task.ledger, sessionId);
     const history = await this.sessionDispatchIndex.readHistory(persistence, sessionId);
     const roots = [...new Set([...operations.taskIds, ...history.ids])];
-    // No remote request for a new session with no confirmed dispatches.
-    const snapshot = roots.length ? await this.projectSnapshot() : { tasks: [], runs: [] };
+    const localAssigned = task.config.role !== "planner" ? this.localExecutorSnapshot(task) : undefined;
+    const assigned = localAssigned?.runs.filter(run=>run.sessionIds.includes(sessionId)) ?? [];
+    for (const run of assigned) if(!roots.includes(run.taskId)) roots.push(run.taskId);
+    const baseSnapshot = task.config.role === "executor" ? localAssigned! : roots.length ? await this.projectSnapshot() : { tasks: [], runs: [] };
+    const snapshot = task.config.role === "both" && assigned.length && localAssigned ? {
+      ...localAssigned,tasks:[...new Map([...baseSnapshot.tasks,...localAssigned.tasks].map(row=>[row.id,row])).values()],
+      runs:[...new Map([...baseSnapshot.runs,...localAssigned.runs].map(row=>[row.id,row])).values()],
+    } : baseSnapshot;
     const view = sessionTaskSnapshot(snapshot, roots, sessionId, operations.pending, history.codexJobs,
       this.ctx.get("jobs") as SessionJobRegistry | undefined);
     const local = this.ctx.get("localCodex")?.store.rows(sessionId) ?? [];
     const tasks = sortSessionTasks([...view.tasks, ...local]);
     const counts: Record<string, number> = { ...view.counts, all: tasks.length };
     for (const item of local) counts[item.status] = (counts[item.status] ?? 0) + 1;
-    return { ...view, tasks, counts, directCount: view.directCount + local.length, localCodexCount: local.length };
+    return { ...view, tasks, counts, directCount: view.directCount + local.length, localCodexCount: local.length, ...("viewContext" in snapshot ? {viewContext:snapshot.viewContext} : {}) };
   }
   async projectPage() {
     return readFileSync(

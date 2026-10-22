@@ -105,6 +105,7 @@ export function sessionTaskSnapshot(snapshot: unknown, roots: readonly string[],
     returnedAt: task.returnedAt ?? (["review", "done", "accepted", "error", "cancelled"].includes(task.status) ? task.time : undefined),
     report: task.report,
     runId: task.runId, runState: task.runState, reviewStatus: task.reviewStatus,
+    ...("sessionIds" in task ? {sessionIds:task.sessionIds} : {}),
   }));
   const tasks = [...ledgerTasks, ...codexJobRows(codexJobs, sessionId, registry)];
   const visible = new Set(tasks.map(task => task.id));
@@ -118,6 +119,7 @@ export function sessionTaskSnapshot(snapshot: unknown, roots: readonly string[],
     runs: view.runs.filter(run => visible.has(run.taskId)).map(run => ({
       id: run.id, taskId: run.taskId, state: run.state, reviewStatus: run.reviewStatus,
       createdAt: run.createdAt, node: run.node, model: run.model,
+      parentRunId:run.parentRunId, parentTaskId:run.parentTaskId, sessionIds:run.sessionIds,
     })),
   };
 }

@@ -92,6 +92,7 @@ export interface TaskPolicy {
 }
 export interface Task {
   taskId: string;
+  parentTaskId?: string;
   kind?: string;
   title: string;
   description: string;
