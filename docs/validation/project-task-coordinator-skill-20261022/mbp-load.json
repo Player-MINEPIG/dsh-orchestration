@@ -1,0 +1,29 @@
+{
+  "passed": true,
+  "verifiedAt": "2026-10-22T06:57:20.370Z",
+  "node": "v22.23.1",
+  "cli": "/Users/pmp/.local/lib/deepseek-harness/0.2.1-rc.2/node_modules/@deepseek-ai/dsh/lib/bin.js",
+  "nativeModules": [
+    "dsh-skill",
+    "dsh-skill-filesystem",
+    "dsh-tools",
+    "dsh-tool-skill"
+  ],
+  "provider": "filesystem",
+  "source": "user-dsh",
+  "invocation": {
+    "modelInvocable": true,
+    "userInvocable": true
+  },
+  "path": "/Users/pmp/.dsh/skills/project-task-coordinator/SKILL.md",
+  "sha256": "5bc46d7578ee445e169770a97175ef181dda4466a12bf7ead9836b2fedaaa813",
+  "call": {
+    "name": "skill",
+    "arguments": {
+      "name": "project-task-coordinator"
+    }
+  },
+  "bodyLength": 2979,
+  "renderedSkillContent": true,
+  "scope": "isolated Context; no agent, session, task plugin, model, business DB or production configuration loaded"
+}

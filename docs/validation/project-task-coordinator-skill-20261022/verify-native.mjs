@@ -1,0 +1,34 @@
+import {createRequire} from 'node:module';
+import {realpathSync,readFileSync} from 'node:fs';
+import {createHash} from 'node:crypto';
+import assert from 'node:assert/strict';
+const req=createRequire(realpathSync(process.env.DSH_CLI));
+const {Context}=req('@deepseek-ai/cordis');
+const skill=req('@deepseek-ai/dsh-skill');
+const filesystem=req('@deepseek-ai/dsh-skill-filesystem');
+const tool=req('@deepseek-ai/dsh-tool-skill');
+const tools=req('@deepseek-ai/dsh-tools');
+const ctx=new Context();
+ctx.provide('systemPrompt',{tools(){},section(){}});
+ctx.provide('agents',{});
+ctx.provide('workingDirectory',{ensure(){throw new Error('No agent/session may be opened by this read-only verification');}});
+try {
+  await (await ctx.plugin(skill.default)).await();
+  await (await ctx.plugin(filesystem,{watch:false,...(process.env.SKILL_DIR ? {includeDefaultRoots:false,customSkillDirs:[process.env.SKILL_DIR]} : {})})).await();
+  await (await ctx.plugin(tools.default)).await();
+  await (await ctx.plugin(tool)).await();
+  const name='project-task-coordinator';
+  const entry=(await ctx.skills.list()).find(s=>s.name===name);
+  assert.ok(entry,'filesystem registry must advertise skill');
+  assert.equal(entry.invocation.modelInvocable,true);
+  const definition=await ctx.skills.get(name);
+  const result=await ctx.tools.execute({name:'skill',arguments:{name},callId:'skill-load-verification',signal:new AbortController().signal});
+  assert.equal(result.isError,false);
+  const rendered=JSON.stringify(result);
+  assert.ok(rendered.includes('project_bind_session'));
+  assert.ok(rendered.includes('task_bind_dispatcher'));
+  assert.ok(rendered.includes('task_submit_result'));
+  assert.ok(rendered.includes('<skill_content'));
+  const path=definition.resourceBase.path+'/SKILL.md';
+  console.log(JSON.stringify({passed:true,verifiedAt:new Date().toISOString(),node:process.version,cli:realpathSync(process.env.DSH_CLI),nativeModules:['dsh-skill','dsh-skill-filesystem','dsh-tools','dsh-tool-skill'],provider:entry.provider,source:entry.source,invocation:entry.invocation,path,sha256:createHash('sha256').update(readFileSync(path)).digest('hex'),call:{name:'skill',arguments:{name}},bodyLength:definition.content.length,renderedSkillContent:true,scope:'isolated Context; no agent, session, task plugin, model, business DB or production configuration loaded'},null,2));
+} finally { await ctx.fiber.dispose(); }
