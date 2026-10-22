@@ -1,4 +1,5 @@
 import { ExecutionCatalogDelivery } from "../execution-models.js";
+import { z } from "zod";
 import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import { dirname } from "node:path";
@@ -24,6 +25,24 @@ import type {
   ExecutorIdentity,
 } from "./ports.js";
 
+const localWorkspaceGrant = z
+  .object({
+    registryId: z.string().min(1).max(200),
+    workspaceId: z.string().min(1).max(128),
+    nodeId: z.string().min(1).max(128),
+    label: z.string().min(1).max(500),
+    path: z.string().min(1).max(4096),
+    enabled: z.boolean(),
+  })
+  .strict();
+const localWorkspaceGrantState = z
+  .object({
+    revision: z.number().int().nonnegative(),
+    grants: z.array(localWorkspaceGrant).max(64),
+  })
+  .strict();
+export type LocalWorkspaceGrant = z.infer<typeof localWorkspaceGrant>;
+export type LocalWorkspaceGrantState = z.infer<typeof localWorkspaceGrantState>;
 export interface CommandReceipt {
   commandId: string;
   state: "pending" | "done" | "uncertain";
@@ -106,6 +125,58 @@ export class RecoveryStore {
         ?.value,
     );
     insist(/^[0-9a-f-]{36}$/.test(this.instanceId), "INVALID_STORE_IDENTITY");
+  }
+  workspaceGrantState(): LocalWorkspaceGrantState {
+    const row = this.db
+      .prepare("SELECT value FROM metadata WHERE key='localWorkspaceGrants'")
+      .get();
+    return row
+      ? localWorkspaceGrantState.parse(JSON.parse(String(row.value)))
+      : { revision: 0, grants: [] };
+  }
+  setWorkspaceGrant(
+    grant: LocalWorkspaceGrant,
+    expectedRevision: number,
+  ): LocalWorkspaceGrantState {
+    return this.transaction(() => {
+      const state = this.workspaceGrantState();
+      insist(
+        state.revision === expectedRevision,
+        "WORKSPACE_GRANT_CONFLICT",
+        409,
+      );
+      const previous = state.grants.find(
+        (saved) => saved.workspaceId === grant.workspaceId,
+      );
+      insist(
+        !previous ||
+          (previous.path === grant.path &&
+            previous.workspaceId === grant.workspaceId &&
+            previous.nodeId === grant.nodeId),
+        "WORKSPACE_GRANT_PATH_CHANGED",
+        409,
+      );
+      if (previous && canonical(previous) === canonical(grant)) return state;
+      const next = localWorkspaceGrantState.parse({
+        revision: state.revision + 1,
+        grants: [
+          ...state.grants
+            .filter((saved) => saved.workspaceId !== grant.workspaceId)
+            .map((saved) =>
+              saved.registryId === grant.registryId
+                ? { ...saved, enabled: false }
+                : saved,
+            ),
+          grant,
+        ],
+      });
+      this.db
+        .prepare(
+          "INSERT INTO metadata(key,value) VALUES('localWorkspaceGrants',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        )
+        .run(canonical(next));
+      return next;
+    });
   }
   /** Assigns only a display identity for an already-authorized node; never grants access. */
   executorIdentity(schedulerId: string, nodeId: string): ExecutorIdentity {

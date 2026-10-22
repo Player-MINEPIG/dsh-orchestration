@@ -1,5 +1,7 @@
 import { createHash, createPublicKey, sign, verify } from 'node:crypto'
 import type { KeyObject } from 'node:crypto'
+import { posix, win32 } from 'node:path'
+import { z } from 'zod'
 
 /** Produced by a trusted native host before agent/model/workload dispatch. */
 export interface PreDispatchFailure { kind: 'native-provider-unavailable-v1'; code: 'NO_ADAPTER'; provider: string; model: string }
@@ -20,6 +22,49 @@ export function validateResultValidationFailure(value: unknown): asserts value i
   insist(value.kind==='native-result-validation-failure-v1'&&['SCHEMA_VALIDATION','RESULT_VALIDATION'].includes(String(value.code))&&value.quiescent===true&&value.sessionPersisted===true, 'INVALID_RESULT_VALIDATION_FAILURE')
   insist(typeof value.sessionId==='string'&&value.sessionId.length>0&&value.sessionId.length<=200, 'INVALID_RESULT_VALIDATION_FAILURE')
   insist(Array.isArray(value.issues)&&value.issues.length<=10&&value.issues.every(x=>typeof x==='string'&&x.length<=1000), 'INVALID_RESULT_VALIDATION_FAILURE')
+}
+
+const executorWorkspace = z
+  .object({
+    workspaceId: z
+      .string()
+      .min(1)
+      .max(128)
+      .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/),
+    nodeId: z.string().min(1).max(128),
+    label: z.string().min(1).max(500),
+    path: z
+      .string()
+      .min(1)
+      .max(4096)
+      .refine(
+        (path) =>
+          !/[\u0000-\u001f]/.test(path) &&
+          (posix.isAbsolute(path)
+            ? posix.normalize(path) === path
+            : win32.isAbsolute(path) && win32.normalize(path) === path),
+      ),
+    state: z.enum(["ready", "unavailable", "revoked"]),
+  })
+  .strict();
+export type ExecutorWorkspaceMetadata = z.infer<typeof executorWorkspace>;
+export function executorWorkspaces(
+  value: unknown,
+  nodeId: string,
+): ExecutorWorkspaceMetadata[] {
+  const parsed = z.array(executorWorkspace).max(64).safeParse(value);
+  insist(parsed.success, "INVALID_EXECUTOR_WORKSPACES");
+  insist(
+    parsed.data.every((workspace) => workspace.nodeId === nodeId),
+    "WORKSPACE_NODE_MISMATCH",
+    403,
+  );
+  insist(
+    new Set(parsed.data.map((workspace) => workspace.workspaceId)).size ===
+      parsed.data.length,
+    "DUPLICATE_EXECUTOR_WORKSPACE",
+  );
+  return parsed.data;
 }
 
 export type Role = 'planner' | 'executor' | 'both'

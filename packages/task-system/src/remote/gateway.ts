@@ -6,6 +6,7 @@ import { ProgramCatalog, ProgramRoute } from "../workflow-programs.js";
 import { validateCollaborationInput } from "../project-collaboration/authority.js";
 import { TaskError } from "../ledger.js";
 import {
+  executorWorkspaces,
   byteLimit,
   canonical,
   canonicalData,
@@ -348,7 +349,7 @@ export function validatePayload(envelope: CommandEnvelope): void {
       fields(
         p,
         ["sampledAt", "runtimeReady", "activeExecutions"],
-        ["providerStatus"],
+        ["providerStatus", "workspaces"],
       );
       insist(
         Number.isSafeInteger(p.sampledAt) && Number(p.sampledAt) >= 0,
@@ -361,6 +362,8 @@ export function validatePayload(envelope: CommandEnvelope): void {
           Number(p.activeExecutions) <= 128,
         "INVALID_ACTIVE_EXECUTIONS",
       );
+      if (p.workspaces !== undefined)
+        executorWorkspaces(p.workspaces, envelope.nodeId);
       if (p.providerStatus !== undefined) {
         insist(isRecord(p.providerStatus), "INVALID_PROVIDER_STATUS");
         const status = p.providerStatus as Record<string, Json>;
@@ -1001,6 +1004,18 @@ export class RemoteGateway {
           break;
         case "heartbeat": {
           insist(ledger.recordNodeHeartbeat, "HEARTBEAT_UNSUPPORTED", 503);
+          if (p.workspaces !== undefined) {
+            insist(
+              ledger.recordExecutorWorkspaces,
+              "WORKSPACE_CATALOG_UNSUPPORTED",
+              503,
+            );
+            await ledger.recordExecutorWorkspaces(`${commandId}:workspaces`, {
+              nodeId: peer.nodeId,
+              sampledAt: Number(p.sampledAt),
+              workspaces: executorWorkspaces(p.workspaces, peer.nodeId),
+            });
+          }
           result = await ledger.recordNodeHeartbeat(commandId, {
             nodeId: peer.nodeId,
             sampledAt: Number(p.sampledAt),
@@ -1405,6 +1420,25 @@ export class RemoteGateway {
       e.operation === "completeExecutionModels"
     ) {
       insist(this.options.ledger.nodeStatuses, "NODE_STATUS_UNSUPPORTED", 503);
+      if (e.operation === "heartbeat" && e.payload.workspaces !== undefined) {
+        const workspaces = executorWorkspaces(
+          e.payload.workspaces,
+          peer.nodeId,
+        );
+        insist(
+          peer.managedAccess ||
+            workspaces.every((workspace) =>
+              peer.workspaces.includes(workspace.workspaceId),
+            ),
+          "WORKSPACE_CATALOG_DENIED",
+          403,
+        );
+        insist(
+          this.options.ledger.recordExecutorWorkspaces,
+          "WORKSPACE_CATALOG_UNSUPPORTED",
+          503,
+        );
+      }
       const status = (await this.options.ledger.nodeStatuses()).find(
         (node) => node.nodeId === peer.nodeId,
       );

@@ -1,3 +1,16 @@
+import {
+  workspaceGrantCatalog,
+  selectedWorkspaceGrant,
+  localWorkspaceBindings,
+  executorWorkspaceSnapshot,
+  SetLocalWorkspaceGrant,
+  type LocalWorkspaceRegistry,
+  type WorkspaceGrantCatalog,
+} from "./workspace-grants.js";
+export type {
+  WorkspaceGrantCatalog,
+  SetLocalWorkspaceGrant,
+} from "./workspace-grants.js";
 import type { ExecutorPanelRecord } from "../executor-panel.js";
 import { independentRemoteControls } from "./controls.js";
 import { ExecutionModelInventory } from "../executor-models.js";
@@ -416,6 +429,91 @@ export class RemoteExecutionService extends Service {
         maxBodyBytes: config.maxBodyBytes,
         maxResponseBytes: config.maxResponseBytes,
       });
+  }
+  private workspaceGrantStore() {
+    return this.store ??= new RecoveryStore(resolve(this.config.statePath));
+  }
+  async workspaceGrantCatalog(): Promise<WorkspaceGrantCatalog> {
+    insist(this.config.role !== "planner", "EXECUTOR_ROLE_REQUIRED", 403);
+    return workspaceGrantCatalog({
+      nodeId: this.config.nodeId,
+      store: this.workspaceGrantStore(),
+      registry: this.ctx.get("workspaceRegistry") as unknown as
+        | LocalWorkspaceRegistry
+        | undefined,
+      configured: this.config.workspaces,
+    });
+  }
+  async setLocalWorkspaceGrant(input: unknown) {
+    const selection = SetLocalWorkspaceGrant.parse(input);
+    insist(this.config.role !== "planner", "EXECUTOR_ROLE_REQUIRED", 403);
+    insist(
+      !this.ctx.get("taskSystem")?.native?.activeCount,
+      "CONFIGURATION_BUSY",
+      409,
+    );
+    const release = await this.beginConfigurationEdit();
+    try {
+      insist(
+        !this.ctx.get("taskSystem")?.native?.activeCount,
+        "CONFIGURATION_BUSY",
+        409,
+      );
+      const store = this.workspaceGrantStore();
+      const grant = selectedWorkspaceGrant({
+        nodeId: this.config.nodeId,
+        store,
+        registry: this.ctx.get("workspaceRegistry") as unknown as
+          | LocalWorkspaceRegistry
+          | undefined,
+        selection,
+      });
+      insist(
+        !this.config.workspaces.some(
+          (binding) =>
+            binding.nodeId === this.config.nodeId &&
+            binding.path === grant.path,
+        ),
+        "WORKSPACE_GRANT_CONFIGURED",
+        409,
+      );
+      insist(
+        this.config.workspaces.length +
+          store
+            .workspaceGrantState()
+            .grants.filter((saved) => saved.workspaceId !== grant.workspaceId)
+            .length <
+          64,
+        "WORKSPACE_CATALOG_LIMIT",
+        409,
+      );
+      store.setWorkspaceGrant(grant, selection.expectedRevision);
+    } finally {
+      release();
+    }
+    let publication: "acknowledged" | "pending" | "not-connected" =
+      "not-connected";
+    if (this.coordinatorLedger && !this.config.paused) {
+      try {
+        await this.heartbeatNow();
+        publication = "acknowledged";
+      } catch {
+        publication = "pending";
+      }
+    }
+    return { ...(await this.workspaceGrantCatalog()), publication };
+  }
+  private workspaceBindings(): WorkspaceBinding[] {
+    return [
+      ...this.config.workspaces,
+      ...localWorkspaceBindings(
+        this.config.nodeId,
+        this.store,
+        this.ctx.get("workspaceRegistry") as unknown as
+          | LocalWorkspaceRegistry
+          | undefined,
+      ),
+    ];
   }
   /** Read-only settings projection, deliberately excludes keys, grants and credentials. */
   coordinatorPanelUrl(): string | null {
@@ -950,6 +1048,14 @@ export class RemoteExecutionService extends Service {
           !!taskSystem?.programs?.catalog().length,
         activeExecutions,
         providerStatus,
+        workspaces: executorWorkspaceSnapshot(
+          this.config.nodeId,
+          this.store,
+          this.config.workspaces,
+          this.ctx.get("workspaceRegistry") as unknown as
+            | LocalWorkspaceRegistry
+            | undefined,
+        ),
       },
     );
     this.lastHeartbeatAcknowledgedAt = new Date().toISOString();
@@ -963,6 +1069,7 @@ export class RemoteExecutionService extends Service {
     const programs = (this.ctx.get("taskSystem") as TaskSystemPort | undefined)
       ?.programs;
     if (programs) provider = programs.provider(provider);
+    const service = this;
     const worker = new ExecutorWorker({
       modelAdmission: (route) =>
         route.backend
@@ -999,7 +1106,9 @@ export class RemoteExecutionService extends Service {
         role: this.config.role,
         nodeId: this.config.nodeId,
         capabilities: this.config.capabilities,
-        workspaces: this.config.workspaces,
+        get workspaces() {
+          return service.workspaceBindings();
+        },
       },
       ttlMs: this.config.leaseTtlMs,
       maxResultBytes: Math.max(1024, this.config.maxBodyBytes - 4096),
@@ -1020,7 +1129,7 @@ export class RemoteExecutionService extends Service {
           managedWorkspaceAvailable: !!this.ctx
             .get("taskSystem")
             ?.executionDirectories?.settings().root,
-          workspaces: this.config.workspaces.map((workspace) => ({
+          workspaces: this.workspaceBindings().map((workspace) => ({
             workspaceId: workspace.workspaceId,
             nodeId: workspace.nodeId,
             description: workspace.workspaceId,

@@ -865,6 +865,9 @@ export class RemoteLedgerClient implements LedgerPort {
         sampledAt: input.sampledAt,
         runtimeReady: input.runtimeReady,
         activeExecutions: input.activeExecutions,
+        ...(input.workspaces !== undefined
+          ? { workspaces: input.workspaces }
+          : {}),
         ...(input.providerStatus !== undefined
           ? { providerStatus: input.providerStatus }
           : {}),

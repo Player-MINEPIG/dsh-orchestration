@@ -100,6 +100,8 @@ export interface Task {
   policy?: TaskPolicy;
 }
 export interface Run {
+  executionParentKind?: "coordinator" | "executor";
+  executionParentRunId?: string;
   updatedAt?: string;
   dispatchIssue?: CoreRun["dispatchIssue"];
   parentRunId?: string;
@@ -275,7 +277,9 @@ export type SafeRetryWitness = RetryWitnessFacts &
         completedTools: CompletedToolFingerprint[];
       }
   );
+export type { ExecutorWorkspaceMetadata } from "./protocol.js";
 export interface HeartbeatInput {
+  workspaces?: import("./protocol.js").ExecutorWorkspaceMetadata[];
   nodeId: string;
   sampledAt: number;
   runtimeReady: boolean;
@@ -446,6 +450,14 @@ export interface LedgerPort {
     input: LeaseRef & { requestId: string; reason: string },
     options?: { signal?: AbortSignal },
   ): MaybePromise<Receipt<ApprovalRequest>>;
+  recordExecutorWorkspaces?(
+    commandId: string,
+    input: {
+      nodeId: string;
+      sampledAt: number;
+      workspaces: import("./protocol.js").ExecutorWorkspaceMetadata[];
+    },
+  ): MaybePromise<Receipt<unknown>>;
   recordNodeHeartbeat?(
     commandId: string,
     input: HeartbeatInput,
