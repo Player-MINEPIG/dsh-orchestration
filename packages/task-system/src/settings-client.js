@@ -2959,7 +2959,7 @@ h(
       const [saving,setSaving]=React.useState(false),[notice,setNotice]=React.useState("");
       if(state.value?.enabled===false)return null;
       const change=async item=>{setSaving(true);setNotice("");try {const value=await setGrant({registryId:item.registryId,enabled:!item.enabled,expectedRevision:state.value.revision});replace(value);setNotice(item.enabled?"本机工作区已停用；已运行任务保留原上下文。":"本机工作区已启用；调度端收到公告且通过连接授权后可选择。");}catch(reason){const failure=reason?.rpcError??reason;setNotice(["CONFLICT","WORKSPACE_GRANT_CONFLICT"].includes(failure?.details?.reason)?"授权已被其他操作更改，请刷新后重试。":failure?.details?.reason==="CONFIGURATION_BUSY"?"本机仍有活动执行或待回传结果，暂不能更改授权。":"目录授权保存失败，请检查目录是否存在并刷新；没有自动授权其他目录。");}finally {setSaving(false);}};
-      return h("section",{"data-executor-workspace-grants":true,className:"task-directory-card"},
+      return h("section",{"data-executor-workspace-grants":true,className:"task-workspace-grants"},
         h("h3",{style:headingStyle},"执行端 · 本机工作区"),
         h("p",{style:hintStyle},"受信网络调度可选择此设备已登记且有效的 DSH 工作区；可在此停用特定目录。静态连接仍遵循其目录授权。这里只管理本机目录，不接受调度端传入任意路径。"),
         state.loading&&!state.value?h("p",{role:"status"},"正在读取本机工作区…"):null,
@@ -3013,7 +3013,8 @@ h(
           [data-task-plugin-settings] .task-directory-grid > div:empty{display:none;}
           [data-task-plugin-settings] .task-directory-grid > div:not(:empty){display:contents;}
           [data-task-plugin-settings] .task-directory-card{display:grid;grid-template-rows:subgrid;grid-row:span 6;row-gap:10px;min-width:0;}
-          [data-task-plugin-settings] .task-directory-card > h3,[data-task-plugin-settings] .task-directory-card > p{margin:0;}
+          [data-task-plugin-settings] .task-workspace-grants{display:grid;grid-column:1/-1;gap:10px;min-width:0;}
+          [data-task-plugin-settings] :is(.task-directory-card,.task-workspace-grants) > :is(h3,p){margin:0;}
           [data-task-plugin-settings] .task-directory-card [data-task-directory-picker]{display:contents;}
           [data-task-plugin-settings] .task-directory-card [data-task-directory-picker] > p{margin:0;}
           [data-task-plugin-settings] .task-directory-value{overflow-wrap:anywhere;min-width:0;align-self:start;}

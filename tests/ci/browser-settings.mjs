@@ -73,9 +73,9 @@ export async function testSettings(browser, { output } = {}) {
         ] } };
         root.render(h(settings.ExecutorWorkspaceGrantSettings, { readGrants: async () => structuredClone(fixture.catalog), setGrant: async input => { fixture.writes.push(input); if (fixture.fail) throw { details: { reason: 'CONFIGURATION_BUSY' } }; return { ...fixture.catalog, revision: 5, items: fixture.catalog.items.map(item => item.registryId === input.registryId ? { ...item, enabled: input.enabled, state: 'revoked' } : item) }; } }));
       };
-      window.mountSurface = () => {
+      window.mountSurface = (options = {}) => {
         root.unmount(); root = ReactDOM.createRoot(document.getElementById('root'));
-        const fixture = window.fixture = { surface: new settings.TaskSettingsSurface() };
+        const fixture = window.fixture = { surface: new settings.TaskSettingsSurface(), workspaceReads: 0, catalog: { enabled: true, revision: 1, items: Array.from({ length: options.workspaceCount ?? 0 }, (_, index) => ({ registryId: `workspace-${index}`, workspaceId: `workspace-${index}`, label: `Workspace ${index + 1}`, path: `/fixture/projects/workspace-${index + 1}/a-long-directory-name-that-must-wrap-on-narrow-screens`, enabled: true, available: true, state: 'ready', source: 'registry' })) } };
         const fields = Object.fromEntries(settings.keys.map(key => [key, { text: key === 'maxConcurrent' ? '4' : key === 'localHeartbeatIntervalMs' ? '1000' : 'false' }]));
         let setRuntime;
         const props = { t: key => settings.zh[key] ?? key,
@@ -83,6 +83,13 @@ export async function testSettings(browser, { output } = {}) {
           edit: (key, text) => setRuntime(old => ({ ...old, dirty: true, fields: { ...old.fields, [key]: { ...old.fields[key], text } } })),
           discard: () => setRuntime(old => ({ ...old, dirty: false, fields })), save: async () => true,
           read: async () => ({ nodeId: 'immutable-node', role: 'executor' }), readQueue: async () => ({ nodeId: 'immutable-node', items: [], sampledAt: new Date().toISOString() }),
+          ...(options.workspaceCount !== undefined ? {
+            startup: async () => ({ writable: true, task: { entryId: 'task-system', values: { role: options.role ?? 'executor', nodeId: 'immutable-node', databasePath: '/fixture/tasks.sqlite', executionAgentPreset: 'ptc', executionTools: null, planningDecisionEnabled: false, sessionDecisionEnabled: false } } }),
+            readExecutionPresets: async () => ({ items: [{ id: 'ptc', label: 'PTC', available: true }] }),
+            readProjectSettings: async () => ({ enabled: options.role === 'both', root: '/fixture/planning', revision: 1 }),
+            readExecutionDirectorySettings: async () => ({ enabled: true, root: '/fixture/execution', revision: 1 }),
+            readExecutorWorkspaceGrants: async () => { fixture.workspaceReads++; return structuredClone(fixture.catalog); },
+          } : {}),
         };
         function Surface() {
           const [visible, setVisible] = React.useState(true);
@@ -176,6 +183,28 @@ export async function testSettings(browser, { output } = {}) {
     await page.getByText(/本机工作区已停用/).waitFor();
     assert.deepEqual(await page.evaluate(() => fixture.writes), [{ registryId: 'a', enabled: false, expectedRevision: 4 }, { registryId: 'a', enabled: false, expectedRevision: 4 }]);
 
+    for (const role of ['executor', 'both']) {
+      await page.evaluate(role => mountSurface({ workspaceCount: 9, role }), role);
+      const grants = page.locator('[data-executor-workspace-grants]');
+      await grants.getByText('Workspace 9', { exact: true }).waitFor();
+      for (const width of [1280, 390]) {
+        await page.setViewportSize({ width, height: 1000 });
+        const layout = await grants.evaluate(section => {
+          const rect = element => { const { top, bottom, left, right } = element.getBoundingClientRect(); return { top, bottom, left, right }; };
+          return { section: rect(section), grid: rect(section.closest('.task-directory-grid')), children: [...section.children].map(rect) };
+        });
+        for (let index = 1; index < layout.children.length; index++) {
+          assert.ok(layout.children[index].top >= layout.children[index - 1].bottom - 1, `${role} at ${width}px: workspace content overlaps at child ${index}`);
+        }
+        assert.ok(layout.section.bottom >= layout.children.at(-1).bottom, 'refresh remains inside the workspace section');
+        assert.ok(Math.abs(layout.section.left - layout.grid.left) < 1 && Math.abs(layout.section.right - layout.grid.right) < 1, 'workspace catalog uses the full directory grid width');
+        if (output) await grants.screenshot({ path: join(output, `workspace-layout-${role}-${width}.png`) });
+      }
+      await grants.getByRole('button', { name: '刷新本机工作区', exact: true }).click();
+      await page.waitForFunction(() => fixture.workspaceReads === 2);
+      assert.equal(await grants.getByText('Workspace 9', { exact: true }).count(), 1);
+    }
+    await page.setViewportSize({ width: 1280, height: 1000 });
     await page.evaluate(() => mountSurface());
     await page.locator('#task-setting-maxConcurrent').fill('7');
     const node = await page.locator('#task-setting-maxConcurrent').elementHandle();
@@ -188,7 +217,7 @@ export async function testSettings(browser, { output } = {}) {
     assert.equal(await page.locator('#task-setting-maxConcurrent').inputValue(), '4');
     await node.dispose();
     assert.deepEqual(errors, []);
-    return { name: 'settings', realReactLifecycle: true, stagedSaveConflictAndDiscard: true, exactConnectionDraft: true, roleAndPermissionBoundaries: true, localWorkspaceGrants: true, persistentPortal: true };
+    return { name: 'settings', realReactLifecycle: true, stagedSaveConflictAndDiscard: true, exactConnectionDraft: true, roleAndPermissionBoundaries: true, localWorkspaceGrants: true, workspaceCatalogLayout: true, persistentPortal: true };
   } catch (error) {
     if (output) await page.screenshot({ path: join(output, 'settings-failure.png'), fullPage: true }).catch(() => {});
     throw error;
