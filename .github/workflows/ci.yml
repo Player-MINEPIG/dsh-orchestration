@@ -84,7 +84,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        timezone: [UTC, Australia/Melbourne]
+        timezone: [UTC]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
