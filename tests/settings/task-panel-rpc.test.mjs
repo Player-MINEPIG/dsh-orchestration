@@ -1,14 +1,16 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
-import {readFileSync,realpathSync,mkdirSync} from 'node:fs';
+import {readFileSync,mkdirSync} from 'node:fs';
 import {join} from 'node:path';
 import {attachWorkspaceRegistry} from './local-workspace-harness.mjs';
 import {Config,RemoteExecutionService} from '../../packages/task-system/dist/remote/index.js';
 import vm from 'node:vm';
 import {createNativeHarness} from '../dsh/native-harness.mjs';
 import * as settings from '../../packages/task-system/dist/settings.js';
-const req=createRequire(realpathSync(process.env.DSH_CLI ?? '/Users/pmp/.local/bin/dsh'));
+const runtimeRoot=process.env.DSH_OFFICIAL_ROOT;
+assert.ok(runtimeRoot,'Set DSH_OFFICIAL_ROOT to the isolated pinned runtime directory containing package.json and node_modules');
+const req=createRequire(join(runtimeRoot,'package.json'));
 function load(file,require){let value;vm.runInNewContext(readFileSync(file,'utf8'),{window:{__ModuleLoader__:{load:row=>{value=row.factory(require);}}},AbortController,AbortSignal,TextEncoder,TextDecoder,crypto:globalThis.crypto,setTimeout,clearTimeout,console});return value;}
 test('actual browser Remote descriptors and host Typert Gateway agree for initial and selected task views and session tasks',async()=>{
  const h=await createNativeHarness({config:{role:'both',nodeId:'local',schedulerEnabled:false,autoExecute:false}}),ctx=h.ctx;
