@@ -25,7 +25,7 @@ Keep `dev` frozen until promotion completes. A new head invalidates the earlier 
 ## Promote and synchronize
 
 1. Merge the accepted `dev` → `main` PR using **Create a merge commit**. This preserves the tested dev commit as an ancestor. Do not squash or rebase a long-lived branch promotion.
-2. Verify the `main` workflow on the resulting merge commit. Report the accepted dev SHA and the integrated main SHA separately.
+2. Verify all eight required checks on the merged promotion PR. Confirm that the integrated `main` tree equals the tested dev tree. Report the accepted dev SHA and the integrated main SHA separately. Pushes do not trigger CI; use the product workflow's manual dispatch when additional verification is needed.
 3. Open a `main` → `dev` PR and use **Create a merge commit** after its checks pass. This syncs the promotion commit back into `dev` and keeps the next candidate up to date. If GitHub reports no changes, inspect both commit ancestry and file differences, and report the result before choosing another sync path.
 4. Fetch the merged refs. Fast-forward the primary `main` checkout to the verified `origin/main`. Report branch names, HEADs, PRs, CI results, acceptance evidence, and WIP locations.
 

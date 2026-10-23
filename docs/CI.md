@@ -4,6 +4,8 @@ Follow the [development and release workflow](DEVELOPMENT.md) for branch routing
 
 The real-device acceptance record and explicit user confirmation are a manual release requirement. CI does not verify that a device was tested or that the user approved its results.
 
+CI runs for pull requests targeting `dev` or `main`. Pushes do not start workflows, so a feature push does not repeat the same product checks alongside its PR. The product workflow also retains `workflow_dispatch` for an explicitly requested manual run. Browser, official-runtime, and installed-package coverage remains required on PRs.
+
 Node 24 and OpenSSL are required. Start with `npm ci --ignore-scripts`.
 
 | Entry | Required behavior |

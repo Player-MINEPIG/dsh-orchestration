@@ -8,4 +8,4 @@
 
 主 checkout 保持在已集成并核实的 `main`。开发前阅读 [开发与发布流程](docs/DEVELOPMENT.md)，fetch 并核对 `origin/dev`、`origin/main` 和已部署版本。保全 WIP 后，从最新已核实的 `origin/dev` 创建新的 `codex/` 分支和独立工作树。
 
-功能通过 PR 进入 `dev`。真机验收、记录被测 SHA 与包 checksum、取得用户明确确认后，才通过 `dev` → `main` PR 发布。被测 SHA 必须等于 PR head；验收期间冻结 `dev`，head 变化后重新验收。长期分支之间使用 merge，随后通过 `main` → `dev` PR 同步。交付后仅快进主 checkout 到已集成并核实的 `origin/main`，报告分支、HEAD、验收证据和 WIP 位置。
+功能通过 PR 进入 `dev`。真机验收、记录被测 SHA 与包 checksum、取得用户明确确认后，才通过 `dev` → `main` PR 发布。被测 SHA 必须等于 PR head；验收期间冻结 `dev`，head 变化后重新验收。长期分支之间使用 merge，随后通过 `main` → `dev` PR 同步。交付后核对已合入 PR 的门禁和最终提交树，再仅快进主 checkout 到已核实的 `origin/main`，报告分支、HEAD、验收证据和 WIP 位置。
