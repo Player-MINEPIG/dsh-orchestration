@@ -21,6 +21,7 @@ import {
 import { NATIVE_PROVIDER_UNAVAILABLE_SUMMARY } from "./contracts.js";
 import { TRANSIENT_RECEIPT_TTL_MS } from "./receipt-retention.js";
 import { scheduleInput } from "./schedule-window.js";
+import { runSessionTitle } from "./task-session-title.js";
 import { projectContext } from "./project-context.js";
 import { validateCriteria } from "./workbench-contracts.js";
 import type { Criterion, VersionRef } from "./workbench-contracts.js";
@@ -2119,7 +2120,11 @@ export class TaskLedger {
         actor: (report.data as { actor?: string })?.actor ?? "unknown",
       };
     });
-    const context = { ...(template ? { template } : {}), reports };
+    const occurrence = run.occurrenceId ? this.get<{ scheduleId: string }>("occurrence", run.occurrenceId) : undefined;
+    const timeZoneChanged = occurrence && this.db.prepare("SELECT 1 FROM events WHERE json_extract(data,'$.type')='schedule.updated' AND json_extract(data,'$.detail.next.scheduleId')=? AND json_extract(data,'$.detail.previous.timeZone') IS NOT json_extract(data,'$.detail.next.timeZone') LIMIT 1").get(occurrence.scheduleId);
+    const timeZone = occurrence && !timeZoneChanged ? this.getSchedule(occurrence.scheduleId).timeZone ?? "UTC" : undefined;
+    const sessionTitle = runSessionTitle(run, { tasks: [this.getTask(run.taskId)], runs: this.list<Run>("run", run.taskId), timeZone });
+    const context = { ...(template ? { template } : {}), reports, sessionTitle };
     if (Buffer.byteLength(canonical(context)) > 1_000_000)
       fail("TOO_LARGE", "Resolved execution context exceeds 1 MB");
     return context;
@@ -5535,6 +5540,7 @@ export class TaskLedger {
             input: scheduleInput(s, input.occurrenceAt),
             trigger: {
               scheduledFor: input.occurrenceAt,
+              timeZone: s.timeZone ?? "UTC",
               observedAt: this.now(),
               ...(missed ? { coalescedUntil: this.now() } : {}),
             },

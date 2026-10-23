@@ -1,11 +1,15 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createNativeHarness } from '../../../tests/dsh/native-harness.mjs'
+import TitleService, {foldSessionTitle} from '@deepseek-ai/dsh-session-title'
 
 // Completely scripted provider; no external model, network, keys or profile edits.
 for (const kind of ['ad_hoc', 'scheduled']) test(`native ${kind} session lifetime follows task versus scheduled occurrence`,async()=>{
   const h=await createNativeHarness({executionRoot:true,script:[{name:'task_submit_result',args:{outcome:'success',summary:'first fixture'}},{name:'task_submit_result',args:{outcome:'success',summary:'second fixture'}}]})
   try {
+    await h.ctx.plugin(TitleService,{fallbackMaxWords:10,fallbackMaxBytes:100,maxTitleBytes:512})
+    const createdTitles=[]
+    h.ctx.on('session/created',session=>createdTitles.push(h.ctx.sessionProjections.snapshot(session).values.title))
     const l=h.ledger
     l.registerWorkspace('workspace',{workspaceId:'default',nodeId:'local',path:h.dir,label:'fixture',state:'ready',createdAt:new Date().toISOString()})
     l.registerNode('node',{nodeId:'local',roles:['both'],models:[{provider:'test-offline',model:'script',reasoningEfforts:[]}],capabilities:[],workspaceIds:['default'],defaultWorkspaceId:'default',enabled:true,lastSeenAt:new Date().toISOString()})
@@ -16,10 +20,18 @@ for (const kind of ['ad_hoc', 'scheduled']) test(`native ${kind} session lifetim
       const claim=l.claim(`claim-${i}`,{runId:run.runId,nodeId:'local',ttlMs:10000}).value
       const result=await h.ctx.taskSystem.native.execute(claim)
       assert.equal(result.run.state,'succeeded');sessions.push(result.sessionId)
+      const reader=await h.ctx.sessionPersistence.open(result.sessionId,'read')
+      try {assert.equal(foldSessionTitle((await reader.read()).events).title,i===2&&kind==='ad_hoc'?'用户保留的名字':i===2?'Two run fixture · 第2次':'Two run fixture')} finally {await reader.close()}
+      if(i===1&&kind==='ad_hoc'){
+        const handle=await h.ctx.agents.resume({resumeSessionId:result.sessionId})
+        h.ctx.sessionTitle.rename(handle.agent.session,'用户保留的名字')
+        await h.ctx.sessions.flush(handle.agent.session);await handle.dispose()
+      }
     }
     if(kind==='scheduled')assert.notEqual(sessions[0],sessions[1]);else assert.equal(sessions[0],sessions[1]);assert.equal(h.adapter.requests.length,2)
     if(kind==='ad_hoc')assert.match(JSON.stringify(h.adapter.requests[1].messages),/newly assigned run/);else assert.doesNotMatch(JSON.stringify(h.adapter.requests[1].messages),/first fixture/)
     assert.equal(l.history(task.taskId).runs.length,2)
+    assert.equal(createdTitles[0],'Two run fixture','title is projected before the first session publication')
   } finally {await h.dispose()}
 })
 
@@ -132,3 +144,23 @@ for (const recover of [false, true]) test(`report rejection resumes one session 
     assert.ok(path.startsWith(root+'/'));assert.equal(workspace.title,'Project fixture');assert.equal(workspace.sessions.size,2);
   }finally{await h.dispose();}
  });
+
+test('automatic conversational title generation cannot replace an initialized task name',async()=>{
+ const {createUserMessage}=await import('@deepseek-ai/dsh-llm');
+ const {SessionTitleProviderId}=await import('@deepseek-ai/dsh-session-title');
+ const h=await createNativeHarness({executionRoot:true,script:[{name:'task_submit_result',args:{outcome:'success',summary:'Task complete'}},'Ordinary reply']});
+ try {
+  await h.ctx.plugin(TitleService,{fallbackMaxWords:10,fallbackMaxBytes:80,maxTitleBytes:80});
+  let generated=0;
+  h.ctx.sessionTitle.register({id:SessionTitleProviderId('fixture-title'),automatic:'all-prompts',async generate(request){generated++;return {title:'Should not replace task name',messageSeqs:request.messages.map(m=>m.seq)}}});
+  const l=h.ledger;l.registerNode('node',{nodeId:'local',roles:['both'],models:[{provider:'test-offline',model:'script',reasoningEfforts:[]}],capabilities:[],workspaceIds:[],enabled:true});
+  const task=l.createTask('task',{title:'审查 PR #23：归档与清理'}).value;
+  const run=l.createRun('run',{taskId:task.taskId,route:{nodeId:'local',provider:'test-offline',model:'script',requiredCapabilities:[]}}).value;
+  const result=await h.ctx.taskSystem.native.execute(l.claim('claim',{runId:run.runId,nodeId:'local',ttlMs:10000}).value);
+  const resumed=await h.ctx.agents.resume({resumeSessionId:result.sessionId});
+  resumed.agent.followup(createUserMessage({source:{kind:'user'},content:[{type:'text',text:'An ordinary follow-up with different content'}]}));await resumed.agent.whenIdle();
+  assert.equal(h.ctx.sessionTitle.get(resumed.agent.session).title,task.title);assert.equal(generated,0);
+  await h.ctx.sessions.flush(resumed.agent.session);await resumed.dispose();
+  const reader=await h.ctx.sessionPersistence.open(result.sessionId,'read');try{assert.equal(foldSessionTitle((await reader.read()).events).title,task.title)}finally{await reader.close()}
+ }finally{await h.dispose()}
+});

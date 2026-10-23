@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { foldSessionTitle } from "@deepseek-ai/dsh-session-title";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createNativeHarness } from "../../../tests/dsh/native-harness.mjs";
@@ -115,6 +116,8 @@ test("project-runtime local execution routes official backend outside DSH llm re
     ttlMs: 10000,
   }).value;
   const result = await h.ctx.taskSystem.native.execute(claim);
+  const reader = await h.ctx.sessionPersistence.open(result.sessionId, "read");
+  try { assert.equal(foldSessionTitle((await reader.read()).events).title, "Pinned original intent"); } finally { await reader.close(); }
   assert.equal(result.run.state, "succeeded");
   assert.equal(h.adapter.requests.length, 0);
   assert.equal(h.calls.length, 1);

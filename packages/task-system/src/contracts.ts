@@ -462,6 +462,8 @@ export interface Snapshot {
   approvals?: ApprovalRequest[];
 }
 export interface ExecutionContext {
+  /** Authority-derived display text only; never overwrites an existing session title. */
+  sessionTitle?: string;
   template?: Template;
   reports: { reportId: string; body: string; actor: string }[];
 }

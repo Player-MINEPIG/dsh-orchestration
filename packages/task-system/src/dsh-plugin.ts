@@ -1,4 +1,5 @@
 import { mountDispatcherTools } from "./dispatcher-tools.js";
+import { initializeTaskSessionTitle, taskSessionTitle } from "./session-titles.js";
 import { TaskReturnDelivery } from "./task-returns.js";
 import { ExecutionModelChoice } from "./execution-models.js";
 import { resolveDeviceNodeId } from "./device-identity.js";
@@ -1161,6 +1162,7 @@ export class NativeExecutionProvider {
               : {}),
           },
           setup: async (agentCtx: Context, agent: Agent) => {
+            if (!claim.run.retry && !request.resumeSession) this.initializeSessionTitle(agent, claim);
             await composition.mount(agentCtx, agent);
             this.pinExecutionRoute(agentCtx, route);
             allow = [
@@ -1346,6 +1348,7 @@ export class NativeExecutionProvider {
     // This inert DSH session carries the worker's exact execution identity/cwd.
     // The business parent is claim.run.parentRunId, never reconstructed from the carrier.
     const setup = (ctx: Context, agent: Agent) => {
+      if (!resume) this.initializeSessionTitle(agent, claim);
       owned.agent = agent;
       ctx.tools.restrict({ allow: [] });
     };
@@ -1615,6 +1618,11 @@ export class NativeExecutionProvider {
       await workspace.attachSession(SessionId(sessionId));
     }
   }
+
+  private initializeSessionTitle(agent: Agent, claim: NativeClaim) {
+    const title = claim.executionContext?.sessionTitle ?? taskSessionTitle({ title: claim.run.intentSnapshot?.title ?? claim.task.title, configuration: claim.run.configuration });
+    initializeTaskSessionTitle(agent.session, title);
+  }
   private async drive(
     owned: OwnedAttempt,
     resume: boolean,
@@ -1632,6 +1640,7 @@ export class NativeExecutionProvider {
     let releaseWorkspace:(()=>void)|undefined;
     let composition: Awaited<ReturnType<NativeExecutionProvider["executionComposition"]>>;
     const setup = async (agentCtx: Context, agent: Agent) => {
+      if (!resume) this.initializeSessionTitle(agent, claim);
       await composition.mount(agentCtx, agent);
       this.pinExecutionRoute(agentCtx, route);
       owned.agent = agent;

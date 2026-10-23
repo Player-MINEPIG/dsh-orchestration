@@ -100,6 +100,7 @@ export interface Task {
   policy?: TaskPolicy;
 }
 export interface Run {
+  createdAt?: string;
   executionParentKind?: "coordinator" | "executor";
   executionParentRunId?: string;
   updatedAt?: string;

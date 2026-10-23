@@ -61,7 +61,8 @@
     "packages/task-system/test/remote/retry.test.mjs",
     "packages/task-system/test/remote/transport-budget.test.mjs",
     "packages/task-system/test/remote/trusted-network.test.mjs",
-    "packages/task-system/test/remote/workspace-grants.test.mjs"
+    "packages/task-system/test/remote/workspace-grants.test.mjs",
+    "packages/task-system/test/session-titles.test.mjs"
   ],
   "native": [
     "packages/task-system/test/execution-agent-preset.test.mjs",
@@ -119,6 +120,7 @@
     "packages/task-system/test/project-workspace-selection.test.mjs",
     "tests/settings/project-execution-settings.test.mjs",
     "tests/dsh/project-settings-execution.test.mjs",
-    "tests/dsh/task-return-coordinator.test.mjs"
+    "tests/dsh/task-return-coordinator.test.mjs",
+    "tests/dsh/session-title-backfill.test.mjs"
   ]
 }
