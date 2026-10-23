@@ -6,4 +6,6 @@
 
 # Development baseline
 
-主 checkout 保持在最新已集成且已核实的源码分支。开始开发前 fetch 并核对最新提交与已部署版本；如部署源码尚未提交，先恢复并记录该基线。保全已有 WIP 后，从该基线创建新的 `codex/` 分支和独立工作树执行开发。交付后将主 checkout 快进到最新集成提交，并报告分支、HEAD 及 WIP 保存位置。
+主 checkout 保持在已集成并核实的 `main`。开发前阅读 [开发与发布流程](docs/DEVELOPMENT.md)，fetch 并核对 `origin/dev`、`origin/main` 和已部署版本。保全 WIP 后，从最新已核实的 `origin/dev` 创建新的 `codex/` 分支和独立工作树。
+
+功能通过 PR 进入 `dev`。真机验收、记录被测 SHA 与包 checksum、取得用户明确确认后，才通过 `dev` → `main` PR 发布。被测 SHA 必须等于 PR head；验收期间冻结 `dev`，head 变化后重新验收。长期分支之间使用 merge，随后通过 `main` → `dev` PR 同步。交付后仅快进主 checkout 到已集成并核实的 `origin/main`，报告分支、HEAD、验收证据和 WIP 位置。

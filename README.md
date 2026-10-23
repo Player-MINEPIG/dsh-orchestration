@@ -19,6 +19,8 @@ Role profiles, protocol types, task templates and the WebUI are not presented as
 
 ## Build and verify
 
+Develop on a feature branch from `dev`, then open a PR to `dev`. Promote `dev` to `main` after real-device acceptance and explicit user confirmation. Follow the [development and release workflow](docs/DEVELOPMENT.md) before changing code or integrating a PR.
+
 Use Node 24 and the system OpenSSL executable:
 
 ```sh
