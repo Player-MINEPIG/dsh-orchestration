@@ -1,4 +1,4 @@
-import {registerExecutor,publishModels} from '../../../tests/dsh/executor-fixture.mjs';
+import {registerExecutor} from '../../../tests/dsh/executor-fixture.mjs';
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";

@@ -117,7 +117,7 @@ test('existing native session keeps uncertainty when the configured provider is 
     const ref = { runId: run.runId, attemptId: claim.attempt.attemptId, nodeId: 'local', fence: claim.attempt.fence };
     const sessionId = SessionId('preexisting-session');
     h.ledger.bindSession('previous-session', { ...ref, sessionId });
-    previous = await h.ctx.agents.create({ sessionId, meta: { cwd: h.dir }, agentOptions: { provider: 'test-offline', model: 'script' } });
+    previous = await h.ctx.agents.create({ sessionId, meta: { cwd: h.dir, agentPreset: 'ptc' }, agentOptions: { provider: 'test-offline', model: 'script' } });
     previous.agent.followup(createUserMessage({ content: [{ type: 'text', text: 'Earlier work cannot be assumed effect-free by a registry check' }], source: { kind: 'user' } }));
     await previous.agent.whenIdle();
     await h.ctx.sessions.flush(previous.agent.session);

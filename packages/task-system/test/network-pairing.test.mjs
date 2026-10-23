@@ -7,12 +7,12 @@ import {createServer} from 'node:http';
 import {TaskLedger} from '../dist/ledger.js';
 import {RecoveryStore} from '../dist/remote/store.js';
 import {RemoteGateway} from '../dist/remote/gateway.js';
-import {RemoteClient} from '../dist/remote/client.js';
+import {RemoteClient,RemoteLedgerClient} from '../dist/remote/client.js';
 import {TrustedNetworkVerifier} from '../dist/remote/trusted-network.js';
 import {httpHandler} from '../dist/remote/http.js';
 import {removeNetworkPairings} from '../dist/network-pairings.js';
 
-test('real HTTP source pairing validates before bind, persists identity, registers models, and revokes last peer',async t=>{
+test('real HTTP source pairing validates before bind, persists identity, accepts requested model catalogs, and revokes last peer',async t=>{
  const dir=mkdtempSync(join(tmpdir(),'pairing-'));const ledger=TaskLedger.open(join(dir,'task.sqlite'),{nodeId:'planner',role:'planner'});const state=join(dir,'server.sqlite');let store=new RecoveryStore(state);let handler,gateway,client;
  const server=createServer((req,res)=>handler(req,res));await new Promise(done=>server.listen(0,'127.0.0.1',done));const port=server.address().port;
  const policy={listen:{address:'127.0.0.1',port},allowHttp:true,allowedAddresses:['127.0.0.1'],peers:[{address:'127.0.0.1',nickname:'我的笔记本',nodeId:'',role:'executor',audience:'planner',operations:[],workspaces:[],capabilities:[]}]};
@@ -23,9 +23,17 @@ test('real HTTP source pairing validates before bind, persists identity, registe
   const before=()=>({pairs:store.networkPairings(),nodes:ledger.nodeStatuses().map(row=>row.nodeId)});
   await assert.rejects(client.send('heartbeat','bad-payload',{sampledAt:Date.now(),runtimeReady:'wrong',activeExecutions:0},{diagnostic:true}),/INVALID_RUNTIME_READY/);assert.deepEqual(before(),{pairs:[],nodes:[]});
   await assert.rejects(client.send('heartbeat','stale-sample',{sampledAt:0,runtimeReady:true,activeExecutions:0},{diagnostic:true}),/STALE_HEARTBEAT_SAMPLE/);assert.deepEqual(before(),{pairs:[],nodes:[]});
-  await assert.rejects(client.send('heartbeat','foreign-catalog',{sampledAt:Date.now(),runtimeReady:true,activeExecutions:0,providerStatus:{state:'not-probed',providers:[],executionRoutes:[{nodeId:'someone-else',provider:'p',model:'m',requiredCapabilities:[]}]}} ,{diagnostic:true}),/WRONG_EXECUTOR_CATALOG/);assert.deepEqual(before(),{pairs:[],nodes:[]});
   const sameNodeStore=new RecoveryStore(join(dir,'collision.sqlite'));const sameNode=new RemoteClient({endpoint:`http://127.0.0.1:${port}/commands`,nodeId:'planner',audience:'planner',authMode:'trusted-network',trustedNetwork:{address:'127.0.0.1',port,localAddress:'127.0.0.1',allowHttp:true},store:sameNodeStore});await assert.rejects(sameNode.executorIdentity({diagnostic:true}),/NODE_ID_COLLISION/);await sameNode.dispose();sameNodeStore.close();assert.deepEqual(before(),{pairs:[],nodes:[]});
   const identity=await client.executorIdentity();assert.equal(identity.nodeId,'new-device');assert.equal(ledger.getNode('new-device').models.length,0);
+  await client.send('heartbeat','foreign-catalog',{sampledAt:Date.now(),runtimeReady:true,activeExecutions:0,providerStatus:{state:'not-probed',providers:[],executionRoutes:[{nodeId:'someone-else',provider:'p',model:'m',requiredCapabilities:[]}]}});
+  assert.deepEqual(ledger.getNode('new-device').models,[],'legacy heartbeat metadata cannot grant or replace executor models');
+  const request=ledger.executionModels.request('requested-catalog',{nodeId:'new-device'}).catalog.request;
+  const result={state:'success',observedAt:Date.now(),complete:true,models:[{provider:'p',model:'m'}]};
+  const remote=new RemoteLedgerClient(client,'new-device');
+  await assert.rejects(remote.completeExecutionModels('foreign-request',{nodeId:'new-device',requestId:'11111111-1111-4111-8111-111111111111',generation:request.generation,result}),/REMOTE_OUTCOME_UNCERTAIN/);
+  assert.deepEqual(ledger.getNode('new-device').models,[]);
+  await remote.completeExecutionModels('requested-models',{nodeId:'new-device',requestId:request.requestId,generation:request.generation,result});
+
   await client.send('heartbeat','ready',{sampledAt:Date.now(),runtimeReady:true,activeExecutions:0,providerStatus:{state:'not-probed',providers:[{provider:'p',state:'not-probed'}],executionRoutes:[{nodeId:'new-device',provider:'p',model:'m',requiredCapabilities:[]}]}});
   assert.equal(ledger.nodeStatuses()[0].state,'online');assert.deepEqual(ledger.getNode('new-device').models,[{provider:'p',model:'m',reasoningEfforts:[]}]);
   const replay=await fetch(`http://127.0.0.1:${port}/commands`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({version:2,authMode:'trusted-network',nodeId:'new-device',audience:'planner',commandId:'replayed-model-change',nonce:'replayed-model-nonce',sequence:1,issuedAt:Date.now(),expiresAt:Date.now()+30000,operation:'heartbeat',payload:{sampledAt:Date.now(),runtimeReady:true,activeExecutions:0,providerStatus:{state:'ready',providers:[],executionRoutes:[{nodeId:'new-device',provider:'evil',model:'changed',requiredCapabilities:[]}]}}})});assert.equal(replay.status,409);assert.equal((await replay.json()).error,'OUT_OF_ORDER');assert.deepEqual(ledger.getNode('new-device').models,[{provider:'p',model:'m',reasoningEfforts:[]}]);assert.deepEqual(store.networkPairings(),[{address:'127.0.0.1',nodeId:'new-device'}]);

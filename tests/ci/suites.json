@@ -89,11 +89,9 @@
     "tests/dsh/node-identity.test.mjs",
     "tests/dsh/pre-dispatch.test.mjs",
     "tests/dsh/project-executor.test.mjs",
-    "tests/dsh/project-settings-execution.test.mjs",
     "tests/dsh/ptc-session-boundaries.test.mjs",
     "tests/dsh/public-tools-admission.test.mjs",
     "tests/dsh/remote-native.test.mjs",
-    "tests/dsh/task-return-coordinator.test.mjs",
     "tests/dsh/trusted-network-native.test.mjs"
   ],
   "ui": [
@@ -119,6 +117,8 @@
     "tests/dsh/default-ptc.test.mjs",
     "tests/settings/task-panel-rpc.test.mjs",
     "packages/task-system/test/project-workspace-selection.test.mjs",
-    "tests/settings/project-execution-settings.test.mjs"
+    "tests/settings/project-execution-settings.test.mjs",
+    "tests/dsh/project-settings-execution.test.mjs",
+    "tests/dsh/task-return-coordinator.test.mjs"
   ]
 }

@@ -41,22 +41,31 @@ test('resuming an attempt cannot adopt a session whose immutable workspace is di
 })
 
 test('native decision wait renews the lease before evaluating and still finishes after its initial expiry',async()=>{
-  const {DecisionEngine,StructuredModelProvider}=await import('./legacy-model-fixture.mjs')
-  const provider=new StructuredModelProvider('ordinary',[{model:'judge',version:'fixture',reasoningEfforts:[]}],{complete:async()=>{await new Promise(resolve=>setTimeout(resolve,1200));return {output:{answers:{session:{type:'choice',choice:'new'},workspace:{type:'choice',choice:'default'}}},modelVersion:'fixture'}}})
-  const decisions=new DecisionEngine([provider],{defaultProvider:'ordinary',maxAttempts:1,timeoutMs:3000})
-  const h=await createNativeHarness({executionRoot:true,config:{leaseTtlMs:1000,executionTimeoutMs:4000,sessionDecisionEnabled:true},script:[{name:'task_submit_result',args:{outcome:'success',summary:'fixture after delayed decision'}}]})
-  h.ctx.provide('decisionModels',decisions)
+  let choices=0;
+  const decisions={ask:async input=>{
+    choices++;
+    assert.deepEqual(Object.keys(input.questions),['session']);
+    assert.ok(Object.keys(input.questions.session.criteria).some(id=>id.startsWith('reuse-')),'the persisted first Run supplies a real reuse candidate');
+    await new Promise(resolve=>setTimeout(resolve,1200));
+    return {provider:'fixture',model:'judge',answers:{session:{type:'choice',choice:'new'}}};
+  }};
+  const settle={name:'task_submit_result',args:{outcome:'success',summary:'fixture after session selection'}};
+  const h=await createNativeHarness({executionRoot:true,config:{leaseTtlMs:1000,executionTimeoutMs:4000,sessionDecisionEnabled:true},script:[settle,settle]});
+  h.ctx.provide('decisionModels',decisions);
   try {
-    const l=h.ledger;l.registerWorkspace('workspace',{workspaceId:'default',nodeId:'local',path:h.dir,label:'fixture',state:'ready',createdAt:new Date().toISOString()})
-    l.registerNode('node',{nodeId:'local',roles:['both'],models:[{provider:'test-offline',model:'script',reasoningEfforts:[]}],capabilities:[],workspaceIds:['default'],defaultWorkspaceId:'default',enabled:true,lastSeenAt:new Date().toISOString()})
-    l.registerWorkspace('alternate-workspace',{workspaceId:'other',nodeId:'local',path:h.dir,label:'other fixture',state:'ready',createdAt:new Date().toISOString()});
-    l.registerNode('expanded-node',{...l.getNode('local'),workspaceIds:['default','other']});
-    const task=l.createTask('task',{title:'Delayed choice'}).value,run=l.createRun('run',{taskId:task.taskId,route:{nodeId:'local',provider:'test-offline',model:'script',workspaceId:'default',requiredCapabilities:[]}}).value
-    const claim=l.claim('claim',{runId:run.runId,nodeId:'local',ttlMs:1000}).value,originalExpiry=Date.parse(claim.attempt.leaseExpiresAt)
-    const result=await h.ctx.taskSystem.native.execute(claim)
-    assert.ok(Date.now()>originalExpiry);assert.equal(result.run.state,'succeeded');assert.equal(h.adapter.requests.length,1)
-  } finally {await h.dispose();await decisions.close()}
-})
+    const l=h.ledger;
+    l.registerNode('node',{nodeId:'local',roles:['both'],models:[{provider:'test-offline',model:'script',reasoningEfforts:[]}],capabilities:[],workspaceIds:[],enabled:true});
+    const task=l.createTask('task',{title:'Delayed choice'}).value;
+    const route={nodeId:'local',provider:'test-offline',model:'script',requiredCapabilities:[]};
+    const first=l.createRun('first',{taskId:task.taskId,route}).value;
+    const initial=await h.ctx.taskSystem.native.execute(l.claim('first-claim',{runId:first.runId,nodeId:'local',ttlMs:1000}).value);
+    assert.equal(initial.run.state,'succeeded');assert.equal(choices,0,'the first session is a deterministic singleton');
+    const run=l.createRun('second',{taskId:task.taskId,route}).value;
+    const claim=l.claim('claim',{runId:run.runId,nodeId:'local',ttlMs:1000}).value,originalExpiry=Date.parse(claim.attempt.leaseExpiresAt);
+    const result=await h.ctx.taskSystem.native.execute(claim);
+    assert.ok(Date.now()>originalExpiry);assert.equal(result.run.state,'succeeded');assert.equal(choices,1);assert.equal(h.adapter.requests.length,2);assert.notEqual(result.sessionId,initial.sessionId);
+  } finally {await h.dispose();}
+});
 
 for (const recover of [false, true]) test(`report rejection resumes one session with two retry budget; recover=${recover}`,async()=>{
  const rejected={name:'task_submit_result',args:{outcome:'success',summary:'Original work remains in the session',reportBody:'Unique saved output',reportData:{wrong:true}}};

@@ -26,7 +26,7 @@
     "test:management": "node --test tests/management/*.test.mjs",
     "test:settings:official": "npm run test:official",
     "prototype:projects": "python3 -m http.server 8127 --bind 127.0.0.1 --directory dashboard/prototypes",
-    "build:feishu": "npm run build -w @dsh-task/feishu-channel",
+    "build:feishu": "npm run build && npm run build -w @dsh-task/feishu-channel",
     "build:fixtures": "tsc -p packages/typed-decisions/tsconfig.json",
     "test:core": "node scripts/ci/task-tests.mjs core",
     "test:ui": "node scripts/ci/task-tests.mjs ui",

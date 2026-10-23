@@ -40,7 +40,7 @@ test('new project selection rejects remote workspaces and never imports executor
   assert.equal(runtime.snapshot().projects[0].workspace,existing);assert.equal(h.ledger.projectWorkspaceConstraint(legacy.projectId),'existing');
   const task=h.ledger.createTask('legacy-task',{title:'Historical bound task'}).value;new Workbench(h.ledger).manage('legacy-link','link_backlog_task',{backlogId:'pr:'+legacy.projectId,taskId:task.taskId});
   h.ledger.registerNode('other-node',node('other',[]));
-  assert.throws(()=>h.ledger.createRun('wrong-node',{taskId:task.taskId,route:{nodeId:'other',provider:'test-offline',model:'script',requiredCapabilities:[]}}),/selected project device/);
+  assert.throws(()=>h.ledger.createRun('wrong-node',{taskId:task.taskId,route:{nodeId:'other',provider:'test-offline',model:'script',requiredCapabilities:[]}}),error=>error.code==='WORKSPACE_POLICY');
   const run=h.ledger.createRun('right-node',{taskId:task.taskId,route:{nodeId:'worker',provider:'test-offline',model:'script',requiredCapabilities:[]}}).value;assert.equal(run.workspaceConstraint,'existing');
   h.ledger.registerNode('revoke-legacy',node('worker',[]));assert.throws(()=>h.ledger.projectWorkspaceConstraint(legacy.projectId),/no longer authorized/);
  }finally{await h.dispose();}
