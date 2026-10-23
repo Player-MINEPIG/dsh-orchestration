@@ -14,6 +14,7 @@ test('trusted managed workspace announcement → project settings → coordinato
  const worker=await createNativeHarness({executionRoot:true,config:{role:'executor',nodeId:'worker',schedulerEnabled:false},script:[{name:'task_submit_result',args:{outcome:'success',summary:'Verified selected repository cwd',reportTitle:'Workspace evidence',reportBody:'The native session uses the owner-authorized original repository.'}}]});
  const stores=['server','client','worker'].map(n=>new RecoveryStore(join(worker.dir,n+'.sqlite')));let gateway,client,executor,server;
  try {
+  const workerRegistry=await attachWorkspaceRegistry(worker);
   const registry=await attachWorkspaceRegistry(planner),coordinator=join(planner.dir,'scheduler-local'),repository=join(worker.dir,'existing-repository');mkdirSync(coordinator);mkdirSync(repository);const official=await registry.create(coordinator,'Scheduler-only directory');
   const runtime=planner.ctx.taskSystem.projects,{projectId}=await runtime.create({commandId:'project',title:'Workspace routing fixture',goal:'Use executor selected repository without confusing scheduler cwd',workspace:{kind:'registered',nodeId:'planner',workspaceId:'registry:'+official.id}});
   assert.throws(()=>planner.ledger.getNode('planner'),{code:'NOT_FOUND'});
@@ -35,6 +36,9 @@ test('trusted managed workspace announcement → project settings → coordinato
   executor=new ExecutorWorker({ledger:remote,provider,store:stores[2],policy:{role:'executor',nodeId:'worker',capabilities:[],workspaces:[{workspaceId:'owner-grant',nodeId:'worker',path:repository,allowedRoot:repository}]}});
   const result=await executor.pollOnce(1);assert.equal(result[0].value.state,'acknowledged',JSON.stringify(result));assert.equal(l.getRun(run.runId).state,'succeeded');
   const record=stores[2].dispatches().find(r=>r.claim.run.runId===run.runId);assert.ok(record?.sessionId);assert.equal((await worker.ctx.sessionPersistence.stat(SessionId(record.sessionId))).header.cwd,repository);
+  const executorWorkspace=await workerRegistry.resolveByPath(repository);
+  assert.ok(executorWorkspace,'coordinator-dispatched execution registers its native workspace');
+  assert.ok(executorWorkspace.sessionIds.includes(record.sessionId),'coordinator child appears in the selected workspace session account');
   assert.equal(await executionWorkspace({parent:repository,claim:record.claim,store:stores[2],sessionId:record.sessionId,resume:true}),repository);
   // The same selected repository still isolates a true recursive executor child.
   const recursive={...record.claim,task:{...record.claim.task,taskId:'recursive-child'},run:{...record.claim.run,parentRunId:run.runId,executionParentKind:'executor',executionParentRunId:run.runId}};
