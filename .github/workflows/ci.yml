@@ -90,6 +90,7 @@ jobs:
     env:
       TZ: ${{ matrix.timezone }}
       DSH_BROWSER_OUTPUT: .runtime/ci-results/browser
+      DSH_BROWSER_CHANNEL: chrome
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -99,7 +100,10 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: npm run build && npm run build:fixtures
       - run: mkdir -p .runtime/ci-results
-      - run: npx playwright install --with-deps chromium
+      - name: Verify preinstalled Chrome
+        run: |
+          command -v google-chrome
+          google-chrome --version | tee .runtime/ci-results/browser-version.txt
       - name: Settings codecs, role views, project pages and reminders
         run: npm run test:ui 2>&1 | tee .runtime/ci-results/ui.log
       - name: Real React settings, reminder actions and polling selection

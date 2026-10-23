@@ -6,6 +6,10 @@ The real-device acceptance record and explicit user confirmation are a manual re
 
 CI runs for pull requests targeting `dev` or `main`. Pushes do not start workflows, so a feature push does not repeat the same product checks alongside its PR. The product workflow also retains `workflow_dispatch` for an explicitly requested manual run. Browser, official-runtime, and installed-package coverage remains required on PRs.
 
+The Ubuntu UI jobs use the runner's [preinstalled Google Chrome](https://github.com/actions/runner-images/blob/main/images/ubuntu/Ubuntu2404-Readme.md) through Playwright's [Chrome channel](https://playwright.dev/docs/browsers#google-chrome--microsoft-edge). They verify its executable and save its version to `browser-version.txt` in the job artifacts. CI does not download Chromium or run `apt` for browser dependencies. Chrome follows the runner image version, so it is not the same pinned binary as Playwright's bundled Chromium. All browser scenarios still run in both time zones and fail if Chrome is missing or incompatible.
+
+Local commands below use bundled Chromium by default. To use an installed Google Chrome locally, set `DSH_BROWSER_CHANNEL=chrome` for `npm run test:browser`; skip the browser-install command in that case. npm dependency installation remains necessary, and `setup-node` already caches npm downloads. Official DSH runtime and installed-package checks retain their existing installation steps.
+
 Node 24 and OpenSSL are required. Start with `npm ci --ignore-scripts`.
 
 | Entry | Required behavior |
