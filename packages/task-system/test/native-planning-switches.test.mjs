@@ -1,4 +1,4 @@
-import {registerExecutor,publishModels} from '../../../tests/dsh/executor-fixture.mjs';
+import {registerExecutor} from '../../../tests/dsh/executor-fixture.mjs';
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {createNativeHarness} from '../../../tests/dsh/native-harness.mjs'
@@ -12,7 +12,7 @@ for (const planningDecisionEnabled of [false,true]) for(const sessionDecisionEna
       plannerCalls++;assert.ok(!questions.some(q=>q.questionId==='workspace'));assert.deepEqual(input.context.catalog.workspaces,[])
       const choices={persist:'create',attach:'none',executor:'local',modelEffort:input.context.catalog.modelRoutes[0].id,reporting:'none'}
       answers=Object.fromEntries(questions.map(q=>[q.questionId,{type:'choice',choice:choices[q.questionId]??'none'}]))
-    } else {executorCalls++;answers={session:{type:'choice',choice:'new'},workspace:{type:'choice',choice:'default'}}}
+    } else {executorCalls++;assert.deepEqual(questions.map(q=>q.questionId),['session']);answers={session:{type:'choice',choice:'new'}}}
     return {output:{answers},modelVersion:'fixture'}
   }})
   const decisions=new DecisionEngine([decisionProvider],{defaultProvider:'ordinary',maxAttempts:1})
@@ -34,6 +34,12 @@ for (const planningDecisionEnabled of [false,true]) for(const sessionDecisionEna
     assert.equal(run.workspaceConstraint,undefined)
     const claim=l.claim('claim',{runId:run.runId,nodeId:'local',ttlMs:10000}).value
     const result=await h.ctx.taskSystem.native.execute(claim)
-    assert.equal(result.run.state,'succeeded');assert.equal(plannerCalls,planningDecisionEnabled?1:0);assert.equal(executorCalls,sessionDecisionEnabled?1:0)
+    assert.equal(result.run.state,'succeeded');assert.equal(plannerCalls,planningDecisionEnabled?1:0);assert.equal(executorCalls,0,'a first run has no reusable session and needs no model call')
+    const next=l.createRun('next-run',{taskId:task.taskId,route:run.route}).value
+    const nextClaim=l.claim('next-claim',{runId:next.runId,nodeId:'local',ttlMs:10000}).value
+    h.adapter.script.push({name:'task_submit_result',args:{outcome:'success',summary:'Second run may choose a new session'}})
+    const nextResult=await h.ctx.taskSystem.native.execute(nextClaim)
+    assert.equal(nextResult.run.state,'succeeded');assert.equal(plannerCalls,planningDecisionEnabled?1:0);assert.equal(executorCalls,sessionDecisionEnabled?1:0)
+    assert.equal(nextResult.sessionId===result.sessionId,!sessionDecisionEnabled,'disabled executor decisions reuse the authoritative task session')
   } finally {await h.dispose();await decisions.close()}
 })

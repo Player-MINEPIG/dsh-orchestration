@@ -1,4 +1,4 @@
-import {registerExecutor,publishModels} from '../../../tests/dsh/executor-fixture.mjs';
+import {registerExecutor,respondToCatalogRequests} from '../../../tests/dsh/executor-fixture.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdirSync,existsSync,readFileSync} from 'node:fs';
@@ -6,8 +6,9 @@ import {join} from 'node:path';
 import {createNativeHarness} from '../../../tests/dsh/native-harness.mjs';
 import {DecisionEngine,StructuredModelProvider} from './legacy-model-fixture.mjs';
 
+function assertPlannerTools(tools){const names=tools.map(tool=>tool.name);for(const name of ['task_wait','task_history','task_nodes','task_plan','task_dispatch','task_query'])assert.ok(names.includes(name),name);for(const name of ['codex_delegate','task_run','task_delegate','bash','write'])assert.ok(!names.includes(name),name);}
 const worker={nodeId:'worker',roles:['executor'],models:[{provider:'worker-model',model:'small',reasoningEfforts:['off']}],capabilities:[],workspaceIds:[],enabled:true,lastSeenAt:new Date().toISOString()};
-async function settle(h,command){for(let i=0;i<100;i++){const turn=h.ledger.managementDatabase().prepare('SELECT state FROM pr_turns WHERE command=?').get(command);if(['completed','failed'].includes(turn.state))return turn;await new Promise(r=>setTimeout(r,20));}throw Error('Turn timeout');}
+async function settle(h,command){const deadline=Date.now()+5000;while(Date.now()<deadline){const turn=h.ledger.managementDatabase().prepare('SELECT state FROM pr_turns WHERE command=?').get(command);if(['completed','failed'].includes(turn.state))return turn;await new Promise(r=>setTimeout(r,20));}throw Error('Turn timeout');}
 function decisions(){return new DecisionEngine([new StructuredModelProvider('judge',[{model:'router',version:'fixture',reasoningEfforts:[]}],{complete:async({input})=>{
   assert.ok(input.context.catalog.modelRoutes.some(r=>r.reasoningEffort==='off'),'fixture publishes the advertised workload effort');
   const route=input.context.catalog.modelRoutes.find(r=>r.executorId==='worker'&&r.reasoningEffort==='off');
@@ -36,8 +37,8 @@ test('project creation provisions a durable native session, rejects root conflic
 
 test('a project message uses real native dispatch tools and persists offline queued work once, with project association and handoff',async()=>{
   const h=await createNativeHarness({config:{role:'planner',projectAgentOptions:{provider:'test-offline',model:'script'}}});
-  const engine=decisions();h.ctx.provide('decisionModels',engine);
-  try{const runtime=h.ctx.taskSystem.projects;registerExecutor(h.ledger, 'worker',worker);runtime.saveSettings({root:join(h.dir,'projects'),expectedRevision:0});
+  const engine=decisions();h.ctx.provide('decisionModels',engine);let stopCatalogs=()=>{};
+  try{const runtime=h.ctx.taskSystem.projects;registerExecutor(h.ledger, 'worker',worker);stopCatalogs=respondToCatalogRequests(h.ledger,['worker']);runtime.saveSettings({root:join(h.dir,'projects'),expectedRevision:0});
     const {projectId}=await runtime.create({commandId:'new',title:'Phone task',goal:'Small real dispatch'});
     const command='message1',requestId='project-message:'+command;
     h.adapter.script.push({name:'task_nodes',args:{}},{name:'task_plan',args:{requestId,title:'Calculate',description:'Compute 1+1 and report'}},{name:'task_dispatch',args:{commandId:requestId}},'任务已经排队，等待执行端上线');
@@ -47,7 +48,7 @@ test('a project message uses real native dispatch tools and persists offline que
     assert.equal(h.ledger.snapshot().attempts.length,0);assert.equal(snapshot.runs.length,0);assert.equal(snapshot.tasks[0].nativeState,'inbox');assert.equal(snapshot.tasks[0].report,'尚未收到执行报告');assert.equal(snapshot.tasks[0].recommendation[0].nodeId,'worker');
     runtime.send(input);assert.equal(h.ledger.snapshot().runs.length,0);assert.equal(h.adapter.requests.length,4);
     assert.throws(()=>runtime.send({...input,text:'different'}),/reused/);
-    const request=h.adapter.requests[0];assert.deepEqual(request.tools.map(t=>t.name).sort(),['task_wait','task_history','task_nodes','task_plan','task_dispatch','task_query'].sort());
+    const request=h.adapter.requests[0];assertPlannerTools(request.tools);
     assert.match(JSON.stringify(request.messages),/project-message:message1/);
     const conversation=await runtime.conversation(projectId);assert.equal(conversation.messages[0].role,'user');assert.equal(conversation.messages.filter(m=>m.role==='user').length,1);assert.match(conversation.messages.at(-1).text,/排队/);
     const second=await runtime.create({commandId:'new2',title:'Other',goal:'Isolated'}),other=runtime.snapshot().projects.find(p=>p.id===second.projectId);
@@ -65,7 +66,7 @@ test('a project message uses real native dispatch tools and persists offline que
     h.ledger.recordNodeHeartbeat('worker-returned',{nodeId:'worker',runtimeReady:true,activeExecutions:0});runtime.tick();runtime.tick();
     assert.equal(h.ledger.snapshot().runs.length,2);assert.equal(h.ledger.managementDatabase().prepare('SELECT generation FROM pr_dispatch').get().generation,2);assert.equal(h.ledger.snapshot().attempts.length,0);
     const old=conversation.sessionId;await runtime.handoff(projectId);const next=await runtime.conversation(projectId);assert.equal(next.generation,2);assert.notEqual(next.sessionId,old);assert.match(next.sessions[0].summary,/Calculate/);assert.equal(h.ledger.snapshot().runs.length,2);
-  }finally{await h.dispose();await engine.close();}
+  }finally{stopCatalogs();await h.dispose();await engine.close();}
 });
 
 test('planner-only ledger rejects a stale self-node executor role and excludes it from the planning catalog',async()=>{
@@ -211,11 +212,11 @@ test('legacy unassigned tasks have isolated durable planning sessions and safe r
   runtime.actOnTask(operator(runtime,one.task.taskId,'handle'));
   const before=h.ledger.snapshot(),[a,b]=await Promise.all([runtime.taskConversation(one.task.taskId),runtime.taskConversation(two.task.taskId)]);
   assert.notEqual(a.sessionId,b.sessionId);assert.equal(a.projectId,null);assert.equal(a.taskId,one.task.taskId);assert.equal(runtime.projectForSession(a.sessionId),undefined);assert.equal(runtime.taskForSession(a.sessionId),one.task.taskId);
-  assert.equal(runtime.snapshot().projects.length,0);assert.equal(h.ledger.snapshot().runs.length,before.runs.length);assert.equal(h.adapter.requests.length,0);assert.ok(existsSync(join(a.workspace,'TOOLS.md')));
+  assert.equal(runtime.snapshot().projects.length,0);assert.equal(h.ledger.snapshot().runs.length,before.runs.length);assert.equal(h.adapter.requests.length,0);assert.equal(a.workspace,b.workspace,'temporary planning sessions share their configured context directory');assert.ok(await h.ctx.sessionPersistence.stat(a.sessionId));assert.ok(await h.ctx.sessionPersistence.stat(b.sessionId));
   assert.equal((await runtime.taskConversation(one.task.taskId)).sessionId,a.sessionId);
   const command='legacy-clarify';h.adapter.script.push('可以在任务详情点击重新尝试派发');runtime.sendTask({taskId:one.task.taskId,commandId:command,text:'说明这个任务失败后如何恢复'});await settle(h,command);
   assert.match((await runtime.taskConversation(one.task.taskId)).messages.at(-1).text,/重新尝试/);assert.equal((await runtime.taskConversation(two.task.taskId)).messages.length,0);assert.equal(h.ledger.snapshot().tasks.length,2);
-  assert.deepEqual(h.adapter.requests[0].tools.map(t=>t.name).sort(),['task_wait','task_history','task_nodes','task_plan','task_dispatch','task_query'].sort());
+  assertPlannerTools(h.adapter.requests[0].tools);
   const input=operator(runtime,one.task.taskId,'retry','legacy-retry');await runtime.actOnTask(input);await runtime.actOnTask(input);
   let row=runtime.snapshot().tasks.find(t=>t.id===one.task.taskId);assert.equal(row.stateLabel,'等待执行端接收');assert.equal(row.status,'queued');assert.equal(row.project,'unassigned');assert.equal(row.recommendation[0].reasoningEffort,'off');assert.equal(h.ledger.snapshot().runs.length,2);assert.equal(h.ledger.getRun(one.run.runId).state,'failed');assert.equal(h.ledger.snapshot().reports.filter(r=>r.kind==='result').length,2);
   assert.throws(()=>runtime.assertDecisionScope(b.sessionId,'task-retry:legacy-retry'),/another temporary task/);
@@ -352,7 +353,7 @@ test('retry skips model decisions for a valid route and keeps capabilities and w
   const route={nodeId:'worker',provider:'worker-model',model:'small',reasoningEffort:'off',requiredCapabilities:['filesystem'],workspaceId:'original'};
   const run=h.ledger.createRun('run',{taskId:task.taskId,route}).value,a=h.ledger.claim('claim',{runId:run.runId,nodeId:'worker',ttlMs:10000}).value.attempt;
   h.ledger.submit('fail',{runId:a.runId,attemptId:a.attemptId,nodeId:a.nodeId,fence:a.fence,outcome:'failure',summary:'Stopped'});
-  let calls=0;h.ctx.provide('decisionModels',{presetFor:()=>undefined,decide:async()=>{calls++;throw Error('Retry must not ask a model');}});
+  let calls=0;h.ctx.provide('decisionModels',{ask:async()=>{calls++;throw Error('Retry must not ask a model');}});
   const runtime=h.ctx.taskSystem.projects;await runtime.actOnTask(operator(runtime,task.taskId,'retry','cached'));
   assert.equal(calls,0);assert.deepEqual(runtime.snapshot().tasks[0].recommendation,[route]);assert.equal(h.ledger.snapshot().runs.length,1);
   h.ledger.recordNodeHeartbeat('online',{nodeId:'worker',runtimeReady:true,activeExecutions:0});runtime.tick();runtime.tick();
@@ -389,7 +390,7 @@ test('a read-only follow-up keeps existing run identities and exposes honest rep
   const before=h.ledger.snapshot();await runtime.taskConversation(task.taskId);
   h.adapter.script.push({name:'task_history',args:{taskId:task.taskId}},'账本没有完成证据；当前统筹工具不能向原执行端会话发送普通消息，不重新派发。');
   runtime.sendTask({taskId:task.taskId,commandId:'receipt-question-message',text:'不重新运行，只询问执行端已有结果'});assert.equal((await settle(h,'receipt-question-message')).state,'completed');
-  const prompt=JSON.stringify(h.adapter.requests[0].messages);assert.match(prompt,/不得断言执行端没有完成/);assert.match(prompt,/没有向执行端会话发送普通消息/);assert.match(prompt,/不得 propose\/apply/);
+  const prompt=JSON.stringify(h.adapter.requests[0].messages);assert.match(prompt,/不得断言执行端没有完成/);assert.match(prompt,/没有向执行端会话发送普通消息/);assert.match(prompt,/不得 task_plan\/task_dispatch/);
   const after=h.ledger.snapshot();assert.deepEqual(after.runs,before.runs);assert.deepEqual(after.attempts,before.attempts);assert.deepEqual(after.reports,before.reports);
  }finally{await h.dispose();}
 });

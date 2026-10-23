@@ -1,4 +1,4 @@
-import {registerExecutor,publishModels} from '../../../tests/dsh/executor-fixture.mjs';
+import {registerExecutor,respondToCatalogRequests} from '../../../tests/dsh/executor-fixture.mjs';
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {createNativeHarness} from '../../../tests/dsh/native-harness.mjs'
@@ -20,11 +20,19 @@ test('a native user message exposes orchestration tools and applies an executor/
   }})],{defaultProvider:'judge',maxAttempts:1})
   const h=await createNativeHarness({executionRoot:true,config:{planningDecisionEnabled:true,sessionDecisionEnabled:false,autoExecute:false}})
   h.ctx.provide('decisionModels',decisions)
+  let stopCatalogs=()=>{}
   try {
     for(const [nodeId,model,reasoningEfforts] of [['fast-worker','small',['off']],['quality-worker','large',['high']]]) registerExecutor(h.ledger, `register-${nodeId}`,{nodeId,roles:['executor'],models:[{provider:'worker-provider',model,reasoningEfforts}],capabilities:['text'],workspaceIds:[],enabled:true,lastSeenAt:new Date().toISOString()})
+    stopCatalogs=respondToCatalogRequests(h.ledger,['fast-worker','quality-worker'])
     const discovery=await h.ctx.tools.execute({name:'task_nodes',callId:'discover',arguments:{},signal:new AbortController().signal})
     assert.deepEqual(discovery.value.find(row=>row.nodeId==='fast-worker').models,[{provider:'worker-provider',model:'small',reasoningEfforts:['off']}])
     assert.deepEqual(discovery.value.find(row=>row.nodeId==='quality-worker').capabilities,['text'])
+    for(const [nodeId,model,effort] of [['fast-worker','small','off'],['quality-worker','large','high']]) {
+      const view=discovery.value.find(row=>row.nodeId===nodeId).executionModels
+      assert.ok(view.catalog.positiveSnapshot.complete,'execution choices come from a completed discovery catalog')
+      assert.deepEqual(view.policy.choice,{provider:'worker-provider',model,reasoningEffort:effort},'each executor owns its workload model default')
+      assert.ok(view.catalog.positiveSnapshot.models.some(row=>row.model===model&&row.reasoningEffort===effort))
+    }
     for(const [index,text,nodeId,model,effort] of [[1,'帮我计算并提交一份简短报告','fast-worker','small','off'],[2,'帮我完成复杂的推理并提交分析报告','quality-worker','large','high']]) {
       const requestId=`message-${index}`
       h.adapter.script.push({name:'task_nodes',args:{}},{name:'task_plan',args:{requestId,title:text,description:text}},{name:'task_dispatch',args:{commandId:requestId}},'已派发，等待执行端报告')
@@ -68,7 +76,7 @@ test('a native user message exposes orchestration tools and applies an executor/
     assert.equal((await h.ctx.taskSystem.native.execute(claim)).run.state,'succeeded')
     assert.doesNotMatch(JSON.stringify(h.adapter.requests.at(-1).messages.filter(row=>row.role==='system')),/You coordinate work across registered execution nodes/,'owned execution must not inherit the conversation dispatch preference')
     assert.doesNotMatch(JSON.stringify(h.adapter.requests.at(-1).messages),/fast-worker|quality-worker|worker-provider/,'owned task_nodes keeps catalog disclosure scoped to the assigned node')
-  } finally {await h.dispose();await decisions.close()}
+  } finally {stopCatalogs();await h.dispose();await decisions.close()}
 })
 
 test('planner role exposes dispatch tools to its conversation model and hides workload tools',async()=>{
