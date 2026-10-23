@@ -15,7 +15,7 @@ function scheduledFor(configuration: Json): string | undefined {
     : undefined;
 }
 
-function scheduledTimeZone(configuration: Json): string | undefined {
+export function scheduledTimeZone(configuration: Json): string | undefined {
   if (
     !configuration ||
     typeof configuration !== "object" ||
