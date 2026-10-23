@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {titleProjectionDefinition} from '@deepseek-ai/dsh-session-title';
 import { join } from 'node:path';
 import { generateKeyPairSync } from 'node:crypto';
 import { ToolCallId } from '@deepseek-ai/dsh-llm';
@@ -44,6 +45,8 @@ for (const valid of [true, false]) {
       assertPrompt(options);
       return { name: 'task_submit_result', args: { outcome: 'success', summary: 'Fixed contract execution', reportBody: 'Actual native execution result', reportData: valid ? { pinned: 1 } : { wrongField: true } } };
     }] });
+    h.ctx.sessionProjections.register(titleProjectionDefinition);
+    h.ctx.on('session/created',session=>assert.equal(h.ctx.sessionProjections.snapshot(session).values.title,'Original run intent','signed planner display title arrives before native external publication'));
     const ledger = TaskLedger.open(join(h.dir, 'coordinator.sqlite'), { role: 'planner', nodeId: 'planner' });
     const stores = ['server', 'client', 'worker'].map(name => new RecoveryStore(join(h.dir, `${name}.sqlite`)));
     let gateway, worker;

@@ -47,5 +47,7 @@ export function resolvedClaimContext(claim: ContextClaim): NonNullable<Claim['ex
     insist(typeof report.body === 'string' && typeof report.actor === 'string', 'INVALID_REPORT_CONTEXT')
     return { reportId: report.reportId, body: report.body, actor: report.actor }
   })
-  return { ...(template ? { template } : {}), reports }
+  const sessionTitle = claim.executionContext?.sessionTitle
+  if (sessionTitle !== undefined) insist(typeof sessionTitle === 'string' && sessionTitle.trim().length > 0 && Buffer.byteLength(sessionTitle) <= 512, 'INVALID_SESSION_TITLE_CONTEXT')
+  return { ...(template ? { template } : {}), reports, ...(sessionTitle === undefined ? {} : { sessionTitle }) }
 }
