@@ -1,20 +1,9 @@
 ## Change and verification
 
-Describe the resulting behavior, relevant checks, and any limits.
+Describe the resulting behavior, checks, and remaining limits. Open feature PRs to `dev`.
 
-## Route
+## Release impact
 
-Choose the route: feature → dev, dev → main promotion, or main → dev sync.
+State whether this changes an installed package, and identify any device checks needed before release. A feature PR does not authorize a release or claim device acceptance.
 
-## Real-device acceptance for dev → main
-
-Complete this section before promoting a runtime release. For other routes, state why it does not apply. Follow [the development workflow](https://github.com/Player-MINEPIG/dsh-orchestration/blob/main/docs/DEVELOPMENT.md).
-
-- Tested dev commit SHA:
-- PR head SHA, confirmed equal to the tested SHA:
-- Package filenames and SHA-256 checksums:
-- Device, OS, installed version, checks, results, and evidence for each intended device:
-- Untested devices or unresolved failures:
-- User's explicit confirmation and evidence link:
-- Confirmation that dev stayed frozen and main did not advance after acceptance:
-- Merge method for a long-lived branch PR: merge commit.
+Release candidates use full CI, its retained tarballs, recorded device results and explicit user confirmation through the [release workflow](https://github.com/Player-MINEPIG/dsh-orchestration/blob/main/docs/DEVELOPMENT.md). `main` is fast-forwarded to that exact candidate with a version tag; do not open a promotion PR.

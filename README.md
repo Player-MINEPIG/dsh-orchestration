@@ -19,7 +19,7 @@ Role profiles, protocol types, task templates and the WebUI are not presented as
 
 ## Build and verify
 
-Develop on a feature branch from `dev`, then open a PR to `dev`. Promote `dev` to `main` after real-device acceptance and explicit user confirmation. Follow the [development and release workflow](docs/DEVELOPMENT.md) before changing code or integrating a PR.
+Develop on a feature branch from `dev`, then open a PR to `dev`. Before release, verify a fixed dev SHA with full CI, test its retained packages on real devices, and obtain explicit user confirmation. The release workflow fast-forwards `main` to that same SHA and creates its version tag. Follow the [development and release workflow](docs/DEVELOPMENT.md) before changing code or integrating a PR.
 
 Use Node 24 and the system OpenSSL executable:
 
@@ -31,7 +31,7 @@ npm run test:browser
 npm run test:distribution
 ```
 
-`check` builds the task suite and runs the core ledger/protocol, native DSH integration, UI contracts, official runtime, JEV, read-only dashboard, shipped task packs and management tests. It prepares an isolated pinned DSH 0.2.1-rc.2 installation for the official tests. The mandatory browser checks exercise real React settings, executor reminders and polling text selection; distribution checks install, boot and remove the built core packages while verifying retained data. GitHub runs these suites in separate jobs, with Linux/macOS core and native coverage and UTC browser coverage. See [CI coverage and commands](docs/CI.md).
+`check` builds the task suite and runs the core ledger/protocol, native DSH integration, UI contracts, official runtime, JEV, read-only dashboard, shipped task packs and management tests. It prepares an isolated pinned DSH 0.2.1-rc.2 installation for the official tests. The mandatory browser checks exercise real React settings, executor reminders and polling text selection; distribution checks install, boot and remove the built core packages while verifying retained data. GitHub runs these suites in separate jobs, with Linux checks on daily PRs, Linux/macOS core and native checks for a release candidate, and UTC browser coverage. See [CI coverage and commands](docs/CI.md).
 
 The default build and checks do not build, test, install or distribute Feishu. Its source and optional entries remain available:
 
