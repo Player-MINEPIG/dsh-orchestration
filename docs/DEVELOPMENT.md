@@ -10,7 +10,7 @@ Keep the primary checkout on `main`. Use an isolated worktree for development. `
 4. Implement and verify the change using GPT-6.1-Sol with High reasoning, as required by [AGENTS.md](../AGENTS.md). Record checks that passed and any limits.
 5. Open a feature PR to `dev`. Review its diff and wait for every required check before merging. Feature PRs may use squash or merge.
 
-Both long-lived branches require PRs, seven product checks, `PR flow`, an up-to-date head, and resolved conversations. Approval count is zero to support a single maintainer. The rules include administrators and prohibit force pushes and deletion. Rebase merging is disabled.
+Both long-lived branches require PRs, the product checks, `PR flow`, an up-to-date head, and resolved conversations. Approval count is zero to support a single maintainer. The rules include administrators and prohibit force pushes and deletion. Rebase merging is disabled.
 
 ## Accept a candidate on real devices
 
@@ -25,7 +25,7 @@ Keep `dev` frozen until promotion completes. A new head invalidates the earlier 
 ## Promote and synchronize
 
 1. Merge the accepted `dev` → `main` PR using **Create a merge commit**. This preserves the tested dev commit as an ancestor. Do not squash or rebase a long-lived branch promotion.
-2. Verify the `main` workflow on the resulting merge commit. Report the accepted dev SHA and the integrated main SHA separately.
+2. Verify all required checks on the merged promotion PR. Confirm that the integrated `main` tree equals the tested dev tree. Report the accepted dev SHA and the integrated main SHA separately. Pushes do not trigger CI; use the product workflow's manual dispatch when additional verification is needed.
 3. Open a `main` → `dev` PR and use **Create a merge commit** after its checks pass. This syncs the promotion commit back into `dev` and keeps the next candidate up to date. If GitHub reports no changes, inspect both commit ancestry and file differences, and report the result before choosing another sync path.
 4. Fetch the merged refs. Fast-forward the primary `main` checkout to the verified `origin/main`. Report branch names, HEADs, PRs, CI results, acceptance evidence, and WIP locations.
 
