@@ -375,6 +375,7 @@ export interface NativeClaim {
     | "configuration"
     | "contextNotes"
     | "parentRunId"
+    | "executionParentKind"
     | "projectContext"
     | "intentSnapshot"
     | "historyOnly"
