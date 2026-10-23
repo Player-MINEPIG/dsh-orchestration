@@ -16,14 +16,17 @@ on:
       verification_run_id:
         description: Successful verify run ID (promote only)
         type: string
-      tag:
-        description: v followed by the tested task-system version (promote only)
+      acceptance_summary:
+        description: Short one-line acceptance summary for the version tag (promote only)
         type: string
-      acceptance_json:
-        description: Device results and explicit user confirmation (promote only)
+      acceptance_record:
+        description: Actual device scope, results and evidence; plain text (promote only)
+        type: string
+      user_confirmation:
+        description: Actual user confirmation quote or evidence link (promote only)
         type: string
       confirm:
-        description: Confirm the recorded device results and user authorization (promote only)
+        description: Intended-device acceptance passed and user authorized this release (promote only)
         type: boolean
         default: false
 permissions:
@@ -235,8 +238,9 @@ jobs:
     env:
       CANDIDATE_SHA: ${{ inputs.candidate_sha }}
       VERIFICATION_RUN_ID: ${{ inputs.verification_run_id }}
-      RELEASE_TAG: ${{ inputs.tag }}
-      ACCEPTANCE_JSON: ${{ inputs.acceptance_json }}
+      ACCEPTANCE_SUMMARY: ${{ inputs.acceptance_summary }}
+      ACCEPTANCE_RECORD: ${{ inputs.acceptance_record }}
+      USER_CONFIRMATION: ${{ inputs.user_confirmation }}
       RELEASE_CONFIRM: ${{ inputs.confirm }}
       GITHUB_TOKEN: ${{ github.token }}
     steps:
@@ -257,13 +261,20 @@ jobs:
           github-token: ${{ github.token }}
           path: .runtime/release-candidate
           merge-multiple: true
-      - name: Validate acceptance and atomically fast-forward main with version tag
-        run: node scripts/ci/release-control.mjs promote
-      - name: Preserve validated release record, including failed pushes
+      - name: Generate detailed record and short tag text
+        run: node scripts/ci/release-control.mjs record
+      - name: Store the detailed record before approval or ref updates
         uses: actions/upload-artifact@v4
-        if: ${{ always() && steps.receipt.outcome == 'success' }}
+        id: release-record
         with:
-          name: release-record-${{ inputs.candidate_sha }}-${{ github.run_id }}
-          path: .runtime/release-candidate/release-annotation.json
-          if-no-files-found: ignore
+          name: release-record-${{ inputs.candidate_sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            .runtime/release-candidate/release-record.json
+            .runtime/release-candidate/tag-message.txt
+          if-no-files-found: error
           retention-days: 90
+      - name: Validate stored artifact and atomically fast-forward main with version tag
+        run: node scripts/ci/release-control.mjs promote
+        env:
+          UPLOADED_RECORD_ID: ${{ steps.release-record.outputs.artifact-id }}
+          UPLOADED_RECORD_DIGEST: ${{ steps.release-record.outputs.artifact-digest }}
