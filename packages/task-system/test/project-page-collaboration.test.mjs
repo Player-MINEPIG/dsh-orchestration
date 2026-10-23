@@ -11,6 +11,7 @@ function page({insecureContext=false}={}) {
   const parent={postMessage:request=>{if(request.method!=="detailFullscreen")requests.push(request);}};
   const context=vm.createContext({markdownit,atob,structuredClone,console,Date,Map,Set,URL,innerWidth:1200,crypto:insecureContext?{getRandomValues:value=>webcrypto.getRandomValues(value)}:{randomUUID:()=>String(++sequence)},parent,window:{addEventListener:(name,listener)=>events[name]=listener},document:{documentElement:root,title:'',activeElement:{tagName:'BODY'},querySelector:()=>null,addEventListener:(name,listener)=>documentEvents[name]=listener,getElementById(id){if(!elements.has(id))elements.set(id,{innerHTML:'',hidden:true,dataset:{}});return elements.get(id);}},setTimeout:()=>1,clearTimeout:()=>{},setInterval:()=>1});
   vm.runInContext(source,context);
+  vm.runInContext('patchHtml=(root,html)=>{root.innerHTML=html}',context);
   return {requests,context,elements,documentEvents,action:(a,id)=>vm.runInContext('actions('+JSON.stringify(a)+','+JSON.stringify(id)+')',context),overlay:()=>elements.get('overlays').innerHTML,theme:(source,input)=>events.message({source:source==='parent'?parent:{},data:{channel:'dsh-project-runtime',method:'theme',input}}),root,content:()=>elements.get('app').innerHTML,async answer(response){const request=requests.shift();assert.ok(request);events.message({source:parent,data:{channel:'dsh-project-runtime',id:request.id,...response}});await new Promise(resolve=>setImmediate(resolve));},async retry(){await vm.runInContext("actions('reload')",context);},startRetry(){return vm.runInContext("actions('reload')",context);},startPoll(){return vm.runInContext('poll()',context);}};
 }
 
@@ -18,8 +19,8 @@ function page({insecureContext=false}={}) {
 const project={id:'local-project',title:'Local project',description:'Work in the existing session',goal:'Deliver PV',workspace:'/test/workspace',stage:'本地会话协作',session:0,messages:[],canChat:false};
 const collaboration={projectId:project.id,backlogId:'b1',ownerNodeId:'mbp',sessionId:'source-session',cwd:'/test/workspace',title:'Local session work',goal:'Deliver PV',summary:'Storyboard approved; rendering next',state:'active',updatedAt:'2026-10-12T08:00:00.000Z'};
 const snapshot={projects:[project],tasks:[],runs:[],attempts:[],settings:{root:null,revision:0},nodes:[],projectCollaborations:[collaboration],projectRegistrations:[]};
-test('existing executor panel displays owned collaboration before any run and adds no mutation or remote-session links',async()=>{
- const p=page();await p.answer({value:{...structuredClone(snapshot),viewContext:{role:'executor',nodeId:'mbp',scope:'node'}}});await p.action('projects');assert.match(p.content(),/会话协作 · 已激活/);assert.match(p.content(),/当前会话协作 · 中央跟进/);assert.doesNotMatch(p.content(),/来源项目 · 已登记/);
+test('planner panel displays owned collaboration before any run and adds no mutation or remote-session links',async()=>{
+ const p=page();await p.answer({value:{...structuredClone(snapshot),viewContext:{role:'planner',nodeId:'central',scope:'all'}}});await p.action('projects');assert.match(p.content(),/会话协作 · 已激活/);assert.match(p.content(),/当前会话协作 · 中央跟进/);assert.doesNotMatch(p.content(),/来源项目 · 已登记/);
  await p.action('project',project.id);const html=p.content();assert.match(html,/aria-label="会话协作"/);assert.match(html,/source-session/);assert.match(html,/Storyboard approved; rendering next/);assert.match(html,/2026\/10\/12/);assert.match(html,/中央尚未验收/);assert.match(html,/会话协作已登记，尚无任务执行记录/);assert.doesNotMatch(html,/data-action="(?:chat|create|task-approve|task-accept)"/);assert.doesNotMatch(html,/<a[^>]+source-session/);
 });
 test('a collaboration-only update refreshes the original panel into pending central review',async()=>{

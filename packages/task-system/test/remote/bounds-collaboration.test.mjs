@@ -1,3 +1,4 @@
+import {registerExecutor} from '../../../../tests/dsh/executor-fixture.mjs';
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { generateKeyPairSync } from 'node:crypto'
@@ -14,7 +15,7 @@ function fixture(t,limit=65536) {
   t.after(async()=>{for(const r of resources.reverse())await(r.dispose?.()??r.close?.());rmSync(root,{recursive:true,force:true})})
   const ledger=TaskLedger.open(join(root,'ledger.sqlite'),{role:'planner',nodeId:'planner'});resources.push(ledger)
   ledger.registerWorkspace('ws',{workspaceId:'workspace',nodeId:'worker',path:root,label:'fixture',state:'ready',createdAt:new Date().toISOString()})
-  ledger.registerNode('node',{nodeId:'worker',roles:['executor'],capabilities:['read'],models:[{provider:'fixture',model:'fixture',reasoningEfforts:[]}],workspaceIds:['workspace'],enabled:true,lastSeenAt:new Date().toISOString(),maxConcurrent:4})
+  registerExecutor(ledger, 'node',{nodeId:'worker',roles:['executor'],capabilities:['read'],models:[{provider:'fixture',model:'fixture',reasoningEfforts:[]}],workspaceIds:['workspace'],enabled:true,lastSeenAt:new Date().toISOString(),maxConcurrent:4})
   const route={nodeId:'worker',provider:'fixture',model:'fixture',workspaceId:'workspace',requiredCapabilities:['read']}
   const serverStore=new RecoveryStore(join(root,'server.sqlite'));resources.push(serverStore)
   const gateway=new RemoteGateway({role:'planner',nodeId:'planner',ledger,store:serverStore,verifier:new IdentityVerifier({audience:'planner',peers:[peer]}),maxBodyBytes:limit,maxResponseBytes:Math.max(limit,131072)});resources.push(gateway)
@@ -97,7 +98,7 @@ test('host response budget bounds claim atomically and cannot be expanded by a p
   const f=fixture(t),blob='c'.repeat(200*1024)
   const task=f.ledger.createTask('bounded-task',{title:'Claim must fit configured transport',workspaceId:'workspace'}).value
   const run=f.ledger.createRun('bounded-run',{taskId:task.taskId,route:f.route,configuration:{input:{largeInput:blob}}}).value
-  await assert.rejects(f.remote.claim('bounded-claim',{runId:run.runId,nodeId:'worker',ttlMs:60000}),/REMOTE_OUTCOME_UNCERTAIN/)
+  await assert.rejects(f.remote.claim('bounded-claim',{runId:run.runId,nodeId:'worker',ttlMs:60000}),/TOO_LARGE/)
   assert.equal(f.ledger.getRun(run.runId).state,'queued','oversized claim rolls back instead of stranding a lease')
   assert.equal(f.ledger.snapshot().attempts.length,0)
   await assert.rejects(f.gateway.handle(JSON.stringify(envelope({runId:run.runId,ttlMs:60000,maxClaimBytes:1024*1024},'claim'))),/PAYLOAD_FIELDS/)

@@ -112,7 +112,7 @@ test('actual Cordis config bootstrap discovers and executes native route through
   const run = f.ledger.createRun('run',{ taskId: task.taskId,route: { nodeId: 'node-a',provider: 'vendor-a',model: 'fixture',workspaceId: 'workspace',requiredCapabilities: ['read'] } }).value
   let executions = 0, sink, detached = false
   const local = { ledger: {},config: { autoAdmitObservations: false },native: { executeExternal: async request => { executions++; assert.equal(request.claim.run.runId,run.runId); return { outcome: 'success',summary: 'native boundary fixture' } } },subscribeObservations(fn) { sink = fn; return () => { detached = true } } }
-  await ctx.plugin({ apply(ctx) { ctx.provide('taskSystem',local) } })
+  await ctx.plugin({ apply(ctx) { ctx.provide('taskSystem',local);ctx.provide('llm',{listProviders:()=>[{id:'vendor-a'},{id:'vendor-b'}],listModels:async provider=>[{id:provider==='vendor-a'?'fixture':'other'}],resolveModelInfo:async()=>({})}); } })
   const fiber = ctx.plugin(plugin,{ role: 'executor',nodeId: 'node-a',statePath: join(f.root,'host.sqlite'),capabilities: ['read'],workspaces: [{ workspaceId: 'workspace',nodeId: 'node-a',path: f.root,allowedRoot: f.root }],pollIntervalMs: 100,
     coordinator: { endpoint: 'https://fixture.invalid/commands',audience: 'planner',keyId: 'key-a',privateKeyEnv: envName,nativeRoutes: [{ provider: 'vendor-a',models: [{ model: 'fixture',reasoningEfforts: [] }] },{ provider: 'vendor-b',models: [{ model: 'other',reasoningEfforts: ['low'] }] }] },observationForwarding: { workspaceId: 'workspace' },
   }); await fiber

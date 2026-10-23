@@ -19,14 +19,26 @@ Role profiles, protocol types, task templates and the WebUI are not presented as
 
 ## Build and verify
 
+Use Node 24 and the system OpenSSL executable:
+
 ```sh
 npm ci --ignore-scripts
-npm run build
 npm run check
+npx playwright install --with-deps chromium
+npm run test:browser
 npm run test:distribution
 ```
 
-`check` runs task/provider/protocol/WebUI tests and actual DSH Loader/AgentLoop integration. Distribution tests install tarballs into isolated profiles using the pinned official DSH CLI, boot them, remove them and verify retained-state behavior. The tests use disposable credentials and fixtures. Live Feishu/Jev/model calls and production machines are not needed or exercised.
+`check` builds the task suite and runs the core ledger/protocol, native DSH integration, UI contracts, official runtime, JEV, read-only dashboard, shipped task packs and management tests. It prepares an isolated pinned DSH 0.2.1-rc.2 installation for the official tests. The mandatory browser checks exercise real React settings, executor reminders and polling text selection; distribution checks install, boot and remove the built core packages while verifying retained data. GitHub runs these suites in separate jobs, with Linux/macOS core and native coverage and UTC/Melbourne browser coverage. See [CI coverage and commands](docs/CI.md).
+
+The default build and checks do not build, test, install or distribute Feishu. Its source and optional entries remain available:
+
+```sh
+npm run test:feishu
+npm run test:distribution:feishu
+```
+
+Tests use disposable local records, credentials and deterministic model fixtures. They do not require live Feishu/JEV/model calls or production machines. No CI job deploys to a device.
 
 For a runnable offline native example, see [the DSH integration guide](docs/dsh-integration.md) and `tests/dsh/demo-local.mjs`. It uses a deterministic model fixture, visibly labeled as such.
 

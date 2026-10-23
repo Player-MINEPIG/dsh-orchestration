@@ -1128,7 +1128,7 @@ test("heartbeat budgets the complete status and preserves registered program cat
       Buffer.byteLength(JSON.stringify(captured.providerStatus)) <= 8192,
     );
     assert.deepEqual(captured.providerStatus.programs, programs.catalog());
-    assert.ok(captured.providerStatus.executionRoutes.length < 100);
+    assert.equal(Object.hasOwn(captured.providerStatus,'executionRoutes'),false,'model catalogs use their bounded request/response protocol');
     assert.equal(captured.runtimeReady, true);
   } finally {
     await service.dispose();

@@ -1,3 +1,4 @@
+import {registerExecutor} from '../../../tests/dsh/executor-fixture.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
@@ -49,7 +50,7 @@ test('ordinary project Task creation links project before creating a queued exec
   const wb=new Workbench(h.ledger),runtime=h.ctx.taskSystem.projects;
   wb.manage('p','create_project',{projectId:'p',title:'Direct tasks',goal:'Test'});
   h.ledger.registerWorkspace('ws',{workspaceId:'ws',nodeId:'worker',path:h.dir,label:'Worker',state:'ready',createdAt:new Date().toISOString()});
-  h.ledger.registerNode('node',{nodeId:'worker',enabled:true,roles:['executor'],models:[{provider:'test',model:'small',reasoningEfforts:['low']}],capabilities:[],workspaceIds:['ws'],lastSeenAt:new Date().toISOString()});
+  registerExecutor(h.ledger, 'node',{nodeId:'worker',enabled:true,roles:['executor'],models:[{provider:'test',model:'small',reasoningEfforts:['low']}],capabilities:[],workspaceIds:['ws'],lastSeenAt:new Date().toISOString()});
   h.ledger.recordNodeHeartbeat('heartbeat',{nodeId:'worker',runtimeReady:true,activeExecutions:0,source:'host-local',sampledAt:Date.now(),providerStatus:{executionRoutes:[{nodeId:'worker',provider:'test',model:'small',reasoningEffort:'low',requiredCapabilities:[]}]}});
   const routeId=runtime.scheduleOptions().routes[0].id,input={commandId:'new-task',projectId:'p',title:'Simple task',description:'Return result',routeId,start:false};
   const created=runtime.createDirectTask(input);assert.deepEqual(runtime.createDirectTask(input),created);assert.equal(h.ledger.snapshot().tasks.length,1);assert.equal(h.ledger.snapshot().runs.length,0);
@@ -69,7 +70,7 @@ test('workflow admission attention is visible on the Task while its root remains
  try{
   new Workbench(h.ledger).manage('attention-project','create_project',{projectId:'p',title:'Flow',goal:'Test'});
   h.ledger.registerWorkspace('attention-ws',{workspaceId:'ws',nodeId:'local',path:h.dir,label:'Local',state:'ready',createdAt:new Date().toISOString()});
-  h.ledger.registerNode('attention-node',{nodeId:'local',roles:['both'],enabled:true,capabilities:[],models:[],workspaceIds:['ws'],lastSeenAt:new Date().toISOString()});
+  registerExecutor(h.ledger, 'attention-node',{nodeId:'local',roles:['both'],enabled:true,capabilities:[],models:[],workspaceIds:['ws'],lastSeenAt:new Date().toISOString()});
   h.ctx.taskSystem.programs.register({programId:'work',version:'1',title:'Work',execute:()=>({data:{},summary:'Done'})});
   h.ledger.recordNodeHeartbeat('attention-heartbeat',{nodeId:'local',runtimeReady:true,activeExecutions:0,providerStatus:{programs:h.ctx.taskSystem.programs.catalog()}});
   const runtime=h.ctx.taskSystem.workflows;

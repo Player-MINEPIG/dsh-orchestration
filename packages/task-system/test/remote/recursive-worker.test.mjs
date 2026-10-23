@@ -1,3 +1,4 @@
+import {registerExecutor} from '../../../../tests/dsh/executor-fixture.mjs';
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
@@ -35,7 +36,7 @@ async function fixture(t, execute) {
     state: "ready",
     createdAt: new Date().toISOString(),
   });
-  ledger.registerNode("node", {
+  registerExecutor(ledger, "node", {
     nodeId: "worker",
     roles: ["executor"],
     models: [{ provider: "fixture", model: "fixture", reasoningEfforts: [] }],
@@ -225,7 +226,7 @@ test("authority blocks a child when its active ancestor chain fills node capacit
     summary: "unused",
   }));
   f.ledger.setNodeCapacity("one-slot", "worker", 1);
-  f.ledger.registerNode("foreign-node", {
+  registerExecutor(f.ledger, "foreign-node", {
     nodeId: "foreign",
     roles: ["executor"],
     models: [{ provider: "fixture", model: "fixture", reasoningEfforts: [] }],

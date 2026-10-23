@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { generateKeyPairSync } from 'node:crypto'
-import { mkdtempSync, mkdirSync, realpathSync, renameSync, rmSync, symlinkSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, realpathSync, renameSync,unlinkSync, rmSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
@@ -66,7 +66,7 @@ test('live executor authorization rejects revoked, missing, moved and symlink-re
   renameSync(f.first, `${f.first}-original`); symlinkSync(f.second, f.first)
   await assert.rejects(authorizedWorkspace(claim, policy, provider), { code: 'WORKSPACE_DENIED' })
   await assert.rejects(f.service.setLocalWorkspaceGrant({ registryId: 'registry-one', enabled: true, expectedRevision: 1 }), { code: 'WORKSPACE_GRANT_PATH_INVALID' })
-  rmSync(f.first); renameSync(`${f.first}-original`, f.first)
+  unlinkSync(f.first); renameSync(`${f.first}-original`, f.first)
   await f.service.setLocalWorkspaceGrant({ registryId: 'registry-one', enabled: false, expectedRevision: 1 })
   await assert.rejects(authorizedWorkspace(claim, policy, provider), { code: 'WORKSPACE_DENIED' })
   assert.equal((await f.service.workspaceGrantCatalog()).revision, 2)

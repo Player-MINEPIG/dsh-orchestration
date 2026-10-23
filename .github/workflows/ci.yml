@@ -1,13 +1,28 @@
-name: Plugin conformance
+name: Current product checks
 on:
   push:
   pull_request:
+  workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+defaults:
+  run:
+    shell: bash
+env:
+  TZ: UTC
+  DSH_TELEMETRY_DISABLED: '1'
 jobs:
-  conformance:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+  core:
+    name: Core (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -15,10 +30,104 @@ jobs:
           node-version: '24.19.0'
           cache: npm
       - run: npm ci --ignore-scripts
-      - run: npm run check
-      - run: npm run test:distribution
+      - run: npm run build && npm run build:fixtures
+      - run: mkdir -p .runtime/ci-results
+      - name: Ledger, projects, workflows, schedules and remote protocol
+        run: npm run test:core 2>&1 | tee .runtime/ci-results/core.log
+      - name: JEV
+        if: ${{ !cancelled() }}
+        run: npm run test:jev 2>&1 | tee .runtime/ci-results/jev.log
+      - name: Read-only dashboard
+        if: ${{ !cancelled() }}
+        run: npm run test:dashboard 2>&1 | tee .runtime/ci-results/dashboard.log
+      - name: Shipped task packs
+        if: ${{ !cancelled() }}
+        run: npm run test:task-pack 2>&1 | tee .runtime/ci-results/task-pack.log
+      - name: Management consumers
+        if: ${{ !cancelled() }}
+        run: npm run test:management 2>&1 | tee .runtime/ci-results/management.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: conformance-${{ github.sha }}
-          path: tests/dsh/results/*.json
+          name: core-${{ matrix.os }}-${{ github.sha }}
+          path: .runtime/ci-results
+  native:
+    name: Native DSH (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.19.0'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run build && npm run build:fixtures
+      - run: mkdir -p .runtime/ci-results
+      - run: npm run setup:runtime -- --github-env
+      - name: Real Loader, AgentLoop, host tools and recovery
+        run: npm run test:native 2>&1 | tee .runtime/ci-results/native.log
+      - name: Official permission, profile and RPC contracts
+        if: ${{ !cancelled() }}
+        run: npm run test:official 2>&1 | tee .runtime/ci-results/official.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-${{ matrix.os }}-${{ github.sha }}
+          path: .runtime/ci-results
+  ui:
+    name: UI (${{ matrix.timezone }})
+    strategy:
+      fail-fast: false
+      matrix:
+        timezone: [UTC, Australia/Melbourne]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TZ: ${{ matrix.timezone }}
+      DSH_BROWSER_OUTPUT: .runtime/ci-results/browser
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.19.0'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run build && npm run build:fixtures
+      - run: mkdir -p .runtime/ci-results
+      - run: npx playwright install --with-deps chromium
+      - name: Settings codecs, role views, project pages and reminders
+        run: npm run test:ui 2>&1 | tee .runtime/ci-results/ui.log
+      - name: Real React settings, reminder actions and polling selection
+        if: ${{ !cancelled() }}
+        run: npm run test:browser 2>&1 | tee .runtime/ci-results/browser.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ui-${{ strategy.job-index }}-${{ github.sha }}
+          path: .runtime/ci-results
+  distribution:
+    name: Installed packages
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.19.0'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run build
+      - run: mkdir -p .runtime/ci-results
+      - run: npm run setup:runtime
+      - name: Install, boot and remove core packages with retained data
+        run: npm run test:distribution 2>&1 | tee .runtime/ci-results/distribution.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: distribution-${{ github.sha }}
+          path: .runtime/ci-results

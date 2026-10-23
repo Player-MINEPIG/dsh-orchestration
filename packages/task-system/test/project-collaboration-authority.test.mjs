@@ -72,7 +72,7 @@ test('dynamic central planner preserves confirmation and missing route never fab
   const authority = new ProjectCollaborationAuthority(f.ledger, { planner: () => planner });
   const call = (id, action, extra = {}) => authority.projectCollaborate('mbp', id, { ...f.input, action, ...extra });
   await call('a', 'activate');
-  await assert.rejects(call('no-route', 'dispatch', { title: 'No configured route' }), { code: 'ROUTE_REQUIRED' });
+  await assert.rejects(call('no-route', 'dispatch', { title: 'No configured route' }), { code: 'EXECUTOR_REQUIRED' });
   assert.equal(f.ledger.snapshot().tasks.length, 0);
   planner = new TaskPlanner(f.ledger, undefined, () => taskDecisionCatalog(f.ledger, {}), () => {});
   const queued = await call('with-route', 'dispatch', { title: 'Needs operator confirmation', route: f.route });
@@ -94,7 +94,7 @@ test('signed remote collaboration binds trusted node, preserves domain errors an
   const activate = await remote.projectCollaborate('mbp', 'activate', { ...f.input, action: 'activate' });
   assert.equal(activate.binding.ownerNodeId, 'mbp');
   await assert.rejects(remote.projectCollaborate('other', 'spoof', { ...f.input, action: 'status' }), /WRONG_CLIENT_NODE/);
-  await assert.rejects(remote.projectCollaborate('mbp', 'no-route', { ...f.input, action: 'dispatch', title: 'Unrouted' }), /ROUTE_REQUIRED/);
+  await assert.rejects(remote.projectCollaborate('mbp', 'no-route', { ...f.input, action: 'dispatch', title: 'Unrouted' }), /EXECUTOR_REQUIRED/);
   failAfterCommit = true;
   const request = { ...f.input, action: 'dispatch', title: 'Exactly once despite missing ACK', route: f.route };
   await assert.rejects(remote.projectCollaborate('mbp', 'dispatch', request), /REMOTE_OUTCOME_UNCERTAIN/);
@@ -111,8 +111,9 @@ test('backend discovery uses fresh authenticated advertisements and strips priva
   registerExecutor(f.ledger, 'backend-node', { ...node, capabilities: [...node.capabilities, 'official-codex'] });
   const route = { ...f.route, backend: 'host-owned-profile', requiredCapabilities: ['official-codex'] };
   f.ledger.recordNodeHeartbeat('advertise', { nodeId: 'other', sampledAt: Date.now(), runtimeReady: true, activeExecutions: 0, providerStatus: { state: 'not-probed', providers: [], executionRoutes: [{ ...route, cliPath: '/private/binary' }, { ...route, nodeId: 'mbp' }, { ...route, model: 'ungranted' }] } });
+  publishModels(f.ledger,'other',[{provider:route.provider,model:route.model,reasoningEffort:route.reasoningEffort,backend:route.backend}]);
   const nodes = await f.call('nodes', 'nodes');
-  assert.equal(nodes.routes.length, 1); assert.equal(nodes.routes[0].backend, 'host-owned-profile');
+  assert.ok(nodes.routes.some(route=>route.nodeId==='other'&&route.backend==='host-owned-profile')); assert.equal(nodes.routes.find(route=>route.backend==='host-owned-profile').backend, 'host-owned-profile');
   assert.equal(JSON.stringify(nodes).includes('/private/binary'), false);
   const d = await f.call('dispatch', 'dispatch', { title: 'Private execution configuration', route });
   const run = f.ledger.createRun('secret-run', { taskId: d.taskId, route, configuration: { input: { secretToken: 'PRIVATE_MARKER' } } }).value;
@@ -120,7 +121,7 @@ test('backend discovery uses fresh authenticated advertisements and strips priva
   assert.ok(status.runs.some(r => r.runId === run.runId));
   assert.equal(JSON.stringify(status).includes('PRIVATE_MARKER'), false);
   f.ledger.recordNodeHeartbeat('offline', { nodeId: 'other', sampledAt: Date.now() + 1, runtimeReady: false, activeExecutions: 0 });
-  assert.equal((await f.call('nodes-offline', 'nodes')).routes.length, 0);
+  assert.ok((await f.call('nodes-offline', 'nodes')).routes.some(route=>route.nodeId==='other'),'fresh catalog remains available for offline queuing; admission still rechecks readiness');
 });
 
 test('actual HTTP malformed collaboration rejection remains INVALID; other remote requests retain uncertainty semantics', async t => {
@@ -188,20 +189,22 @@ test('actual planner route refusal cancels only the unstarted task and does not 
   assert.equal(f.ledger.snapshot().runs.length, 1);
 });
 
-test('advertised routes contain only ready workspace IDs and can be dispatched unchanged and claimed by ExecutorWorker', async t => {
+test('advertised model routes support managed directories and explicit unavailable workspaces cannot dispatch', async t => {
   const f = fixture(t); await f.call('activate', 'activate');
   const node = f.ledger.getNode('other');
   f.ledger.registerWorkspace('unready-workspace', { workspaceId: 'not-ready', nodeId: 'other', path: '/private/path/not-advertised', label: 'Unavailable', state: 'planned', createdAt: new Date().toISOString() });
   registerExecutor(f.ledger, 'worker-with-backend', { ...node, capabilities: [...node.capabilities, 'official-codex'], workspaceIds: [...node.workspaceIds, 'not-ready'] });
   const advertised = { nodeId: 'other', provider: 'fixture', model: 'fixture', reasoningEffort: 'low', backend: 'fixture-host-profile', requiredCapabilities: ['official-codex'] };
   f.ledger.recordNodeHeartbeat('routes-heartbeat', { nodeId: 'other', sampledAt: Date.now(), runtimeReady: true, activeExecutions: 0, providerStatus: { state: 'not-probed', providers: [], executionRoutes: [advertised] } });
+  publishModels(f.ledger,'other',[{provider:advertised.provider,model:advertised.model,reasoningEffort:advertised.reasoningEffort,backend:advertised.backend}]);
   const nodes = await f.call('nodes', 'nodes');
-  assert.deepEqual(nodes.routes, [{ ...advertised, workspaceId: 'ws-other' }]);
+  const available=nodes.routes.find(route=>route.nodeId==='other');
+  assert.equal(available.workspaceId,undefined);assert.equal(available.backend,advertised.backend);
   assert.equal(JSON.stringify(nodes).includes('/private/path'), false);
-  await assert.rejects(f.call('incomplete', 'dispatch', { title: 'Reject incomplete route before persistence', route: advertised }), { code: 'WORKSPACE_REQUIRED' });
+  await assert.rejects(f.call('incomplete', 'dispatch', { title: 'Reject incomplete route before persistence', route: {...advertised,workspaceId:'not-ready'} }), { code: 'FORBIDDEN' });
   assert.equal(f.ledger.snapshot().tasks.length, 0); assert.equal(f.ledger.snapshot().runs.length, 0);
   assert.equal(new Workbench(f.ledger).snapshot().backlogTasks.length, 0);
-  const dispatched = await f.call('complete', 'dispatch', { title: 'Use exact advertised route', route: nodes.routes[0] });
+  const dispatched = await f.call('complete', 'dispatch', { title: 'Use exact advertised route', route: {...available,workspaceId:'ws-other'} });
   const run = f.ledger.snapshot().runs.find(r => r.taskId === dispatched.taskId);
   assert.equal(run.route.workspaceId, 'ws-other');
   const store = new RecoveryStore(join(f.dir, 'executor-worker.sqlite'));

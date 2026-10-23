@@ -34,8 +34,9 @@ const runtime = process.env.DSH_OFFICIAL_ROOT;
 
 test(
   "official rc2 PTC preset executes inherited host tools and task settlement",
-  { skip: !runtime, timeout: 30000 },
+  { timeout: 30000 },
   async () => {
+    assert.ok(runtime, "Run npm run test:official to prepare the pinned runtime");
     const req = createRequire(join(runtime, "package.json"));
     const url = (name) => pathToFileURL(req.resolve(name)).href;
     const { load } = await import(url("js-yaml"));

@@ -132,10 +132,10 @@ test('actual Cordis opt-in heartbeat reports native presence and actual executio
   t.after(()=>release());local.native={executeExternal:async()=>{entered();await gate;return {outcome:'success',summary:'fixture'}}}
   const task=f.ledger.createTask('task',{title:'Active heartbeat',workspaceId:'workspace',policy:{settlementQuietMs:0}}).value
   const run=f.ledger.createRun('run',{taskId:task.taskId,route:{nodeId:'worker',provider:'fixture',model:'fixture',workspaceId:'workspace',requiredCapabilities:['read']}}).value
-  const running=service.nativeWorker.execute(run.runId,'claim');await started;await service.heartbeatNow()
+  const running=service.nativeWorker.pollOnce(1);await started;await service.heartbeatNow()
   let own=f.ledger.nodeStatuses().find(n=>n.nodeId==='worker')
-  assert.equal(own.runtimeReady,true);assert.equal(own.activeExecutions,1);assert.deepEqual(own.providerStatus,{...status,executionRoutes:[{nodeId:'worker',provider:'fixture',model:'fixture',requiredCapabilities:[]}]})
-  release();assert.equal((await running).state,'acknowledged')
+  assert.equal(own.runtimeReady,true);assert.equal(own.activeExecutions,1);assert.equal(Object.hasOwn(own.providerStatus,'executionRoutes'),false)
+  release();assert.equal((await running)[0].value.state,'acknowledged')
   delete local.native;t.mock.timers.tick(1000)
   for(let i=0;i<100&&f.ledger.nodeStatuses().find(n=>n.nodeId==='worker').runtimeReady;i++)await immediate()
   own=f.ledger.nodeStatuses().find(n=>n.nodeId==='worker');assert.equal(own.runtimeReady,false);assert.equal(own.activeExecutions,0)
