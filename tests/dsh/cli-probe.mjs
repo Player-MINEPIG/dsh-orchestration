@@ -1,4 +1,4 @@
-import { writeFileSync } from 'node:fs';
+import { realpathSync, writeFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
@@ -11,6 +11,9 @@ export const inject = ['taskSystem', 'tools', 'llm', 'quotaMonitor', 'sessionPer
 export async function apply(ctx) {
   const service = ctx.taskSystem;
   const ledger = service.ledger;
+  if (service.config.role !== 'planner' && !service.executionDirectories.settings().root) {
+    service.executionDirectories.save({ root: realpathSync(process.cwd()), expectedRevision: 0 });
+  }
   if (service.config.role !== 'executor') {
     ledger.createTask('cli-acceptance-create', { taskId: 'cli-retained-task', title: 'Installed tarball persisted task' });
     ledger.appendReport('cli-acceptance-report', { taskId: 'cli-retained-task', title: 'Boot proof', body: 'Written by actual DSH CLI-loaded taskSystem service', kind: 'observation' });
@@ -63,6 +66,11 @@ export async function apply(ctx) {
     assert.equal(result.run.outcome, undefined);
     assert.equal(ledger.history(task.taskId).artifacts.length, 1);
     assert.equal(adapter.requests.length, 2);
+    const persistedSession = await ctx.sessionPersistence.open(result.sessionId, 'read');
+    try { assert.equal(persistedSession.header.agentPreset, 'ci-offline', 'installed execution uses the official preset registry'); }
+    finally { await persistedSession.close(); }
+    assert.ok(adapter.requests[0].tools.some(tool => tool.name === 'legacy_report_prepare'));
+    assert.ok(!adapter.requests[0].tools.some(tool => ['activity_sources_read', 'activity_report_prepare', 'bash', 'write'].includes(tool.name)), 'task policy keeps the installed workload tool mask narrow');
     preparedArtifact = true;
     const { makeTemplate } = await import(pathToFileURL(require.resolve('@dsh-task/task-system/activity/plugin')).href.replace(/plugin\.mjs$/, 'report.mjs'));
     const activityTemplate = makeTemplate('daily');

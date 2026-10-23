@@ -1,16 +1,18 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
+import { DatabaseSync } from 'node:sqlite';
 import { generateKeyPairSync } from 'node:crypto';
-import { createRequire } from 'node:module';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { DSH_VERSION, ensureOfficialRuntime } from '../../scripts/ci/runtime-install.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
+const resultsDirectory = resolve(process.env.DSH_CI_RESULTS_DIR ?? join(root, '.runtime/ci-results'));
 const scratch = mkdtempSync(join(tmpdir(), 'dsh-capability-distribution-'));
-const runtime = resolve(process.env.DSH_TEST_RUNTIME_DIR ?? join(scratch, 'runtime'));
-const receipt = { ok: false, dshVersion: '0.2.1-rc.2', scratch, packages: [], stages: [] };
+const includeFeishu = process.argv.includes('--include-feishu') || process.env.DSH_CI_INCLUDE_FEISHU === '1';
+const receipt = { ok: false, dshVersion: DSH_VERSION, scratch, packages: [], stages: [] };
 const env = { ...process.env, DSH_HOME: join(scratch, 'home'), DSH_AGENTS_HOME: join(scratch, 'agents'), DSH_TELEMETRY_DISABLED: '1', XDG_DATA_HOME: join(scratch, 'data'), XDG_CACHE_HOME: join(scratch, 'cache'), XDG_STATE_HOME: join(scratch, 'state'), npm_config_cache: join(scratch, 'npm-cache'), npm_config_store_dir: process.env.DSH_TEST_STORE_DIR ?? join(scratch, 'pnpm-store'), npm_config_update_notifier: 'false' };
 for (const key of Object.keys(env)) if (/^(DEEPSEEK|OPENAI|ANTHROPIC|GEMINI|GOOGLE_API|DSH_API)/.test(key)) delete env[key];
 mkdirSync(join(scratch, 'workspace'));
@@ -51,14 +53,10 @@ async function boot(profile, capability, patch, absent = false) {
 }
 let bin;
 try {
-  mkdirSync(runtime, { recursive: true });
-  if (!existsSync(join(runtime, 'node_modules/@deepseek-ai/dsh/package.json'))) {
-    run('pnpm', ['--dir', runtime, 'add', '--save-exact', '--reporter=append-only', '--allow-build=@deepseek-ai/dsh-subprocess-local', '--allow-build=@google/genai', '--allow-build=koffi', '--allow-build=node-pty', '--allow-build=protobufjs', '@deepseek-ai/dsh@0.2.1-rc.2'], { timeout: 300000 });
-  }
-  const require = createRequire(join(runtime, 'package.json'));
-  const dshPackage = require.resolve('@deepseek-ai/dsh/package.json');
-  assert.equal(JSON.parse(readFileSync(dshPackage)).version, '0.2.1-rc.2');
-  bin = join(dirname(dshPackage), 'lib/bin.js');
+  const runtime = ensureOfficialRuntime();
+  bin = runtime.bin;
+  receipt.runtime = runtime.root;
+  receipt.includeFeishu = includeFeishu;
   stage('official-pinned-runtime');
   const jev = 'dsh-jev-plugin';
   const jevProfile = 'jev-only-acceptance';
@@ -83,30 +81,36 @@ try {
   env.DSH_TEST_PEER_KEY = join(scratch, 'test-peer-private.pem');
   writeFileSync(env.DSH_TEST_PEER_KEY, keys.privateKey.export({ type: 'pkcs8', format: 'pem' }), { mode: 0o600 });
   env.DSH_TASK_DATABASE = join(scratch, 'remote-ledger.sqlite');
-  const remotePatch = `- insert:\n    - id: task-remote-execution\n      name: '@dsh-task/task-system/remote'\n      config: {}\n- id: task-system\n  config:\n    databasePath: ${JSON.stringify(env.DSH_TASK_DATABASE)}\n    role: both\n    nodeId: coordinator\n    keepAlive: true\n- id: task-remote-execution\n  config:\n    role: both\n    nodeId: coordinator\n    statePath: ${JSON.stringify(join(scratch, 'remote-recovery.sqlite'))}\n    exposeHttp: false\n    peers:\n      - keyId: probe-key\n        nodeId: probe-node\n        publicKey: ${JSON.stringify(publicKey)}\n        audience: task-coordinator\n        operations: [claim, bindSession, markRunning, submit, observe]\n        workspaces: [probe-workspace]\n        capabilities: [offline-probe]\n`;
+  const remotePatch = `- insert:\n    - id: task-remote-execution\n      name: '@dsh-task/task-system/remote'\n      config: {}\n- id: task-system\n  config:\n    databasePath: ${JSON.stringify(env.DSH_TASK_DATABASE)}\n    role: both\n    nodeId: coordinator\n    keepAlive: true\n- id: task-remote-execution\n  config:\n    role: both\n    nodeId: coordinator\n    statePath: ${JSON.stringify(join(scratch, 'remote-recovery.sqlite'))}\n    exposeHttp: true\n    peers:\n      - keyId: probe-key\n        nodeId: probe-node\n        publicKey: ${JSON.stringify(publicKey)}\n        audience: task-coordinator\n        operations: [claim, bindSession, markRunning, submit, observe]\n        workspaces: [probe-workspace]\n        capabilities: [offline-probe]\n`;
   assert.match(dsh(['--profile', remoteProfile, '--dump-config']), /@dsh-task\/task-system/);
   JSON.parse(dsh(['--profile', remoteProfile, '--dump-config-schema']));
   await boot(remoteProfile, 'remote', remotePatch);
   dsh(['plugin', '--profile', remoteProfile, 'remove', remote]);
   assert.doesNotMatch(dsh(['--profile', remoteProfile, '--dump-config']), /@dsh-task\/task-system/);
   assert.ok(existsSync(join(scratch, 'remote-recovery.sqlite')));
+  const recovery = new DatabaseSync(join(scratch, 'remote-recovery.sqlite'), { readOnly: true });
+  try {
+    assert.ok(recovery.prepare("SELECT COUNT(*) AS count FROM commands WHERE state='done'").get().count >= 5, 'removal retains authenticated command receipts');
+  } finally { recovery.close(); }
   stage('remote-actual-plugin-remove-retains-recovery');
   await boot(remoteProfile, 'remote', '', true);
-  const feishu = '@dsh-task/feishu-channel';
-  const feishuProfile = 'feishu-standalone-acceptance';
-  dsh(['plugin', '--profile', feishuProfile, 'add', '--allow-build=protobufjs', pack('feishu-channel')]);
-  stage('feishu-actual-plugin-add');
-  assert.match(dsh(['--profile', feishuProfile, '--dump-config']), /@dsh-task\/feishu-channel\/plugin/);
-  JSON.parse(dsh(['--profile', feishuProfile, '--dump-config-schema']));
-  await boot(feishuProfile, 'feishu', `- insert:\n    - id: installed-feishu-native-chat\n      name: '@dsh-task/feishu-channel/dsh-chat'\n      config:\n        enabled: false\n`);
-  dsh(['plugin', '--profile', feishuProfile, 'remove', feishu]);
-  assert.doesNotMatch(dsh(['--profile', feishuProfile, '--dump-config']), /@dsh-task\/feishu-channel\/plugin/);
-  stage('feishu-actual-plugin-remove');
-  await boot(feishuProfile, 'feishu', '', true);
+  if (includeFeishu) {
+    const feishu = '@dsh-task/feishu-channel';
+    const feishuProfile = 'feishu-standalone-acceptance';
+    dsh(['plugin', '--profile', feishuProfile, 'add', '--allow-build=protobufjs', pack('feishu-channel')]);
+    stage('feishu-actual-plugin-add');
+    assert.match(dsh(['--profile', feishuProfile, '--dump-config']), /@dsh-task\/feishu-channel\/plugin/);
+    JSON.parse(dsh(['--profile', feishuProfile, '--dump-config-schema']));
+    await boot(feishuProfile, 'feishu', `- insert:\n    - id: installed-feishu-native-chat\n      name: '@dsh-task/feishu-channel/dsh-chat'\n      config:\n        enabled: false\n`);
+    dsh(['plugin', '--profile', feishuProfile, 'remove', feishu]);
+    assert.doesNotMatch(dsh(['--profile', feishuProfile, '--dump-config']), /@dsh-task\/feishu-channel\/plugin/);
+    stage('feishu-actual-plugin-remove');
+    await boot(feishuProfile, 'feishu', '', true);
+  }
   receipt.ok = true;
 } catch (error) { receipt.error = error.stack ?? String(error); process.exitCode = 1; }
 finally {
-  mkdirSync(join(root, 'tests/dsh/results'), { recursive: true });
-  writeFileSync(join(root, 'tests/dsh/results/capabilities.json'), JSON.stringify(receipt, null, 2) + '\n');
+  mkdirSync(resultsDirectory, { recursive: true });
+  writeFileSync(join(resultsDirectory, 'capabilities.json'), JSON.stringify(receipt, null, 2) + '\n');
   process.stdout.write(JSON.stringify(receipt, null, 2) + '\n');
 }

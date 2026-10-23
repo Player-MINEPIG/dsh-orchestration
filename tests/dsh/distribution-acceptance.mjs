@@ -1,15 +1,16 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { createRequire } from 'node:module';
+import { DatabaseSync } from 'node:sqlite';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { DSH_VERSION, ensureOfficialRuntime } from '../../scripts/ci/runtime-install.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
+const resultsDirectory = resolve(process.env.DSH_CI_RESULTS_DIR ?? join(root, '.runtime/ci-results'));
 const scratch = mkdtempSync(join(tmpdir(), 'dsh-task-distribution-'));
-const runtime = process.env.DSH_TEST_RUNTIME_DIR ? resolve(process.env.DSH_TEST_RUNTIME_DIR) : join(scratch, 'runtime');
-const receipt = { ok: false, dshVersion: '0.2.1-rc.2', upstreamCommit: '687f282e8625c6b8d11ff58211a90524be2e4317', node: process.version, scratch, stages: [] };
+const receipt = { ok: false, dshVersion: DSH_VERSION, node: process.version, scratch, stages: [] };
 const env = {
   ...process.env,
   DSH_HOME: join(scratch, 'home'), DSH_AGENTS_HOME: join(scratch, 'agents'),
@@ -20,7 +21,6 @@ const env = {
   npm_config_update_notifier: 'false',
 };
 for (const key of Object.keys(env)) if (/^(DEEPSEEK|OPENAI|ANTHROPIC|GEMINI|GOOGLE_API|DSH_API)/.test(key)) delete env[key];
-mkdirSync(runtime, { recursive: true });
 mkdirSync(join(scratch, 'workspace'));
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, { cwd: root, env, encoding: 'utf8', timeout: 180000, ...options });
@@ -30,13 +30,8 @@ function run(command, args, options = {}) {
 }
 function stage(name, detail = {}) { receipt.stages.push({ name, ok: true, ...detail }); process.stderr.write(`Passed: ${name}\n`); }
 try {
-  if (!existsSync(join(runtime, 'node_modules', '@deepseek-ai', 'dsh', 'package.json'))) {
-    run('pnpm', ['--dir', runtime, 'add', '--save-exact', '--reporter=append-only', '--allow-build=@deepseek-ai/dsh-subprocess-local', '--allow-build=@google/genai', '--allow-build=koffi', '--allow-build=node-pty', '--allow-build=protobufjs', '@deepseek-ai/dsh@0.2.1-rc.2'], { timeout: 300000 });
-  }
-  const require = createRequire(join(runtime, 'package.json'));
-  const dshPackage = require.resolve('@deepseek-ai/dsh/package.json');
-  assert.equal(JSON.parse(readFileSync(dshPackage)).version, '0.2.1-rc.2');
-  const dshBin = join(dirname(dshPackage), 'lib', 'bin.js');
+  const { root: runtime, bin: dshBin } = ensureOfficialRuntime();
+  receipt.runtime = runtime;
   stage('official-pinned-runtime');
   const dsh = args => run(process.execPath, [dshBin, ...args], { cwd: join(scratch, 'workspace') });
   const pack = JSON.parse(run('npm', ['pack', '--json', '--pack-destination', scratch], { cwd: join(root, 'packages/task-system') }))[0];
@@ -68,7 +63,7 @@ try {
     const out = join(scratch, `probe-${role}.json`);
     const probeModule = pathToFileURL(join(root, 'tests/dsh', absent ? 'cli-absence-probe.mjs' : 'cli-probe.mjs')).href;
     const probePatch = join(scratch, `probe-${role}.yml`);
-    writeFileSync(probePatch, `${absent ? '' : `${role === 'both' ? `- id: task-system\n  config:\n    databasePath: ${JSON.stringify(env.DSH_TASK_DATABASE)}\n    nodeId: local\n    role: both\n    keepAlive: true\n    executionTools: [legacy_report_prepare, activity_sources_read, activity_report_prepare]\n    trustedUnconfinedTools: true\n` : ''}- insert:\n    - id: installed-legacy-task-pack\n      name: '@dsh-task/task-system/task-pack/plugin'\n      config:\n        artifactDirectory: ${JSON.stringify(join(scratch, 'native-artifacts'))}\n    - id: installed-activity-reports\n      name: '@dsh-task/task-system/activity/plugin'\n      config: {}\n    - id: installed-quota-monitor\n      name: '@dsh-task/task-system/task-pack/quota/plugin'\n      config:\n        enabled: false\n    - id: installed-native-approval-bridge\n      name: '@dsh-task/task-system/approval-bridge'\n      config:\n        enabled: false\n`}\n- insert:\n    - id: acceptance-probe\n      name: ${JSON.stringify(probeModule)}\n`);
+    writeFileSync(probePatch, `${absent ? '' : `${role === 'both' ? `- id: task-system\n  config:\n    databasePath: ${JSON.stringify(env.DSH_TASK_DATABASE)}\n    nodeId: local\n    role: both\n    executionAgentPreset: ci-offline\n    keepAlive: true\n    executionTools: [legacy_report_prepare, activity_sources_read, activity_report_prepare]\n    trustedUnconfinedTools: true\n` : ''}- insert:\n    - id: acceptance-preset-registry\n      name: '@deepseek-ai/dsh-agent-preset-registry'\n      config:\n        default: ci-offline\n    - id: acceptance-preset\n      name: '@deepseek-ai/dsh-agent-preset'\n      config:\n        id: ci-offline\n        plugins: []\n    - id: installed-legacy-task-pack\n      name: '@dsh-task/task-system/task-pack/plugin'\n      config:\n        artifactDirectory: ${JSON.stringify(join(scratch, 'native-artifacts'))}\n    - id: installed-activity-reports\n      name: '@dsh-task/task-system/activity/plugin'\n      config: {}\n    - id: installed-quota-monitor\n      name: '@dsh-task/task-system/task-pack/quota/plugin'\n      config:\n        enabled: false\n    - id: installed-native-approval-bridge\n      name: '@dsh-task/task-system/approval-bridge'\n      config:\n        enabled: false\n`}\n- insert:\n    - id: acceptance-probe\n      name: ${JSON.stringify(probeModule)}\n`);
     const args = [dshBin, '--profile', profile];
     if (!absent) args.push('--patch', join(root, 'profiles', `${role}.patch.yml`));
     args.push('--patch', probePatch);
@@ -104,6 +99,12 @@ try {
   assert.ok(!manifest.dsh.profile.bundles.includes('@dsh-task/task-system'));
   assert.equal(manifest.dependencies?.['@dsh-task/task-system'], undefined);
   assert.ok(existsSync(env.DSH_TASK_DATABASE));
+  const retained = new DatabaseSync(env.DSH_TASK_DATABASE, { readOnly: true });
+  try {
+    const task = JSON.parse(retained.prepare("SELECT data FROM entities WHERE kind='task' AND id=?").get('cli-retained-task').data);
+    assert.equal(task.title, 'Installed tarball persisted task');
+    assert.ok(retained.prepare("SELECT COUNT(*) AS count FROM entities WHERE kind='report'").get().count >= 3, 'removal retains original and native execution reports');
+  } finally { retained.close(); }
   assert.doesNotMatch(dsh(['--profile', profile, '--dump-config']), /@dsh-task\/task-system\/plugin/);
   stage('actual-plugin-remove-retains-data');
   await boot('removed', true);
@@ -112,7 +113,7 @@ try {
   receipt.error = error.stack ?? String(error);
   process.exitCode = 1;
 } finally {
-  mkdirSync(join(root, 'tests/dsh/results'), { recursive: true });
-  writeFileSync(join(root, 'tests/dsh/results/distribution.json'), JSON.stringify(receipt, null, 2) + '\n');
+  mkdirSync(resultsDirectory, { recursive: true });
+  writeFileSync(join(resultsDirectory, 'distribution.json'), JSON.stringify(receipt, null, 2) + '\n');
   process.stdout.write(JSON.stringify(receipt, null, 2) + '\n');
 }
