@@ -20,3 +20,5 @@ DSH_PLAYWRIGHT_MODULE=/absolute/path/to/playwright/index.mjs \
 ```
 
 `tests/settings/executor-alert-browser.mjs` serves the isolated real DSH/Typert browser fixture on loopback. Production observations and screenshots remain local and are excluded from this repository. No production reminder is confirmed automatically; no task is rerun for validation. DMC is outside this change.
+
+Both installations are healthy on 0.2.50. AWS cloned the pushed source commit from GitHub and built the same 328-file archive as the local build. The task package was replaced independently with configuration and DMC preserved. `release.json` includes only source/build hashes and de-identified deployment checks. Production reminders were not confirmed and tasks were not dispatched by validation.

@@ -1,0 +1,30 @@
+{
+  "version": "0.2.50",
+  "sourceCommit": "525dcd3c7aac067115b32df978a283f3ffd5d1aa",
+  "integratedBaseline": "e71cd56ab8c15589d7870c0ba95cc4ebd9c38785",
+  "archiveSha256": "d813e10dc8f6138bb699b7ca95d8be87e801dc459724c693a43a96b6194b5bcb",
+  "archiveFiles": 328,
+  "deployment": {
+    "AWS": {
+      "sourceDelivery": "Cloned the pushed GitHub commit and built with locked dependencies on the host",
+      "matchesLocalArchive": true,
+      "healthy": true,
+      "configurationPreserved": true,
+      "dmcUnchanged": true
+    },
+    "MBP": {
+      "healthy": true,
+      "configurationPreserved": true,
+      "dmcUnchanged": true
+    }
+  },
+  "verification": {
+    "targetedChecksPassed": 25,
+    "targetedChecksFailed": 0,
+    "isolatedChromeAlerts": "passed",
+    "isolatedChromePollingSelection": "passed",
+    "productionReminderConfirmations": 0,
+    "productionTaskDispatches": 0
+  },
+  "evidencePolicy": "Operational records, addresses, user paths and screenshots are excluded; private receipts remain local."
+}
