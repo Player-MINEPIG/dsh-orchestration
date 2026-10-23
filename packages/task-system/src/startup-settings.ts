@@ -1,3 +1,4 @@
+import { deploymentPolicy, ledgerRole } from "./deployment.js";
 /** Narrow startup config editing through the host's public ConfigEditor only. */
 import { independentRemoteControls, remoteListenerEnabled, remoteExecutorPaused } from "./remote/controls.js";
 import type { Context } from "@deepseek-ai/cordis";
@@ -23,6 +24,8 @@ const Target = z
 export const TaskStartupValues = z
   .object({
     role: Role,
+    centralMode: z.enum(["host", "remote"]).optional(),
+    executionEnabled: z.boolean().optional(),
     databasePath: z.string().optional(),
     nodeId: z.string().optional(),
     nodeCapacities: z
@@ -186,8 +189,8 @@ function taskValues(raw: Raw, task: TaskSystemService | undefined) {
     executionTools: Array.isArray(raw.executionTools) ? raw.executionTools : raw.executionTools === null ? null : task?.config.executionTools ?? null,
     databasePath: resolve(typeof raw.databasePath==="string" ? raw.databasePath : task?.config.databasePath ?? ".dsh-task/tasks.sqlite"),
     nodeId: task?.config.nodeId ?? (typeof raw.nodeId==="string" ? raw.nodeId : "local"),
-    role:
-      typeof raw.role === "string" ? raw.role : (task?.config.role ?? "both"),
+    ...deploymentPolicy({ ...task?.config, ...raw } as Parameters<typeof deploymentPolicy>[0]),
+    role: ledgerRole(deploymentPolicy({ ...task?.config, ...raw } as Parameters<typeof deploymentPolicy>[0])),
     nodeCapacities: [...new Map([
       ...(Array.isArray(raw.remoteNodes) ? raw.remoteNodes : task?.config.remoteNodes ?? []).map(value=>{const node=record(value);return [String(node?.nodeId),{nodeId:String(node?.nodeId),maxConcurrent:Number(record(raw.nodeCapacityOverrides)?.[String(node?.nodeId)] ?? node?.maxConcurrent ?? 1)}] as const;}),
       ...(task?.ledger.nodeStatuses().filter(node=>node.nodeId!==task.config.nodeId).map(node=>[node.nodeId,{nodeId:node.nodeId,maxConcurrent:Number(record(raw.nodeCapacityOverrides)?.[node.nodeId] ?? task.ledger.getNode(node.nodeId).maxConcurrent ?? 1)}] as const) ?? []),
@@ -392,7 +395,7 @@ export async function saveStartupSettings(ctx: Context, value: unknown) {
       "Install and enable dsh-jev-plugin before enabling decisions",
     );
   if (input.target === "task" && (input.changes.executionAgentPreset !== undefined || input.changes.executionTools !== undefined)) {
-    if ((input.changes.role ?? task.config.role) === "planner") reject("STARTUP_EXECUTOR_REQUIRED", "Select an execution preset on an executor");
+    if (!(input.changes.executionEnabled ?? (input.changes.role ? deploymentPolicy({role:input.changes.role}).executionEnabled : deploymentPolicy(task.config).executionEnabled))) reject("STARTUP_EXECUTOR_REQUIRED", "Select an execution preset on an executor");
     if (input.changes.executionAgentPreset === undefined) reject("STARTUP_PRESET_REQUIRED", "Select a DSH agent preset before clearing the tool mask");
     const presets = ctx.get("agentPresets");
     if (!presets) reject("STARTUP_PRESET_UNAVAILABLE", "DSH agent preset registry is unavailable");
@@ -404,8 +407,8 @@ export async function saveStartupSettings(ctx: Context, value: unknown) {
   }
   const restart = Object.keys(input.changes).some(key => !(input.target === "task" ? ["nodeCapacities", "planningDecisionEnabled", "sessionDecisionEnabled"] : ["concurrency", "pollIntervalMs"]).includes(key));
   if(input.target==="task" && input.changes.databasePath!==undefined) {
-    const role=input.changes.role ?? task.config.role;
-    if(role==="executor")reject("STARTUP_DATABASE_DENIED","Only a scheduler may select its task database");
+    const policy=deploymentPolicy({...task.config,...input.changes});
+    if(policy.centralMode === "remote")reject("STARTUP_DATABASE_DENIED","Only a scheduler may select its task database");
     try { input.changes.databasePath=await validateTaskDatabasePath(input.changes.databasePath); } catch(error) { reject("STARTUP_DATABASE_INVALID",error instanceof Error?error.message:"Database path is invalid"); }
   }
   const releases: (() => void)[] = [];
@@ -429,9 +432,11 @@ export async function saveStartupSettings(ctx: Context, value: unknown) {
         const { nodeCapacities, ...selected } = input.changes;
         const next: Raw = { ...current, ...selected },
           resolved = { ...input.expected, ...input.changes };
+        const policy = deploymentPolicy(resolved);
+        if (input.changes.centralMode !== undefined || input.changes.executionEnabled !== undefined) Object.assign(next, policy);
         if(selected.databasePath!==undefined && selected.databasePath!==input.expected.databasePath)next.defaultWorkspaceId=null;
         if (nodeCapacities !== undefined) {
-          if (resolved.role === "executor")
+          if (policy.centralMode === "remote")
             reject(
               "STARTUP_CAPACITY_DENIED",
               "Only a scheduler may configure its registered executor capacities",
@@ -450,13 +455,13 @@ export async function saveStartupSettings(ctx: Context, value: unknown) {
             );
           next.nodeCapacityOverrides = { ...record(current.nodeCapacityOverrides), ...Object.fromEntries(nodeCapacities.map(node => [node.nodeId, node.maxConcurrent])) };
         }
-        if (resolved.role === "planner" && next.localNode)
+        if (input.changes.role === "planner" && next.localNode)
           reject(
             "STARTUP_ROLE_CONFLICT",
             "Remove the local executor bootstrap through the operator configuration before selecting planner-only",
           );
         if (
-          resolved.role === "executor" &&
+          policy.centralMode === "remote" &&
           Array.isArray(next.remoteNodes) &&
           next.remoteNodes.length
         )
@@ -464,15 +469,15 @@ export async function saveStartupSettings(ctx: Context, value: unknown) {
             "STARTUP_ROLE_CONFLICT",
             "This profile still owns remote node registrations and cannot become executor-only",
           );
-        if(input.changes.role!==undefined){
-          const remoteEntry=row(host,"remote"),raw=remoteEntry?.options.config;
-          if(raw){
-            const coordinator=record(raw.coordinator),limits=record(raw.executionLimits);
-            if((resolved.role==="executor" && remoteListenerEnabled(raw)) ||
-               (resolved.role==="planner" && !remoteExecutorPaused(raw) && (Number(limits?.pollIntervalMs ?? raw.pollIntervalMs ?? 0)>0 || Number(coordinator?.heartbeatIntervalMs ?? 0)>0)) ||
-               (resolved.role!=="executor" && remoteListenerEnabled(raw) && raw.authMode==="trusted-network" && !raw.trustedNetwork))
-              reject("STARTUP_ROLE_CONFLICT","The selected role conflicts with the current connection listener, polling or heartbeat. Pause the connection or adjust those settings first");
-          }
+        if (input.changes.role !== undefined) {
+          const raw = row(host,"remote")?.options.config;
+          const legacyPolicy = deploymentPolicy({role:input.changes.role});
+          if (raw && legacyPolicy.centralMode === "remote" && remoteListenerEnabled(raw)) reject("STARTUP_ROLE_CONFLICT","Disable central hosting before selecting a remote authority");
+          if (raw && !legacyPolicy.executionEnabled && !remoteExecutorPaused(raw) && (Number(record(raw.executionLimits)?.pollIntervalMs ?? raw.pollIntervalMs ?? 0)>0 || Number(record(raw.coordinator)?.heartbeatIntervalMs ?? 0)>0)) reject("STARTUP_ROLE_CONFLICT","Pause legacy execution before changing its role declaration");
+        }
+        if (input.changes.centralMode === "remote") {
+          const connection = row(host, "remote")?.options.config;
+          if (connection && remoteListenerEnabled(connection)) reject("STARTUP_AUTHORITY_CONFLICT", "Disable central hosting before selecting a remote authority");
         }
         return next;
       }
@@ -576,7 +581,7 @@ export async function saveStartupSettings(ctx: Context, value: unknown) {
       if (
         input.changes.paused === false &&
         input.expected.paused &&
-        task.config.role === "executor"
+        deploymentPolicy(task.config).centralMode === "remote"
       ) {
         const connection = record(next.coordinator);
         if (

@@ -111,7 +111,7 @@ export type AuthMode = 'ed25519' | 'trusted-network'
 /** Network identity is supplied by the transport, never by these wire fields. */
 export type TrustedNetworkEnvelope = Omit<Envelope, 'version' | 'keyId' | 'signature'> & { version: 2; authMode: 'trusted-network' }
 export type CommandEnvelope = Envelope | TrustedNetworkEnvelope
-export type AuthorizedPeer = Pick<Peer, 'nodeId' | 'audience' | 'operations' | 'workspaces' | 'capabilities'> & { managedAccess?: true; networkSource?: string }
+export type AuthorizedPeer = Pick<Peer, 'nodeId' | 'audience' | 'operations' | 'workspaces' | 'capabilities'> & { managedAccess?: true; networkSource?: string; executionEnabled?: boolean }
 export interface TransportIdentity { remoteAddress?: string; localAddress?: string; localPort?: number }
 export interface RequestVerifier {
   readonly authMode: AuthMode

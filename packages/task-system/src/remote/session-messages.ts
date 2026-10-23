@@ -23,9 +23,10 @@ export class SessionMessages {
       !provider.sendSessionMessage
     )
       return;
-    const messages = await ledger.pendingSessionMessages(policy.nodeId);
+    const messages = await ledger.pendingSessionMessages(policy.nodeId, this.options.deliverTaskReturns === false ? {kind:"message"} : undefined);
     if(!canAdmit())return;
     for (const message of messages) {
+      if (message.completion && this.options.deliverTaskReturns === false) continue;
       if (
         this.active.size >= concurrency &&
         !this.options.store.sessionMessageState(message.messageId)

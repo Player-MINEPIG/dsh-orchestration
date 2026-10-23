@@ -379,6 +379,7 @@ export interface LedgerPort {
     commandId: string,
     nodeId: string,
     providerStatus?: unknown,
+    executionEnabled?: boolean,
   ): MaybePromise<unknown>;
   /** Authority derives visibility from the authenticated executor node. */
   projectSnapshot?(nodeId: string): MaybePromise<Json>;
@@ -387,7 +388,7 @@ export interface LedgerPort {
     commandId: string,
     input: import("../project-collaboration/types.js").ProjectCollaborationInput,
   ): MaybePromise<Json>;
-  pendingSessionMessages?(nodeId: string): MaybePromise<SessionMessage[]>;
+  pendingSessionMessages?(nodeId: string, options?: {kind?: "completion" | "message"}): MaybePromise<SessionMessage[]>;
   getSessionMessage?(messageId: string): MaybePromise<SessionMessage>;
   completeSessionMessage?(
     commandId: string,

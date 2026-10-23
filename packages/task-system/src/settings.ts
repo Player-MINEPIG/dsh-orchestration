@@ -1,3 +1,7 @@
+import { ProtocolError } from "./remote/protocol.js";
+import { CentralTaskControl } from "./central-control.js";
+import { deploymentPolicy } from "./deployment.js";
+import type { ProjectRuntime } from "./project-runtime.js";
 import {executorAlertFingerprint} from "./executor-alerts.js";
 import { executorPanelSnapshot, type ExecutorPanelRecord } from "./executor-panel.js";
 import { ExecutionModelChoice, ExecutionModelsError, sameExecutionModel } from "./execution-models.js";
@@ -520,7 +524,7 @@ export class TaskPluginSettings extends TypertRemoteService {
   }
   private workflowService() {
     const service = this.ctx.get("taskSystem");
-    if (!service || service.config.role === "executor") throw new RemoteError("task/project", "Workflow center requires a planner", {reason:"PLANNER_REQUIRED"});
+    if (!service || deploymentPolicy(service.config).centralMode === "remote") throw new RemoteError("task/project", "Workflow center requires a planner", {reason:"PLANNER_REQUIRED"});
     return service.workflows;
   }
   async configureWorkflowTask(input:unknown) { return this.projectOperation(()=>this.workflowService().configureTask(projectInputs.configureWorkflowTask.parse(input))); }
@@ -546,7 +550,7 @@ export class TaskPluginSettings extends TypertRemoteService {
   async workflowPage() { return readFileSync(new URL("./workflow-page.html", import.meta.url), "utf8"); }
   private projects() {
     const task = this.ctx.get("taskSystem") as TaskSystemService | undefined;
-    if (task?.config.role === "executor")
+    if ((task && deploymentPolicy(task.config).centralMode) === "remote")
       throw new RemoteError(
         "task/project",
         "Project center requires a planner",
@@ -566,7 +570,7 @@ export class TaskPluginSettings extends TypertRemoteService {
     try {
       return await operation();
     } catch (error) {
-      if (error instanceof TaskError)
+      if (error instanceof TaskError || error instanceof ProtocolError)
         throw new RemoteError("task/project", "Project operation rejected", {
           reason: error.code,
           ...(["WORKFLOW_SCOPE","WORKFLOW_UNBOUND"].includes(error.code) ? {detail:error.message} : {}),
@@ -576,7 +580,7 @@ export class TaskPluginSettings extends TypertRemoteService {
   }
   async projectSettings() {
     const task = this.ctx.get("taskSystem") as TaskSystemService | undefined;
-    return task?.projects && task.config.role !== "executor"
+    return task?.projects && deploymentPolicy(task.config).centralMode === "host"
       ? { enabled: true, ...task.projects.settings() }
       : { enabled: false };
   }
@@ -584,12 +588,12 @@ export class TaskPluginSettings extends TypertRemoteService {
   async saveProjectExecutionSettings(input:unknown) {return this.projectOperation(()=>this.projects().saveExecutionSettings(projectInputs.saveProjectExecutionSettings.parse(input)));}
   private executorGrantService() {
     const task=this.ctx.get("taskSystem"),remote=this.ctx.get("remoteExecution");
-    if(!task || task.config.role==="planner" || !remote)throw new RemoteError("task/project","This host has no executor workspace grant service",{reason:"EXECUTOR_REQUIRED"});
+    if(!task || !deploymentPolicy(task.config).executionEnabled || !remote)throw new RemoteError("task/project","This host has no executor workspace grant service",{reason:"EXECUTOR_REQUIRED"});
     return remote;
   }
   async setExecutorAlertDisposition(input:unknown) {
     const value=projectInputs.setExecutorAlertDisposition.parse(input),task=this.ctx.get("taskSystem"),remote=this.ctx.get("remoteExecution");
-    if(!task || task.config.role==="planner")throw new RemoteError("task/project","Executor unavailable",{reason:"EXECUTOR_REQUIRED"});
+    if(!task || !deploymentPolicy(task.config).executionEnabled)throw new RemoteError("task/project","Executor unavailable",{reason:"EXECUTOR_REQUIRED"});
     const snapshot=this.localExecutorSnapshot(task);
     const alert=[...snapshot.runs.map(row=>row.alert),...snapshot.viewContext.unresolvedClaims.map(row=>row.alert)].find(alert=>alert?.recordId===value.recordId);
     if(!alert)throw new RemoteError("task/project","Alert changed; refresh the panel",{reason:"ALERT_CHANGED"});
@@ -606,7 +610,7 @@ export class TaskPluginSettings extends TypertRemoteService {
   }
   async executorWorkspaceGrants() {
     const task=this.ctx.get("taskSystem"),remote=this.ctx.get("remoteExecution");
-    if(!task || task.config.role==="planner" || !remote)return {enabled:false,nodeId:task?.config.nodeId??null,revision:0,items:[]};
+    if(!task || !deploymentPolicy(task.config).executionEnabled || !remote)return {enabled:false,nodeId:task?.config.nodeId??null,revision:0,items:[]};
     return {enabled:true,...await remote.workspaceGrantCatalog()};
   }
   async setExecutorWorkspaceGrant(input:unknown) {
@@ -649,7 +653,7 @@ export class TaskPluginSettings extends TypertRemoteService {
       const recordId=`local:${row.runId}:${row.attemptId??"none"}`,fingerprint=executorAlertFingerprint({recordId,state:row.state,outcome:row.outcome??null,disposition:row.authorityDisposition??null});
       return {...row,alert:task.ledger.executorAlerts.alert(recordId,fingerprint,["failed","blocked","partial"].includes(row.state) && !["leased","running"].includes(row.authorityDisposition?.attemptState??""))};
     }),...(observed?.records??[])]);
-    return {...snapshot,viewCapabilities:{planner:task.config.role!=="executor",executor:task.config.role!=="planner"},
+    return {...snapshot,viewCapabilities:{planner:true,executor:true},
       viewContext:{role:"executor",scope:"local",nodeId,observedAt:snapshot.sampledAt,queueObservedAt:observed?.queueObservedAt??null,
         pollState:observed?.pollState??"never",connection:observed?.connection??null,heartbeat:observed?.heartbeat??null,
         unresolvedClaims:observed?.unresolvedClaims??[],truncated:ownRuns.length>200 || observed?.truncated===true}};
@@ -658,12 +662,21 @@ export class TaskPluginSettings extends TypertRemoteService {
     const requested = projectInputs.projectSnapshot.parse(input ?? {}).view;
     const task = this.ctx.get("taskSystem") as TaskSystemService | undefined;
     if(!task) throw new RemoteError("task/project","Task service unavailable",{reason:"PROJECT_UNAVAILABLE"});
-    const view=requested ?? (task.config.role==="executor" ? "executor" : "planner");
-    if(view==="executor" && task.config.role==="planner" || view==="planner" && task.config.role==="executor")
-      throw new RemoteError("task/project","This host does not have the selected role",{reason:"VIEW_UNAVAILABLE"});
-    if(view==="executor") return this.localExecutorSnapshot(task);
-    return this.projectOperation(()=>({...this.projects().snapshot(),viewCapabilities:{planner:true,executor:task.config.role==="both"}}));
+    const view = requested ?? (task.config.centralMode === undefined && task.config.role === "executor" ? "executor" : "planner");
+    if (view === "executor") return this.localExecutorSnapshot(task);
+    if (deploymentPolicy(task.config).centralMode === "remote") {
+      const remote = this.ctx.get("remoteExecution") as RemoteExecutionService | undefined;
+      if (!remote?.coordinatorLedger || remote.settingsSnapshot().paused) throw new RemoteError("task/project", "Central task center is offline; local activity remains available", {reason:"CENTRAL_UNAVAILABLE"});
+      try {
+        const value = await remote.coordinatorLedger.projectSnapshot(task.config.nodeId);
+        if (!value || typeof value !== "object" || Array.isArray(value) || !Array.isArray(value.tasks) || !Array.isArray(value.runs) || !Array.isArray(value.projects)) throw new Error("Invalid central projection");
+        const snapshot = value as unknown as ReturnType<ProjectRuntime["snapshotForNode"]>;
+        return {...snapshot, viewCapabilities:{planner:true,executor:true},viewContext:{role:"planner",scope:"central",nodeId:task.config.nodeId}};
+      } catch { throw new RemoteError("task/project", "Central task center is offline; local activity remains available", {reason:"CENTRAL_UNAVAILABLE"}); }
+    }
+    return this.projectOperation(()=>({...this.projects().snapshot(),viewCapabilities:{planner:true,executor:true}}));
   }
+
   private sessionDispatchIndex = new SessionDispatchIndex();
   async sessionTasks(input: unknown) {
     const { sessionId } = projectInputs.sessionTasks.parse(input);
@@ -673,11 +686,11 @@ export class TaskPluginSettings extends TypertRemoteService {
     const operations = sessionDispatchOperations(task.ledger, sessionId);
     const history = await this.sessionDispatchIndex.readHistory(persistence, sessionId);
     const roots = [...new Set([...operations.taskIds, ...history.ids])];
-    const localAssigned = task.config.role !== "planner" ? this.localExecutorSnapshot(task) : undefined;
+    const localAssigned = this.localExecutorSnapshot(task);
     const assigned = localAssigned?.runs.filter(run=>run.sessionIds.includes(sessionId)) ?? [];
     for (const run of assigned) if(!roots.includes(run.taskId)) roots.push(run.taskId);
-    const baseSnapshot = task.config.role === "executor" ? localAssigned! : roots.length ? await this.projectSnapshot() : { tasks: [], runs: [] };
-    const snapshot = task.config.role === "both" && assigned.length && localAssigned ? {
+    const baseSnapshot = deploymentPolicy(task.config).centralMode === "remote" && (assigned.length || task.config.centralMode === undefined && task.config.role === "executor") ? localAssigned : roots.length ? await this.projectSnapshot() : {tasks:[],runs:[]};
+    const snapshot = deploymentPolicy(task.config).executionEnabled && assigned.length && localAssigned ? {
       ...localAssigned,tasks:[...new Map([...baseSnapshot.tasks,...localAssigned.tasks].map(row=>[row.id,row])).values()],
       runs:[...new Map([...baseSnapshot.runs,...localAssigned.runs].map(row=>[row.id,row])).values()],
     } : baseSnapshot;
@@ -698,12 +711,12 @@ export class TaskPluginSettings extends TypertRemoteService {
   async executionDirectorySettings() {
     const task = this.ctx.get("taskSystem") as TaskSystemService | undefined;
     if (!task) throw new Error("Task service unavailable");
-    return {enabled: task.config.role !== "planner", nodeId: task.config.nodeId, fallback:null, ...task.executionDirectories.settings()};
+    return {enabled: deploymentPolicy(task.config).executionEnabled, nodeId: task.config.nodeId, fallback:null, ...task.executionDirectories.settings()};
   }
 
   async saveExecutionDirectorySettings(input: unknown) {
     const task = this.ctx.get("taskSystem") as TaskSystemService | undefined;
-    if (!task || task.config.role === "planner") throw new Error("Executor required");
+    if (!task || !deploymentPolicy(task.config).executionEnabled) throw new Error("Executor required");
     return this.projectOperation(() => task.executionDirectories.save(projectInputs.saveExecutionDirectorySettings.parse(input)));
   }
   async saveProjectSettings(input: unknown) {
@@ -771,6 +784,13 @@ export class TaskPluginSettings extends TypertRemoteService {
   async readProjectReport(input:unknown){return this.projectOperation(()=>this.projects().readReport(projectInputs.readProjectReport.parse(input)));}
   async setReportRetryLimit(input:unknown){return this.projectOperation(()=>this.projects().setReportRetryLimit(projectInputs.setReportRetryLimit.parse(input)));}
   async actOnProjectTask(input: unknown) {
+    const task = this.ctx.get("taskSystem") as TaskSystemService | undefined;
+    if (task && deploymentPolicy(task.config).centralMode === "remote") {
+      const remote = this.ctx.get("remoteExecution") as RemoteExecutionService | undefined;
+      if (!remote?.coordinatorLedger?.projectCollaborate || remote.settingsSnapshot().paused) throw new RemoteError("task/project","Central task controls unavailable",{reason:"CENTRAL_UNAVAILABLE"});
+      const parsed = projectInputs.actOnProjectTask.parse(input), {commandId, ...control} = parsed;
+      return this.projectOperation(()=>remote.coordinatorLedger!.projectCollaborate(task.config.nodeId,commandId,{action:"control",control:CentralTaskControl.parse(control)}));
+    }
     return this.projectOperation(
       async () =>
         await this.projects().actOnTask(
@@ -885,7 +905,7 @@ export class TaskPluginSettings extends TypertRemoteService {
   }
   private modelAuthority(nodeId:string) {
     const task=this.ctx.get("taskSystem") as TaskSystemService|undefined;
-    if(!task || task.config.role==="executor")throw new TaskError("FORBIDDEN","Scheduler settings required");
+    if(!task || deploymentPolicy(task.config).centralMode === "remote")throw new TaskError("FORBIDDEN","Scheduler settings required");
     const node=task.ledger.getNode(nodeId);
     if(!node.enabled || nodeId===task.config.nodeId)throw new TaskError("EXECUTOR_REQUIRED","Connect the executor before setting its default model");
     return task.ledger;
@@ -1002,6 +1022,8 @@ export class TaskPluginSettings extends TypertRemoteService {
       planningDecisionEnabled: config.planningDecisionEnabled ?? true,
       nodeId: config.nodeId,
       role: config.role,
+      centralMode: config.centralMode,
+      executionEnabled: config.executionEnabled,
       databasePath: resolve(config.databasePath),
       profilePatch: editor?.documentPath ?? null,
       homePatch: homePatch && existsSync(homePatch) ? homePatch : null,

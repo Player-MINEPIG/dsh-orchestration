@@ -530,8 +530,10 @@ test("startup drafts contain only approved fields; unchanged values and reset do
   };
   const draft = ui.startupDraft("task", values);
   assert.deepEqual(Object.keys(draft).sort(), [
+    "centralMode",
     "databasePath",
     "executionAgentPreset",
+    "executionEnabled",
     "followExecutionPreset",
     "planningDecisionEnabled",
     "role",
@@ -540,12 +542,14 @@ test("startup drafts contain only approved fields; unchanged values and reset do
   assert.equal(ui.startupChanges("task", values, draft).dirty, false);
   draft.executionAgentPreset = "codex";
   draft.sessionDecisionEnabled = true;
-  draft.role = "both";
+  draft.centralMode = "host";
   const changes = ui.startupChanges("task", values, draft).changes;
   assert.equal(changes.executionAgentPreset, "codex");
   assert.equal(changes.defaultWorkspaceId, undefined);
   assert.equal(changes.sessionDecisionEnabled, true);
-  assert.equal(changes.role, "both");
+  assert.equal(changes.centralMode, "host");
+  assert.equal(changes.executionEnabled, true);
+  assert.equal(changes.role, undefined);
   assert.equal(changes.nodeId, undefined);
   assert.equal(changes.credentials, undefined);
 });

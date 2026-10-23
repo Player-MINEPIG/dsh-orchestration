@@ -62,7 +62,8 @@
     "packages/task-system/test/remote/transport-budget.test.mjs",
     "packages/task-system/test/remote/trusted-network.test.mjs",
     "packages/task-system/test/remote/workspace-grants.test.mjs",
-    "packages/task-system/test/session-titles.test.mjs"
+    "packages/task-system/test/session-titles.test.mjs",
+    "packages/task-system/test/session-duty-authority.test.mjs"
   ],
   "native": [
     "packages/task-system/test/execution-agent-preset.test.mjs",
@@ -93,7 +94,8 @@
     "tests/dsh/ptc-session-boundaries.test.mjs",
     "tests/dsh/public-tools-admission.test.mjs",
     "tests/dsh/remote-native.test.mjs",
-    "tests/dsh/trusted-network-native.test.mjs"
+    "tests/dsh/trusted-network-native.test.mjs",
+    "tests/dsh/session-duty-authority.test.mjs"
   ],
   "ui": [
     "packages/task-system/test/executor-alerts.test.mjs",

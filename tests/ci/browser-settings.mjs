@@ -100,8 +100,9 @@ export async function testSettings(browser, { output } = {}) {
     });
 
     await page.evaluate(() => mountStartup('task'));
-    const role = page.locator('#task-startup-task-role');
-    await role.selectOption('planner');
+    const role = page.locator('#task-startup-task-centralMode');
+    const execution = page.getByRole('switch', {name:'允许本机接受任务执行', exact:true});
+    await execution.uncheck();
     assert.equal(await page.locator('[data-task-executor-decision] [role=switch]').isDisabled(), true);
     assert.equal(await page.locator('[data-task-scheduler-decision] [role=switch]').isDisabled(), false);
     await page.locator('[data-task-scheduler-decision] [role=switch]').uncheck();
@@ -109,18 +110,18 @@ export async function testSettings(browser, { output } = {}) {
     await page.evaluate(() => { fixture.fail = true; });
     await page.locator('#fixture-save').click();
     await page.getByText(/STARTUP_CONFLICT/).waitFor();
-    assert.equal(await role.inputValue(), 'planner');
+    assert.equal(await role.inputValue(), 'host');
     assert.equal(await page.locator('[data-task-scheduler-decision] [role=switch]').isChecked(), false);
     await page.evaluate(() => { fixture.fail = false; });
     await page.locator('#fixture-save').click();
     await page.waitForFunction(() => fixture.reads === 1);
     const saved = await page.evaluate(() => fixture.writes.at(-1));
-    assert.deepEqual(saved.changes, { role: 'planner', planningDecisionEnabled: false });
+    assert.deepEqual(saved.changes, { centralMode:'host',executionEnabled:false,planningDecisionEnabled:false });
     assert.equal(saved.expected.nodeId, 'immutable-node');
     assert.equal(saved.changes.nodeId, undefined);
-    await role.selectOption('both');
+    await execution.check();
     await page.locator('#fixture-discard').click();
-    assert.equal(await role.inputValue(), 'planner', 'discard restores the last saved Host snapshot');
+    assert.equal(await role.inputValue(), 'host', 'discard restores the last saved Host snapshot');
     assert.equal(await page.locator('[data-task-scheduler-decision] [role=switch]').isChecked(), false);
 
     await page.evaluate(() => mountStartup('task', { writable: false, decisionAvailable: false }));
@@ -133,16 +134,23 @@ export async function testSettings(browser, { output } = {}) {
     assert.equal(await page.locator('[data-task-executor-decision] [role=switch]').isDisabled(), true);
 
     await page.evaluate(() => mountStartupSettings());
-    await role.selectOption('planner');
+    await execution.uncheck();
     await page.evaluate(() => { fixture.snapshot.task.values.role = 'executor'; fixture.snapshot.task.values.sessionDecisionEnabled = true; });
     await page.getByRole('button', { name: '刷新启动配置', exact: true }).click();
     await page.waitForFunction(() => fixture.reads === 2);
-    assert.equal(await role.inputValue(), 'planner', 'refresh retains an edited startup draft');
+    assert.equal(await role.inputValue(), 'host', 'refresh retains an edited startup draft');
     await page.getByRole('button', { name: '丢弃草稿', exact: true }).click();
-    assert.equal(await role.inputValue(), 'executor', 'discard adopts the refreshed Host snapshot');
+    assert.equal(await role.inputValue(), 'remote', 'discard adopts the refreshed Host snapshot');
     assert.equal(await page.locator('[data-task-executor-decision] [role=switch]').isChecked(), true);
     assert.equal(await page.locator('[data-task-scheduler-decision] [role=switch]').isDisabled(), true);
     assert.equal(await page.evaluate(() => fixture.writes.length), 0);
+
+    await role.selectOption('remote');
+    await execution.uncheck();
+    assert.equal(await role.inputValue(),'remote');
+    assert.equal(await execution.isChecked(),false);
+    if (output) await page.screenshot({path:join(output,'central-remote-execution-disabled.png'),fullPage:true});
+    assert.equal(await page.locator('[data-task-executor-decision] [role=switch]').isDisabled(),true);
 
     await page.evaluate(() => mountStartup('remote'));
     const port = page.locator('#task-startup-remote-connectionPort');

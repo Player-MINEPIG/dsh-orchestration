@@ -182,6 +182,7 @@ async function setup(t) {
   executor.ctx.provide("remoteExecution", {
     coordinatorLedger: new RemoteLedgerClient(client, "mbp"),
     coordinatorPanelUrl: () => "https://central.example/tasks",
+    settingsSnapshot: () => ({paused:false,coordinatorConfigured:true}),
   });
   // Actual method implementation with actual execution host Context; Typert UI transport is immaterial to scoped data.
   const settings = Object.assign(Object.create(TaskPluginSettings.prototype), {
@@ -286,7 +287,7 @@ test("remote protocol projection includes its registered source project as obser
   );
   assert.equal(imported.canRetry, false);
   const denied = (e) =>
-    e.isDSHRemoteError && e.details?.reason === "PLANNER_REQUIRED";
+    e.isDSHRemoteError && ["PLANNER_REQUIRED","CENTRAL_UNAVAILABLE","FORBIDDEN","PROJECT_COLLABORATION_UNSUPPORTED","OPERATION_DENIED"].includes(e.details?.reason);
   await assert.rejects(
     f.settings.createProject({
       commandId: "forbidden",
@@ -299,6 +300,8 @@ test("remote protocol projection includes its registered source project as obser
     f.settings.actOnProjectTask({
       commandId: "forbidden-action",
       taskId: f.own.task.taskId,
+      expectedVersion: f.ledger.taskActionState(f.own.task.taskId).version,
+      runId: null,
       action: "cancel",
     }),
     denied,

@@ -13,7 +13,7 @@ test('project RPC distinguishes executor role, unavailable planner service and b
   await assert.rejects(executor.createProject({commandId: 'no-grant', title: 'test', goal: 'test'}), roleError);
   await assert.rejects(service({config:{role:'planner'}}).projectSnapshot(), error => error.details.reason === 'PROJECT_UNAVAILABLE');
   const snapshot = {projects:[],tasks:[]};
-  assert.deepEqual(await service({config:{role:'planner'},projects:{snapshot:()=>snapshot}}).projectSnapshot(), {...snapshot,viewCapabilities:{planner:true,executor:false}});
+  assert.deepEqual(await service({config:{role:'planner'},projects:{snapshot:()=>snapshot}}).projectSnapshot(), {...snapshot,viewCapabilities:{planner:true,executor:true}});
   await assert.rejects(service({config:{role:'both'},projects:{create:async()=>{throw new TaskError('CONFLICT','PRIVATE PATH MUST NOT LEAK');}}}).createProject({commandId:'conflict',title:'test',goal:'test'}),error=>error.code==='task/project'&&error.details.reason==='CONFLICT'&&!error.message.includes('PRIVATE PATH'));
 });
 
@@ -28,13 +28,13 @@ function page() {
   return {requests,context,elements,documentEvents,action:(a,id)=>vm.runInContext('actions('+JSON.stringify(a)+','+JSON.stringify(id)+')',context),overlay:()=>elements.get('overlays').innerHTML,theme:(source,input)=>events.message({source:source==='parent'?parent:{},data:{channel:'dsh-project-runtime',method:'theme',input}}),root,content:()=>elements.get('app').innerHTML,async answer(response){const request=requests.shift();assert.ok(request);events.message({source:parent,data:{channel:'dsh-project-runtime',id:request.id,...response}});await new Promise(resolve=>setImmediate(resolve));},async retry(){await vm.runInContext("actions('reload')",context);},startRetry(){return vm.runInContext("actions('reload')",context);},startPoll(){return vm.runInContext('poll()',context);}};
 }
 const snapshot={projects:[],tasks:[],settings:{root:null,revision:0},nodes:[]};
-test('executor page shows a persistent role explanation without false zero task counts or repeated role requests', async () => {
+test('offline page offers local activity without false zero task counts or repeated role requests', async () => {
   const p=page();assert.match(p.content(),/正在读取/);assert.doesNotMatch(p.content(),/暂无任务|hub-stats|kanban-col/);
   await p.answer({error:'当前节点为执行端，项目任务中心需要调度端身份。',errorCode:'PLANNER_REQUIRED'});
-  assert.match(p.content(),/当前节点是执行端/);assert.match(p.content(),/任务中心右上角的设置/);assert.doesNotMatch(p.content(),/暂无任务|hub-stats|kanban-col/);
+  assert.match(p.content(),/项目任务中心暂不可用/);assert.match(p.content(),/本机活动/);assert.doesNotMatch(p.content(),/暂无任务|hub-stats|kanban-col/);
   await p.startPoll();assert.equal(p.requests.length,0);
   const retry=p.startRetry();assert.equal(p.requests.length,1);await p.answer({value:snapshot});await retry;
-  assert.match(p.content(),/hub-stats/);assert.doesNotMatch(p.content(),/当前节点是执行端/);
+  assert.match(p.content(),/hub-stats/);assert.doesNotMatch(p.content(),/项目任务中心暂不可用/);
 });
 test('initial read failure and stale real data stay distinct and clear after recovery', async () => {
   const p=page();await p.answer({error:'服务内部错误',errorCode:'gateway/internal'});
@@ -684,7 +684,16 @@ test('both identities switch read views without settings writes and retain selec
  const poll=p.startPoll();assert.equal(p.requests[0].input.view,'executor');await p.answer({error:'local read failure'});await poll;
  assert.match(p.content(),/保留上次/);assert.match(p.content(),/data-id="executor" aria-pressed="true"/);
 });
-test('scheduler-only page disables executor without treating network failure as identity change',async()=>{
+test('explicit unavailable activity capability disables its view without changing central identity',async()=>{
  const p=page();await p.answer({value:{...snapshot,viewContext:{role:'planner'},viewCapabilities:{planner:true,executor:false}}});
  assert.match(p.content(),/data-id="executor"[^>]*disabled/);await p.action('task-view','executor');assert.equal(p.requests.length,0);
+});
+
+test('cold central failure can switch to local activity and back without a device role',async()=>{
+ const p=page();await p.answer({error:'Central offline',errorCode:'CENTRAL_UNAVAILABLE'});
+ assert.match(p.content(),/本机活动/);
+ const local=p.action('task-view','executor');assert.equal(p.requests.length,1);assert.equal(p.requests[0].input.view,'executor');
+ await p.answer({value:{...snapshot,viewContext:{role:'executor',scope:'local'},viewCapabilities:{planner:true,executor:true}}});await local;
+ const central=p.action('task-view','planner');assert.equal(p.requests.length,1);assert.equal(p.requests[0].input.view,'planner');
+ await p.answer({value:{...snapshot,viewContext:{role:'planner'},viewCapabilities:{planner:true,executor:true}}});await central;
 });

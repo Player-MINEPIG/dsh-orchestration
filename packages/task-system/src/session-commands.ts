@@ -1,0 +1,98 @@
+import { z } from "zod";
+import { TaskError, type TaskLedger } from "./ledger.js";
+import { Workbench } from "./workbench.js";
+import type { ProjectSessionInput } from "./project-collaboration/types.js";
+import type { Json } from "./contracts.js";
+
+const Policy = z.object({allowedNodeIds:z.array(z.string()).optional(),allowedWorkspaceIds:z.array(z.string()).optional(),allowedTools:z.array(z.string()).optional(),allowedBackends:z.array(z.string()).optional(),maxDepth:z.number().int().nonnegative().optional(),maxChildren:z.number().int().nonnegative().optional(),maxDescendants:z.number().int().nonnegative().optional(),settlementQuietMs:z.number().int().min(0).max(30000).optional()}).strict();
+const text = z.string().min(1).max(200);
+export const SessionCommand = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("projects") }).strict(),
+  z.object({ kind: z.literal("create"), title: z.string().min(1).max(1000), description: z.string().max(20000).optional(), goal: z.string().max(5000).optional(), requiresConfirmation: z.boolean().optional(), policy: Policy.optional() }).strict(),
+  z.object({ kind: z.literal("bind"), taskId: text }).strict(),
+  z.object({ kind: z.literal("query") }).strict(),
+  z.object({ kind: z.literal("history"), taskId: text }).strict(),
+  z.object({ kind: z.literal("wait"), taskId: text, quietMs: z.number().int().min(0).max(30000) }).strict(),
+  z.object({ kind: z.literal("result"), outcome: z.enum(["success", "partial", "failure", "blocked", "unknown"]), summary: z.string().min(1).max(5000), report: z.object({ title: z.string().min(1).max(1000), body: z.string().max(20000), data: z.json().optional(), artifactIds: z.array(text).max(32).optional() }).strict().optional() }).strict(),
+  z.object({ kind: z.literal("retryReturn"), messageId: text }).strict(),
+]);
+export type SessionCommand = z.infer<typeof SessionCommand>;
+const json = (value: unknown): Json => JSON.parse(JSON.stringify(value));
+
+/** Commands are evaluated only by the central ledger with an authenticated node. */
+export class SessionDispatcherAuthority {
+  private db;
+  private wb;
+  constructor(private ledger: TaskLedger) {
+    this.db = ledger.managementDatabase();
+    this.wb = new Workbench(ledger);
+    this.db.exec("CREATE TABLE IF NOT EXISTS dispatcher_projects(node TEXT NOT NULL,session TEXT NOT NULL,project TEXT NOT NULL,cwd TEXT NOT NULL,PRIMARY KEY(node,session))");
+  }
+  select(nodeId: string, sessionId: string, cwd: string, projectId: string) {
+    const active = this.ledger.dispatcherForSession(nodeId, sessionId);
+    if (active && active.projectId !== projectId) throw new TaskError("CONFLICT", "Finish the current coordinated task before changing projects");
+    this.db.prepare("INSERT INTO dispatcher_projects VALUES(?,?,?,?) ON CONFLICT(node,session) DO UPDATE SET project=excluded.project,cwd=excluded.cwd").run(nodeId, sessionId, projectId, cwd);
+  }
+  execute(nodeId: string, commandId: string, input: ProjectSessionInput): Json {
+    const command = SessionCommand.parse(input.command);
+    if (command.kind === "result" && this.ledger.commandReceipt(commandId)) {
+      const {kind: _kind, ...result} = command;
+      return json(this.ledger.submitDispatcherResult(commandId, {nodeId,sessionId:input.sessionId,...result}));
+    }
+    if (command.kind === "projects") return json(this.wb.snapshot().projects.filter(project => project.state !== "archived").map(project => ({ ...project, id: project.projectId })));
+    const selected = this.db.prepare("SELECT project,cwd FROM dispatcher_projects WHERE node=? AND session=?").get(nodeId, input.sessionId);
+    if (!selected || selected.cwd !== input.cwd) throw new TaskError("FORBIDDEN", "Bind this session to a central project first");
+    const projectId = String(selected.project);
+    if (input.projectId && input.projectId !== projectId) throw new TaskError("FORBIDDEN", "Project differs from session binding");
+    const wb = this.wb.snapshot();
+    const backlogs = wb.backlogs.filter(backlog => backlog.projectId === projectId);
+    const taskIds = new Set(wb.backlogTasks.filter(link => backlogs.some(backlog => backlog.backlogId === link.backlogId)).map(link => link.taskId));
+    const snapshot = this.ledger.querySnapshot();
+    for (let changed = true; changed;) {
+      changed = false;
+      for (const task of snapshot.tasks) if (task.parentTaskId && taskIds.has(task.parentTaskId) && !taskIds.has(task.taskId)) { taskIds.add(task.taskId); changed = true; }
+    }
+    if ("taskId" in command && !taskIds.has(command.taskId)) throw new TaskError("FORBIDDEN", "Task is outside the current project");
+    const projectHistory = (ids: Set<string>) => ({
+      tasks:snapshot.tasks.filter(task=>ids.has(task.taskId)).map(task=>({taskId:task.taskId,title:task.title,description:task.description,goal:task.goal,state:task.state,parentTaskId:task.parentTaskId,parentRunId:task.parentRunId,confirmation:task.confirmation,actionVersion:this.ledger.taskActionState(task.taskId).version})),
+      runs:snapshot.runs.filter(run=>ids.has(run.taskId)).map(run=>({runId:run.runId,taskId:run.taskId,parentRunId:run.parentRunId,state:run.state,reviewStatus:run.reviewStatus,resultSummary:run.resultSummary,createdAt:run.createdAt,updatedAt:run.updatedAt,route:run.route && {nodeId:run.route.nodeId,provider:run.route.provider,model:run.route.model,reasoningEffort:run.route.reasoningEffort,backend:run.route.backend}})),
+      reports:snapshot.reports.filter(report=>ids.has(report.taskId)).map(report=>({reportId:report.reportId,taskId:report.taskId,runId:report.runId,kind:report.kind,title:report.title,body:report.body,data:report.data,createdAt:report.createdAt})),
+    });
+    switch (command.kind) {
+      case "create": {
+        const {kind: _kind, ...intent} = command;
+        const receipt = this.ledger.createTask(commandId, intent);
+        const backlog = backlogs[0];
+        if (!backlog) throw new TaskError("NOT_FOUND", "Project backlog unavailable");
+        this.wb.manage(`${commandId}:link`, "link_backlog_task", {backlogId: backlog.backlogId, taskId: receipt.value.taskId});
+        return json(receipt);
+      }
+      case "bind": {
+        const backlog = backlogs.find(backlog => wb.backlogTasks.some(link => link.backlogId === backlog.backlogId && link.taskId === command.taskId));
+        if (!backlog) throw new TaskError("FORBIDDEN", "Draft is outside the selected project");
+        return json(this.ledger.bindDispatcher(commandId, {nodeId, sessionId: input.sessionId, cwd: input.cwd, projectId, taskId: command.taskId, backlogId: backlog.backlogId}));
+      }
+      case "query": return json(projectHistory(taskIds));
+      case "history": {
+        const projected = projectHistory(new Set([command.taskId])), history = this.ledger.history(command.taskId);
+        return json({task:projected.tasks[0],runs:projected.runs,reports:projected.reports,
+          artifacts:history.artifacts.map(({uri:_uri,...metadata})=>metadata),
+          events:history.events.map(({detail:_detail,...metadata})=>metadata),
+          resultReturns:history.resultReturns.filter(message=>message.nodeId===nodeId && message.sessionId===input.sessionId).map(message=>({messageId:message.messageId,taskId:message.taskId,state:message.state,deliveryAttempts:message.deliveryAttempts,lastDeliveryError:message.lastDeliveryError,lastAttemptAt:message.lastAttemptAt,nextAttemptAt:message.nextAttemptAt,createdAt:message.createdAt,updatedAt:message.updatedAt})),
+        });
+      }
+      case "wait": return json(this.ledger.allSettled(command.taskId, command.quietMs, undefined, true));
+      case "result": {
+        const active = this.ledger.dispatcherForSession(nodeId, input.sessionId);
+        if (!active || active.projectId !== projectId || active.cwd !== input.cwd) throw new TaskError("FORBIDDEN", "Session has no active dispatcher in this project");
+        const {kind: _kind, ...result} = command;
+        return json(this.ledger.submitDispatcherResult(commandId, {nodeId, sessionId: input.sessionId, ...result}));
+      }
+      case "retryReturn": {
+        const origin = this.ledger.getSessionMessage(command.messageId).completion?.origin;
+        if (origin?.kind !== "session" || origin.nodeId !== nodeId || origin.sessionId !== input.sessionId || origin.cwd !== input.cwd) throw new TaskError("FORBIDDEN", "Only the original session can retry this result");
+        return json(this.ledger.retryTaskReturn(commandId, command.messageId));
+      }
+    }
+  }
+}

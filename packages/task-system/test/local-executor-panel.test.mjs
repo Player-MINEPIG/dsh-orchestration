@@ -21,9 +21,9 @@ function fixture(t,role='executor') {
 }
 test('local queue, durable claim uncertainty, acknowledged history and parents survive coordinator outage',async t=>{
  const f=fixture(t);f.store.saveOutbound('claim',{operation:'claim',payload:{runId:f.run.runId,secret:'not displayed'},state:'uncertain'});
- let view=await f.settings.projectSnapshot();assert.equal(view.viewContext.scope,'local');assert.equal(view.viewContext.pollState,'failed');assert.equal(view.tasks[0].stateLabel,'领取未确认');assert.equal(view.viewCapabilities.planner,false);
+ let view=await f.settings.projectSnapshot();assert.equal(view.viewContext.scope,'local');assert.equal(view.viewContext.pollState,'failed');assert.equal(view.tasks[0].stateLabel,'领取未确认');assert.equal(view.viewCapabilities.planner,true);
  f.save('acknowledged');view=await f.settings.projectSnapshot();assert.equal(view.tasks.length,1);assert.equal(view.tasks[0].stateLabel,'结果已回传');assert.equal(view.tasks[0].parentTaskId,'parent');assert.equal(view.runs[0].parentRunId,'parent-run');assert.deepEqual(view.runs[0].sessionIds,['actual-session']);assert.equal(view.tasks[0].report,'actual report');assert.doesNotMatch(JSON.stringify(view),/secret|must never/);assert.equal(f.calls,0);
- await assert.rejects(f.settings.projectSnapshot({view:'planner'}),e=>e.details.reason==='VIEW_UNAVAILABLE');
+ await assert.rejects(f.settings.projectSnapshot({view:'planner'}),e=>e.details.reason==='CENTRAL_UNAVAILABLE');
 });
 for(const role of ['executor','both'])test(`${role} session view uses exact local assignment with no remote snapshot or sibling leak`,async t=>{
  const f=fixture(t,role);f.save();

@@ -67,10 +67,10 @@ test('both uses configured remote authority; paused or missing coordinator never
  let localCalls=0,remoteCalls=0;
  const local={projectCollaborate:()=>{localCalls++;return 'local';}};
  const remote={settingsSnapshot:()=>({coordinatorConfigured:true,paused:false}),coordinatorLedger:{projectCollaborate:()=>{remoteCalls++;return 'remote';}}};
- assert.equal(await collaborationAuthority('both',local,remote)('mbp','id',{}),'remote');
+ assert.equal(await collaborationAuthority('both',local,remote)('mbp','id',{action:'status',sessionId:'s',cwd:'/tmp/p'}),'remote');
  assert.equal(localCalls,0);assert.equal(remoteCalls,1);
  assert.throws(()=>collaborationAuthority('both',local,{...remote,settingsSnapshot:()=>({coordinatorConfigured:true,paused:true})}),/第二个中央/);
  assert.throws(()=>collaborationAuthority('both',local,{settingsSnapshot:remote.settingsSnapshot}),/第二个中央/);
  assert.throws(()=>collaborationAuthority('executor',local),/第二个中央/);
- assert.equal(await collaborationAuthority('both',local)('mbp','id',{}),'local');
+ assert.equal(await collaborationAuthority('both',local)('mbp','id',{action:'status',sessionId:'s',cwd:'/tmp/p'}),'local');
 });

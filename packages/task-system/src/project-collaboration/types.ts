@@ -1,7 +1,8 @@
 import type { ExecutionRoute } from "../contracts.js";
 import type { ExecutionModelChoice } from "../execution-models.js";
-export interface ProjectCollaborationInput {
-  action: "activate" | "status" | "nodes" | "dispatch" | "update" | "submit";
+export interface ProjectSessionInput {
+  action: "session" | "activate" | "status" | "nodes" | "dispatch" | "update" | "submit";
+  command?: import("../session-commands.js").SessionCommand;
   sessionId: string;
   cwd: string;
   composition?: Extract<import("../contracts.js").DispatchOrigin,{kind:"session"}>["composition"];
@@ -26,3 +27,11 @@ export interface CollaborationSummary {
   state: "active" | "pending_review";
   updatedAt: string;
 }
+
+export type ProjectCollaborationInput = ProjectSessionInput | {
+  action: "control";
+  control: import("../central-control.js").CentralTaskControl;
+  sessionId?: never;
+  cwd?: never;
+  composition?: never;
+};

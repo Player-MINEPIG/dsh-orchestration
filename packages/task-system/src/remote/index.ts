@@ -1,3 +1,5 @@
+import { TaskReturnInbox } from "./task-return-inbox.js";
+import { deploymentPolicy, ledgerRole, type DeploymentPolicy } from "../deployment.js";
 import { executorAlertFingerprint, type ExecutorAlert } from "../executor-alerts.js";
 import {
   workspaceGrantCatalog,
@@ -74,6 +76,8 @@ export interface Config {
   paused?: boolean;
   pauseScope?: "executor";
   role: Role;
+  centralMode?: DeploymentPolicy["centralMode"];
+  executionEnabled?: boolean;
   nodeId: string;
   statePath: string;
   exposeHttp: boolean;
@@ -174,7 +178,8 @@ const networkPolicySchema = z.object({
         nickname: z.string(),
         role: z
           .union([z.const("planner"), z.const("executor"), z.const("both")])
-          .required(),
+          .required(false),
+        executionEnabled: z.boolean().required(false),
         audience: z.string().required(),
         operations: z.array(operationSchema).required(),
         workspaces: z.array(z.string()).required(),
@@ -321,12 +326,15 @@ export interface TaskSystemPort {
   programs?: ProgramRegistry;
   executionDirectories?: { validatedRoot(): string | null };
   ledger: LedgerPort;
+  taskReturns?: {deliver(message: import("./ports.js").SessionMessage, signal?: AbortSignal): Promise<string>};
   native?: NativeExecutionPort;
   config?: {
     localNode?: {
       models: { provider: string; model: string; reasoningEfforts: string[] }[];
     } | null;
     role?: "planner" | "executor" | "both";
+    centralMode?: DeploymentPolicy["centralMode"];
+    executionEnabled?: boolean;
     officialBackends?: OfficialBackend[];
     decisionBindings?: Record<string, string>;
     autoAdmitObservations?: boolean;
@@ -358,6 +366,7 @@ export class RemoteExecutionService extends Service {
   private disposal?: Promise<void>;
   private modelControl?: ExecutorModelControl;
   private readonly modelInventory: ExecutionModelInventory;
+  private returnInbox?: TaskReturnInbox;
   private heartbeatTimer?: ReturnType<typeof setInterval>;
   private heartbeatPending?: Promise<unknown>;
   lastHeartbeatFailed = false;
@@ -388,8 +397,9 @@ export class RemoteExecutionService extends Service {
         }
       },
     });
+    const policy = deploymentPolicy({...config, ...currentTask()?.config});
     config = {
-      ...config,
+      ...config, ...policy, role: ledgerRole(policy),
       ...independentRemoteControls(config),
       paused: config.paused,
     };
@@ -410,7 +420,7 @@ export class RemoteExecutionService extends Service {
       config.paused === true && !config.exposeHttp ? undefined : store;
     if (config.paused === true && !config.exposeHttp) return;
     insist(store, "RECOVERY_STORE_REQUIRED", 503);
-    if (config.exposeHttp && config.role !== "executor")
+    if (config.exposeHttp && config.centralMode === "host")
       this.gateway = new RemoteGateway({
         role: config.role,
         nodeId: config.nodeId,
@@ -435,7 +445,7 @@ export class RemoteExecutionService extends Service {
     return this.store ??= new RecoveryStore(resolve(this.config.statePath));
   }
   async workspaceGrantCatalog(): Promise<WorkspaceGrantCatalog> {
-    insist(this.config.role !== "planner", "EXECUTOR_ROLE_REQUIRED", 403);
+    insist(this.config.executionEnabled === true, "EXECUTOR_ROLE_REQUIRED", 403);
     return workspaceGrantCatalog({
       nodeId: this.config.nodeId,
       store: this.workspaceGrantStore(),
@@ -448,7 +458,7 @@ export class RemoteExecutionService extends Service {
   }
   async setLocalWorkspaceGrant(input: unknown) {
     const selection = SetLocalWorkspaceGrant.parse(input);
-    insist(this.config.role !== "planner", "EXECUTOR_ROLE_REQUIRED", 403);
+    insist(this.config.executionEnabled === true, "EXECUTOR_ROLE_REQUIRED", 403);
     insist(
       !this.ctx.get("taskSystem")?.native?.activeCount,
       "CONFIGURATION_BUSY",
@@ -543,6 +553,8 @@ export class RemoteExecutionService extends Service {
     }
     return {
       role: this.config.role,
+      centralMode: this.config.centralMode,
+      executionEnabled: this.config.executionEnabled,
       nodeId: this.config.nodeId,
       paused: this.config.paused === true,
       coordinatorConfigured: Boolean(this.config.coordinator),
@@ -594,6 +606,7 @@ export class RemoteExecutionService extends Service {
     this.configurationPaused = true;
     const releases: (() => void)[] = [];
     try {
+      if (this.returnInbox) releases.push(await this.returnInbox.beginConfigurationEdit());
       if (this.modelControl)
         releases.push(await this.modelControl.beginConfigurationEdit());
       for (const worker of this.workers)
@@ -878,22 +891,12 @@ export class RemoteExecutionService extends Service {
         ),
       "INVALID_NATIVE_ROUTES",
     );
-    insist(
-      this.config.role !== "planner" || this.config.pollIntervalMs === 0,
-      "PLANNER_CANNOT_POLL_EXECUTION",
-      403,
-    );
     const heartbeatIntervalMs = coordinator.heartbeatIntervalMs ?? 0;
     insist(
       Number.isSafeInteger(heartbeatIntervalMs) &&
         (heartbeatIntervalMs === 0 ||
           (heartbeatIntervalMs >= 1000 && heartbeatIntervalMs <= 3600000)),
       "INVALID_HEARTBEAT_INTERVAL",
-    );
-    insist(
-      this.config.role !== "planner" || heartbeatIntervalMs === 0,
-      "EXECUTOR_HEARTBEAT_REQUIRED",
-      403,
     );
     if (this.config.observationForwarding) {
       insist(
@@ -930,7 +933,16 @@ export class RemoteExecutionService extends Service {
       this.config.nodeId,
     ));
     this.workerLedger = remote;
-    if (this.config.role !== "planner") {
+    this.returnInbox = new TaskReturnInbox(remote, this.config.nodeId, (message, signal) => {
+      const delivery = (this.ctx.get("taskSystem") as TaskSystemPort | undefined)?.taskReturns;
+      insist(delivery, "TASK_RETURNS_UNSUPPORTED", 503);
+      return delivery.deliver(message, signal);
+    }, async () => {
+      if (coordinator.authMode === "trusted-network" && !this.client!.cachedExecutorIdentity()) await this.client!.executorIdentity();
+    });
+    try { if (coordinator.authMode === "trusted-network") await this.client.executorIdentity({signal:AbortSignal.timeout(1000)}); } catch { /* The inbox retries the same authenticated handshake after recovery. */ }
+    this.returnInbox.start(Math.max(100, this.config.pollIntervalMs || 1000));
+    if (this.config.executionEnabled === true) {
       const currentTaskSystem = () =>
         this.ctx.get("taskSystem") as TaskSystemPort | undefined;
       const currentNative = (): NativeExecutionPort | undefined =>
@@ -1010,11 +1022,7 @@ export class RemoteExecutionService extends Service {
         inventory: this.modelInventory,
       });
       this.modelControl.start();
-    } else
-      insist(
-        this.config.pollIntervalMs === 0,
-        "NATIVE_ROUTES_REQUIRED_FOR_POLLING",
-      );
+    }
     if (this.config.observationForwarding) {
       const binding = this.config.workspaces.find(
         (workspace) =>
@@ -1026,7 +1034,7 @@ export class RemoteExecutionService extends Service {
         observationForwarder(remote, binding),
       );
     }
-    if (heartbeatIntervalMs > 0) {
+    if (heartbeatIntervalMs > 0 && this.config.executionEnabled === true) {
       const tick = (): void => {
         if (!this.active || this.heartbeatPending || this.configurationPaused)
           return;
@@ -1066,7 +1074,7 @@ export class RemoteExecutionService extends Service {
   private async sendHeartbeat(): Promise<unknown> {
     insist(this.config.paused !== true, "REMOTE_PAUSED", 409);
     insist(this.active, "DRAINING", 503);
-    insist(this.config.role !== "planner", "EXECUTOR_HEARTBEAT_REQUIRED", 403);
+    insist(this.config.executionEnabled === true, "EXECUTOR_HEARTBEAT_REQUIRED", 403);
     insist(
       this.coordinatorLedger && this.config.coordinator,
       "COORDINATOR_REQUIRED",
@@ -1122,6 +1130,7 @@ export class RemoteExecutionService extends Service {
     return receipt;
   }
   createWorker(provider: ExecutionProvider): ExecutorWorker {
+    insist(this.config.executionEnabled === true, "EXECUTION_DISABLED", 403);
     insist(this.config.paused !== true, "REMOTE_PAUSED", 409);
     insist(this.active, "DRAINING", 503);
     insist(!this.configurationPaused, "CONFIGURATION_BUSY", 409);
@@ -1131,6 +1140,7 @@ export class RemoteExecutionService extends Service {
     if (programs) provider = programs.provider(provider);
     const service = this;
     const worker = new ExecutorWorker({
+      deliverTaskReturns: false,
       observeDispositions:()=>this.observeExecutorDispositions(),
       modelAdmission: (route) =>
         route.backend
@@ -1237,6 +1247,7 @@ export class RemoteExecutionService extends Service {
     this.active = false;
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
     await this.modelControl?.dispose();
+    await this.returnInbox?.dispose();
     this.observationDisposer?.();
     if (this.carrierStartup) await Promise.allSettled([this.carrierStartup]);
     await this.carrierClose?.();
@@ -1249,7 +1260,7 @@ export class RemoteExecutionService extends Service {
     // Workers have drained; release the client guard only for the final offline sample.
     this.configurationRelease?.();
     this.configurationRelease = undefined;
-    if (this.coordinatorLedger && this.config.role !== "planner") {
+    if (this.coordinatorLedger && this.config.executionEnabled === true) {
       this.lastHeartbeatSample = Math.max(
         Date.now(),
         this.lastHeartbeatSample + 1,
@@ -1280,9 +1291,9 @@ declare module "@deepseek-ai/cordis" {
 }
 export async function apply(ctx: Context, config: Config): Promise<void> {
   config = { ...config, ...independentRemoteControls(config) };
-  const hostRole = (ctx.get("taskSystem") as TaskSystemPort | undefined)?.config
-    ?.role;
-  if (hostRole) config = { ...config, role: hostRole };
+  const taskPolicy = (ctx.get("taskSystem") as TaskSystemPort | undefined)?.config;
+  const policy = deploymentPolicy({...config, ...taskPolicy});
+  config = {...config, ...policy, role:ledgerRole(policy)};
   if (config.trustedNetwork)
     config = {
       ...config,
@@ -1322,7 +1333,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     );
   } else insist(!config.trustedNetwork, "AUTH_CONFIG_CONFLICT");
   insist(
-    !config.exposeHttp || config.role !== "executor",
+    !config.exposeHttp || config.centralMode === "host",
     "EXECUTOR_CANNOT_EXPOSE_COORDINATOR",
     403,
   );
@@ -1353,7 +1364,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   }
   ctx.effect(() => () => service.dispose(), "remote execution drain and close");
   try {
-    if (config.paused !== true && config.role !== "planner")
+    if (config.paused !== true && (config.centralMode === "remote" || taskPolicy?.centralMode === undefined && !!config.coordinator))
       await service.configureCoordinator(taskSystem);
   } catch (error) {
     await service.dispose();

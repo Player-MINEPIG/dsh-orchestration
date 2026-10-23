@@ -120,9 +120,9 @@ test('trusted network preserves operation, workspace, capability, route and payl
   assert.equal(f.calls.length,0)
 })
 
-test('trusted network executor operation requires the configured peer role',async t => {
+test('trusted network executor operation requires explicit execution permission',async t => {
   const f = fixture(t,{ policy: policy(49152,{ peers: [{ ...peer,role: 'planner' }] }) })
-  await assert.rejects(f.gateway.handle(body(),context()),/ROLE/)
+  await assert.rejects(f.gateway.handle(body(),context()),/EXECUTION_DISABLED|OPERATION_DENIED/)
   assert.equal(f.calls.length,0)
 })
 
