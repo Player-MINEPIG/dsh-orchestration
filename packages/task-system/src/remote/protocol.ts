@@ -68,7 +68,7 @@ export function executorWorkspaces(
 }
 
 export type Role = 'planner' | 'executor' | 'both'
-export const EXECUTOR_OPERATIONS = ['claim', 'renew', 'submit', 'cancel', 'receipt', 'bindSession', 'markRunning', 'getRun', 'getAttempt', 'acknowledgeCancellation', 'listWork', 'observe', 'delegate', 'taskHistory', 'taskWait', 'taskNote', 'taskReport', 'heartbeat', 'nodeStatus', 'retryBeforeEffects', 'offerApproval', 'approvalStatus', 'cancelApproval', 'executorIdentity', 'sessionContext', 'selectTaskSession', 'sessionMessages', 'sessionMessageReply', 'projectSnapshot', 'projectCollaborate', 'executionModelRequests', 'completeExecutionModels', 'executionModelView', 'reportAdmission'] as const
+export const EXECUTOR_OPERATIONS = ['claim', 'renew', 'submit', 'cancel', 'receipt', 'bindSession', 'markRunning', 'getRun', 'executionDisposition', 'getAttempt', 'acknowledgeCancellation', 'listWork', 'observe', 'delegate', 'taskHistory', 'taskWait', 'taskNote', 'taskReport', 'heartbeat', 'nodeStatus', 'retryBeforeEffects', 'offerApproval', 'approvalStatus', 'cancelApproval', 'executorIdentity', 'sessionContext', 'selectTaskSession', 'sessionMessages', 'sessionMessageReply', 'projectSnapshot', 'projectCollaborate', 'executionModelRequests', 'completeExecutionModels', 'executionModelView', 'reportAdmission'] as const
 export type Operation = typeof EXECUTOR_OPERATIONS[number]
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json }
 export const DEFAULT_MAX_BODY_BYTES = 64 * 1024
@@ -173,7 +173,7 @@ export function parseCommandEnvelope(body: Uint8Array | string, authMode: AuthMo
   for (const key of ['nodeId', 'audience', 'commandId', 'nonce',...(authMode === 'ed25519' ? ['keyId'] : [])]) insist(identifier(e[key]), `INVALID_${key}`)
   insist(Number.isSafeInteger(e.sequence) && Number(e.sequence) > 0, 'INVALID_SEQUENCE')
   insist(Number.isSafeInteger(e.issuedAt) && Number.isSafeInteger(e.expiresAt), 'INVALID_TIME')
-  insist(['claim','renew','submit','cancel','receipt','bindSession','markRunning','getRun','getAttempt','acknowledgeCancellation','listWork','observe','delegate','taskHistory','taskWait','taskNote','taskReport','heartbeat','nodeStatus','retryBeforeEffects','offerApproval','approvalStatus','cancelApproval','executorIdentity','sessionContext','selectTaskSession','sessionMessages','sessionMessageReply','projectSnapshot','projectCollaborate','executionModelRequests','completeExecutionModels','executionModelView','reportAdmission'].includes(String(e.operation)), 'UNKNOWN_OPERATION')
+  insist(['claim','renew','submit','cancel','receipt','bindSession','markRunning','getRun','executionDisposition','getAttempt','acknowledgeCancellation','listWork','observe','delegate','taskHistory','taskWait','taskNote','taskReport','heartbeat','nodeStatus','retryBeforeEffects','offerApproval','approvalStatus','cancelApproval','executorIdentity','sessionContext','selectTaskSession','sessionMessages','sessionMessageReply','projectSnapshot','projectCollaborate','executionModelRequests','completeExecutionModels','executionModelView','reportAdmission'].includes(String(e.operation)), 'UNKNOWN_OPERATION')
   insist(isRecord(e.payload), 'INVALID_PAYLOAD')
   if (authMode === 'ed25519') insist(typeof e.signature === 'string' && /^[A-Za-z0-9_-]{86}$/.test(e.signature), 'INVALID_SIGNATURE', 401)
   canonical(e)

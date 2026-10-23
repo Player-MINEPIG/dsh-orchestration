@@ -1,3 +1,4 @@
+import type { ExecutorAlert, ExecutionDisposition } from "./executor-alerts.js";
 /** Read-only public facts collected on this executor; never a scheduler mirror. */
 export interface ExecutorPanelRecord {
   taskId: string;
@@ -20,9 +21,16 @@ export interface ExecutorPanelRecord {
   detail?: string;
   outcome?: string;
   attemptId?: string;
+  authorityDisposition?: ExecutionDisposition;
+  dispositionObservedAt?: string;
+  alert?: ExecutorAlert;
+  authorityEndpoint?: string;
+  authorityNotice?: string;
 }
 
 function presentation(row: ExecutorPanelRecord) {
+  if(row.alert?.acknowledged && row.alert.canAcknowledge)return {status:"handled",stateLabel:"本机提醒已确认"};
+  if((row.authorityDisposition?.taskState==="cancelled" || row.authorityDisposition?.runState==="cancelled") && ["acknowledged","cancelled","failed","blocked","partial","succeeded"].includes(row.state))return {status:"cancelled",stateLabel:"调度端任务已取消 · 本机已结束"};
   switch (row.state) {
     case "queued": return { status: "queued", stateLabel: "最近观察到等待领取" };
     case "claim_rejected": return { status: "error", stateLabel: "尚未领取 · 调度端拒绝" };
@@ -47,7 +55,7 @@ export function executorPanelSnapshot(nodeId: string, records: readonly Executor
   // Sources are ordered by ownership: a durable local dispatch supersedes queue observations.
   for (const row of records) if (row.nodeId === nodeId) byRun.set(row.runId, row);
   const runs = [...byRun.values()].map(row => ({
-    id: row.runId, taskId: row.taskId, parentTaskId: row.parentTaskId ?? null,
+    id: row.runId, taskId: row.taskId, alert:row.alert??null, authorityEndpoint:row.authorityEndpoint??null,authorityNotice:row.authorityNotice??null,authorityDisposition:row.authorityDisposition??null, dispositionObservedAt:row.dispositionObservedAt??null, parentTaskId: row.parentTaskId ?? null,
     parentRunId: row.parentRunId ?? null, state: row.state, ...presentation(row),
     node: row.nodeId, model: row.model ?? null, createdAt: row.time,
     sessionIds: row.sessionIds, workspaceId: row.workspaceId ?? null,
@@ -57,7 +65,7 @@ export function executorPanelSnapshot(nodeId: string, records: readonly Executor
   const latest = new Map<string, ExecutorPanelRecord>();
   for (const row of byRun.values()) if (!latest.has(row.taskId) || row.time >= latest.get(row.taskId)!.time) latest.set(row.taskId, row);
   const tasks = [...latest.values()].map(row => ({
-    id: row.taskId, title: row.title.slice(0, 500), description: row.description.slice(0, 8000),
+    id: row.taskId, alert:row.alert??null,authorityEndpoint:row.authorityEndpoint??null,authorityNotice:row.authorityNotice??null,authorityDisposition:row.authorityDisposition??null,dispositionObservedAt:row.dispositionObservedAt??null,title: row.title.slice(0, 500), description: row.description.slice(0, 8000),
     parentTaskId: row.parentTaskId ?? null, parentRunId: row.parentRunId ?? null,
     project: row.projectId ?? "unassigned", projectTitle: row.projectTitle ?? null,
     ...presentation(row), node: row.nodeId, model: row.model ?? null,

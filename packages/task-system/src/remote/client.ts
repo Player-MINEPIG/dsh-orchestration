@@ -1,3 +1,4 @@
+import { ExecutionDisposition } from "../executor-alerts.js";
 import {
   ExecutionCatalogRequest,
   ExecutionModelViewPage,
@@ -798,6 +799,13 @@ export class RemoteLedgerClient implements LedgerPort {
         ? { allowRetry: input.allowRetry }
         : {}),
     });
+  }
+  async executionDisposition(input:{runId:string;attemptId?:string}) {
+    const value=ExecutionDisposition.parse(await this.command("executionDisposition",`read-${randomUUID()}`,input));
+    insist(value.runId===input.runId && (!input.attemptId || value.attemptId===input.attemptId),"EXECUTION_DISPOSITION_MISMATCH",403);
+    const expected=this.client.cachedExecutorIdentity();
+    insist(expected && expected.schedulerId===value.schedulerId,"SCHEDULER_IDENTITY_CHANGED",409);
+    return value;
   }
   getRun(runId: string): Promise<Run | undefined> {
     return this.command("getRun", `read-${randomUUID()}`, { runId });

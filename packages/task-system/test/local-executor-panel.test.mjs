@@ -11,7 +11,7 @@ function fixture(t,role='executor') {
  const store=new RecoveryStore(':memory:'),ledger=TaskLedger.open(':memory:');t.after(()=>{store.close();ledger.close();});
  const nodeId='mbp',run={runId:'run-child',taskId:'child',state:'queued',updatedAt:'2026-10-22T01:00:00Z',parentRunId:'parent-run',route:{nodeId,model:'fixture',workspaceId:'mbp-workspace'},configuration:{secret:'must never reach browser'},intentSnapshot:{title:'Queued child',description:'Original workload'}};
  const task={taskId:'child',parentTaskId:'parent',title:'Child analysis',description:'Read only analysis'};
- const worker={queueObservedAt:'2026-10-22T02:00:00Z',lastPollFailed:true,queueSnapshot:()=>[run]};
+ const worker={queueObservedAt:'2026-10-22T02:00:00Z',lastPollFailed:true,isExecuting:()=>false,queueSnapshot:()=>[run]};
  const remote=Object.assign(Object.create(RemoteExecutionService.prototype),{store,workers:new Set([worker]),config:{role:'executor',nodeId,paused:false,pollIntervalMs:5000,concurrency:1},active:true,heartbeatTimer:1,lastHeartbeatAcknowledgedAt:'2026-10-22T03:00:00Z',lastHeartbeatFailed:false});
  let calls=0;remote.coordinatorLedger={projectSnapshot(){calls++;throw Error('remote forbidden');}};
  const taskSystem={config:{role,nodeId},ledger,results:{pending:()=>[]},projects:{snapshot:()=>({projects:[],tasks:[],runs:[],viewContext:{role:'planner'}})}};
@@ -33,7 +33,7 @@ for(const role of ['executor','both'])test(`${role} session view uses exact loca
 test('recovery panel bounds history and returns claim metadata without payloads',t=>{
  const f=fixture(t);for(let i=0;i<205;i++)f.store.createDispatch({attemptId:'history-'+i,state:'acknowledged',claim:{task:f.task,run:{...f.run,runId:'history-'+i}},lease:{},sessionId:'s'});
  f.save('uncertain');assert.equal(f.store.panelDispatches().length,201);assert.equal(f.store.panelDispatches()[0].state,'uncertain');assert.equal(f.remote.executorPanel().truncated,true);
- f.store.saveOutbound('claim',{operation:'claim',payload:{runId:'orphan-run',credential:'never return'},state:'uncertain'});assert.deepEqual(f.store.panelClaims(),[{runId:'orphan-run',state:'uncertain'}]);
+ f.store.saveOutbound('claim',{operation:'claim',payload:{runId:'orphan-run',credential:'never return'},state:'uncertain'});assert.deepEqual(f.store.panelClaims(),[{commandId:'claim',runId:'orphan-run',state:'uncertain',endpoint:'',audience:''}]);
 });
 test('projection de-duplicates queue and attempts by Run while retaining other Runs of the Task',()=>{
  const row={taskId:'t',runId:'r',nodeId:'mbp',title:'T',description:'D',state:'queued',source:'local-queue',time:'2026-10-22T01:00:00Z',sessionIds:[]};

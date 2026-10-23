@@ -3246,6 +3246,7 @@ h(
       "sessionTasks",
       "projectExecutionSettings",
       "saveProjectExecutionSettings",
+      "setExecutorAlertDisposition",
       "executorWorkspaceGrants",
       "setExecutorWorkspaceGrant",
       "projectSettings",

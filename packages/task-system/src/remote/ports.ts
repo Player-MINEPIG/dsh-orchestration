@@ -433,6 +433,7 @@ export interface LedgerPort {
     commandId: string,
     input: LeaseRef & { witness: SafeRetryWitness; allowRetry?: boolean },
   ): MaybePromise<Receipt<Run>>;
+  executionDisposition?(input:{runId:string;attemptId?:string}): MaybePromise<import("../executor-alerts.js").ExecutionDisposition>;
   getRun(runId: string): MaybePromise<Run | undefined>;
   getAttempt(attemptId: string): MaybePromise<Attempt | undefined>;
   pendingRuns(nodeId: string): MaybePromise<Run[]>;

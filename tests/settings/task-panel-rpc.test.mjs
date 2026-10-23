@@ -29,6 +29,20 @@ test('actual browser Remote descriptors and host Typert Gateway agree for initia
   assert.equal((await read('projectSnapshot',{view:'planner'})).viewContext.role,'planner');
   assert.equal((await read('sessionTasks',{sessionId:'nonexistent-isolated-session'})).tasks.length,0);
   assert.equal(calls.length,4);console.log('actual Remote→Gateway calls passed:',calls.map(x=>x.method).join(','));
+  ctx.taskSystem.executionDirectories.save({root:h.dir,expectedRevision:0});
+  h.ledger.registerNode('local-executor',{nodeId:'local',roles:['executor'],enabled:true,workspaceIds:[],capabilities:[],models:[{provider:'test-offline',model:'script',reasoningEfforts:[]}]});
+  const task=h.ledger.createTask('alert-task',{title:'Native-only terminal exception'}).value,run=h.ledger.createRun('alert-run',{taskId:task.taskId,route:{nodeId:'local',provider:'test-offline',model:'script',requiredCapabilities:[]}}).value;
+  const claim=h.ledger.claim('alert-claim',{runId:run.runId,nodeId:'local',ttlMs:10000}).value;
+  h.ledger.submit('alert-result',{runId:run.runId,attemptId:claim.attempt.attemptId,nodeId:'local',fence:claim.attempt.fence,outcome:'blocked',summary:'Actual isolated result'});
+  const alert=(await read('projectSnapshot',{view:'executor'})).tasks[0].alert;
+  assert.equal(ui.projectDescriptors.find(d=>d.method==='setExecutorAlertDisposition').parameters.length,1);
+  await read('setExecutorAlertDisposition',{recordId:alert.recordId,fingerprint:alert.fingerprint,acknowledged:true});
+  assert.equal((await read('projectSnapshot',{view:'executor'})).tasks[0].status,'handled');
+  await read('setExecutorAlertDisposition',{recordId:alert.recordId,fingerprint:alert.fingerprint,acknowledged:false});
+  assert.equal((await read('projectSnapshot',{view:'executor'})).tasks[0].status,'error');
+  await assert.rejects(read('setExecutorAlertDisposition',{recordId:alert.recordId,fingerprint:'stale-fingerprint',acknowledged:true}),error=>error.details?.reason==='ALERT_CHANGED');
+
+
  } finally {await h.dispose();}
 });
 

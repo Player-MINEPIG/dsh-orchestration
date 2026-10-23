@@ -39,6 +39,7 @@ export interface WorkerOptions {
   now?: () => number;
   taskSessions?: boolean;
   prepare?: () => Promise<void>;
+  observeDispositions?: () => Promise<void>;
   prepareForWork?: (
     runs: readonly import("./ports.js").Run[],
   ) => Promise<boolean>;
@@ -93,6 +94,7 @@ export class ExecutorWorker {
     // gets a distinct workspace/session; unrelated root work remains serialized.
     return !!run.parentRunId && held.get(run.parentRunId)?.key === key;
   }
+  isExecuting(runId:string) {return this.runs.has(runId);}
   queueSnapshot() {
     return this.observedQueue.map((run) => ({ ...run }));
   }
@@ -169,6 +171,7 @@ export class ExecutorWorker {
         await this.deliver(record);
     }
     await this.reconcileUncertain();
+    await this.options.observeDispositions?.().catch(()=>{});
     if (this.configurationPaused || !this.active) return [];
     await this.messages
       .poll(

@@ -465,6 +465,11 @@ export function validatePayload(envelope: CommandEnvelope): void {
       );
       text(p, "reply", 48000);
       break;
+    case "executionDisposition":
+      fields(p, ["runId"], ["attemptId"]);
+      id(p, "runId");
+      if(p.attemptId !== undefined)id(p,"attemptId");
+      break;
     case "getRun":
       fields(p, ["runId"]);
       id(p, "runId");
@@ -1111,6 +1116,10 @@ export class RemoteGateway {
           result = receipt ? await this.reconcile(peer.nodeId, receipt) : null;
           break;
         }
+        case "executionDisposition":
+          insist(ledger.executionDisposition,"EXECUTION_DISPOSITION_UNSUPPORTED",503);
+          result=await ledger.executionDisposition({runId:id(p,"runId"),...(p.attemptId!==undefined?{attemptId:id(p,"attemptId")}: {})});
+          break;
         case "getRun":
           result = await ledger.getRun(id(p, "runId"));
           break;
@@ -1554,6 +1563,10 @@ export class RemoteGateway {
     // Peer cancellation is scoped to that peer's own assigned node. Coordinator
     // operator cancellation uses the trusted ledger API, never a peer role claim.
     insist(run.route.nodeId === peer.nodeId, "NODE_ROUTE_DENIED", 403);
+    if(e.operation==="executionDisposition" && e.payload.attemptId!==undefined) {
+      const attempt=await this.options.ledger.getAttempt(String(e.payload.attemptId));
+      insist(attempt?.nodeId===peer.nodeId && attempt.runId===run.runId,"ATTEMPT_DENIED",403);
+    }
     const workspace = run.route.workspaceId;
     insist(
       workspace

@@ -1,3 +1,4 @@
+import {executorAlertFingerprint} from "./executor-alerts.js";
 import { executorPanelSnapshot, type ExecutorPanelRecord } from "./executor-panel.js";
 import { ExecutionModelChoice, ExecutionModelsError, sameExecutionModel } from "./execution-models.js";
 import { randomUUID } from "node:crypto";
@@ -377,6 +378,7 @@ const projectInputs = {
     z.object({kind:z.literal("registered"),nodeId:z.string().min(1),workspaceId:z.string().min(1)}).strict(),
     z.object({kind:z.literal("directory"),nodeId:z.string().min(1),path:z.string().min(1).max(4096)}).strict(),
   ]).optional()}).strict(),
+  setExecutorAlertDisposition:z.object({recordId:z.string().min(1).max(300),fingerprint:z.string().min(1).max(200),acknowledged:z.boolean()}).strict(),
   executorWorkspaceGrants: null,
   setExecutorWorkspaceGrant: z.object({registryId:z.string().min(1).max(256),enabled:z.boolean(),expectedRevision:z.number().int().nonnegative()}).strict(),
   projectSettings: null,
@@ -585,6 +587,23 @@ export class TaskPluginSettings extends TypertRemoteService {
     if(!task || task.config.role==="planner" || !remote)throw new RemoteError("task/project","This host has no executor workspace grant service",{reason:"EXECUTOR_REQUIRED"});
     return remote;
   }
+  async setExecutorAlertDisposition(input:unknown) {
+    const value=projectInputs.setExecutorAlertDisposition.parse(input),task=this.ctx.get("taskSystem"),remote=this.ctx.get("remoteExecution");
+    if(!task || task.config.role==="planner")throw new RemoteError("task/project","Executor unavailable",{reason:"EXECUTOR_REQUIRED"});
+    const snapshot=this.localExecutorSnapshot(task);
+    const alert=[...snapshot.runs.map(row=>row.alert),...snapshot.viewContext.unresolvedClaims.map(row=>row.alert)].find(alert=>alert?.recordId===value.recordId);
+    if(!alert)throw new RemoteError("task/project","Alert changed; refresh the panel",{reason:"ALERT_CHANGED"});
+    try{
+      if(value.recordId.startsWith("local:")) {
+        if(value.fingerprint!==alert.fingerprint || value.acknowledged&&!alert.canAcknowledge)throw new RemoteError("task/project","Local alert changed or execution is active",{reason:value.fingerprint!==alert.fingerprint?"ALERT_CHANGED":"ALERT_STILL_ACTIVE"});
+        task.ledger.executorAlerts.set(value.recordId,value.fingerprint,value.acknowledged);
+        return task.ledger.executorAlerts.alert(value.recordId,value.fingerprint,alert.canAcknowledge);
+      }
+      if(!remote)throw new RemoteError("task/project","Remote recovery unavailable",{reason:"RECOVERY_UNAVAILABLE"});
+      return remote.setExecutorAlertDisposition(value,alert);
+    }
+    catch(error){if(error instanceof RemoteError)throw error;if(error instanceof Error && "code" in error)throw new RemoteError("task/project",error.message,{reason:String(error.code)});throw error;}
+  }
   async executorWorkspaceGrants() {
     const task=this.ctx.get("taskSystem"),remote=this.ctx.get("remoteExecution");
     if(!task || task.config.role==="planner" || !remote)return {enabled:false,nodeId:task?.config.nodeId??null,revision:0,items:[]};
@@ -612,21 +631,24 @@ export class TaskPluginSettings extends TypertRemoteService {
     const ownRuns = data.runs.filter(run=>run.route?.nodeId===nodeId && !run.observationOnly && !run.historyOnly)
       .sort((a,b)=>Number(["queued","running"].includes(b.state))-Number(["queued","running"].includes(a.state)) || b.updatedAt.localeCompare(a.updatedAt));
     const records: ExecutorPanelRecord[] = ownRuns.slice(0,200).map(run=>{
-      const task = data.tasks.find(task=>task.taskId===run.taskId);
+      const ownerTask = data.tasks.find(task=>task.taskId===run.taskId);
       const attempt = data.attempts?.find(attempt=>attempt.attemptId===run.currentAttemptId);
       const report = data.reports.findLast(report=>report.runId===run.runId && report.kind==="result");
-      return {taskId:run.taskId,runId:run.runId,title:task?.title ?? run.intentSnapshot?.title ?? run.taskId,
-        description:task?.description ?? run.intentSnapshot?.description ?? "",state:run.state,source:"local-ledger",nodeId,time:run.updatedAt,
+      return {taskId:run.taskId,runId:run.runId,title:ownerTask?.title ?? run.intentSnapshot?.title ?? run.taskId,
+        description:ownerTask?.description ?? run.intentSnapshot?.description ?? "",state:run.state,source:"local-ledger",nodeId,time:run.updatedAt,
         sessionIds:[...new Set([...(run.sessionIds??[]),...(attempt?.sessionId?[attempt.sessionId]:[])])],
-        parentTaskId:task?.parentTaskId,parentRunId:run.parentRunId,projectId:run.projectContext?.project?.projectId,
+        parentTaskId:ownerTask?.parentTaskId,parentRunId:run.parentRunId,projectId:run.projectContext?.project?.projectId,
         projectTitle:run.projectContext?.project?.title,model:run.route?.model,workspaceId:run.route?.workspaceId,
-        report:report?.body,outcome:run.outcome};
+        report:report?.body,outcome:run.outcome,attemptId:attempt?.attemptId,authorityDisposition:ownerTask ? {schedulerId:task.ledger.schedulerIdentity(),runId:run.runId,taskId:run.taskId,taskState:ownerTask.state,runState:run.state,attemptId:attempt?.attemptId??null,attemptState:attempt?.state??null,currentAttemptId:run.currentAttemptId??null,cancellationRequested:run.cancellationRequested===true}:undefined};
     });
     for (const entry of task.results?.pending() ?? []) {
       const row = records.find(row=>row.runId===entry.ref.runId);
       if(row) {row.state="result";row.report=entry.settlement.report?.body ?? entry.settlement.summary;row.detail=entry.reasonCode;row.sessionIds=[...new Set([...row.sessionIds,entry.sessionId])];}
     }
-    const snapshot=executorPanelSnapshot(nodeId,[...records,...(observed?.records??[])]);
+    const snapshot=executorPanelSnapshot(nodeId,[...records.map(row=>{
+      const recordId=`local:${row.runId}:${row.attemptId??"none"}`,fingerprint=executorAlertFingerprint({recordId,state:row.state,outcome:row.outcome??null,disposition:row.authorityDisposition??null});
+      return {...row,alert:task.ledger.executorAlerts.alert(recordId,fingerprint,["failed","blocked","partial"].includes(row.state) && !["leased","running"].includes(row.authorityDisposition?.attemptState??""))};
+    }),...(observed?.records??[])]);
     return {...snapshot,viewCapabilities:{planner:task.config.role!=="executor",executor:task.config.role!=="planner"},
       viewContext:{role:"executor",scope:"local",nodeId,observedAt:snapshot.sampledAt,queueObservedAt:observed?.queueObservedAt??null,
         pollState:observed?.pollState??"never",connection:observed?.connection??null,heartbeat:observed?.heartbeat??null,

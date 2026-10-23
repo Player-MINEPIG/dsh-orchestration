@@ -1,3 +1,4 @@
+import { ExecutorAlertStore } from "./executor-alerts.js";
 import { ProjectExecutionSettingsStore } from "./project-execution-settings.js";
 import { z } from "zod";
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -386,6 +387,7 @@ export class TaskLedger {
     });
   }
   readonly projectExecutionSettings: ProjectExecutionSettingsStore;
+  readonly executorAlerts: ExecutorAlertStore;
   private readonly db: DatabaseSync;
   readonly executionModels: ExecutionModels;
   executionDirectoryReady?:()=>boolean;
@@ -468,6 +470,7 @@ export class TaskLedger {
       }
     }
     this.db = new DatabaseSync(path, { readOnly: options.readOnly ?? false });
+    this.executorAlerts = new ExecutorAlertStore(this.db,{readOnly:options.readOnly});
     this.db.exec("PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON;");
     this.executionModels = new ExecutionModels(this.db,{now:this.clock,readOnly:options.readOnly});
     this.projectExecutionSettings = new ProjectExecutionSettingsStore(this.db, {readOnly: options.readOnly});
@@ -3376,6 +3379,14 @@ export class TaskLedger {
     });
   }
   /** Nonsecret stable authority identity, scoped to this ledger rather than an endpoint. */
+  executionDisposition(input:{runId:string;attemptId?:string}) {
+    const run=this.getRun(input.runId),task=this.getTask(run.taskId);
+    const attemptId=input.attemptId ?? run.currentAttemptId;
+    const attempt=attemptId ? this.getAttempt(attemptId) : undefined;
+    if(attempt && attempt.runId!==run.runId)fail("FORBIDDEN","Attempt does not belong to this Run");
+    return {schedulerId:this.schedulerIdentity(),runId:run.runId,taskId:task.taskId,taskState:task.state,runState:run.state,
+      attemptId:attempt?.attemptId??null,attemptState:attempt?.state??null,currentAttemptId:run.currentAttemptId??null,cancellationRequested:run.cancellationRequested===true};
+  }
   schedulerIdentity(): string {
     return this.need<{ schedulerId: string }>("authority", "scheduler")
       .schedulerId;

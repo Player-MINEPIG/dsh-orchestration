@@ -1,3 +1,4 @@
+import { executorAlertFingerprint, type ExecutorAlert } from "../executor-alerts.js";
 import {
   workspaceGrantCatalog,
   selectedWorkspaceGrant,
@@ -131,6 +132,7 @@ const operationSchema = z.union([
   z.const("bindSession"),
   z.const("markRunning"),
   z.const("getRun"),
+  z.const("executionDisposition"),
   z.const("getAttempt"),
   z.const("acknowledgeCancellation"),
   z.const("listWork"),
@@ -671,11 +673,67 @@ export class RemoteExecutionService extends Service {
       truncated: byRun.size > 100,
     };
   }
+  private dispositionProbes = new Map<string,number>();
+  private currentAuthority(authority:{endpoint:string;audience:string}) {
+    return !!authority.endpoint && !!this.config.coordinator && new URL(authority.endpoint).href===new URL(this.config.coordinator.endpoint).href && authority.audience===this.config.coordinator.audience;
+  }
+  private observedDisposition(recordId:string,authority:{endpoint:string;audience:string}|undefined,schedulerId?:string) {
+    if(!authority)return undefined;
+    const observed=this.store?.executionObservation(recordId);
+    return observed?.authority===executorAlertFingerprint(authority) && (!schedulerId || observed.value.schedulerId===schedulerId) ? observed : undefined;
+  }
+  decorateExecutorRecord(row:ExecutorPanelRecord):ExecutorPanelRecord {
+    if(!this.store)return row;
+    const recordId=row.source==="local-ledger" ? `local:${row.runId}:${row.attemptId??"none"}` : `dispatch:${row.attemptId}`;
+    const authority=row.source==="local-recovery" ? this.store.dispatchAuthority(row.runId,row.attemptId??"") : undefined;
+    const record=row.source==="local-recovery" && row.attemptId ? this.store.dispatch(row.attemptId) : undefined;
+    const observed=this.observedDisposition(recordId,authority,record?.claim.run.projectContext?.schedulerId);
+    const disposition=row.authorityDisposition??observed?.value;
+    const active=[...this.workers].some(worker=>worker.isExecuting(row.runId));
+    const ended=row.state==="acknowledged" && ["blocked","failure","partial"].includes(row.outcome??"") || row.source==="local-ledger" && ["failed","blocked","partial"].includes(row.state);
+    const canAcknowledge=ended && !active && !["leased","running"].includes(disposition?.attemptState??"") && disposition?.runState!=="uncertain";
+    const fingerprint=executorAlertFingerprint({recordId,authority:authority??null,state:row.state,outcome:row.outcome??null,detail:row.detail??null,receipt:record?.receipt?.commandId??null,disposition:disposition??null});
+    return {...row,authorityEndpoint:authority?.endpoint,authorityNotice:authority && !this.currentAuthority(authority) ? "原调度端历史结果，当前连接不能核实其最新状态" : !observed && row.source==="local-recovery" ? "尚未核实当前调度端任务状态" : undefined,...(disposition?{authorityDisposition:disposition}:{}),...(observed?{dispositionObservedAt:new Date(observed.observedAt).toISOString()}:{}),alert:this.store.executorAlert(recordId,fingerprint,canAcknowledge)};
+  }
+  setExecutorAlertDisposition(input:{recordId:string;fingerprint:string;acknowledged:boolean},current:ExecutorAlert) {
+    insist(this.store,"RECOVERY_UNAVAILABLE",503);
+    insist(input.recordId===current.recordId && input.fingerprint===current.fingerprint,"ALERT_CHANGED",409);
+    insist(!input.acknowledged || current.canAcknowledge,"ALERT_STILL_ACTIVE",409);
+    this.store.setExecutorAlert(input.recordId,input.fingerprint,input.acknowledged);
+    return this.store.executorAlert(input.recordId,input.fingerprint,current.canAcknowledge);
+  }
+  private async observeExecutorDispositions() {
+    const store=this.store,ledger=this.coordinatorLedger;
+    if(!store || !ledger || !this.client?.cachedExecutorIdentity())return;
+    const candidates=[
+      ...store.panelDispatches().filter(row=>row.state==="acknowledged" && ["failure","blocked","partial","unknown"].includes(row.result?.outcome??"")).map(row=>({recordId:`dispatch:${row.attemptId}`,runId:row.claim.run.runId,attemptId:row.attemptId,schedulerId:row.claim.run.projectContext?.schedulerId,authority:store.dispatchAuthority(row.claim.run.runId,row.attemptId)})),
+      ...store.panelClaims().map(row=>({recordId:`claim:${row.commandId}`,runId:row.runId,attemptId:undefined,schedulerId:undefined,authority:{endpoint:row.endpoint,audience:row.audience}})),
+    ].filter(row=>row.authority && this.currentAuthority(row.authority) && ![...this.workers].some(worker=>worker.isExecuting(row.runId)))
+      .sort((a,b)=>(this.dispositionProbes.get(a.recordId)??0)-(this.dispositionProbes.get(b.recordId)??0));
+    let count=0;
+    for(const row of candidates) {
+      const now=Date.now();if(now-(this.dispositionProbes.get(row.recordId)??0)<60000)continue;
+      if(count++>=4)break;
+      this.dispositionProbes.set(row.recordId,now);
+      try {
+        const value=await ledger.executionDisposition({runId:row.runId,...(row.attemptId?{attemptId:row.attemptId}:{})});
+        insist(!row.schedulerId || value.schedulerId===row.schedulerId,"SCHEDULER_IDENTITY_CHANGED",409);
+        store.saveExecutionObservation(row.recordId,executorAlertFingerprint(row.authority),value,now);
+      } catch { /* An unavailable authority cannot prove cancellation or completion. */ }
+    }
+  }
   /** Local recovery and last observed work only; this method performs no RPC. */
   executorPanel() {
     const settings = this.settingsSnapshot();
-    const currentEndpoint = this.config.coordinator ? new URL(this.config.coordinator.endpoint).href : null;
-    const claims = (this.store?.panelClaims() ?? []).map(row => ({...row, recoveryNote:row.endpoint && row.endpoint !== currentEndpoint ? "原调度端记录，当前连接无法恢复" : undefined}));
+    const claims = (this.store?.panelClaims() ?? []).map(row => {
+      const recordId=`claim:${row.commandId}`,authority={endpoint:row.endpoint,audience:row.audience};
+      const observed=this.observedDisposition(recordId,authority),active=[...this.workers].some(worker=>worker.isExecuting(row.runId));
+      const resolved=!!observed && !active && !["leased","running"].includes(observed.value.attemptState??"") && (observed.value.taskState==="cancelled" || observed.value.runState==="cancelled");
+      const canAcknowledge=!active && (!this.currentAuthority(authority) || resolved);
+      const fingerprint=executorAlertFingerprint({recordId,authority,state:row.state,code:row.code??null,message:row.message??null,disposition:observed?.value??null});
+      return {...row,resolved,authorityDisposition:observed?.value??null,dispositionObservedAt:observed?new Date(observed.observedAt).toISOString():null,
+        alert:this.store!.executorAlert(recordId,fingerprint,canAcknowledge),recoveryNote:!this.currentAuthority(authority) ? "原调度端记录，当前连接无法恢复；可仅确认本机提醒，原领取回执保留" : resolved ? "调度端已确认取消，本机无活动执行；原领取回执保留" : undefined};
+    });
     const claimByRun = new Map(claims.map(row => [row.runId, row]));
     const dispatches = this.store?.panelDispatches() ?? [];
     const records: ExecutorPanelRecord[] = [];
@@ -697,7 +755,7 @@ export class RemoteExecutionService extends Service {
       report:row.result?.report?.body ?? row.result?.summary,detail:row.detail,outcome:row.result?.outcome,attemptId:row.attemptId,
     });
     const observed = [...this.workers].map(worker=>worker.queueObservedAt).filter((at): at is string=>!!at).sort().at(-1) ?? null;
-    return {records,unresolvedClaims:claims.filter(claim=>!records.some(row=>row.runId===claim.runId)).slice(0,200),truncated:dispatches.length>200 || claims.length>200 || [...this.workers].some(worker=>worker.queueSnapshot().length>=128),
+    return {records:records.map(row=>this.decorateExecutorRecord(row)),unresolvedClaims:claims.slice(0,200),truncated:dispatches.length>200 || claims.length>200 || [...this.workers].some(worker=>worker.queueSnapshot().length>=128),
       queueObservedAt:observed,pollState:settings.paused ? "paused" : [...this.workers].some(worker=>worker.lastPollFailed) ? "failed" : observed ? "ready" : "never",
       connection:settings,heartbeat:this.heartbeatSnapshot()};
   }
@@ -1073,6 +1131,7 @@ export class RemoteExecutionService extends Service {
     if (programs) provider = programs.provider(provider);
     const service = this;
     const worker = new ExecutorWorker({
+      observeDispositions:()=>this.observeExecutorDispositions(),
       modelAdmission: (route) =>
         route.backend
           ? "BACKEND_UNAVAILABLE"

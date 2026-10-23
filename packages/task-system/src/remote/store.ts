@@ -1,3 +1,4 @@
+import { ExecutionDisposition, ExecutorAlertStore, type ExecutorAlert } from "../executor-alerts.js";
 import { ExecutionCatalogDelivery } from "../execution-models.js";
 import { z } from "zod";
 import { DatabaseSync } from "node:sqlite";
@@ -73,6 +74,7 @@ export class RecoveryStore {
   private db: DatabaseSync;
   private closed = false;
   readonly instanceId: string;
+  readonly executorAlerts:ExecutorAlertStore;
   constructor(path: string) {
     if (path !== ":memory:") {
       mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
@@ -83,6 +85,7 @@ export class RecoveryStore {
       }
     }
     this.db = new DatabaseSync(path);
+    this.executorAlerts=new ExecutorAlertStore(this.db);
     this.db.exec(
       "PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000;",
     );
@@ -556,9 +559,24 @@ export class RecoveryStore {
   /** Project only receipt metadata, never outbound payloads or business content. */
   panelClaims(limit = 201) {
     insist(Number.isSafeInteger(limit) && limit >= 1 && limit <= 201, "INVALID_RECOVERY_LIMIT");
-    return this.db.prepare("SELECT json_extract(data,'$.payload.runId') AS runId,json_extract(data,'$.state') AS state,json_extract(data,'$.endpoint') AS endpoint,json_extract(data,'$.audience') AS audience,json_extract(data,'$.receipt.result.claimRejected.code') AS code,json_extract(data,'$.receipt.result.claimRejected.message') AS message FROM outbound WHERE json_extract(data,'$.operation')='claim' AND json_extract(data,'$.state') IN ('sending','pending','uncertain') ORDER BY rowid DESC LIMIT ?")
-      .all(limit).flatMap(row => typeof row.runId === "string" && typeof row.state === "string" ? [{runId:row.runId,state:row.state,endpoint:String(row.endpoint ?? ""),audience:String(row.audience ?? ""),...(typeof row.code === "string" ? {code:row.code,message:String(row.message ?? "")} : {})}] : []);
+    return this.db.prepare("SELECT id AS commandId,json_extract(data,'$.payload.runId') AS runId,json_extract(data,'$.state') AS state,json_extract(data,'$.endpoint') AS endpoint,json_extract(data,'$.audience') AS audience,json_extract(data,'$.receipt.result.claimRejected.code') AS code,json_extract(data,'$.receipt.result.claimRejected.message') AS message FROM outbound WHERE json_extract(data,'$.operation')='claim' AND json_extract(data,'$.state') IN ('sending','pending','uncertain') ORDER BY rowid DESC LIMIT ?")
+      .all(limit).flatMap(row => typeof row.runId === "string" && typeof row.state === "string" ? [{commandId:String(row.commandId),runId:row.runId,state:row.state,endpoint:String(row.endpoint ?? ""),audience:String(row.audience ?? ""),...(typeof row.code === "string" ? {code:row.code,message:String(row.message ?? "")} : {})}] : []);
   }
+  dispatchAuthority(runId:string,attemptId:string) {
+    const row=this.db.prepare("SELECT json_extract(data,'$.endpoint') AS endpoint,json_extract(data,'$.audience') AS audience FROM outbound WHERE json_extract(data,'$.operation')='claim' AND json_extract(data,'$.payload.runId')=? AND json_extract(data,'$.state')='done' AND json_extract(data,'$.receipt.result.value.attempt.attemptId')=? AND json_extract(data,'$.receipt.result.value.run.runId')=? ORDER BY rowid DESC LIMIT 1").get(runId,attemptId,runId);
+    return row && typeof row.endpoint==="string" && typeof row.audience==="string" ? {endpoint:row.endpoint,audience:row.audience} : undefined;
+  }
+  executionObservation(recordId:string) {
+    const row=this.db.prepare("SELECT value FROM metadata WHERE key=?").get(`disposition:${recordId}`);
+    if(!row)return undefined;
+    const value=JSON.parse(String(row.value));
+    return {authority:String(value.authority),observedAt:Number(value.observedAt),value:ExecutionDisposition.parse(value.value)};
+  }
+  saveExecutionObservation(recordId:string,authority:string,value:ExecutionDisposition,now:number) {
+    this.db.prepare("INSERT INTO metadata VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(`disposition:${recordId}`,canonical({authority,observedAt:now,value}));
+  }
+  executorAlert(recordId:string,fingerprint:string,canAcknowledge:boolean):ExecutorAlert {return this.executorAlerts.alert(recordId,fingerprint,canAcknowledge);}
+  setExecutorAlert(recordId:string,fingerprint:string,acknowledged:boolean) {this.executorAlerts.set(recordId,fingerprint,acknowledged);}
   /** A durable dispatch without a result is an uncertain side effect, never executable again. */
   recover(): DispatchRecord[] {
     return this.transaction(() => {
