@@ -1,0 +1,12 @@
+{
+  "host": "AWS",
+  "url": "http://100.85.216.39:3080/",
+  "authenticatedExistingChromeSession": true,
+  "servedIframeIncludesIncrementalPatch": true,
+  "selectedText": "需处理是异常；待确认是等你批准执行或审核结果",
+  "selectedAt": "2026-10-23T05:16:43.352Z",
+  "retainedAt": "2026-10-23T05:17:23.186Z",
+  "selectionRetained": true,
+  "note": "Real production data remained unchanged during this observation; simultaneous visible changes verified in the Chrome fixture and the live MBP queue timestamp.",
+  "businessActions": 0
+}
