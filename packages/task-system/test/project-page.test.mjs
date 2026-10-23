@@ -24,6 +24,7 @@ function page() {
   const parent={postMessage:request=>{if(request.method!=="detailFullscreen")requests.push(request);}};
   const context=vm.createContext({atob,structuredClone,console,Date,Map,Set,URL,innerWidth:1200,crypto:{randomUUID:()=>String(++sequence)},parent,window:{addEventListener:(name,listener)=>events[name]=listener},document:{documentElement:root,title:'',activeElement:{tagName:'BODY'},querySelector:()=>null,addEventListener:(name,listener)=>documentEvents[name]=listener,getElementById(id){if(!elements.has(id))elements.set(id,{innerHTML:'',hidden:true,dataset:{}});return elements.get(id);}},setTimeout:()=>1,clearTimeout:()=>{},setInterval:()=>1});
   vm.runInContext(source,context);
+  vm.runInContext('patchHtml = (root, html) => { root.innerHTML = html; };',context);
   return {requests,context,elements,documentEvents,action:(a,id)=>vm.runInContext('actions('+JSON.stringify(a)+','+JSON.stringify(id)+')',context),overlay:()=>elements.get('overlays').innerHTML,theme:(source,input)=>events.message({source:source==='parent'?parent:{},data:{channel:'dsh-project-runtime',method:'theme',input}}),root,content:()=>elements.get('app').innerHTML,async answer(response){const request=requests.shift();assert.ok(request);events.message({source:parent,data:{channel:'dsh-project-runtime',id:request.id,...response}});await new Promise(resolve=>setImmediate(resolve));},async retry(){await vm.runInContext("actions('reload')",context);},startRetry(){return vm.runInContext("actions('reload')",context);},startPoll(){return vm.runInContext('poll()',context);}};
 }
 const snapshot={projects:[],tasks:[],settings:{root:null,revision:0},nodes:[]};
@@ -498,7 +499,7 @@ test('new project opens with no directory and remains actionable after a model c
 test('board columns page five tasks independently and clamp after refreshed counts shrink',async()=>{
  const p=page(),rows=['done','review'].flatMap(status=>Array.from({length:12},(_,i)=>({id:status+'-'+i,project:'unassigned',title:status+' task '+i,status,node:'VPS'})));
  await p.answer({value:{...snapshot,tasks:rows}});
- const column=status=>p.content().split('<section class="kanban-col" aria-label="'+({done:'已完成',review:'待确认'}[status])+'">')[1].split('</section>')[0];
+ const column=status=>p.content().split('<section class="kanban-col" aria-label="'+({done:'已完成',review:'待确认'}[status])+'" data-dom-key="status:'+status+'">')[1].split('</section>')[0];
  assert.equal((column('done').match(/class="task-inline board-card"/g)||[]).length,5);
  assert.match(column('done'),/done task 0/);assert.doesNotMatch(column('done'),/done task 5/);assert.match(column('done'),/<span>12<\/span>/);
  await p.action('board-page',JSON.stringify({status:'done',delta:1}));assert.match(column('done'),/done task 5/);assert.match(column('review'),/review task 0/);

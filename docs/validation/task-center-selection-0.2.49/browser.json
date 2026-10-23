@@ -1,0 +1,49 @@
+[
+  {
+    "label": "baseline",
+    "reads": 3,
+    "initial": {
+      "text": "Stable selected",
+      "nodeConnected": true,
+      "sameNode": true
+    },
+    "heartbeat": {
+      "text": "",
+      "nodeConnected": false,
+      "sameNode": false
+    }
+  },
+  {
+    "label": "candidate",
+    "reads": 11,
+    "initial": {
+      "text": "Stable selected",
+      "nodeConnected": true,
+      "sameNode": true
+    },
+    "heartbeat": {
+      "text": "Stable selected",
+      "nodeConnected": true,
+      "sameNode": true
+    },
+    "concurrentUpdate": {
+      "text": "Stable selected",
+      "nodeConnected": true,
+      "sameNode": true
+    },
+    "reordered": {
+      "text": "Stable selected",
+      "nodeConnected": true,
+      "sameNode": true
+    },
+    "recovered": {
+      "text": "Stable selected",
+      "nodeConnected": true,
+      "sameNode": true
+    },
+    "unchangedElapsedNodeRetained": true,
+    "firstClickOpensTask": true,
+    "selectedReportSurvivesOtherDetailsUpdate": true,
+    "changedAndRemovedTextNotRestored": true
+  }
+]

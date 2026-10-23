@@ -1,0 +1,12 @@
+{
+  "host": "MBP",
+  "url": "http://127.0.0.1:3080/",
+  "authenticatedExistingChromeSession": true,
+  "servedIframeIncludesIncrementalPatch": true,
+  "selectedText": "只显示本机观察与持久执行记录，结果回传不等于调度端已验收",
+  "observedBefore": "2026/10/23 16:12:55",
+  "observedAfter": "2026/10/23 16:13:15",
+  "selectionRetained": true,
+  "queueTimestampAdvanced": true,
+  "businessActions": 0
+}
