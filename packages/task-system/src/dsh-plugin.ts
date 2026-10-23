@@ -1605,7 +1605,8 @@ export class NativeExecutionProvider {
   }
 
   private async attachExecutionWorkspace(claim: NativeClaim, path: string, sessionId: string) {
-    if (!claim.run.projectContext || claim.run.parentRunId) return;
+    if (!claim.run.projectContext ||
+        (claim.run.parentRunId && claim.run.executionParentKind !== "coordinator")) return;
     const registry = this.ctx.get("workspaceRegistry") as unknown as
       {create(path: string,title?: string): Promise<{attachSession(id: SessionId): Promise<void>}>} | undefined;
     if (registry) {
