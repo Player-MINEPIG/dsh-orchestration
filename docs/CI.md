@@ -1,5 +1,9 @@
 # Current product verification
 
+Follow the [development and release workflow](DEVELOPMENT.md) for branch routing and real-device acceptance. Both `dev` and `main` require the seven product checks below and the `PR flow` check, with an up-to-date head. `PR flow` permits same-repository feature PRs to `dev`, `main` → `dev` synchronization, and `dev` → `main` promotion. It rejects direct feature PRs to `main` and a fork's branch named `dev`.
+
+The real-device acceptance record and explicit user confirmation are a manual release requirement. CI does not verify that a device was tested or that the user approved its results.
+
 Node 24 and OpenSSL are required. Start with `npm ci --ignore-scripts`.
 
 | Entry | Required behavior |

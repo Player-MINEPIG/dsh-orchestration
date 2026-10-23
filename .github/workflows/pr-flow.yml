@@ -1,0 +1,21 @@
+name: Pull request flow
+on:
+  pull_request:
+    branches: [dev, main]
+    types: [opened, synchronize, reopened, edited]
+permissions:
+  contents: read
+jobs:
+  pr-flow:
+    name: PR flow
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.19.0'
+      - name: Verify routing cases
+        run: node --test tests/ci/pr-flow.test.mjs
+      - name: Check this PR route
+        run: node scripts/ci/pr-flow.mjs
