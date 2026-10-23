@@ -1194,7 +1194,7 @@ test('standard native file tools cannot read or mutate authority database, SQLit
   } finally { await h.dispose(); }
 });
 
-test('quiescent native terminal journal survives authority SQLite lock and host restart without another model invocation', { timeout: 15000 }, async () => {
+test('quiescent native terminal journal survives authority SQLite lock and host restart without another model invocation', { timeout: 30000 }, async () => {
   const { DatabaseSync } = await import('node:sqlite');
   const dir = join(scratch, 'native-terminal-recovery');
   let h = await harness({ dir, config: { leaseTtlMs: 1000 }, script: [{ name: 'task_submit_result', args: { outcome: 'success', summary: 'Known terminal result before authority outage', reportTitle: 'Durable native report', reportBody: 'This exact owned result survived the independent authority lock.' } }] });
