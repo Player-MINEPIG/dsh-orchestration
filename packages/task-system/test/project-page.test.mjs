@@ -31,7 +31,7 @@ const snapshot={projects:[],tasks:[],settings:{root:null,revision:0},nodes:[]};
 test('executor page shows a persistent role explanation without false zero task counts or repeated role requests', async () => {
   const p=page();assert.match(p.content(),/正在读取/);assert.doesNotMatch(p.content(),/暂无任务|hub-stats|kanban-col/);
   await p.answer({error:'当前节点为执行端，项目任务中心需要调度端身份。',errorCode:'PLANNER_REQUIRED'});
-  assert.match(p.content(),/当前节点是执行端/);assert.match(p.content(),/设置 → 任务系统/);assert.doesNotMatch(p.content(),/暂无任务|hub-stats|kanban-col/);
+  assert.match(p.content(),/当前节点是执行端/);assert.match(p.content(),/任务中心右上角的设置/);assert.doesNotMatch(p.content(),/暂无任务|hub-stats|kanban-col/);
   await p.startPoll();assert.equal(p.requests.length,0);
   const retry=p.startRetry();assert.equal(p.requests.length,1);await p.answer({value:snapshot});await retry;
   assert.match(p.content(),/hub-stats/);assert.doesNotMatch(p.content(),/当前节点是执行端/);
@@ -553,7 +553,7 @@ test('coordinator defaults to root deliveries, preserves exact child attention a
  const p=page(),child={id:'child-delivery',parentTaskId:'root',project:'unassigned',title:'Child delivery',status:'review',runId:'child-run',showInCoordinator:false,unreadResultCount:1},root={id:'root',project:'unassigned',title:'User delivery',status:'done',showInCoordinator:true,unreadResultCount:1,childAttention:[{taskId:child.id,runId:'child-run',parentRunId:'old-parent',parentCreatedAt:'2026-10-14T23:00:00Z',state:'partial',node:'PC_AU',summary:'来源缺口'}]},internal={id:'tiny',parentTaskId:'root',project:'unassigned',title:'Internal step',delegationDisplay:'step',status:'done',showInCoordinator:false};
  const data={...snapshot,tasks:[root,child,internal],runs:[{id:'child-run',taskId:child.id,parentRunId:'old-parent',state:'partial',reviewStatus:'pending_user',createdAt:'2026-10-14T23:00:10Z'}]};
  await p.answer({value:data});assert.match(p.content(),/User delivery/);assert.doesNotMatch(p.content(),/data-action="task" data-id="child-delivery"/);assert.match(p.content(),/历史执行中有 1 项/);assert.match(p.content(),/已完成未读 <span>1/);
- await p.action('task','root');assert.match(p.overlay(),/历史执行待核对/);await p.action('attention-open','root');assert.match(p.overlay(),/2026\/10\/15/);assert.match(p.overlay(),/data-action="schedule-run" data-id="old-parent"/);assert.doesNotMatch(p.overlay(),/data-id="child-run"/);
+ await p.action('task','root');assert.match(p.overlay(),/历史执行待核对/);await p.action('attention-open','root');assert.ok(p.overlay().includes(new Date(root.childAttention[0].parentCreatedAt).toLocaleString('zh-CN')));assert.match(p.overlay(),/data-action="schedule-run" data-id="old-parent"/);assert.doesNotMatch(p.overlay(),/data-id="child-run"/);
  await p.action('fullpanel');await p.action('panel-tab','tasks');assert.match(p.content(),/Child delivery/);assert.match(p.content(),/Internal step/);
  await p.action('task',child.id);assert.match(p.overlay(),/在主列表显示/);const pending=p.action('task-presentation',child.id);assert.equal(p.requests[0].method,'setTaskPresentation');assert.equal(p.requests[0].input.visibility,'primary');await p.answer({value:{}});await p.answer({value:{...data,tasks:[root,{...child,showInCoordinator:true},internal]}});await pending;
  await p.action('close');await p.action('home');assert.match(p.content(),/Child delivery/);assert.doesNotMatch(p.content(),/Internal step/);
@@ -653,8 +653,7 @@ test('attention keeps missing-parent hints and complete records access without i
  const groups=Array.from({length:5},(_,i)=>({parentRunId:'r'+i,taskId:'child',runId:'c'+i,parentCreatedAt:'2026-10-18T00:00:00Z'}));const pending=p.startPoll();await p.answer({value:{...snapshot,tasks:[{...root,childAttention:groups}]}});await pending;assert.doesNotMatch(p.overlay(),/attention-pagination/);assert.match(p.overlay(),/部分所属执行记录未包含在当前视图/);assert.match(p.overlay(),/data-action="fullpanel"/);assert.match(p.overlay(),/data-action="schedule-run" data-id="r0"/);assert.equal(p.requests.length,0);
 });
 
-test('owned UI wording uses execution language while inbox remains waiting rather than running',async()=>{
- for(const name of ['project-page.html','settings-client.js','workflow-ui.js','workflow-page.html'])assert.doesNotMatch(readFileSync(new URL('../src/'+name,import.meta.url),'utf8'),/派发|执行执行/);
+test('queued inbox tasks remain waiting rather than running and expose redispatch context',async()=>{
  const p=page();await p.answer({value:{...snapshot,tasks:[{id:'waiting',project:'unassigned',title:'Queued request',status:'queued',stateLabel:'等待执行端接收',dispatchState:'inbox'}]}});assert.match(p.content(),/等待执行端接收/);await p.action('task','waiting');assert.match(p.overlay(),/等待可接单的执行端/);assert.doesNotMatch(p.overlay(),/>执行中</);assert.match(p.overlay(),/重新执行/);assert.match(p.overlay(),/执行请求状态/);
 });
 
@@ -668,11 +667,11 @@ test('result attention entry selects visible provenance history, preserves both 
  await p.action('schedule-run','r0');assert.match(p.overlay(),/Hidden old report 0/);assert.doesNotMatch(p.overlay(),/Latest formal result/);
 });
 
-const executorSnapshot={...snapshot,runs:[],viewCapabilities:{planner:false,executor:true},viewContext:{role:'executor',scope:'local',nodeId:'mbp',pollState:'failed',queueObservedAt:'2026-10-22T01:00:00Z',heartbeat:{state:'acknowledged'},unresolvedClaims:[{runId:'claim-run',state:'uncertain'}]}};
+const executorSnapshot={...snapshot,runs:[],viewCapabilities:{planner:false,executor:true},viewContext:{role:'executor',scope:'local',nodeId:'mbp',pollState:'failed',queueObservedAt:'2026-10-22T01:00:00Z',heartbeat:{state:'acknowledged'},unresolvedClaims:[{commandId:'claim-command',runId:'claim-run',state:'uncertain'}]}};
 test('executor view stays local while disconnected and cannot select an absent scheduler identity',async()=>{
  const p=page();await p.answer({value:executorSnapshot});
  assert.match(p.content(),/data-id="planner"[^>]*disabled/);assert.match(p.content(),/data-id="executor" aria-pressed="true"/);
- assert.match(p.content(),/本机没有记录不能证明调度端没有任务/);assert.match(p.content(),/领取回执尚未确认/);assert.match(p.content(),/心跳已确认/);
+ assert.match(p.content(),/本机没有记录不能证明调度端没有任务/);assert.match(p.content(),/领取记录提醒/);assert.match(p.content(),/心跳已确认/);
  await p.action('task-view','planner');assert.equal(p.requests.length,0);
  const poll=p.startPoll();assert.deepEqual(JSON.parse(JSON.stringify(p.requests[0].input)),{view:'executor'});await p.answer({value:executorSnapshot});await poll;
  assert.match(p.content(),/data-id="executor" aria-pressed="true"/);

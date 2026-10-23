@@ -1,19 +1,21 @@
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import assert from 'node:assert/strict';
-import { resolve } from 'node:path';
+import { resolve, join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { pathToFileURL } from 'node:url';
 
-const { chromium } = await import(process.env.DSH_PLAYWRIGHT_MODULE || 'playwright');
-const output = resolve(process.env.DSH_SELECTION_OUTPUT || '/private/tmp/dsh-task-center-selection');
+export async function testTaskCenterSelection(browser, { output = join(tmpdir(), 'dsh-task-center-selection') } = {}) {
 mkdirSync(output, { recursive: true });
 const candidate = readFileSync(new URL('../../packages/task-system/dist/project-page.html', import.meta.url), 'utf8');
 const baseline = process.env.DSH_BASELINE_PROJECT_PAGE && readFileSync(process.env.DSH_BASELINE_PROJECT_PAGE, 'utf8');
-const browser = await chromium.launch({ headless: true, channel: 'chrome' });
 const results = [];
 const selectedTitle = 'Stable selected task title';
 const task = (id, title, status = 'running', time = '2026-10-23T00:00:00Z') => ({ id, title, status, time, project: 'unassigned' });
-try {
+ let activePage;
+ try {
  for (const [label, html] of [...(baseline ? [['baseline', baseline]] : []), ['candidate', candidate]]) {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  const page = activePage = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  page.setDefaultTimeout(10000);
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   let reads = 0, failure = false;
@@ -105,5 +107,16 @@ try {
   await page.close();
  }
  writeFileSync(resolve(output, 'browser.json'), JSON.stringify(results, null, 2) + '\n');
- console.log(JSON.stringify(results));
-} finally { await browser.close(); }
+ return results;
+ } catch (error) {
+  if (activePage) await activePage.screenshot({path: resolve(output, 'selection-failure.png'), fullPage:true}).catch(()=>{});
+  throw error;
+ } finally { if (activePage) await activePage.close(); }
+}
+
+if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
+ const { chromium } = await import(process.env.DSH_PLAYWRIGHT_MODULE || 'playwright');
+ const browser = await chromium.launch({ headless: true, ...(process.env.DSH_BROWSER_CHANNEL ? { channel: process.env.DSH_BROWSER_CHANNEL } : {}) });
+ try { console.log(JSON.stringify(await testTaskCenterSelection(browser, { output: process.env.DSH_SELECTION_OUTPUT }))); }
+ finally { await browser.close(); }
+}

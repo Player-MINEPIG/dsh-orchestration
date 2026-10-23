@@ -11,6 +11,7 @@ function page({insecureContext=false}={}) {
   const parent={postMessage:request=>{if(request.method!=="detailFullscreen")requests.push(request);}};
   const context=vm.createContext({markdownit,atob,structuredClone,console,Date,Map,Set,URL,innerWidth:1200,crypto:insecureContext?{getRandomValues:value=>webcrypto.getRandomValues(value)}:{randomUUID:()=>String(++sequence)},parent,window:{addEventListener:(name,listener)=>events[name]=listener},document:{documentElement:root,title:'',activeElement:{tagName:'BODY'},querySelector:()=>null,addEventListener:(name,listener)=>documentEvents[name]=listener,getElementById(id){if(!elements.has(id))elements.set(id,{innerHTML:'',hidden:true,dataset:{}});return elements.get(id);}},setTimeout:()=>1,clearTimeout:()=>{},setInterval:()=>1});
   vm.runInContext(source,context);
+  vm.runInContext('patchHtml = (root, html) => { root.innerHTML = html; };',context);
   return {requests,context,elements,documentEvents,action:(a,id)=>vm.runInContext('actions('+JSON.stringify(a)+','+JSON.stringify(id)+')',context),overlay:()=>elements.get('overlays').innerHTML,theme:(source,input)=>events.message({source:source==='parent'?parent:{},data:{channel:'dsh-project-runtime',method:'theme',input}}),root,content:()=>elements.get('app').innerHTML,async answer(response){const request=requests.shift();assert.ok(request);events.message({source:parent,data:{channel:'dsh-project-runtime',id:request.id,...response}});await new Promise(resolve=>setImmediate(resolve));},async retry(){await vm.runInContext("actions('reload')",context);},startRetry(){return vm.runInContext("actions('reload')",context);},startPoll(){return vm.runInContext('poll()',context);}};
 }
 
@@ -31,12 +32,12 @@ test('retried child runs stay under their exact parent execution and task top on
  await p.action('schedule-run','r-parent');assert.match(p.overlay(),/data-run-id="r-child"/);assert.doesNotMatch(p.overlay(),/data-run-id="r-child-two"/);
  vm.runInContext("state.records.runs.push({id:'cycle',taskId:'parent',parentRunId:'r-child',state:'running'})",p.context);await p.action('schedule-run','r-parent');assert.match(p.overlay(),/循环引用/);
 });
-test('executor sees central scoped progress in original panel and never offers local management actions',async()=>{
- const p=page();await p.answer({value:{...structuredClone(snapshot),viewContext:{role:'executor',scope:'node',nodeId:'mbp',observedAt:'2026-10-12T00:00:00Z',coordinatorUrl:'http://100.123.230.75:4000/#tasks'}}});
- assert.match(p.content(),/本机协作进度/);assert.match(p.content(),/mbp 相关任务与子任务执行 · 只读/);assert.match(p.content(),/http:\/\/100.123.230.75:4000\/#tasks/);
+test('executor shows local execution evidence and never offers management actions',async()=>{
+ const p=page();await p.answer({value:{...structuredClone(snapshot),viewContext:{role:'executor',scope:'local',nodeId:'mbp',observedAt:'2026-10-12T00:00:00Z',coordinatorUrl:'http://100.123.230.75:4000/#tasks'}}});
+ assert.match(p.content(),/mbp · 本机执行记录/);assert.match(p.content(),/本机没有记录不能证明调度端没有任务/);assert.doesNotMatch(p.content(),/href="http:\/\/100.123.230.75/);
  await p.action('task','parent');assert.doesNotMatch(p.overlay(),/data-action="task-(retry|chat|accept|manual)"/);
  await p.action('task-retry','parent');assert.equal(p.requests.length,0);
- const pending=p.startPoll();await p.answer({error:'中央连接中断',errorCode:'gateway/disconnected'});await pending;assert.match(p.content(),/保留上次/);assert.match(p.content(),/中央连接中断/);
+ const pending=p.startPoll();await p.answer({error:'本机读取中断',errorCode:'gateway/disconnected'});await pending;assert.match(p.content(),/保留上次/);assert.match(p.content(),/本机读取中断/);
 });
 test('source task observations do not become execution claims or central acceptance',async()=>{
  const p=page(),data=structuredClone(snapshot);data.tasks[0].observationOnly=true;data.runs[0].observationOnly=true;data.projectRegistrations=[{projectId:'p',namespace:'import',mode:'history',sourceRevision:2,origin:{harness:'DSH'},unknownOriginalTimes:true,central:{review:'unreviewed',note:'Review outstanding'},sourceAcceptance:[{title:'PV',acceptance:'accepted'}],artifactAvailability:[{uri:'file:///media.mp4',availability:'reference-only'}]}];

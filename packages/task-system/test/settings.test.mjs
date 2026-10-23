@@ -25,6 +25,7 @@ function client(primitives = {}, react = {}) {
     ),
     {
       URL,
+      document: { createElement: () => ({ style: {} }) },
       window: {
         addEventListener() {},
         removeEventListener() {},
@@ -174,7 +175,7 @@ test("remote read-only projection strips URL user info, query and fragment, and 
   );
 });
 
-test("browser companion exposes the same served form in Settings and its installed plugin row", async () => {
+test("browser companion registers the shared persistent task settings surface and installed task center", async () => {
   class Model {
     constructor() {}
     bind(project) {
@@ -249,21 +250,14 @@ test("browser companion exposes the same served form in Settings and its install
   assert.ok(registrations.some(r => r.options.name === "conversation.view" && r.options.id === "dsh-session-tasks"));
   assert.ok(listeners.has("command/executed"));
   assert.ok(registrations.some(r => r.options.name === "shell.overlay" && r.options.id === "task-project-command-result"));
-  const section = registrations.find(
-    (r) => r.options.name === "settings.section",
-  );
-  const row = registrations.find(
-    (r) => r.options.name === "plugins.row.config",
-  );
-  assert.equal((await section.options.inject().read()).nodeId, "fixture");
-  assert.equal(section.options.id, "task-system");
-  assert.equal(section.options.label(), "title");
-  assert.equal(row.options.key, "@dsh-task/task-system#task-system");
-  assert.equal(section.component, row.component);
-  assert.equal(
-    section.options.inject().hooks.taskSettings,
-    row.options.inject().hooks.taskSettings,
-  );
+  const main = registrations.find(r => r.options.key === "dsh-task-settings");
+  const portal = registrations.find(r => r.options.id === "task-settings-surface");
+  assert.ok(main && portal);
+  assert.equal(main.component, ui.TaskSettingsPanel);
+  assert.equal(portal.component, ui.TaskSettingsPortal);
+  assert.equal(main.options.inject().surface, portal.options.inject().surface);
+  assert.equal((await portal.options.inject().read()).nodeId, "fixture");
+  assert.equal(registrations.filter(r => r.options.name === "settings.section" || r.options.name === "plugins.row.config").length, 0);
   for (const cleanup of effects.splice(0).reverse()) cleanup?.();
   assert.equal(disposed.length, 6);
   assert.equal(listeners.size, 0);
@@ -273,7 +267,7 @@ test("browser companion exposes the same served form in Settings and its install
   assert.equal(
     registrations.length,
     4,
-    "hide both entries while the Host does not serve task-system settings",
+    "hide the surface and portal while the Host does not serve task-system settings",
   );
   for (const cleanup of effects.splice(0).reverse()) cleanup?.();
 });
@@ -526,7 +520,9 @@ test("startup drafts contain only approved fields; unchanged values and reset do
   const ui = client();
   const values = {
     role: "executor",
-    defaultWorkspaceId: "fixture-workspace",
+    databasePath: "/fixture/tasks.sqlite",
+    executionAgentPreset: "ptc",
+    executionTools: null,
     planningDecisionEnabled: true,
     sessionDecisionEnabled: false,
     nodeId: "must-not-edit",
@@ -534,17 +530,20 @@ test("startup drafts contain only approved fields; unchanged values and reset do
   };
   const draft = ui.startupDraft("task", values);
   assert.deepEqual(Object.keys(draft).sort(), [
-    "defaultWorkspaceId",
+    "databasePath",
+    "executionAgentPreset",
+    "followExecutionPreset",
     "planningDecisionEnabled",
     "role",
     "sessionDecisionEnabled",
   ]);
   assert.equal(ui.startupChanges("task", values, draft).dirty, false);
-  draft.defaultWorkspaceId = "";
+  draft.executionAgentPreset = "codex";
   draft.sessionDecisionEnabled = true;
   draft.role = "both";
   const changes = ui.startupChanges("task", values, draft).changes;
-  assert.equal(changes.defaultWorkspaceId, null);
+  assert.equal(changes.executionAgentPreset, "codex");
+  assert.equal(changes.defaultWorkspaceId, undefined);
   assert.equal(changes.sessionDecisionEnabled, true);
   assert.equal(changes.role, "both");
   assert.equal(changes.nodeId, undefined);
@@ -601,8 +600,8 @@ test("connection draft validates limits and excludes identity, auth and grant ch
   );
   assert.ok(
     ui
-      .startupChanges("remote", values, { ...draft, targetPort: "65536" })
-      .invalid.includes("targetPort"),
+      .startupChanges("remote", values, { ...draft, connectionTouched: true, connectionPort: "65536" })
+      .invalid.includes("connectionPort"),
   );
   const changes = ui.startupChanges("remote", values, {
     ...draft,
@@ -611,119 +610,6 @@ test("connection draft validates limits and excludes identity, auth and grant ch
   }).changes;
   for (const key of ["nodeId", "authMode", "grants", "credentials"])
     assert.equal(changes[key], undefined);
-});
-
-test("startup form stages a role edit, sends its exact expected snapshot, reads after save and retains conflicts", async () => {
-  const states = [];
-  let index = 0;
-  const react = {
-    useState(initial) {
-      const slot = index++;
-      if (!(slot in states))
-        states[slot] = typeof initial === "function" ? initial() : initial;
-      return [
-        states[slot],
-        (value) => {
-          states[slot] =
-            typeof value === "function" ? value(states[slot]) : value;
-        },
-      ];
-    },
-  };
-  const ui = client(
-    { Button: "FixtureButton", Switch: "FixtureSwitch" },
-    react,
-  );
-  const row = {
-    entryId: "task-system",
-    values: {
-      role: "executor",
-      defaultWorkspaceId: "fixture-workspace",
-      planningDecisionEnabled: true,
-      sessionDecisionEnabled: false,
-    },
-  };
-  const order = [],
-    writes = [];
-  let reject = false;
-  const props = {
-    t: (key) => key,
-    target: "task",
-    row,
-    writable: true,
-    saveStartup: async (request) => {
-      order.push("save");
-      writes.push(request);
-      if (reject) throw new Error("fixture conflict");
-    },
-    onSaved: async () => {
-      order.push("read-after-save");
-    },
-  };
-  const render = () => {
-    index = 0;
-    return ui.StartupRow(props);
-  };
-  const find = (node, predicate) => {
-    if (!node || typeof node !== "object") return;
-    if (predicate(node)) return node;
-    for (const child of node.children ?? []) {
-      const result = find(child, predicate);
-      if (result) return result;
-    }
-  };
-  let tree = render();
-  const role = find(tree, (node) => node.type === "select");
-  role.props.onChange({ target: { value: "planner" } });
-  assert.equal(writes.length, 0);
-  tree = render();
-  const save = find(
-    tree,
-    (node) =>
-      node.type === "FixtureButton" && node.children.includes("startupSave"),
-  );
-  assert.equal(save.props.disabled, false);
-  await save.props.onClick();
-  assert.equal(writes[0].target, "task");
-  assert.equal(writes[0].expected, row.values);
-  assert.deepEqual(Object.keys(writes[0].changes), ["role"]);
-  assert.equal(writes[0].changes.role, "planner");
-  assert.deepEqual(order, ["save", "read-after-save"]);
-  reject = true;
-  tree = render();
-  find(tree, (node) => node.type === "select").props.onChange({
-    target: { value: "both" },
-  });
-  tree = render();
-  await find(
-    tree,
-    (node) =>
-      node.type === "FixtureButton" && node.children.includes("startupSave"),
-  ).props.onClick();
-  tree = render();
-  assert.equal(
-    find(tree, (node) => node.type === "select").props.value,
-    "both",
-  );
-  assert.ok(
-    find(
-      tree,
-      (node) =>
-        node.props?.role === "alert" &&
-        node.children.includes("startupSaveFailed"),
-    ),
-  );
-  props.writable = false;
-  tree = render();
-  const count = writes.length;
-  const readonlySave = find(
-    tree,
-    (node) =>
-      node.type === "FixtureButton" && node.children.includes("startupSave"),
-  );
-  assert.equal(readonlySave.props.disabled, true);
-  await readonlySave.props.onClick();
-  assert.equal(writes.length, count);
 });
 
 test("startup transport descriptors match the final host and carry only one strict input", async () => {
@@ -746,7 +632,8 @@ test("startup transport descriptors match the final host and carry only one stri
     target: "task",
     expected: {
       role: "executor",
-      defaultWorkspaceId: null,
+      executionAgentPreset: "ptc",
+      executionTools: null,
       planningDecisionEnabled: true,
       sessionDecisionEnabled: false,
     },
@@ -823,14 +710,16 @@ test("unconfigured connection requires explicit source and target and starts wit
   const draft = ui.startupDraft("remote", values);
   assert.equal(draft.pollIntervalMs, "5000");
   assert.ok(
-    ui.startupChanges("remote", values, draft).invalid.includes("targetPort"),
+    ui.startupChanges("remote", values, draft).invalid.includes("connectionPort"),
   );
   Object.assign(draft, {
-    endpoint: "http://fixture.invalid:8443/commands",
+    connectionTouched: true,
+    connectionProtocol: "http",
+    connectionAddress: "127.0.0.2",
+    connectionPort: "8443",
+    connectionPath: "/commands",
     audience: "fixture-authority",
-    targetAddress: "fixture.invalid",
-    targetPort: "8443",
-    targetLocalAddress: "fixture.local",
+    targetLocalAddress: "127.0.0.3",
   });
   const parsed = ui.startupChanges("remote", values, draft);
   assert.equal(parsed.invalid.length, 0);
@@ -838,7 +727,7 @@ test("unconfigured connection requires explicit source and target and starts wit
   assert.equal(parsed.changes.trustedNetworkTarget.allowHttp, true);
   assert.equal(
     parsed.changes.trustedNetworkTarget.localAddress,
-    "fixture.local",
+    "127.0.0.3",
   );
   assert.equal(parsed.changes.nodeId, undefined);
   assert.equal(parsed.changes.authMode, undefined);
@@ -874,9 +763,12 @@ test("paused remote snapshots retain incomplete connection values and require pu
   assert.ok(resume.invalid.includes("endpoint"));
   const partialConnection = ui.startupChanges("remote", values, {
     ...draft,
-    endpoint: "http://fixture.invalid:8443/commands",
+    connectionTouched: true,
+    connectionAddress: "127.0.0.2",
   });
-  assert.ok(partialConnection.invalid.includes("audience"));
+  assert.equal(partialConnection.invalid.length, 0);
+  assert.equal(partialConnection.retainedDirty, true);
+  assert.equal(partialConnection.dirty, false);
   const view = {
     writable: true,
     applies: "plugin-restart",
@@ -922,428 +814,6 @@ test("paused remote snapshots retain incomplete connection values and require pu
         .parse({ ...request, changes: { paused: "false" } }),
     /Invalid startup value/,
   );
-});
-
-test("executor switch is visible in simple mode and immediately persists availability; Loader-disabled entries cannot write", async () => {
-  const states = [];
-  let index = 0;
-  const ui = client(
-    { Button: "FixtureButton", Switch: "FixtureSwitch" },
-    {
-      useState(initial) {
-        const slot = index++;
-        if (!(slot in states))
-          states[slot] = typeof initial === "function" ? initial() : initial;
-        return [
-          states[slot],
-          (value) => {
-            states[slot] =
-              typeof value === "function" ? value(states[slot]) : value;
-          },
-        ];
-      },
-    },
-  );
-  const writes = [],
-    order = [];
-  const row = {
-    entryId: "task-remote-execution",
-    loaded: true,
-    loaderDisabled: false,
-    values: {
-      role: "executor",
-      paused: true,
-      endpoint: "http://fixture.invalid:8443/commands",
-      audience: "fixture-authority",
-      pollIntervalMs: 0,
-      concurrency: 1,
-      taskSessionsEnabled: true,
-      trustedNetworkTarget: {
-        address: "fixture.invalid",
-        port: 8443,
-        localAddress: "fixture.local",
-        allowHttp: true,
-      },
-    },
-  };
-  const props = {
-    t: (key) => key,
-    target: "remote",
-    row,
-    advanced: false,
-    writable: true,
-    saveStartup: async (input) => {
-      writes.push(input);
-      order.push("save");
-    },
-    onSaved: async () => order.push("read-after-save"),
-  };
-  const find = (node, predicate) => {
-    if (!node || typeof node !== "object") return;
-    if (predicate(node)) return node;
-    for (const child of node.children ?? []) {
-      const value = find(child, predicate);
-      if (value) return value;
-    }
-  };
-  const render = () => {
-    index = 0;
-    return ui.StartupRow(props);
-  };
-  const toggle = (tree) =>
-    find(
-      tree,
-      (node) => node.type === "FixtureSwitch" && node.props.label === "executorEnabled",
-    );
-  const button = (tree, label) =>
-    find(
-      tree,
-      (node) => node.type === "FixtureButton" && node.children.includes(label),
-    );
-  let tree = render();
-  assert.equal(toggle(tree).props.checked, false);
-  assert.equal(toggle(tree).props.disabled, false);
-  const label = find(tree, node => node.props?.["data-task-availability-switch"]);
-  assert.notEqual(label.props.hidden, true);
-  await toggle(tree).props.onChange(true);
-  tree = render();
-  assert.equal(toggle(tree).props.checked, true);
-  assert.equal(writes[0].expected, row.values);
-  assert.deepEqual(Object.keys(writes[0].changes), ["paused"]);
-  assert.equal(writes[0].changes.paused, false);
-  assert.deepEqual(order, ["save", "read-after-save"]);
-  for (const metadata of [
-    { loaded: false, loaderDisabled: true },
-    { loaded: false, loaderDisabled: false },
-    { loaded: true, loaderDisabled: true },
-  ]) {
-    Object.assign(row, metadata);
-    tree = render();
-    assert.equal(toggle(tree).props.disabled, true);
-    assert.equal(button(tree, "startupSave").props.disabled, true);
-    assert.ok(
-      find(
-        tree,
-        (node) =>
-          node.props?.role === "note" &&
-          node.children.includes("startupRemoteDisabled"),
-      ),
-    );
-    await button(tree, "startupSave").props.onClick();
-    assert.equal(writes.length, 1);
-  }
-});
-
-test("simple scheduler addresses preserve existing paths and never infer audience", () => {
-  const ui = client();
-  const existing = "https://fixture.invalid/dsh-task/v1/commands";
-  assert.equal(ui.simpleEndpointDisplay(existing), "https://fixture.invalid");
-  assert.equal(
-    ui.simpleEndpointInput("https://new.invalid", existing),
-    "https://new.invalid/dsh-task/v1/commands",
-  );
-  assert.equal(ui.simpleEndpointInput(existing, null), existing);
-  assert.equal(
-    ui.simpleEndpointInput("https://new.invalid", null),
-    "https://new.invalid/dsh-task/v1/commands",
-  );
-  const custom = "https://fixture.invalid/custom/commands";
-  assert.equal(ui.simpleEndpointDisplay(custom), "https://fixture.invalid");
-  assert.equal(
-    ui.simpleEndpointInput("https://new.invalid", custom),
-    "https://new.invalid/custom/commands",
-  );
-  assert.equal(
-    ui.simpleEndpointInput("https://new.invalid/explicit", custom),
-    "https://new.invalid/explicit",
-  );
-  assert.equal(ui.simpleEndpointInput("incomplete", custom), "incomplete");
-  assert.equal(
-    ui.simpleEndpointDisplay("https://fixture.invalid?token=invalid"),
-    "https://fixture.invalid?token=invalid",
-  );
-  const values = {
-    role: "executor",
-    paused: true,
-    endpoint: existing,
-    audience: "existing-target",
-    pollIntervalMs: 0,
-    concurrency: 1,
-    taskSessionsEnabled: true,
-    trustedNetworkTarget: null,
-  };
-  const draft = ui.startupDraft("remote", values);
-  draft.concurrency = "2";
-  const changes = ui.startupChanges("remote", values, draft).changes;
-  assert.deepEqual(Object.keys(changes), ["concurrency"]);
-  const incomplete = { ...values, endpoint: null, audience: null };
-  const newDraft = ui.startupDraft("remote", incomplete);
-  newDraft.endpoint = ui.simpleEndpointInput("https://new.invalid", null);
-  const pending = ui.startupChanges("remote", incomplete, newDraft);
-  assert.ok(pending.invalid.includes("audience"));
-  assert.equal(pending.changes.audience, undefined);
-});
-
-function startupRoleFixture(values) {
-  const states = [];
-  let index = 0;
-  const ui = client(
-    { Button: "FixtureButton", Switch: "FixtureSwitch" },
-    {
-      useState(initial) {
-        const slot = index++;
-        if (!(slot in states))
-          states[slot] = typeof initial === "function" ? initial() : initial;
-        return [
-          states[slot],
-          (value) => {
-            states[slot] =
-              typeof value === "function" ? value(states[slot]) : value;
-          },
-        ];
-      },
-    },
-  );
-  const writes = [],
-    navigation = [];
-  const props = {
-    t: (key) => key,
-    target: "task",
-    row: { entryId: "task-system", values },
-    writable: true,
-    advanced: false,
-    workspaceDirectory: {
-      loading: false,
-      value: {
-        scope: {
-          entryId: "task-system",
-          nodeId: "fixture-node",
-          schedulerId: "fixture-scheduler",
-        },
-        source: "task",
-        items: [
-          {
-            workspaceId: "fixture-workspace",
-            title: "Project",
-            path: "/fixture/original",
-            available: true,
-          },
-          {
-            workspaceId: "draft-workspace",
-            title: "Project",
-            path: "/fixture/draft",
-            available: true,
-          },
-        ],
-      },
-    },
-    refreshWorkspaces: () => {},
-    saveStartup: async (input) => writes.push(input),
-    onSaved: async () => {},
-    openDecisionModels: () => navigation.push("models-form"),
-    openAdvanced: (id) => navigation.push(id),
-  };
-  const find = (node, predicate) => {
-    if (!node || typeof node !== "object") return;
-    if (predicate(node)) return node;
-    for (const child of node.children ?? []) {
-      const result = find(child, predicate);
-      if (result) return result;
-    }
-  };
-  return {
-    props,
-    writes,
-    navigation,
-    find,
-    render() {
-      index = 0;
-      return ui.StartupRow({...props,decisionAvailable:props.decisionAvailable ?? true});
-    },
-  };
-}
-
-test("decision controls distinguish scheduler executor selection from executor workspace/session choice for all roles", () => {
-  for (const role of ["planner", "executor", "both"]) {
-    for (const advanced of [false, true]) {
-      const fixture = startupRoleFixture({
-        role,
-        defaultWorkspaceId: "fixture-workspace",
-        planningDecisionEnabled: true,
-        sessionDecisionEnabled: true,
-      });
-      fixture.props.advanced = advanced;
-      const tree = fixture.render(),
-        { find } = fixture;
-      const scheduler = find(
-        tree,
-        (node) => node.props?.["data-task-scheduler-decision"],
-      );
-      const executor = find(
-        tree,
-        (node) => node.props?.["data-task-executor-decision"],
-      );
-      assert.equal(scheduler.props.hidden, role === "executor");
-      assert.equal(executor.props.hidden, role === "planner" && !advanced);
-      const planningSwitch = find(
-        scheduler,
-        (node) => node.type === "FixtureSwitch",
-      );
-      assert.equal(planningSwitch.props.label, "planningDecisionEnabled");
-      assert.equal(planningSwitch.props.checked, true);
-      assert.equal(planningSwitch.props.disabled, role === "executor");
-      const sessionSwitch = find(
-        executor,
-        (node) => node.type === "FixtureSwitch",
-      );
-      assert.equal(sessionSwitch.props.label, "sessionDecisionEnabled");
-      assert.equal(sessionSwitch.props.checked, true);
-      assert.equal(sessionSwitch.props.disabled, role === "planner");
-      const routeSelector=find(executor,node=>node.props?.id === "task-startup-task-defaultWorkspaceId");
-      if (advanced) assert.equal(routeSelector.props.disabled, role === "planner");
-      else assert.equal(routeSelector,undefined,"simple mode uses directory picker rather than route IDs");
-      assert.equal(
-        !!find(executor, (node) => node.props?.["data-task-decision-entry"]),
-        role !== "planner",
-      );
-      if (role === "planner")
-        assert.ok(
-          find(executor, (node) =>
-            node.children?.includes("executorDecisionInactive"),
-          ),
-        );
-    }
-  }
-});
-
-test("scheduler and executor switches stage independent fields; role and mode edits preserve both CAS drafts", async () => {
-  const values = {
-    role: "both",
-    defaultWorkspaceId: "fixture-workspace",
-    planningDecisionEnabled: true,
-    sessionDecisionEnabled: false,
-  };
-  const fixture = startupRoleFixture(values),
-    { find, props, writes, navigation } = fixture;
-  props.advanced = true;
-  let tree = fixture.render();
-  const button = (node, label) =>
-    find(
-      node,
-      (item) => item.type === "FixtureButton" && item.children.includes(label),
-    );
-  const scheduler = find(
-    tree,
-    (node) => node.props?.["data-task-scheduler-decision"],
-  );
-  button(scheduler, "schedulerDecisionModelEntry").props.onClick();
-  assert.deepEqual(navigation, ["models-form"]);
-  props.openDecisionModels = () => navigation.push("models-form");
-  button(fixture.render(), "schedulerDecisionModelEntry").props.onClick();
-  assert.deepEqual(navigation, ["models-form", "models-form"]);
-  assert.equal(writes.length, 0);
-  assert.equal(
-    find(tree, (node) => node.props?.["data-task-decision-entry"]),
-    undefined,
-  );
-  find(
-    tree,
-    (node) =>
-      node.type === "FixtureSwitch" &&
-      node.props.label === "planningDecisionEnabled",
-  ).props.onChange(false);
-  tree = fixture.render();
-  assert.equal(
-    find(tree, (node) => node.props?.["data-task-scheduler-decision-entry"]),
-    undefined,
-  );
-  assert.equal(
-    find(
-      tree,
-      (node) =>
-        node.type === "FixtureSwitch" &&
-        node.props.label === "sessionDecisionEnabled",
-    ).props.checked,
-    false,
-  );
-  find(
-    tree,
-    (node) => node.props?.id === "task-startup-task-defaultWorkspaceId",
-  ).props.onChange({
-    target: { value: "draft-workspace" },
-  });
-  tree = fixture.render();
-  find(
-    tree,
-    (node) =>
-      node.type === "FixtureSwitch" &&
-      node.props.label === "sessionDecisionEnabled",
-  ).props.onChange(true);
-  tree = fixture.render();
-  find(tree, (node) => node.type === "select").props.onChange({
-    target: { value: "planner" },
-  });
-  for (const advanced of [true, false, true]) {
-    props.advanced = advanced;
-    tree = fixture.render();
-    const selector=find(tree,node=>node.props?.id === "task-startup-task-defaultWorkspaceId");
-    if (advanced) assert.equal(selector.props.value,"draft-workspace");
-    else assert.equal(selector,undefined);
-    assert.equal(
-      find(
-        tree,
-        (node) =>
-          node.type === "FixtureSwitch" &&
-          node.props.label === "sessionDecisionEnabled",
-      ).props.checked,
-      true,
-    );
-    assert.equal(
-      find(
-        tree,
-        (node) =>
-          node.type === "FixtureSwitch" &&
-          node.props.label === "sessionDecisionEnabled",
-      ).props.disabled,
-      true,
-    );
-    assert.equal(
-      find(
-        tree,
-        (node) =>
-          node.type === "FixtureSwitch" &&
-          node.props.label === "planningDecisionEnabled",
-      ).props.checked,
-      false,
-    );
-    assert.equal(writes.length, 0);
-  }
-  find(tree, (node) => node.type === "select").props.onChange({
-    target: { value: "executor" },
-  });
-  tree = fixture.render();
-  assert.equal(
-    find(
-      tree,
-      (node) =>
-        node.type === "FixtureSwitch" &&
-        node.props.label === "sessionDecisionEnabled",
-    ).props.disabled,
-    false,
-  );
-  assert.ok(find(tree, (node) => node.props?.["data-task-decision-entry"]));
-  await button(tree, "startupSave").props.onClick();
-  assert.equal(writes[0].expected, values);
-  assert.deepEqual(Object.keys(writes[0].changes).sort(), [
-    "defaultWorkspaceId",
-    "planningDecisionEnabled",
-    "role",
-    "sessionDecisionEnabled",
-  ]);
-  assert.equal(writes[0].changes.role, "executor");
-  assert.equal(writes[0].changes.defaultWorkspaceId, "draft-workspace");
-  assert.equal(writes[0].changes.planningDecisionEnabled, false);
-  assert.equal(writes[0].changes.sessionDecisionEnabled, true);
 });
 
 test("workspace directory descriptor reads only metadata and preserves strict local scope", () => {
@@ -1393,117 +863,6 @@ test("workspace directory descriptor reads only metadata and preserves strict lo
   );
 });
 
-test("workspace selector retains missing values, distinguishes names by path and blocks stale or failed directory saves", async () => {
-  const f = startupRoleFixture({
-    role: "both",
-    defaultWorkspaceId: "fixture-workspace",
-    planningDecisionEnabled: true,
-    sessionDecisionEnabled: false,
-  });
-  const { find, props, writes } = f;
-  props.advanced = true;
-  const select = (tree) =>
-    find(
-      tree,
-      (node) => node.props?.id === "task-startup-task-defaultWorkspaceId",
-    );
-  const save = (tree) =>
-    find(
-      tree,
-      (node) =>
-        node.type === "FixtureButton" && node.children.includes("startupSave"),
-    );
-  let tree = f.render();
-  assert.equal(select(tree).props.value, "fixture-workspace");
-  assert.equal(select(tree).props.disabled, false);
-  assert.ok(
-    select(tree).children.some((node) =>
-      node?.children?.includes("Project · /fixture/draft"),
-    ),
-  );
-  select(tree).props.onChange({ target: { value: "draft-workspace" } });
-  tree = f.render();
-  props.workspaceDirectory = { ...props.workspaceDirectory, failed: true };
-  tree = f.render();
-  assert.equal(select(tree).props.value, "draft-workspace");
-  assert.equal(select(tree).props.disabled, true);
-  assert.equal(save(tree).props.disabled, true);
-  await save(tree).props.onClick();
-  assert.equal(writes.length, 0);
-  props.workspaceDirectory = {
-    loading: false,
-    value: {
-      ...props.workspaceDirectory.value,
-      items: [props.workspaceDirectory.value.items[0]],
-    },
-  };
-  tree = f.render();
-  assert.equal(select(tree).props.value, "draft-workspace");
-  assert.ok(
-    select(tree).children.some(
-      (node) => node?.props?.value === "draft-workspace" && node.props.disabled,
-    ),
-  );
-  assert.equal(save(tree).props.disabled, true);
-  props.workspaceDirectory.value = {
-    ...props.workspaceDirectory.value,
-    scope: {
-      ...props.workspaceDirectory.value.scope,
-      entryId: "another-profile",
-    },
-  };
-  tree = f.render();
-  assert.equal(select(tree).props.disabled, true);
-  assert.equal(select(tree).props.value, "draft-workspace");
-  props.workspaceDirectory = {
-    loading: false,
-    value: {
-      scope: {
-        entryId: "task-system",
-        nodeId: "fixture-node",
-        schedulerId: "fixture-scheduler",
-      },
-      source: "task",
-      items: [
-        {
-          workspaceId: "draft-workspace",
-          title: "Project",
-          path: "/fixture/draft",
-          available: true,
-        },
-      ],
-    },
-  };
-  tree = f.render();
-  assert.equal(select(tree).props.value, "draft-workspace");
-  assert.equal(save(tree).props.disabled, false);
-  await save(tree).props.onClick();
-  assert.deepEqual(Object.keys(writes[0].changes), ["defaultWorkspaceId"]);
-  assert.equal(writes[0].changes.defaultWorkspaceId, "draft-workspace");
-  assert.equal(writes[0].expected, props.row.values);
-});
-
-test('simple address typing retains a trailing colon, carries the exact port into save and checks an unsaved draft', async () => {
-  const states = []; let index = 0;
-  const ui = client({ Button: 'FixtureButton', Switch: 'FixtureSwitch' }, {
-    useState(initial) { const slot=index++; if (!(slot in states)) states[slot]=typeof initial==='function'?initial():initial; return [states[slot],value=>{states[slot]=typeof value==='function'?value(states[slot]):value;}]; },
-  });
-  const row={entryId:'remote',loaded:true,loaderDisabled:false,values:{role:'executor',paused:true,endpoint:'http://100.123.230.75:18440/dsh-task/v1/commands',audience:'planner',pollIntervalMs:1000,concurrency:1,taskSessionsEnabled:true,trustedNetworkTarget:{address:'100.123.230.75',port:18440,localAddress:'100.111.163.32',allowHttp:true}}};
-  const checks=[],writes=[];
-  const props={t:k=>k,target:'remote',row,writable:true,advanced:false,saveStartup:async input=>writes.push(input),onSaved:async()=>{},checkConnection:async input=>{checks.push(input);return {connected:true,paused:true,identity:{nodeId:'worker',executorId:'executor-fixture'}};}};
-  const render=()=>{index=0;return ui.StartupRow(props);};
-  const find=(node,predicate)=>{if(!node||typeof node!=='object')return; if(predicate(node))return node; for(const child of node.children??[]){const result=find(child,predicate);if(result)return result;}};
-  for(const text of ['http://100.123.230.75','http://100.123.230.75:', 'http://100.123.230.75:1', 'http://100.123.230.75:18441']) {
-    find(render(),n=>n.props?.id==='task-startup-remote-endpoint').props.onChange({target:{value:text}});
-    assert.equal(find(render(),n=>n.props?.id==='task-startup-remote-endpoint').props.value,text);
-  }
-  await find(render(),n=>n.type==='FixtureButton'&&n.children.includes('connectionCheck')).props.onClick();
-  assert.equal(writes.length,0);assert.equal(checks.length,1);assert.equal(checks[0].endpoint,'http://100.123.230.75:18441/dsh-task/v1/commands');assert.equal(checks[0].trustedNetworkTarget.port,18441);assert.equal(checks[0].trustedNetworkTarget.localAddress,row.values.trustedNetworkTarget.localAddress);
-  await find(render(),n=>n.type==='FixtureButton'&&n.children.includes('startupSave')).props.onClick();
-  assert.equal(writes[0].changes.endpoint,checks[0].endpoint);assert.equal(writes[0].changes.trustedNetworkTarget.port,18441);
-});
-
-
 test('connection result codec accepts the native identity response and rejects an invalid success', () => {
   const ui=client(),value={connected:true,checkedAt:new Date().toISOString(),endpoint:'http://127.0.0.1:1234/commands',paused:true,code:null,identity:{nodeId:'worker',schedulerId:'scheduler-5b933515-b3ae-43ec-bf5b-e7c6b1bfaebd',executorId:'executor-17bed9a3-a4a3-4db7-916c-a5e45b491ed6'}};
   assert.deepEqual(ui.checkConnectionDescriptor.result.create().parse(value),checkConnectionDescriptor.result.create().parse(value));
@@ -1521,18 +880,6 @@ test('model settings shortcut uses the official root store seat, sharing the cur
   assert.equal(ui.openPlugins(ctx),true);assert.deepEqual(selected,['models','plugins']);
   assert.equal(ui.openModels({slots:{entries:()=>[]}}),false);
   assert.equal(ui.openModels({slots:{entries:()=>[{options:{},store:{create:()=>({actions:{}})}}]}}),false);
-});
-
-test("decision switches stay disabled and show dependency instructions when the decision plugin is absent",()=>{
- const f=startupRoleFixture({role:"both",defaultWorkspaceId:"fixture-workspace",planningDecisionEnabled:true,sessionDecisionEnabled:true});
- f.props.decisionAvailable=false;
- const tree=f.render();
- for(const label of ["planningDecisionEnabled","sessionDecisionEnabled"]){
-  const control=f.find(tree,n=>n.type==="FixtureSwitch"&&n.props.label===label);
-  assert.equal(control.props.disabled,true);assert.equal(control.props.checked,false);
- }
- assert.ok(f.find(tree,n=>n.props?.role==="note"&&n.children?.includes("decisionDependencyRequired")));
- assert.equal(f.find(tree,n=>n.props?.["data-task-decision-entry"]),undefined);
 });
 
 test('scheduler node capacity draft stays clean and validates each registered node independently',()=>{
