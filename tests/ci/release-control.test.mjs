@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { atomicPromote, candidatePackageVersion, checkedSha, checkedTag, createManifest, validateAcceptance, validateManifest, validateVerification } from '../../scripts/ci/release-control.mjs';
+import { atomicPromote, candidatePackageVersion, checkedSha, checkedTag, createManifest, createReleaseRecord, shortTagMessage, releaseRecordName, validateUploadedRecord, validateManifest, validateVerification } from '../../scripts/ci/release-control.mjs';
 import { preserveTestedPackage } from '../../scripts/ci/tested-package.mjs';
 
 const candidate = 'a'.repeat(40);
@@ -25,11 +25,8 @@ function fixture() {
   writeFileSync(join(root, 'capabilities.json'), JSON.stringify({ ok: true, packages }));
   return root;
 }
-function acceptance(manifest) {
-  return { schemaVersion: 1, candidateSha: candidate, fullCiRunId: 12, tag: 'v0.2.51', packages: manifest.packages,
-    devices: [{ id: 'fixture-device', platform: 'fixture-os', packages: [{ name: '@dsh-task/task-system', sha256: manifest.packages.find((item) => item.name === '@dsh-task/task-system').sha256 }], checks: [{ name: 'fixture-check', passed: true, evidence: 'Synthetic unit-test evidence only' }] }],
-    userConfirmation: { by: 'fixture-user', confirmedAt: '2026-10-23T00:00:00Z', statement: 'Synthetic test declaration', evidence: 'Unit-test fixture; not a real release authorization' } };
-}
+const input = { summary: '# Fixture devices passed', report: 'Synthetic device OS; fixture checks passed; fixture evidence only.', userConfirmation: 'Synthetic test confirmation; not a real authorization.', confirmed: 'true' };
+const operator = { actor: 'fixture-actor', triggeringActor: 'fixture-operator', workflowRef: 'owner/repository/.github/workflows/ci.yml@refs/heads/main', runId: 34, runAttempt: 1 };
 
 test('release identifiers reject abbreviated SHA, shell syntax and mismatched version tags', () => {
   assert.equal(checkedSha(candidate), candidate);
@@ -70,25 +67,33 @@ test('duplicate package names preserve the very same bytes and reject changed re
     assert.throws(() => preserveTestedPackage({ ...pack, filename: '../task.tgz' }, join(root, 'task.tgz'), root));
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
-test('acceptance rejects absent confirmation, failed devices, altered packages and wrong candidate', () => {
+test('plain-text acceptance record binds all candidate metadata without duplicating hashes by hand', () => {
   const root = fixture();
   try {
     const manifest = createManifest(root, context);
-    const receipt = acceptance(manifest);
-    validateAcceptance(receipt, manifest, 'v0.2.51', 'true');
-    assert.throws(() => validateAcceptance(receipt, manifest, 'v0.2.51', 'false'));
-    for (const mutate of [
-      (item) => { item.candidateSha = 'b'.repeat(40); },
-      (item) => { item.fullCiRunId = 13; },
-      (item) => { item.devices = []; },
-      (item) => { item.devices[0].checks[0].passed = false; },
-      (item) => { item.devices[0].packages[0].sha256 = 'wrong'; },
-      (item) => { item.userConfirmation.evidence = ''; },
-    ]) {
-      const changed = structuredClone(receipt); mutate(changed);
-      assert.throws(() => validateAcceptance(changed, manifest, 'v0.2.51', 'true'));
+    const record = createReleaseRecord(manifest, input, operator);
+    assert.deepEqual(record.manifest, manifest);
+    assert.equal(record.acceptance.report, input.report);
+    assert.deepEqual(record.operator, operator);
+    const message = shortTagMessage(record);
+    assert.equal(message, `# Fixture devices passed\n\nCI: https://github.com/${repository}/actions/runs/12`);
+    assert.equal(message.includes(input.report), false);
+    assert.equal(message.includes(input.userConfirmation), false);
+    const retry = createReleaseRecord(manifest, input, { ...operator, runId: 35, runAttempt: 2 });
+    assert.equal(shortTagMessage(retry), message, 'Tag text is independent of promotion run/attempt');
+    for (const changed of [{ confirmed: 'false' }, { summary: '' }, { summary: 'line one\nline two' }, { summary: 'x'.repeat(241) }, { report: '' }, { userConfirmation: '' }]) {
+      assert.throws(() => createReleaseRecord(manifest, { ...input, ...changed }, operator));
     }
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+test('uploaded detailed record must exist in this exact promotion attempt before approval', () => {
+  const upload = { candidate, runId: 34, attempt: 1, digest: 'b'.repeat(64) };
+  const artifact = { name: releaseRecordName(candidate, 34, 1), expired: false, workflow_run: { id: 34 }, size_in_bytes: 200, digest: `sha256:${upload.digest}` };
+  validateUploadedRecord(artifact, upload);
+  assert.throws(() => validateUploadedRecord(undefined, upload));
+  for (const changed of [{ expired: true }, { name: releaseRecordName(candidate, 34, 2) }, { workflow_run: { id: 35 } }, { digest: 'sha256:' + 'c'.repeat(64) }, { size_in_bytes: 0 }]) {
+    assert.throws(() => validateUploadedRecord({ ...artifact, ...changed }, upload));
+  }
 });
 test('ordinary atomic push fast-forwards main with an annotated immutable tag; retry converges', async () => {
   const root = mkdtempSync(join(tmpdir(), 'dsh-release-git-'));
@@ -114,14 +119,16 @@ test('ordinary atomic push fast-forwards main with an annotated immutable tag; r
     local('checkout', '--detach', sha);
     let approved = 0;
     const options = { beforePush: async () => { approved++; } };
-    const annotation = { fixture: 'Synthetic acceptance only' };
+    const annotation = '# Fixture devices passed\n\nCI: https://github.com/owner/repository/actions/runs/12';
     assert.equal(await atomicPromote(sha, 'v0.2.51', annotation, options), 'promoted');
+    const tagObject = execFileSync('git', ['--git-dir=' + join(root, 'remote.git'), 'cat-file', '-p', 'refs/tags/v0.2.51'], { encoding: 'utf8' });
+    assert.equal(tagObject.split('\n\n').slice(1).join('\n\n'), annotation + '\n', 'Git preserves the # summary and exactly matches tag-message.txt bytes');
     assert.equal(approved, 1);
     assert.match(local('ls-remote', 'origin', 'refs/heads/main'), new RegExp(`^${sha}\\s`));
     assert.equal(await atomicPromote(sha, 'v0.2.51', annotation, options), 'already promoted');
     assert.equal(approved, 1);
     await assert.rejects(atomicPromote(base, 'v0.2.52', annotation, options));
-    await assert.rejects(atomicPromote(sha, 'v0.2.51', { different: true }, options));
+    await assert.rejects(atomicPromote(sha, 'v0.2.51', 'Different summary', options));
     assert.equal(approved, 1, 'Ref conflicts must be rejected before approval');
     writeFileSync('file', 'next'); local('commit', '-am', 'next');
     const next = local('rev-parse', 'HEAD');
@@ -130,4 +137,29 @@ test('ordinary atomic push fast-forwards main with an annotated immutable tag; r
     assert.match(local('ls-remote', 'origin', 'refs/heads/main'), new RegExp(`^${sha}\\s`));
     assert.equal(local('ls-remote', 'origin', 'refs/tags/v0.2.52'), '', 'Rejected atomic transaction must create neither ref');
   } finally { process.chdir(previous); rmSync(root, { recursive: true, force: true }); }
+});
+
+test('npm version prepares only the selected release workspace and its generated lock without a commit or tag', () => {
+  const root = mkdtempSync(join(tmpdir(), 'dsh-release-version-'));
+  const npm = (...args) => execFileSync('npm', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  const git = (...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  try {
+    mkdirSync(join(root, 'packages/task-system'), { recursive: true });
+    mkdirSync(join(root, 'packages/jev'), { recursive: true });
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'fixture-root', version: '0.0.0', private: true, workspaces: ['packages/*'] }));
+    writeFileSync(join(root, 'packages/task-system/package.json'), JSON.stringify({ name: '@dsh-task/task-system', version: '0.2.50', scripts: { preversion: 'exit 99' } }));
+    writeFileSync(join(root, 'packages/jev/package.json'), JSON.stringify({ name: 'dsh-jev-plugin', version: '0.3.4' }));
+    npm('install', '--package-lock-only', '--ignore-scripts', '--offline', '--no-audit', '--no-fund');
+    git('init', '-b', 'dev'); git('config', 'user.name', 'Fixture'); git('config', 'user.email', 'fixture@example.invalid');
+    git('add', '.'); git('commit', '-m', 'fixture baseline'); const head = git('rev-parse', 'HEAD');
+    npm('version', '0.2.51', '--workspace', '@dsh-task/task-system', '--no-git-tag-version', '--ignore-scripts');
+    const read = (path) => JSON.parse(readFileSync(join(root, path)));
+    const lock = read('package-lock.json');
+    assert.equal(read('packages/task-system/package.json').version, '0.2.51');
+    assert.equal(lock.packages['packages/task-system'].version, '0.2.51');
+    assert.equal(read('packages/jev/package.json').version, '0.3.4');
+    assert.equal(lock.packages['packages/jev'].version, '0.3.4');
+    assert.equal(lock.packages[''].version, '0.0.0');
+    assert.equal(git('rev-parse', 'HEAD'), head); assert.equal(git('tag', '--list'), '');
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });

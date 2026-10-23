@@ -19,7 +19,7 @@ Role profiles, protocol types, task templates and the WebUI are not presented as
 
 ## Build and verify
 
-Develop on a feature branch from `dev`, then open a PR to `dev`. Before release, verify a fixed dev SHA with full CI, test its retained packages on real devices, and obtain explicit user confirmation. The release workflow fast-forwards `main` to that same SHA and creates its version tag. Follow the [development and release workflow](docs/DEVELOPMENT.md) before changing code or integrating a PR.
+Develop on a feature branch from `dev`, then open a PR to `dev`. Before release, verify a fixed dev SHA with full CI, test its retained packages on real devices, and obtain explicit user confirmation. Prepare package versions once per formal release before testing; ordinary feature PRs do not each bump versions. The release workflow fast-forwards `main` to the tested SHA and derives its version tag. Detailed acceptance stays in Actions artifacts; the tag contains a short summary and CI link. Follow the [development and release workflow](docs/DEVELOPMENT.md) before changing code or integrating a PR.
 
 Use Node 24 and the system OpenSSL executable:
 

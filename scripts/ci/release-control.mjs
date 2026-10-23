@@ -85,41 +85,45 @@ export function validateVerification(run, { repository, candidate, runId }) {
   checkedId(run.run_attempt);
   return `release-candidate-${candidate}-${run.id}-${run.run_attempt}`;
 }
-export function validateAcceptance(receipt, manifest, tag, confirmed) {
-  assert.equal(confirmed, 'true', 'Explicit workflow confirmation is required');
-  assert.equal(receipt.schemaVersion, 1);
-  assert.equal(receipt.candidateSha, manifest.candidateSha);
-  assert.equal(receipt.fullCiRunId, manifest.runId);
-  assert.equal(receipt.tag, checkedTag(tag, manifest.taskSystemVersion));
-  assert.deepEqual(receipt.packages, manifest.packages, 'Acceptance must name the exact tested package bytes');
-  assert.ok(Array.isArray(receipt.devices) && receipt.devices.length > 0, 'Declare the intended device scope and actual results');
-  const names = new Set();
-  for (const device of receipt.devices) {
-    assert.ok(typeof device.id === 'string' && device.id.trim());
-    assert.ok(!names.has(device.id), 'Duplicate device'); names.add(device.id);
-    assert.ok(typeof device.platform === 'string' && device.platform.trim());
-    assert.ok(Array.isArray(device.packages) && device.packages.length > 0);
-    assert.ok(device.packages.some((item) => item.name === '@dsh-task/task-system'), 'Each declared device must test task-system');
-    for (const installed of device.packages) {
-      const tested = manifest.packages.find((item) => item.name === installed.name);
-      assert.ok(tested && installed.sha256 === tested.sha256, 'Device used an untested package');
-    }
-    assert.ok(Array.isArray(device.checks) && device.checks.length > 0);
-    for (const check of device.checks) {
-      assert.equal(check.passed, true, 'Every declared device check must pass');
-      assert.ok(typeof check.name === 'string' && check.name.trim());
-      assert.ok(typeof check.evidence === 'string' && check.evidence.trim(), 'Device evidence is required');
-    }
-  }
-  const confirmation = receipt.userConfirmation;
-  for (const key of ['by', 'statement', 'evidence']) assert.ok(typeof confirmation?.[key] === 'string' && confirmation[key].trim(), `User confirmation ${key} is required`);
-  assert.ok(Number.isFinite(Date.parse(confirmation.confirmedAt)), 'User confirmation timestamp is required');
+export function createReleaseRecord(manifest, input, operator) {
+  assert.equal(input.confirmed, 'true', 'Explicit workflow confirmation is required');
+  const text = (value, name, limit) => {
+    assert.ok(typeof value === 'string' && value.trim(), `${name} is required`);
+    assert.ok(Buffer.byteLength(value, 'utf8') <= limit, `${name} is too long`);
+    return value.trim();
+  };
+  const summary = text(input.summary, 'Acceptance summary', 240);
+  assert.ok(!/[\r\n\x00-\x1f\x7f]/.test(summary), 'Acceptance summary must be one line');
+  const report = text(input.report, 'Detailed acceptance record', 40000);
+  const userConfirmation = text(input.userConfirmation, 'Actual user confirmation evidence', 8000);
+  for (const name of ['actor', 'triggeringActor', 'workflowRef']) assert.ok(typeof operator[name] === 'string' && operator[name]);
+  return {
+    schemaVersion: 2, manifest,
+    acceptance: { summary, report, userConfirmation, confirmed: true },
+    operator: { actor: operator.actor, triggeringActor: operator.triggeringActor, workflowRef: operator.workflowRef,
+      runId: checkedId(operator.runId), runAttempt: checkedId(operator.runAttempt) },
+  };
+}
+export function shortTagMessage(record) {
+  return `${record.acceptance.summary}\n\nCI: https://github.com/${record.manifest.repository}/actions/runs/${checkedId(record.manifest.runId)}`;
+}
+export function releaseRecordName(candidate, runId, attempt) {
+  return `release-record-${checkedSha(candidate)}-${checkedId(runId)}-${checkedId(attempt)}`;
+}
+export function validateUploadedRecord(artifact, { candidate, runId, attempt, digest }) {
+  assert.ok(artifact, 'Detailed release record has not been uploaded');
+  assert.equal(artifact.name, releaseRecordName(candidate, runId, attempt));
+  assert.equal(artifact.expired, false);
+  assert.equal(artifact.workflow_run?.id, checkedId(runId));
+  assert.ok(artifact.size_in_bytes > 0);
+  assert.match(digest ?? '', /^[a-f0-9]{64}$/, 'Artifact upload digest is required');
+  assert.equal(artifact.digest, `sha256:${digest}`, 'Uploaded release record digest mismatch');
 }
 export function validateManifest(directory, manifest, context, run) {
   const actual = createManifest(directory, { ...context, attempt: run.run_attempt });
   assert.deepEqual(manifest, actual, 'Candidate manifest is inconsistent with the immutable verification artifact');
 }
-export async function atomicPromote(candidate, tag, annotation, { remote = 'origin', beforePush = async () => {} } = {}) {
+export async function atomicPromote(candidate, tag, tagMessage, { remote = 'origin', beforePush = async () => {} } = {}) {
   checkedSha(candidate);
   assert.match(tag, /^v[0-9A-Za-z.+-]+$/);
   const lines = git('ls-remote', remote, 'refs/heads/main', `refs/tags/${tag}`, `refs/tags/${tag}^{}`).split('\n').filter(Boolean);
@@ -130,8 +134,9 @@ export async function atomicPromote(candidate, tag, annotation, { remote = 'orig
     git('fetch', '--no-tags', remote, `refs/tags/${tag}`);
     assert.equal(git('rev-parse', 'FETCH_HEAD^{}'), candidate, 'Version tag already identifies another candidate');
     assert.equal(git('cat-file', '-t', 'FETCH_HEAD'), 'tag', 'Existing version tag is not annotated');
-    const body = git('cat-file', '-p', 'FETCH_HEAD').split('\n\n').slice(1).join('\n\n');
-    assert.deepEqual(JSON.parse(body), annotation, 'Version tag already has a different acceptance record');
+    const tagged = execFileSync('git', ['cat-file', '-p', 'FETCH_HEAD'], { encoding: 'utf8' });
+    const body = tagged.split('\n\n').slice(1).join('\n\n').replace(/\n$/, '');
+    assert.equal(body, tagMessage, 'Version tag already has a different acceptance summary or CI link');
     ancestor(candidate, main);
     return 'already promoted';
   }
@@ -140,7 +145,7 @@ export async function atomicPromote(candidate, tag, annotation, { remote = 'orig
   assert.equal(git('tag', '--list', tag), '', 'Local version tag already exists');
   await beforePush();
   git('-c', 'user.name=github-actions[bot]', '-c', 'user.email=41898282+github-actions[bot]@users.noreply.github.com',
-    'tag', '-a', tag, candidate, '-m', JSON.stringify(annotation));
+    'tag', '--cleanup=verbatim', '-a', tag, candidate, '-m', tagMessage + '\n');
   try {
     git('push', '--atomic', remote, `${candidate}:refs/heads/main`, `${local}:${local}`);
   } finally {
@@ -194,7 +199,8 @@ async function main(command) {
     assert.equal(matches.length, 1, 'One immutable candidate artifact from the successful attempt is required');
     appendFileSync(env.GITHUB_OUTPUT, `artifact_id=${matches[0].id}\n`);
     writeFileSync('.runtime-verified-run.json', JSON.stringify(run));
-  } else if (command === 'promote') {
+  } else if (command === 'record' || command === 'promote') {
+    assert.equal(env.GITHUB_EVENT_NAME, 'workflow_dispatch');
     assert.equal(env.GITHUB_REF, 'refs/heads/main');
     assert.ok(env.GITHUB_WORKFLOW_REF?.endsWith(`${workflowPath}@refs/heads/main`));
     const run = json('.runtime-verified-run.json');
@@ -203,17 +209,28 @@ async function main(command) {
     const manifest = json(join(directory, 'candidate.json'));
     const sourceVersion = candidatePackageVersion(context.candidate);
     validateManifest(directory, manifest, { ...context, sourceVersion }, run);
-    const acceptance = JSON.parse(env.ACCEPTANCE_JSON);
-    validateAcceptance(acceptance, manifest, env.RELEASE_TAG, env.RELEASE_CONFIRM);
-    git('fetch', '--no-tags', 'origin', 'main', 'dev');
     ancestor(context.candidate, git('rev-parse', 'origin/dev'));
-    const annotation = { schemaVersion: 1, manifest, acceptance };
-    console.log(await atomicPromote(context.candidate, checkedTag(env.RELEASE_TAG, manifest.taskSystemVersion), annotation, {
-      beforePush: async () => {
-        await status('success', releaseContext, 'Explicit device acceptance and user confirmation recorded');
-        writeFileSync(join(directory, 'release-annotation.json'), JSON.stringify(annotation, null, 2) + '\n');
-      },
-    }));
+    const record = createReleaseRecord(manifest, {
+      summary: env.ACCEPTANCE_SUMMARY, report: env.ACCEPTANCE_RECORD,
+      userConfirmation: env.USER_CONFIRMATION, confirmed: env.RELEASE_CONFIRM,
+    }, { actor: env.GITHUB_ACTOR, triggeringActor: env.GITHUB_TRIGGERING_ACTOR,
+      workflowRef: env.GITHUB_WORKFLOW_REF, runId: env.GITHUB_RUN_ID, runAttempt: env.GITHUB_RUN_ATTEMPT });
+    const tagMessage = shortTagMessage(record);
+    const tag = checkedTag(`v${manifest.taskSystemVersion}`, manifest.taskSystemVersion);
+    if (command === 'record') {
+      writeFileSync(join(directory, 'release-record.json'), JSON.stringify(record, null, 2) + '\n');
+      writeFileSync(join(directory, 'tag-message.txt'), tagMessage + '\n');
+    } else {
+      assert.deepEqual(json(join(directory, 'release-record.json')), record, 'Detailed record changed after upload');
+      assert.equal(readFileSync(join(directory, 'tag-message.txt'), 'utf8'), tagMessage + '\n', 'Tag text changed after upload');
+      const artifacts = await api(`/actions/runs/${checkedId(env.GITHUB_RUN_ID)}/artifacts?per_page=100`);
+      const artifact = artifacts.artifacts.find((item) => item.id === checkedId(env.UPLOADED_RECORD_ID));
+      validateUploadedRecord(artifact, { candidate: context.candidate, runId: env.GITHUB_RUN_ID,
+        attempt: env.GITHUB_RUN_ATTEMPT, digest: env.UPLOADED_RECORD_DIGEST });
+      console.log(await atomicPromote(context.candidate, tag, tagMessage, {
+        beforePush: () => status('success', releaseContext, 'Detailed acceptance artifact stored; user confirmation recorded'),
+      }));
+    }
   } else throw new Error('Unknown release control operation');
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) await main(process.argv[2]);
