@@ -9,7 +9,7 @@ import {TaskPluginSettings,executionPresetsDescriptor} from '../dist/settings.js
 import {SessionId} from '@deepseek-ai/dsh-session';
 
 async function fixture() {
- const h=await createNativeHarness({config:{executionAgentPreset:'files'},script:[{name:'read',args:{file_path:'evidence.txt'}},{name:'task_submit_result',args:{outcome:'success',summary:'Read the actual preset file'}}]});
+ const h=await createNativeHarness({presets:false,config:{executionAgentPreset:'files'},script:[{name:'read',args:{file_path:'evidence.txt'}},{name:'task_submit_result',args:{outcome:'success',summary:'Read the actual preset file'}}]});
  writeFileSync(join(h.dir,'evidence.txt'),'PRESET_READ_PROOF');h.ctx.taskSystem.executionDirectories.save({root:h.dir,expectedRevision:0});
  const wrong=join(h.dir,'wrong-route.mjs');writeFileSync(wrong,`import {installModelSelection} from ${JSON.stringify(import.meta.resolve('@deepseek-ai/dsh-agent'))};export function apply(ctx){installModelSelection(ctx,{current:{provider:'wrong-provider',model:'wrong-model'},assembled:undefined})}`);
  for(const row of [

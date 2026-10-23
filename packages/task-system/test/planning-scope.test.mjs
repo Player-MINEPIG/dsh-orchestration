@@ -1,3 +1,4 @@
+import {registerExecutor,publishModels} from '../../../tests/dsh/executor-fixture.mjs';
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {TaskLedger} from '../dist/ledger.js'
@@ -10,7 +11,7 @@ import {SaveStartupInput} from '../dist/startup-settings.js'
 function setup(t) {
   const ledger=TaskLedger.open(':memory:');t.after(()=>ledger.close())
   for(const workspaceId of ['default','other']) ledger.registerWorkspace(`ws-${workspaceId}`,{workspaceId,nodeId:'worker',label:workspaceId,path:`/tmp/fixture-${workspaceId}`,state:'ready',createdAt:new Date().toISOString()})
-  ledger.registerNode('node',{nodeId:'worker',roles:['executor'],models:[{provider:'fixture',model:'fixture',reasoningEfforts:['high']}],capabilities:['text'],workspaceIds:['default','other'],defaultWorkspaceId:'default',enabled:true,lastSeenAt:new Date().toISOString()})
+  registerExecutor(ledger, 'node',{nodeId:'worker',roles:['executor'],models:[{provider:'fixture',model:'fixture',reasoningEfforts:['high']}],capabilities:['text'],workspaceIds:['default','other'],defaultWorkspaceId:'default',enabled:true,lastSeenAt:new Date().toISOString()})
   const catalog=()=>taskDecisionCatalog(ledger,{fixture:true}),route={nodeId:'worker',provider:'fixture',model:'fixture',requiredCapabilities:['text']}
   return {ledger,catalog,route}
 }
@@ -25,7 +26,7 @@ function claim(f,runId) {const claim=f.ledger.claim(`claim-${runId}`,{runId,node
 
 test('planning flag is independent, compatible by default and exposed in strict startup writes',()=>{
   assert.equal(Config({}).planningDecisionEnabled.get(),true);assert.equal(Config({}).sessionDecisionEnabled.get(),false)
-  const expected={role:'both',defaultWorkspaceId:'default',sessionDecisionEnabled:true,planningDecisionEnabled:true}
+  const expected={role:'both',sessionDecisionEnabled:true,planningDecisionEnabled:true}
   assert.deepEqual(SaveStartupInput.parse({target:'task',expected,changes:{planningDecisionEnabled:false}}).changes,{planningDecisionEnabled:false})
 })
 for(const mode of ['disabled','missing']) test(`${mode} planning calls no model, preserves an explicit route and otherwise leaves routing pending`,async t=>{
@@ -41,9 +42,9 @@ for(const mode of ['disabled','missing']) test(`${mode} planning calls no model,
 test('scheduler request omits workspace and model workspace answers cannot become Task constraints',async t=>{
   const f=setup(t);let seen
   const p=planner(f,engine(t,(questions,context)=>{seen=questions;assert.deepEqual(context.catalog.workspaces,[]);return plannerAnswers(questions,context)}))
-  const record=await p.plan({requestId:'model',title:'Executor owns workspace',description:''});assert.equal(record.proposal.kind,'proposal');assert.ok(!seen.some(q=>q.questionId==='workspace'));assert.equal(record.proposal.workspace,null)
+  const record=await p.plan({requestId:'model',title:'Executor owns workspace',description:''});assert.equal(record.proposal.kind,'proposal',JSON.stringify({proposal:record.proposal,receipt:record.receipt}));assert.ok(!seen.some(q=>q.questionId==='workspace'));assert.equal(record.proposal.workspace,null)
   const applied=p.apply('model'),run=f.ledger.getRun(applied.value.runId),task=f.ledger.getTask(applied.value.taskId)
-  assert.equal(task.workspaceId,undefined);assert.equal(run.route.workspaceId,'default');assert.equal(run.workspaceConstraint,undefined)
+  assert.equal(task.workspaceId,undefined);assert.equal(run.route.workspaceId,undefined);assert.equal(run.workspaceConstraint,undefined)
 })
 test('an injected scheduler workspace answer is rejected instead of copied into a Task',async t=>{
   const f=setup(t),p=planner(f,engine(t,(questions,context)=>({...plannerAnswers(questions,context),workspace:{type:'choice',choice:'other'}})))

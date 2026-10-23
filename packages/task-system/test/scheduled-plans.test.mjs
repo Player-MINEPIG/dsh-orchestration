@@ -1,3 +1,4 @@
+import {registerExecutor,publishModels} from '../../../tests/dsh/executor-fixture.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtempSync,rmSync} from 'node:fs';
@@ -8,7 +9,7 @@ import {ScheduledPlans} from '../dist/scheduled-plans.js';
 import {Workbench} from '../dist/workbench.js';
 function fixture(){let now=Date.parse('2026-10-01T12:00:00Z');const dir=mkdtempSync(join(tmpdir(),'schedule-plan-')),file=join(dir,'ledger.sqlite');let l=TaskLedger.open(file,{now:()=>now});
  const node={nodeId:'mbp',enabled:true,roles:['executor'],models:[{provider:'test',model:'small',reasoningEfforts:['low']}],capabilities:[],workspaceIds:['ws'],lastSeenAt:new Date(now).toISOString()};
- l.registerWorkspace('ws',{workspaceId:'ws',nodeId:'mbp',path:dir,label:'Isolated',state:'ready',createdAt:new Date(now).toISOString()});l.registerNode('node',node);l.recordNodeHeartbeat('hb',{nodeId:'mbp',runtimeReady:true,activeExecutions:0,sampledAt:now,source:'host-local',providerStatus:{executionRoutes:[{nodeId:'mbp',provider:'test',model:'small',reasoningEffort:'low',requiredCapabilities:[]}]}});
+ l.registerWorkspace('ws',{workspaceId:'ws',nodeId:'mbp',path:dir,label:'Isolated',state:'ready',createdAt:new Date(now).toISOString()});registerExecutor(l,'node',node);l.recordNodeHeartbeat('hb',{nodeId:'mbp',runtimeReady:true,activeExecutions:0,sampledAt:now,source:'host-local',providerStatus:{executionRoutes:[{nodeId:'mbp',provider:'test',model:'small',reasoningEffort:'low',requiredCapabilities:[]}]}});
  new Workbench(l).manage('project','create_project',{projectId:'p',title:'Recurring project',goal:'Test'});
  return{get l(){return l},get service(){return new ScheduledPlans(l)},node,advance(n){now+=n},reopen(){l.close();l=TaskLedger.open(file,{now:()=>now})},close(){l.close();rmSync(dir,{recursive:true,force:true})}};
 }

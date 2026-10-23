@@ -1,3 +1,4 @@
+import {registerExecutor,publishModels} from '../../../tests/dsh/executor-fixture.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
@@ -23,7 +24,7 @@ for (const transport of ['local', 'remote']) test(`${transport} delegated sessio
     const project=runtime.snapshot().projects.find(p=>p.id===projectId);
     const route={nodeId:'local',workspaceId:'default',provider:'test-offline',model:'script',requiredCapabilities:[]};
     l.registerWorkspace('workspace',{workspaceId:'default',nodeId:'local',path:h.dir,label:'Authorized root',state:'ready',createdAt:new Date().toISOString()});
-    l.registerNode('node',{nodeId:'local',roles:['both'],models:[{provider:'test-offline',model:'script',reasoningEfforts:[]}],capabilities:[],workspaceIds:['default'],defaultWorkspaceId:'default',enabled:true,maxConcurrent:4});
+    registerExecutor(l, 'node',{nodeId:'local',roles:['both'],models:[{provider:'test-offline',model:'script',reasoningEfforts:[]}],capabilities:[],workspaceIds:['default'],defaultWorkspaceId:'default',enabled:true,maxConcurrent:4});
     const task=l.createTask('parent',{title:'Daily root',policy:{maxChildren:3,maxDepth:3}}).value;
     runtime.linkTask(project.sessionId,task.taskId);
     const parent=l.createRun('parent-run',{taskId:task.taskId,route}).value;

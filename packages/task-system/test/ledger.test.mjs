@@ -1,3 +1,4 @@
+import {registerExecutor,publishModels} from '../../../tests/dsh/executor-fixture.mjs';
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -32,7 +33,7 @@ function legacyAdmission(l, task) {
   return old;
 }
 function prepare(l, nodeId = "worker") {
-  l.registerNode("node-" + nodeId, {
+  registerExecutor(l, "node-" + nodeId, {
     nodeId,
     roles: ["executor"],
     capabilities: ["text"],
@@ -635,7 +636,7 @@ test("run-scoped cancellation cannot cancel another node run under the same stab
   const f = fixture();
   try {
     const { task, run } = prepare(f.l);
-    f.l.registerNode("other-node", {
+    registerExecutor(f.l, "other-node", {
       nodeId: "other",
       roles: ["executor"],
       capabilities: ["text"],
@@ -1656,7 +1657,7 @@ test("owned delegation is atomic, bounded, capacity-aware and scoped to its task
     const base = prepare(f.l);
     const templateNode = f.l.getNode("worker");
     f.l.registerNode("capacity-one", { ...templateNode, maxConcurrent: 1 });
-    f.l.registerNode("second-node", {
+    registerExecutor(f.l, "second-node", {
       ...templateNode,
       nodeId: "second",
       maxConcurrent: 1,
@@ -1817,7 +1818,7 @@ test("recurring executions get independent delegation budgets and causal settlem
   try {
     const base = prepare(f.l),
       node = f.l.getNode("worker");
-    f.l.registerNode("other-node", {
+    registerExecutor(f.l, "other-node", {
       ...node,
       nodeId: "other",
       maxConcurrent: 1,

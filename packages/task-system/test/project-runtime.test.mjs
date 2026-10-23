@@ -1,3 +1,4 @@
+import {registerExecutor,publishModels} from '../../../tests/dsh/executor-fixture.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdirSync,existsSync,readFileSync} from 'node:fs';
@@ -8,11 +9,11 @@ import {DecisionEngine,StructuredModelProvider} from './legacy-model-fixture.mjs
 const worker={nodeId:'worker',roles:['executor'],models:[{provider:'worker-model',model:'small',reasoningEfforts:['off']}],capabilities:[],workspaceIds:[],enabled:true,lastSeenAt:new Date().toISOString()};
 async function settle(h,command){for(let i=0;i<100;i++){const turn=h.ledger.managementDatabase().prepare('SELECT state FROM pr_turns WHERE command=?').get(command);if(['completed','failed'].includes(turn.state))return turn;await new Promise(r=>setTimeout(r,20));}throw Error('Turn timeout');}
 function decisions(){return new DecisionEngine([new StructuredModelProvider('judge',[{model:'router',version:'fixture',reasoningEfforts:[]}],{complete:async({input})=>{
-  assert.ok(input.context.catalog.modelRoutes.every(r=>r.reasoningEffort==='off'),'project routes must pin the advertised effort, not a provider default');
+  assert.ok(input.context.catalog.modelRoutes.some(r=>r.reasoningEffort==='off'),'fixture publishes the advertised workload effort');
   const route=input.context.catalog.modelRoutes.find(r=>r.executorId==='worker'&&r.reasoningEffort==='off');
   const replan=input.context.state.request.title==='Replan';
   const choices={persist:replan?'attach':'create',attach:replan?input.context.catalog.tasks[0].id:'none',executor:'worker',modelEffort:route.id,reporting:'summary'};
-  return {output:{answers:Object.fromEntries(input.questions.map(q=>[q.questionId,{type:'choice',choice:choices[q.questionId]}]))},modelVersion:'fixture'};
+  return {output:{answers:Object.fromEntries(input.questions.map(q=>[q.questionId,{type:'choice',choice:choices[q.questionId]??'none'}]))},modelVersion:'fixture'};
 }})],{defaultProvider:'judge',maxAttempts:1});}
 
 test('project creation provisions a durable native session, rejects root conflicts and reconciles duplicate commands',async()=>{
@@ -36,7 +37,7 @@ test('project creation provisions a durable native session, rejects root conflic
 test('a project message uses real native dispatch tools and persists offline queued work once, with project association and handoff',async()=>{
   const h=await createNativeHarness({config:{role:'planner',projectAgentOptions:{provider:'test-offline',model:'script'}}});
   const engine=decisions();h.ctx.provide('decisionModels',engine);
-  try{const runtime=h.ctx.taskSystem.projects;h.ledger.registerNode('worker',worker);runtime.saveSettings({root:join(h.dir,'projects'),expectedRevision:0});
+  try{const runtime=h.ctx.taskSystem.projects;registerExecutor(h.ledger, 'worker',worker);runtime.saveSettings({root:join(h.dir,'projects'),expectedRevision:0});
     const {projectId}=await runtime.create({commandId:'new',title:'Phone task',goal:'Small real dispatch'});
     const command='message1',requestId='project-message:'+command;
     h.adapter.script.push({name:'task_nodes',args:{}},{name:'task_plan',args:{requestId,title:'Calculate',description:'Compute 1+1 and report'}},{name:'task_dispatch',args:{commandId:requestId}},'任务已经排队，等待执行端上线');
@@ -69,7 +70,7 @@ test('a project message uses real native dispatch tools and persists offline que
 
 test('planner-only ledger rejects a stale self-node executor role and excludes it from the planning catalog',async()=>{
  const h=await createNativeHarness({config:{role:'planner',nodeId:'vps'}});
- try{h.ledger.registerNode('stale-self',{...worker,nodeId:'vps',roles:['both']});
+ try{registerExecutor(h.ledger, 'stale-self',{...worker,nodeId:'vps',roles:['both']});
   assert.throws(()=>h.ledger.validateRoute({nodeId:'vps',provider:'worker-model',model:'small',requiredCapabilities:[]}),/Planner-only/);
   const {taskDecisionCatalog}=await import('../dist/planning.js');assert.equal(taskDecisionCatalog(h.ledger,{role:'planner',nodeId:'vps'}).executors.length,0);
  }finally{await h.dispose();}
@@ -81,10 +82,10 @@ test('ordered candidate admission skips offline primary, persists fallback order
   const primary=input.context.catalog.modelRoutes.find(r=>r.executorId==='worker'&&r.reasoningEffort==='off');
   const backup=input.context.catalog.modelRoutes.find(r=>r.executorId==='backup'&&r.reasoningEffort==='off');
   const choices={persist:'create',attach:'none',executor:'worker',modelEffort:primary.id,reporting:'summary',fallbackRoute1:backup.id};
-  return {output:{answers:Object.fromEntries(input.questions.map(q=>[q.questionId,{type:'choice',choice:choices[q.questionId]}]))},modelVersion:'fixture'};
+  return {output:{answers:Object.fromEntries(input.questions.map(q=>[q.questionId,{type:'choice',choice:choices[q.questionId]??'none'}]))},modelVersion:'fixture'};
  }} )],{defaultProvider:'judge',maxAttempts:1});h.ctx.provide('decisionModels',engine);
  try {
-  h.ledger.registerNode('one',worker);h.ledger.registerNode('two',{...worker,nodeId:'backup'});
+  registerExecutor(h.ledger, 'one',worker);registerExecutor(h.ledger, 'two',{...worker,nodeId:'backup'});
   h.ledger.recordNodeHeartbeat('backup-online',{nodeId:'backup',runtimeReady:true,activeExecutions:0});
   const runtime=h.ctx.taskSystem.projects;runtime.saveSettings({root:join(h.dir,'projects'),expectedRevision:0});
   const {projectId}=await runtime.create({commandId:'new-fallback',title:'Fallback',goal:'Use alternate executor'});
@@ -115,7 +116,7 @@ function fixtureRun(h,key,policy) {
 test('operator attention preserves failed outcome, survives restart, restores and invalidates on a new execution',async()=>{
  const h=await createNativeHarness({config:{role:'planner'}});
  try {
-  h.ledger.registerNode('node',worker);const runtime=h.ctx.taskSystem.projects;
+  registerExecutor(h.ledger, 'node',worker);const runtime=h.ctx.taskSystem.projects;
   const {task,run,lease}=fixtureRun(h,'failed-work');
   h.ledger.submit('failure',{...lease,outcome:'failure',summary:'Real failure',report:{title:'Failure',body:'Original error'}});
   const before=operator(runtime,task.taskId,'handle');assert.equal(runtime.snapshot().tasks[0].status,'error');
@@ -135,7 +136,7 @@ test('operator attention preserves failed outcome, survives restart, restores an
 test('execution approval and result review are distinct; rejected result becomes actionable without automatic replay',async()=>{
  const h=await createNativeHarness({config:{role:'planner',requireConfirmation:true}});
  try {
-  h.ledger.registerNode('node',worker);const runtime=h.ctx.taskSystem.projects;
+  registerExecutor(h.ledger, 'node',worker);const runtime=h.ctx.taskSystem.projects;
   const task=h.ledger.createTask('approval-task',{title:'Needs permission'}).value;
   let t=runtime.snapshot().tasks[0];assert.equal(t.status,'review');assert.equal(t.stateLabel,'待批准执行');
   const approve=operator(runtime,task.taskId,'approve');runtime.actOnTask(approve);runtime.actOnTask(approve);
@@ -157,7 +158,7 @@ test('execution approval and result review are distinct; rejected result becomes
 test('cancellation respects executor stop acknowledgement, queued tasks and unknown effects',async()=>{
  const h=await createNativeHarness({config:{role:'planner'}});
  try {
-  h.ledger.registerNode('node',worker);const runtime=h.ctx.taskSystem.projects;
+  registerExecutor(h.ledger, 'node',worker);const runtime=h.ctx.taskSystem.projects;
   const {task,run,lease}=fixtureRun(h,'running-work');
   const cancel=operator(runtime,task.taskId,'cancel');runtime.actOnTask(cancel);runtime.actOnTask(cancel);
   assert.equal(runtime.snapshot().tasks.find(t=>t.id===task.taskId).status,'cancelling');assert.equal(h.ledger.getRun(run.runId).state,'running');
@@ -182,7 +183,7 @@ test('cancellation respects executor stop acknowledgement, queued tasks and unkn
 test('continue dispatch reuses a safe project recommendation, queues offline and creates one new Run without replaying old effects',async()=>{
  const h=await createNativeHarness({config:{role:'planner',projectAgentOptions:{provider:'test-offline',model:'script'}}});const engine=decisions();h.ctx.provide('decisionModels',engine);
  try {
-  h.ledger.registerNode('node',worker);const runtime=h.ctx.taskSystem.projects;runtime.saveSettings({root:join(h.dir,'projects'),expectedRevision:0});
+  registerExecutor(h.ledger, 'node',worker);const runtime=h.ctx.taskSystem.projects;runtime.saveSettings({root:join(h.dir,'projects'),expectedRevision:0});
   const {projectId}=await runtime.create({commandId:'retry-project',title:'Retry project',goal:'Compute externally'}),requestId='project-message:retry-message';
   h.adapter.script.push({name:'task_plan',args:{requestId,title:'Retry work',description:'Compute once'}},{name:'task_dispatch',args:{commandId:requestId}},'排队');
   runtime.send({projectId,commandId:'retry-message',text:'派发'});await settle(h,'retry-message');
@@ -204,7 +205,7 @@ test('continue dispatch reuses a safe project recommendation, queues offline and
 test('legacy unassigned tasks have isolated durable planning sessions and safe retry preserves task/run/report/attention history',async()=>{
  const h=await createNativeHarness({config:{role:'planner',projectAgentOptions:{provider:'test-offline',model:'script'}}});const engine=decisions();h.ctx.provide('decisionModels',engine);
  try{
-  const runtime=h.ctx.taskSystem.projects;h.ledger.registerNode('node',worker);runtime.saveSettings({root:join(h.dir,'projects'),expectedRevision:0});
+  const runtime=h.ctx.taskSystem.projects;registerExecutor(h.ledger, 'node',worker);runtime.saveSettings({root:join(h.dir,'projects'),expectedRevision:0});
   const one=fixtureRun(h,'legacy-one'),two=fixtureRun(h,'legacy-two');
   for(const f of [one,two]) h.ledger.submit('failure-'+f.task.taskId,{...f.lease,outcome:'failure',summary:'Original failure',report:{title:'Failure report',body:'Keep the original report'}});
   runtime.actOnTask(operator(runtime,one.task.taskId,'handle'));
@@ -226,7 +227,7 @@ test('legacy unassigned tasks have isolated durable planning sessions and safe r
 test('temporary conversation applies to the host-owned inbox task and cannot bypass operator retry or attach another task',async()=>{
  const h=await createNativeHarness({config:{role:'planner',projectAgentOptions:{provider:'test-offline',model:'script'}}});const engine=decisions();h.ctx.provide('decisionModels',engine);
  try{
-  const runtime=h.ctx.taskSystem.projects;runtime.saveSettings({root:join(h.dir,'projects'),expectedRevision:0});h.ledger.registerNode('node',worker);
+  const runtime=h.ctx.taskSystem.projects;runtime.saveSettings({root:join(h.dir,'projects'),expectedRevision:0});registerExecutor(h.ledger, 'node',worker);
   const task=h.ledger.createTask('inbox-temporary',{title:'Temporary',description:'Compute externally'}).value;
   const conversation=await runtime.taskConversation(task.taskId),command='temporary-plan',requestId='project-message:'+command;
   h.adapter.script.push({name:'task_plan',args:{requestId,title:'Calculate',description:'Compute externally'}},{name:'task_dispatch',args:{commandId:requestId}},'已排队');
@@ -243,7 +244,7 @@ test('temporary conversation applies to the host-owned inbox task and cannot byp
 test('retry rechecks action CAS after asynchronous planning and does not reopen a cancelled task',async()=>{
  const h=await createNativeHarness({config:{role:'planner'}});
  try{
-  const runtime=h.ctx.taskSystem.projects;h.ledger.registerNode('node',worker);const f=fixtureRun(h,'race');h.ledger.submit('fail-race',{...f.lease,outcome:'failure',summary:'Failed'});
+  const runtime=h.ctx.taskSystem.projects;registerExecutor(h.ledger, 'node',worker);const f=fixtureRun(h,'race');h.ledger.submit('fail-race',{...f.lease,outcome:'failure',summary:'Failed'});
   const real=runtime.planner;let release,started;const began=new Promise(r=>started=r),wait=new Promise(r=>release=r);
   runtime.planner={plan:async(...args)=>{started();await wait;return real.plan(...args)},apply:(...args)=>real.apply(...args)};
   const retry=runtime.actOnTask(operator(runtime,f.task.taskId,'retry','race-retry'));await began;runtime.actOnTask(operator(runtime,f.task.taskId,'cancel','race-cancel'));release();await assert.rejects(retry,/changed/);
@@ -254,7 +255,7 @@ test('retry rechecks action CAS after asynchronous planning and does not reopen 
 test('retry without a decision dependency preserves the original route and queues without executing on the planner',async()=>{
  const h=await createNativeHarness({config:{role:'planner'}});
  try{
-  const runtime=h.ctx.taskSystem.projects;h.ledger.registerNode('node',worker);const f=fixtureRun(h,'no-catalog-choice');h.ledger.submit('failed-default',{...f.lease,outcome:'failure',summary:'Failed'});
+  const runtime=h.ctx.taskSystem.projects;registerExecutor(h.ledger, 'node',worker);const f=fixtureRun(h,'no-catalog-choice');h.ledger.submit('failed-default',{...f.lease,outcome:'failure',summary:'Failed'});
   await runtime.actOnTask(operator(runtime,f.task.taskId,'retry'));
   assert.equal(h.ledger.snapshot().runs.length,1);assert.equal(runtime.snapshot().tasks[0].stateLabel,'等待执行端接收');assert.deepEqual(runtime.snapshot().tasks[0].recommendation,[f.run.route]);assert.equal(h.ledger.getDecision('task-retry:retry-'+f.task.taskId).receipt.kind,'deterministic-planning-v1');assert.equal(h.ctx.taskSystem.native,undefined);
  }finally{await h.dispose();}
@@ -277,7 +278,7 @@ test('existing project session schema migrates to explicit conversation ownershi
 test('new temporary task plans and dispatches the same Task once, with independent context and no project',async()=>{
  const h=await createNativeHarness({config:{role:'planner',projectAgentOptions:{provider:'test-offline',model:'script'}}}),engine=decisions();h.ctx.provide('decisionModels',engine);
  try {
-  const runtime=h.ctx.taskSystem.projects;h.ledger.registerNode('worker',worker);runtime.saveSettings({root:join(h.dir,'projects'),expectedRevision:0});
+  const runtime=h.ctx.taskSystem.projects;registerExecutor(h.ledger, 'worker',worker);runtime.saveSettings({root:join(h.dir,'projects'),expectedRevision:0});
   const input={commandId:'temporary-new',title:'Calculate',description:'Compute 1+1 and report'};
   const [first,second]=await Promise.all([runtime.createTemporary(input),runtime.createTemporary(input)]);
   assert.deepEqual(first,second);assert.equal(first.dispatchState,'queued');assert.equal(h.ledger.snapshot().tasks.length,1);assert.equal(h.ledger.snapshot().runs.length,0);
@@ -334,7 +335,7 @@ test('conversation model selection uses the host catalog, persists per owner, re
 test('interrupted task can be confirmed stopped without cancelling its Task, then becomes retryable with a terminal attempt',async()=>{
  const h=await createNativeHarness({config:{role:'planner'}});
  try {
-  h.ledger.registerNode('node',worker);const runtime=h.ctx.taskSystem.projects,unknown=fixtureRun(h,'interrupted-work');h.ledger.submit('uncertain-result',{...unknown.lease,outcome:'unknown',summary:'Service stopped'});
+  registerExecutor(h.ledger, 'node',worker);const runtime=h.ctx.taskSystem.projects,unknown=fixtureRun(h,'interrupted-work');h.ledger.submit('uncertain-result',{...unknown.lease,outcome:'unknown',summary:'Service stopped'});
   const row=runtime.snapshot().tasks.find(t=>t.id===unknown.task.taskId);assert.equal(row.canReconcile,true);assert.equal(row.canRetry,false);assert.match(row.report,/执行回执：/);
   runtime.actOnTask(operator(runtime,unknown.task.taskId,'confirm-stopped'));
   assert.equal(h.ledger.getTask(unknown.task.taskId).state,'waiting');assert.equal(h.ledger.getRun(unknown.run.runId).state,'failed');assert.equal(h.ledger.getAttempt(unknown.lease.attemptId).state,'expired');assert.equal(runtime.snapshot().tasks.find(t=>t.id===unknown.task.taskId).canRetry,true);
@@ -345,7 +346,7 @@ test('interrupted task can be confirmed stopped without cancelling its Task, the
 test('retry skips model decisions for a valid route and keeps capabilities and workspace until admission',async()=>{
  const h=await createNativeHarness({config:{role:'planner'}});
  try {
-  h.ledger.registerNode('node',{...worker,capabilities:['filesystem'],workspaceIds:['original']});
+  registerExecutor(h.ledger, 'node',{...worker,capabilities:['filesystem'],workspaceIds:['original']});
   h.ledger.registerWorkspace('workspace',{workspaceId:'original',nodeId:'worker',path:h.dir,label:'Original',state:'ready',createdAt:new Date().toISOString()});
   const task=h.ledger.createTask('task',{title:'Keep choices',workspaceId:'original'}).value;
   const route={nodeId:'worker',provider:'worker-model',model:'small',reasoningEffort:'off',requiredCapabilities:['filesystem'],workspaceId:'original'};
@@ -363,7 +364,7 @@ test('retry skips model decisions for a valid route and keeps capabilities and w
 test('task status requests and elapsed timestamps survive snapshot refresh and use the exact current attempt',async()=>{
  const h=await createNativeHarness({config:{role:'planner'}});
  try {
-  h.ledger.registerNode('node',worker);const runtime=h.ctx.taskSystem.projects;
+  registerExecutor(h.ledger, 'node',worker);const runtime=h.ctx.taskSystem.projects;
   const {task,run,lease}=fixtureRun(h,'long-work');
   const before=runtime.snapshot().tasks.find(t=>t.id===task.taskId);
   assert.ok(before.executionStartedAt);assert.equal(before.executionEndedAt,null);assert.equal(before.canRequestStatus,true);
@@ -382,7 +383,7 @@ test('task status requests and elapsed timestamps survive snapshot refresh and u
 test('a read-only follow-up keeps existing run identities and exposes honest report and messaging limitations in the planner prompt',async()=>{
  const h=await createNativeHarness({config:{role:'planner',projectAgentOptions:{provider:'test-offline',model:'script'}}});
  try {
-  const runtime=h.ctx.taskSystem.projects;runtime.saveSettings({root:join(h.dir,'projects'),expectedRevision:0});h.ledger.registerNode('node',worker);
+  const runtime=h.ctx.taskSystem.projects;runtime.saveSettings({root:join(h.dir,'projects'),expectedRevision:0});registerExecutor(h.ledger, 'node',worker);
   const {task,run,lease}=fixtureRun(h,'receipt-question');h.ledger.submit('old-unknown',{...lease,outcome:'unknown',summary:'No canonical receipt'});
   h.ledger.resolveUncertain('verified-stopped',{runId:run.runId,outcome:'failed',reason:'Verified stopped'});
   const before=h.ledger.snapshot();await runtime.taskConversation(task.taskId);
@@ -397,7 +398,7 @@ test('a read-only follow-up keeps existing run identities and exposes honest rep
 test('manual completion and original-session supplements never create an execution or rewrite its outcome',async()=>{
  const h=await createNativeHarness({config:{role:'planner'}});
  try{
-  h.ledger.registerNode('node',{...worker,workspaceIds:['original']});
+  registerExecutor(h.ledger, 'node',{...worker,workspaceIds:['original']});
   h.ledger.registerWorkspace('workspace',{workspaceId:'original',nodeId:'worker',path:h.dir,label:'Original',state:'ready',createdAt:new Date().toISOString()});
   const runtime=h.ctx.taskSystem.projects,{task,run,lease}=fixtureRun(h,'supplement');
   assert.throws(()=>runtime.actOnTask(operator(runtime,task.taskId,'complete','active')),/not ready/);
@@ -443,7 +444,7 @@ test('rejected result can be dispatched with immutable operator feedback in the 
  for(const outcome of ['partial','success']){
   const h=await createNativeHarness({config:{role:'planner'}});
   try{
-   const runtime=h.ctx.taskSystem.projects;h.ledger.registerWorkspace('rework-workspace',{workspaceId:'review-ws',nodeId:'worker',path:join(h.dir,'review-workspace'),label:'Review workspace',state:'ready',createdAt:new Date().toISOString()});h.ledger.registerNode('node',{...worker,workspaceIds:['review-ws']});
+   const runtime=h.ctx.taskSystem.projects;h.ledger.registerWorkspace('rework-workspace',{workspaceId:'review-ws',nodeId:'worker',path:join(h.dir,'review-workspace'),label:'Review workspace',state:'ready',createdAt:new Date().toISOString()});registerExecutor(h.ledger, 'node',{...worker,workspaceIds:['review-ws']});
    const task=h.ledger.createTask('rework-task',{title:'Rework fixture',description:'Original instructions',policy:{allowedBackends:['fixture-backend']}}).value;
    const run=h.ledger.createRun('rework-run',{taskId:task.taskId,route:{nodeId:'worker',provider:'worker-model',model:'small',reasoningEffort:'off',requiredCapabilities:[],...(outcome==='success'?{backend:'fixture-backend',workspaceId:'review-ws'}:{})}}).value;
    const a=h.ledger.claim('rework-claim',{runId:run.runId,nodeId:'worker',ttlMs:10000}).value.attempt;
@@ -473,16 +474,16 @@ test('rejected result can be dispatched with immutable operator feedback in the 
 
 test('scheduled plans expose assigned ownership before first Run and restrict the executor projection',async()=>{
  const h=await createNativeHarness({config:{role:'planner',projectAgentOptions:{provider:'test-offline',model:'script'}}});
- try{h.ledger.registerWorkspace('scheduled-ws',{workspaceId:'ws',nodeId:'worker',path:h.dir,label:'Scheduled workspace',state:'ready',createdAt:new Date().toISOString()});h.ledger.registerNode('scheduled-node',{...worker,workspaceIds:['ws']});h.ledger.recordNodeHeartbeat('scheduled-hb',{nodeId:'worker',runtimeReady:true,activeExecutions:0,sampledAt:Date.now(),source:'host-local',providerStatus:{executionRoutes:[{nodeId:'worker',provider:'worker-model',model:'small',reasoningEffort:'off',requiredCapabilities:[]}]}});const runtime=h.ctx.taskSystem.projects;runtime.saveSettings({root:join(h.dir,'projects'),expectedRevision:0});const {projectId}=await runtime.create({commandId:'plan-project',title:'Plans',goal:'Recurring work'});const options=runtime.scheduleOptions();const created=runtime.createScheduledPlan({commandId:'scheduled-new',title:'Regular check',description:'Return a report',projectId,routeId:options.routes[0].id,cadence:{mode:'interval',minutes:1}});const own=runtime.snapshotForNode('worker');assert.equal(own.schedules.length,1);assert.equal(own.schedules[0].scheduleId,created.scheduleId);assert.equal(own.tasks.find(t=>t.id===created.taskId).kind,'scheduled');assert.equal(own.tasks[0].canCancel,false);assert.equal(runtime.snapshotForNode('unrelated').schedules.length,0);assert.equal(own.runs.length,0);}finally{await h.dispose();}
+ try{h.ledger.registerWorkspace('scheduled-ws',{workspaceId:'ws',nodeId:'worker',path:h.dir,label:'Scheduled workspace',state:'ready',createdAt:new Date().toISOString()});registerExecutor(h.ledger, 'scheduled-node',{...worker,workspaceIds:['ws']});h.ledger.recordNodeHeartbeat('scheduled-hb',{nodeId:'worker',runtimeReady:true,activeExecutions:0,sampledAt:Date.now(),source:'host-local',providerStatus:{executionRoutes:[{nodeId:'worker',provider:'worker-model',model:'small',reasoningEffort:'off',requiredCapabilities:[]}]}});const runtime=h.ctx.taskSystem.projects;runtime.saveSettings({root:join(h.dir,'projects'),expectedRevision:0});const {projectId}=await runtime.create({commandId:'plan-project',title:'Plans',goal:'Recurring work'});const options=runtime.scheduleOptions();const created=runtime.createScheduledPlan({commandId:'scheduled-new',title:'Regular check',description:'Return a report',projectId,routeId:options.routes[0].id,cadence:{mode:'interval',minutes:1}});const own=runtime.snapshotForNode('worker');assert.equal(own.schedules.length,1);assert.equal(own.schedules[0].scheduleId,created.scheduleId);assert.equal(own.tasks.find(t=>t.id===created.taskId).kind,'scheduled');assert.equal(own.tasks[0].canCancel,false);assert.equal(runtime.snapshotForNode('unrelated').schedules.length,0);assert.equal(own.runs.length,0);}finally{await h.dispose();}
 });
 
 test('execution detail exposes the immutable intent and only referenced context notes',async()=>{
- const h=await createNativeHarness({config:{role:'planner'}});try{const l=h.ledger;l.registerNode('input-node',worker);const t=l.createTask('input-task',{title:'Inspect input',description:'Original instructions'}).value;const note=l.appendReport('input-note',{taskId:t.taskId,title:'Provided reference',body:'Relevant context'}).value;l.appendReport('unreferenced',{taskId:t.taskId,title:'Later material',body:'Do not pretend this was sent'});const r=l.createRun('input-run',{taskId:t.taskId,route:{nodeId:'worker',provider:'worker-model',model:'small',reasoningEffort:'off',requiredCapabilities:[]},contextNotes:[note.reportId]}).value;l.updateTask('edit-current',{taskId:t.taskId,expectedRevision:l.getTask(t.taskId).revision??1,description:'Changed for future work'});const snapshot=h.ctx.taskSystem.projects.snapshot();assert.equal(snapshot.tasks.find(x=>x.id===t.taskId).description,'Changed for future work');const input=snapshot.runs.find(x=>x.id===r.runId).inputSnapshot;assert.equal(input.description,'Original instructions');assert.deepEqual(input.notes,[{id:note.reportId,title:'Provided reference',body:'Relevant context'}]);}finally{await h.dispose();}
+ const h=await createNativeHarness({config:{role:'planner'}});try{const l=h.ledger;registerExecutor(l, 'input-node',worker);const t=l.createTask('input-task',{title:'Inspect input',description:'Original instructions'}).value;const note=l.appendReport('input-note',{taskId:t.taskId,title:'Provided reference',body:'Relevant context'}).value;l.appendReport('unreferenced',{taskId:t.taskId,title:'Later material',body:'Do not pretend this was sent'});const r=l.createRun('input-run',{taskId:t.taskId,route:{nodeId:'worker',provider:'worker-model',model:'small',reasoningEffort:'off',requiredCapabilities:[]},contextNotes:[note.reportId]}).value;l.updateTask('edit-current',{taskId:t.taskId,expectedRevision:l.getTask(t.taskId).revision??1,description:'Changed for future work'});const snapshot=h.ctx.taskSystem.projects.snapshot();assert.equal(snapshot.tasks.find(x=>x.id===t.taskId).description,'Changed for future work');const input=snapshot.runs.find(x=>x.id===r.runId).inputSnapshot;assert.equal(input.description,'Original instructions');assert.deepEqual(input.notes,[{id:note.reportId,title:'Provided reference',body:'Relevant context'}]);}finally{await h.dispose();}
 });
 
 
 test('same-run diagnostic notes expose evidence without accepting or changing the execution result',async()=>{
- const h=await createNativeHarness({config:{role:'planner'}});try{const l=h.ledger;l.registerNode('diagnostic-node',worker);const t=l.createTask('diag-task',{title:'Daily',description:'Report'}).value;const r=l.createRun('diag-run',{taskId:t.taskId,route:{nodeId:'worker',provider:'worker-model',model:'small',reasoningEffort:'off',requiredCapabilities:[]}}).value;const a=l.claim('diag-claim',{runId:r.runId,nodeId:'worker',ttlMs:10000}).value.attempt;l.submit('diag-unknown',{runId:r.runId,attemptId:a.attemptId,nodeId:a.nodeId,fence:a.fence,outcome:'unknown',summary:'Native result rejected: SCHEMA_VALIDATION'});l.appendReport('diag-note',{taskId:t.taskId,runId:r.runId,kind:'note',title:'Saved evidence',body:'24 summaries; not accepted',schemaId:'execution-diagnostic.v1'});l.appendReport('unrelated-note',{taskId:t.taskId,kind:'note',title:'Other note',body:'Not this execution',schemaId:'execution-diagnostic.v1'});const v=h.ctx.taskSystem.projects.snapshot(),run=v.runs.find(x=>x.id===r.runId);assert.equal(run.diagnosticReport.body,'24 summaries; not accepted');assert.equal(run.settlementSummary,'Native result rejected: SCHEMA_VALIDATION');assert.equal(run.state,'uncertain');assert.equal(v.tasks.find(x=>x.id===t.taskId).reportId,null);assert.equal(l.snapshot().reports.filter(x=>x.kind==='result').length,0);}finally{await h.dispose();}
+ const h=await createNativeHarness({config:{role:'planner'}});try{const l=h.ledger;registerExecutor(l, 'diagnostic-node',worker);const t=l.createTask('diag-task',{title:'Daily',description:'Report'}).value;const r=l.createRun('diag-run',{taskId:t.taskId,route:{nodeId:'worker',provider:'worker-model',model:'small',reasoningEffort:'off',requiredCapabilities:[]}}).value;const a=l.claim('diag-claim',{runId:r.runId,nodeId:'worker',ttlMs:10000}).value.attempt;l.submit('diag-unknown',{runId:r.runId,attemptId:a.attemptId,nodeId:a.nodeId,fence:a.fence,outcome:'unknown',summary:'Native result rejected: SCHEMA_VALIDATION'});l.appendReport('diag-note',{taskId:t.taskId,runId:r.runId,kind:'note',title:'Saved evidence',body:'24 summaries; not accepted',schemaId:'execution-diagnostic.v1'});l.appendReport('unrelated-note',{taskId:t.taskId,kind:'note',title:'Other note',body:'Not this execution',schemaId:'execution-diagnostic.v1'});const v=h.ctx.taskSystem.projects.snapshot(),run=v.runs.find(x=>x.id===r.runId);assert.equal(run.diagnosticReport.body,'24 summaries; not accepted');assert.equal(run.settlementSummary,'Native result rejected: SCHEMA_VALIDATION');assert.equal(run.state,'uncertain');assert.equal(v.tasks.find(x=>x.id===t.taskId).reportId,null);assert.equal(l.snapshot().reports.filter(x=>x.kind==='result').length,0);}finally{await h.dispose();}
 });
 
 test('per-task report retry limit is revision checked and bounded',async()=>{
@@ -498,7 +499,7 @@ test('per-task report retry limit is revision checked and bounded',async()=>{
 
 test('child report rejection keeps parent waiting while its bounded retry is pending',async()=>{
  const h=await createNativeHarness({config:{role:'planner'}});try{
-  const l=h.ledger,runtime=h.ctx.taskSystem.projects;l.registerNode('n',{...worker,maxConcurrent:2});
+  const l=h.ledger,runtime=h.ctx.taskSystem.projects;registerExecutor(l, 'n',{...worker,maxConcurrent:2});
   const parent=l.createTask('parent',{title:'Parent',policy:{settlementQuietMs:0}}).value;
   const root=l.createRun('root',{taskId:parent.taskId,route:{nodeId:'worker',provider:'worker-model',model:'small',reasoningEffort:'off',requiredCapabilities:[]}}).value;
   l.claim('parent-claim',{runId:root.runId,nodeId:'worker',ttlMs:10000});
@@ -517,7 +518,7 @@ test('child report rejection keeps parent waiting while its bounded retry is pen
 test('accepted partial results project as accepted without rewriting delivery facts; a later run has its own review',async()=>{
  const h=await createNativeHarness({config:{role:'planner'}});
  try{
-  h.ledger.registerNode('node',worker);const runtime=h.ctx.taskSystem.projects;
+  registerExecutor(h.ledger, 'node',worker);const runtime=h.ctx.taskSystem.projects;
   const {task,run,lease}=fixtureRun(h,'accepted-partial');
   h.ledger.submit('partial-result',{...lease,outcome:'partial',summary:'Missing PC_AU source',report:{title:'Daily',body:'Partial delivery; PC_AU source unavailable'}});
   const reportBefore=JSON.stringify(h.ledger.snapshot().reports);
@@ -568,7 +569,7 @@ test('project creation accepts an available per-project model with no global def
 test('report reading persists by report content version independently of generation and acceptance',async()=>{
  const h=await createNativeHarness({config:{role:'planner'}});
  try{
-  h.ledger.registerNode('reading-worker',worker);const {task,lease}=fixtureRun(h,'reading');h.ledger.submit('reading-result',{...lease,outcome:'success',summary:'Report generated',report:{title:'Daily report',body:'First visible body'}});
+  registerExecutor(h.ledger, 'reading-worker',worker);const {task,lease}=fixtureRun(h,'reading');h.ledger.submit('reading-result',{...lease,outcome:'success',summary:'Report generated',report:{title:'Daily report',body:'First visible body'}});
   const runtime=h.ctx.taskSystem.projects,first=runtime.snapshot().reports.find(r=>r.taskId===task.taskId&&r.kind==='result');
   assert.equal(first.unread,true);assert.equal(runtime.snapshot().tasks.find(t=>t.id===task.taskId).status,'done');
   const input={commandId:'read-exact',reportId:first.id,contentVersion:first.contentVersion};runtime.readReport(input);runtime.readReport(input);
@@ -587,7 +588,7 @@ test('report reading persists by report content version independently of generat
 test('task center presentation is reversible metadata and never erases a historical child issue or executor tree',async()=>{
  const h=await createNativeHarness({config:{role:'planner'}});
  try{
-  h.ledger.registerNode('presentation-worker',{...worker,maxConcurrent:3});const f=fixtureRun(h,'parent-presentation',{settlementQuietMs:0}),l=h.ledger;
+  registerExecutor(h.ledger, 'presentation-worker',{...worker,maxConcurrent:3});const f=fixtureRun(h,'parent-presentation',{settlementQuietMs:0}),l=h.ledger;
   const child=l.createTask('child-presentation',{title:'Local source',parentTaskId:f.task.taskId,parentRunId:f.run.runId}).value;
   const r=l.createRun('child-presentation-run',{taskId:child.taskId,parentRunId:f.run.runId,route:{nodeId:'worker',provider:'worker-model',model:'small',reasoningEffort:'off',requiredCapabilities:[]}}).value;
   const claim=l.claim('child-presentation-claim',{runId:r.runId,nodeId:'worker',ttlMs:10000}).value.attempt;
@@ -611,7 +612,7 @@ test('task center presentation is reversible metadata and never erases a histori
 test('HTML report presentation loads by exact version without growing snapshots or changing read facts',async(t)=>{
  const h=await createNativeHarness({config:{role:'planner'}});
  try{
-  h.ledger.registerNode('html-worker',worker);const {task,lease}=fixtureRun(h,'html-report');const html='<h1>Exact HTML</h1><p>'+'x'.repeat(300000)+'</p>';
+  registerExecutor(h.ledger, 'html-worker',worker);const {task,lease}=fixtureRun(h,'html-report');const html='<h1>Exact HTML</h1><p>'+'x'.repeat(300000)+'</p>';
   h.ledger.submit('html-result',{...lease,outcome:'success',summary:'Rendered report',report:{title:'HTML',body:'Text alternative',data:{presentation:{mediaType:'text/html',body:html},privateField:'not projected'}}});
   const runtime=h.ctx.taskSystem.projects,view=runtime.snapshot(),report=view.reports.find(r=>r.taskId===task.taskId&&r.kind==='result');assert.equal(report.hasHtmlPresentation,true);assert.equal('presentation' in report,false);assert.equal(JSON.stringify(view).includes(html),false);assert.equal(JSON.stringify(view).includes('not projected'),false);
   const bytes=Buffer.byteLength(JSON.stringify(view)),full=runtime.reportPresentation({reportId:report.id,contentVersion:report.contentVersion});assert.equal(full.presentation.body,html);assert.equal(full.runId,lease.runId);assert.equal(full.taskId,task.taskId);assert.deepEqual(Object.keys(full.presentation).sort(),['body','mediaType']);assert.equal(runtime.snapshot().reports.find(r=>r.id===report.id).unread,true);

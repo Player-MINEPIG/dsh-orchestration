@@ -1,3 +1,4 @@
+import {registerExecutor,publishModels} from '../../../tests/dsh/executor-fixture.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -17,7 +18,7 @@ function fixture(t, options = {}) {
   t.after(async () => { for (const r of resources.reverse()) await (r.dispose?.() ?? r.close?.()); rmSync(dir, { recursive: true, force: true }); });
   for (const nodeId of ['mbp', 'other']) {
     ledger.registerWorkspace(`workspace:${nodeId}`, { workspaceId: `ws-${nodeId}`, nodeId, path: dir, label: nodeId, state: 'ready', createdAt: new Date().toISOString() });
-    ledger.registerNode(`node:${nodeId}`, { nodeId, roles: ['executor'], enabled: true, capabilities: ['read'], models: [{ provider: 'fixture', model: 'fixture', reasoningEfforts: ['low'] }], workspaceIds: [`ws-${nodeId}`], maxConcurrent: 4 });
+    registerExecutor(ledger, `node:${nodeId}`, { nodeId, roles: ['executor'], enabled: true, capabilities: ['read'], models: [{ provider: 'fixture', model: 'fixture', reasoningEfforts: ['low'] }], workspaceIds: [`ws-${nodeId}`], maxConcurrent: 4 });
   }
   const authority = new ProjectCollaborationAuthority(ledger);
   const route = { nodeId: 'other', provider: 'fixture', model: 'fixture', reasoningEffort: 'low', workspaceId: 'ws-other', requiredCapabilities: ['read'] };
@@ -107,7 +108,7 @@ test('signed remote collaboration binds trusted node, preserves domain errors an
 test('backend discovery uses fresh authenticated advertisements and strips private configuration from project status', async t => {
   const f = fixture(t); await f.call('activate', 'activate');
   const node = f.ledger.getNode('other');
-  f.ledger.registerNode('backend-node', { ...node, capabilities: [...node.capabilities, 'official-codex'] });
+  registerExecutor(f.ledger, 'backend-node', { ...node, capabilities: [...node.capabilities, 'official-codex'] });
   const route = { ...f.route, backend: 'host-owned-profile', requiredCapabilities: ['official-codex'] };
   f.ledger.recordNodeHeartbeat('advertise', { nodeId: 'other', sampledAt: Date.now(), runtimeReady: true, activeExecutions: 0, providerStatus: { state: 'not-probed', providers: [], executionRoutes: [{ ...route, cliPath: '/private/binary' }, { ...route, nodeId: 'mbp' }, { ...route, model: 'ungranted' }] } });
   const nodes = await f.call('nodes', 'nodes');
@@ -191,7 +192,7 @@ test('advertised routes contain only ready workspace IDs and can be dispatched u
   const f = fixture(t); await f.call('activate', 'activate');
   const node = f.ledger.getNode('other');
   f.ledger.registerWorkspace('unready-workspace', { workspaceId: 'not-ready', nodeId: 'other', path: '/private/path/not-advertised', label: 'Unavailable', state: 'planned', createdAt: new Date().toISOString() });
-  f.ledger.registerNode('worker-with-backend', { ...node, capabilities: [...node.capabilities, 'official-codex'], workspaceIds: [...node.workspaceIds, 'not-ready'] });
+  registerExecutor(f.ledger, 'worker-with-backend', { ...node, capabilities: [...node.capabilities, 'official-codex'], workspaceIds: [...node.workspaceIds, 'not-ready'] });
   const advertised = { nodeId: 'other', provider: 'fixture', model: 'fixture', reasoningEffort: 'low', backend: 'fixture-host-profile', requiredCapabilities: ['official-codex'] };
   f.ledger.recordNodeHeartbeat('routes-heartbeat', { nodeId: 'other', sampledAt: Date.now(), runtimeReady: true, activeExecutions: 0, providerStatus: { state: 'not-probed', providers: [], executionRoutes: [advertised] } });
   const nodes = await f.call('nodes', 'nodes');

@@ -494,6 +494,7 @@ window.__ModuleLoader__.load({
       rolePlanner: "调度端",
       roleExecutor: "执行端",
       roleBoth: "调度端和执行端",
+      workspaceEmpty: "本机目前没有可用于任务的已登记工作区。",
       workspaceTitle: "执行端 · 会话与工作区",
       workspaceLayoutHint: "新项目任务以此授权工作区为父目录，按调度端 ID／项目 ID 创建本地文件夹；临时任务使用独立目录。已有会话保留原目录。",
       workspaceFailed:

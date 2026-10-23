@@ -1,3 +1,4 @@
+import {registerExecutor,publishModels} from '../../../tests/dsh/executor-fixture.mjs';
 import test from "node:test";
 import assert from "node:assert/strict";
 import { join } from "node:path";
@@ -33,7 +34,7 @@ async function setup(t) {
       state: "ready",
       createdAt: new Date().toISOString(),
     });
-    ledger.registerNode(key(), {
+    registerExecutor(ledger, key(), {
       nodeId,
       roles: ["executor"],
       enabled: true,
@@ -314,7 +315,7 @@ test("remote protocol projection includes its registered source project as obser
 test('session collaboration without runs is visible only to its owner node in original project projection', async () => {
   const h = await createNativeHarness({ config: { role: 'both', nodeId: 'central' } });
   try {
-    h.ledger.registerNode('collaboration-owner', {nodeId:'mbp',roles:['executor'],enabled:true,workspaceIds:[],capabilities:[],models:[],lastSeenAt:new Date().toISOString()});
+    registerExecutor(h.ledger, 'collaboration-owner', {nodeId:'mbp',roles:['executor'],enabled:true,workspaceIds:[],capabilities:[],models:[],lastSeenAt:new Date().toISOString()});
     const result=await h.ledger.projectCollaborate('mbp','activate-empty-project',{action:'activate',sessionId:'local-conversation',cwd:h.dir,title:'No tasks yet'});
     const own=h.ctx.taskSystem.projects.snapshotForNode('mbp');
     const other=h.ctx.taskSystem.projects.snapshotForNode('other');

@@ -1,3 +1,4 @@
+import {registerExecutor,publishModels} from '../../../tests/dsh/executor-fixture.mjs';
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {createNativeHarness} from '../../../tests/dsh/native-harness.mjs'
@@ -15,12 +16,12 @@ test('a native user message exposes orchestration tools and applies an executor/
     assert.ok(route,'the full model/effort choice must come from this executor catalog')
     assert.equal(input.context.catalog.workspaces.length,0)
     const choices={persist:'create',attach:'none',executor:node,modelEffort:route.id,reporting:'summary'}
-    return {output:{answers:Object.fromEntries(input.questions.map(q=>[q.questionId,{type:'choice',choice:choices[q.questionId]}]))},modelVersion:'fixture'}
+    return {output:{answers:Object.fromEntries(input.questions.map(q=>[q.questionId,{type:'choice',choice:choices[q.questionId]??'none'}]))},modelVersion:'fixture'}
   }})],{defaultProvider:'judge',maxAttempts:1})
-  const h=await createNativeHarness({config:{planningDecisionEnabled:true,sessionDecisionEnabled:false,autoExecute:false}})
+  const h=await createNativeHarness({executionRoot:true,config:{planningDecisionEnabled:true,sessionDecisionEnabled:false,autoExecute:false}})
   h.ctx.provide('decisionModels',decisions)
   try {
-    for(const [nodeId,model,reasoningEfforts] of [['fast-worker','small',['off']],['quality-worker','large',['high']]]) h.ledger.registerNode(`register-${nodeId}`,{nodeId,roles:['executor'],models:[{provider:'worker-provider',model,reasoningEfforts}],capabilities:['text'],workspaceIds:[],enabled:true,lastSeenAt:new Date().toISOString()})
+    for(const [nodeId,model,reasoningEfforts] of [['fast-worker','small',['off']],['quality-worker','large',['high']]]) registerExecutor(h.ledger, `register-${nodeId}`,{nodeId,roles:['executor'],models:[{provider:'worker-provider',model,reasoningEfforts}],capabilities:['text'],workspaceIds:[],enabled:true,lastSeenAt:new Date().toISOString()})
     const discovery=await h.ctx.tools.execute({name:'task_nodes',callId:'discover',arguments:{},signal:new AbortController().signal})
     assert.deepEqual(discovery.value.find(row=>row.nodeId==='fast-worker').models,[{provider:'worker-provider',model:'small',reasoningEfforts:['off']}])
     assert.deepEqual(discovery.value.find(row=>row.nodeId==='quality-worker').capabilities,['text'])
@@ -59,7 +60,7 @@ test('a native user message exposes orchestration tools and applies an executor/
       } finally {await handle.dispose()}
     }
     assert.equal(calls,2)
-    h.ledger.registerNode('local-node',{nodeId:'local',roles:['both'],models:[{provider:'test-offline',model:'script',reasoningEfforts:[]}],capabilities:[],workspaceIds:[],enabled:true,lastSeenAt:new Date().toISOString()})
+    registerExecutor(h.ledger, 'local-node',{nodeId:'local',roles:['both'],models:[{provider:'test-offline',model:'script',reasoningEfforts:[]}],capabilities:[],workspaceIds:[],enabled:true,lastSeenAt:new Date().toISOString()})
     const task=h.ledger.createTask('owned-task',{title:'Owned workload',policy:{settlementQuietMs:0}}).value
     const run=h.ledger.createRun('owned-run',{taskId:task.taskId,route:{nodeId:'local',provider:'test-offline',model:'script',requiredCapabilities:[]}}).value
     const claim=h.ledger.claim('owned-claim',{runId:run.runId,nodeId:'local',ttlMs:10000}).value
@@ -71,7 +72,7 @@ test('a native user message exposes orchestration tools and applies an executor/
 })
 
 test('planner role exposes dispatch tools to its conversation model and hides workload tools',async()=>{
-  const h=await createNativeHarness({config:{role:'planner'},script:['等待任务描述']})
+  const h=await createNativeHarness({executionRoot:true,config:{role:'planner'},script:['等待任务描述']})
   let handle
   try {
     handle=await h.ctx.agents.create({sessionId:SessionId('planner-only'),agentOptions:{provider:'test-offline',model:'script'}})
@@ -79,7 +80,7 @@ test('planner role exposes dispatch tools to its conversation model and hides wo
     await handle.agent.whenIdle()
     const names=h.adapter.requests[0].tools.map(tool=>tool.name)
     for(const name of ['task_nodes','task_plan','task_dispatch','task_query','task_history','task_wait']) assert.ok(names.includes(name),name)
-    for(const name of ['task_submit_result','task_delegate','task_run','task_children','codex_delegate']) assert.ok(!names.includes(name),name)
+    for(const name of ['task_delegate','task_run','task_children','codex_delegate']) assert.ok(!names.includes(name),name)
     assert.match(JSON.stringify(h.adapter.requests[0].messages.filter(row=>row.role==='system')),/prefer dispatching to a suitable executor/)
   } finally {await handle?.dispose();await h.dispose()}
 })

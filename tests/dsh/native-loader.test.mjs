@@ -30,6 +30,8 @@ async function harness({ role = 'both', script = [], dir, native = true, config 
     ['tools', '@deepseek-ai/dsh-tools'],
     ...(native ? [
       ['agents', '@deepseek-ai/dsh-agent'],
+      ['presetRegistry', '@deepseek-ai/dsh-agent-preset-registry', { default: 'ptc' }],
+      ['fixturePreset', '@deepseek-ai/dsh-agent-preset', { id: 'ptc', name: 'Offline task fixture', plugins: [] }],
       ['persistence', '@deepseek-ai/dsh-session-persistence-jsonl', { root: join(dir, 'sessions'), compression: 'none' }],
       ['agentLoop', '@deepseek-ai/dsh-agent-loop', { agents: [] }],
     ] : []),
