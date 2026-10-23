@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { join } from 'node:path';
+import { ScriptedModel } from './scripted-model.mjs';
 import { createNativeHarness } from './native-harness.mjs';
 import * as remotePlugin from '../../packages/task-system/dist/remote/index.js';
 import * as deepseekApiKey from '@deepseek-ai/dsh-llm-deepseek-api-key';
@@ -20,21 +21,24 @@ for (const missing of ['credential','adapter']) {
     const authority=await createNativeHarness({config:{nodeId:'planner'}});
     const executor=await createNativeHarness({config:{role:'executor',nodeId:'worker'},script:[]});
     let serverFiber,clientFiber;
+    let credentialsAvailable=true,revokeAdapter=()=>{};
     try {
       const ledger=authority.ledger;
       const route=missing==='credential'?{provider:'deepseek-official',model:'deepseek-flash'}:{provider:'absent-provider',model:'acceptance'};
       const expectedCode=missing==='credential'?'MISSING_CREDENTIAL':'NO_ADAPTER';
       if(missing==='credential'){
+        executor.ctx.provide('credentials',{resolve:async()=>credentialsAvailable?{value:'sk-isolated-ci-catalog-fixture'}:undefined});
         executor.ctx.provide('launchEnvironment',createLaunchEnvironmentSnapshot([{source:'process',values:{DSH_TEST_EMPTY_KEY:''}}]));
         await executor.ctx.plugin(deepseekApiKey,{apiKeyEnv:'DSH_TEST_EMPTY_KEY',baseURL:'https://must-not-request.invalid/anthropic'});
       }
+      if(missing==='adapter'){const adapter=new ScriptedModel([]);adapter.listModels=async provider=>[{provider,id:route.model,name:'Installed catalog fixture'}];revokeAdapter=executor.ctx.llm.registerAdapter([route.provider],adapter);}
       ledger.registerWorkspace('network-workspace',{workspaceId:'acceptance',nodeId:'worker',path:executor.dir,label:'Isolated exact-address fixture',state:'ready',createdAt:new Date().toISOString()});
       ledger.registerNode('network-node',{nodeId:'worker',roles:['executor'],capabilities:['acceptance'],workspaceIds:['acceptance'],models:[{...route,reasoningEfforts:[]}],enabled:true,maxConcurrent:1,lastSeenAt:new Date().toISOString()});
       const port=await unusedPort();
       const peerAddress=process.platform==='darwin'?'127.0.0.1':'127.0.0.2';
-      const operations=['listWork','claim','markRunning','bindSession','renew','submit','getRun','getAttempt','acknowledgeCancellation','taskWait','receipt','heartbeat','nodeStatus'];
+      const operations=['listWork','claim','markRunning','bindSession','renew','submit','getRun','getAttempt','acknowledgeCancellation','taskWait','receipt','heartbeat','nodeStatus','executorIdentity','executionModelRequests','completeExecutionModels'];
       const serverConfig=remotePlugin.Config({role:'planner',nodeId:'planner',authMode:'trusted-network',statePath:join(authority.dir,'network.sqlite'),exposeHttp:true,routePath:'/commands',audience:'planner',trustedNetwork:{listen:{address:'127.0.0.1',port},allowHttp:true,allowedAddresses:['127.0.0.1','127.0.0.2','127.0.0.3'],peers:[{address:peerAddress,nodeId:'worker',role:'executor',audience:'planner',operations,workspaces:['acceptance'],capabilities:['acceptance']}]}});
-      const clientConfig=remotePlugin.Config({role:'executor',nodeId:'worker',authMode:'trusted-network',statePath:join(executor.dir,'network.sqlite'),exposeHttp:false,audience:'planner',capabilities:['acceptance'],workspaces:[{workspaceId:'acceptance',nodeId:'worker',path:executor.dir,allowedRoot:executor.dir}],pollIntervalMs:0,coordinator:{authMode:'trusted-network',endpoint:`http://127.0.0.1:${port}/commands`,audience:'planner',trustedNetwork:{address:'127.0.0.1',port,localAddress:peerAddress,allowHttp:true},nativeRoutes:[{provider:route.provider,models:[{model:route.model,reasoningEfforts:[]}]}]}});
+      const clientConfig=remotePlugin.Config({role:'executor',nodeId:'worker',authMode:'trusted-network',statePath:join(executor.dir,'network.sqlite'),exposeHttp:false,audience:'planner',capabilities:['acceptance'],workspaces:[{workspaceId:'acceptance',nodeId:'worker',path:executor.dir,allowedRoot:executor.dir}],pollIntervalMs:0,coordinator:{authMode:'trusted-network',endpoint:`http://127.0.0.1:${port}/commands`,audience:'planner',trustedNetwork:{address:'127.0.0.1',port,localAddress:peerAddress,allowHttp:true}}});
       serverConfig.executionLimits=serverConfig.executionLimits?.get?.() ?? serverConfig.executionLimits;clientConfig.executionLimits=clientConfig.executionLimits?.get?.() ?? clientConfig.executionLimits;
       serverFiber=await authority.ctx.plugin(remotePlugin,serverConfig);await serverFiber.await();
       clientFiber=await executor.ctx.plugin(remotePlugin,clientConfig);await clientFiber.await();
@@ -42,8 +46,12 @@ for (const missing of ['credential','adapter']) {
       assert.equal(ledger.nodeStatuses()[0].state,'online');
       assert.equal(ledger.nodeStatuses()[0].runtimeReady,true);
       assert.equal(ledger.nodeStatuses()[0].providerStatus.state,'not-probed');
+      const catalog=await ledger.refreshNodeModels('worker');
+      assert.equal(catalog.catalog.state,'fresh');
+      assert.ok(catalog.catalog.positiveSnapshot.models.some(model=>model.provider===route.provider&&model.model===route.model),'execution is admitted only after the real remote inventory publishes this tuple');
       const task=ledger.createTask('network-negative-task',{title:`Missing ${missing}`,workspaceId:'acceptance',policy:{allowedNodeIds:['worker'],allowedWorkspaceIds:['acceptance'],allowedTools:[],maxRuntimeMs:10000}}).value;
       const run=ledger.createRun('network-negative-run',{taskId:task.taskId,route:{nodeId:'worker',workspaceId:'acceptance',requiredCapabilities:['acceptance'],...route}}).value;
+      credentialsAvailable=false;revokeAdapter();
       const [result]=await executor.ctx.remoteExecution.nativeWorker.pollOnce(1);
       assert.equal(result.status,'fulfilled');assert.equal(result.value.state,'acknowledged');
       assert.equal(ledger.getRun(run.runId).state,missing==='adapter'?'blocked':'uncertain');
@@ -81,9 +89,9 @@ test('mounted remote plugin forwards exact native progress through two DSH hosts
       ledger.registerNode('network-node',{nodeId:'worker',roles:['executor'],capabilities:['acceptance'],workspaceIds:['acceptance'],models:[{...route,reasoningEfforts:[]}],enabled:true,maxConcurrent:1,lastSeenAt:new Date().toISOString()});
       const port=await unusedPort();
       const peerAddress=process.platform==='darwin'?'127.0.0.1':'127.0.0.2';
-      const operations=['listWork','claim','markRunning','bindSession','renew','submit','getRun','getAttempt','acknowledgeCancellation','taskWait','receipt','heartbeat','nodeStatus'];
+      const operations=['listWork','claim','markRunning','bindSession','renew','submit','getRun','getAttempt','acknowledgeCancellation','taskWait','receipt','heartbeat','nodeStatus','executorIdentity','executionModelRequests','completeExecutionModels'];
       const serverConfig=remotePlugin.Config({role:'planner',nodeId:'planner',authMode:'trusted-network',statePath:join(authority.dir,'network.sqlite'),exposeHttp:true,routePath:'/commands',audience:'planner',trustedNetwork:{listen:{address:'127.0.0.1',port},allowHttp:true,allowedAddresses:['127.0.0.1','127.0.0.2','127.0.0.3'],peers:[{address:peerAddress,nodeId:'worker',role:'executor',audience:'planner',operations,workspaces:['acceptance'],capabilities:['acceptance']}]}});
-      const clientConfig=remotePlugin.Config({role:'executor',nodeId:'worker',leaseTtlMs:1000,authMode:'trusted-network',statePath:join(executor.dir,'network.sqlite'),exposeHttp:false,audience:'planner',capabilities:['acceptance'],workspaces:[{workspaceId:'acceptance',nodeId:'worker',path:executor.dir,allowedRoot:executor.dir}],pollIntervalMs:0,coordinator:{authMode:'trusted-network',endpoint:`http://127.0.0.1:${port}/commands`,audience:'planner',trustedNetwork:{address:'127.0.0.1',port,localAddress:peerAddress,allowHttp:true},nativeRoutes:[{provider:route.provider,models:[{model:route.model,reasoningEfforts:[]}]}]}});
+      const clientConfig=remotePlugin.Config({role:'executor',nodeId:'worker',leaseTtlMs:1000,authMode:'trusted-network',statePath:join(executor.dir,'network.sqlite'),exposeHttp:false,audience:'planner',capabilities:['acceptance'],workspaces:[{workspaceId:'acceptance',nodeId:'worker',path:executor.dir,allowedRoot:executor.dir}],pollIntervalMs:0,coordinator:{authMode:'trusted-network',endpoint:`http://127.0.0.1:${port}/commands`,audience:'planner',trustedNetwork:{address:'127.0.0.1',port,localAddress:peerAddress,allowHttp:true}}});
       serverConfig.executionLimits=serverConfig.executionLimits?.get?.() ?? serverConfig.executionLimits;clientConfig.executionLimits=clientConfig.executionLimits?.get?.() ?? clientConfig.executionLimits;
       serverFiber=await authority.ctx.plugin(remotePlugin,serverConfig);await serverFiber.await();
       clientFiber=await executor.ctx.plugin(remotePlugin,clientConfig);await clientFiber.await();
@@ -91,6 +99,9 @@ test('mounted remote plugin forwards exact native progress through two DSH hosts
       assert.equal(ledger.nodeStatuses()[0].state,'online');
       assert.equal(ledger.nodeStatuses()[0].runtimeReady,true);
       assert.equal(ledger.nodeStatuses()[0].providerStatus.state,'not-probed');
+      const catalog=await ledger.refreshNodeModels('worker');
+      assert.equal(catalog.catalog.state,'fresh');
+      assert.ok(catalog.catalog.positiveSnapshot.models.some(model=>model.provider===route.provider&&model.model===route.model),'execution is admitted only after the real remote inventory publishes this tuple');
       const task=ledger.createTask('network-negative-task',{title:`Missing ${missing}`,workspaceId:'acceptance',policy:{allowedNodeIds:['worker'],allowedWorkspaceIds:['acceptance'],allowedTools:[],maxRuntimeMs:100}}).value;
       const run=ledger.createRun('network-negative-run',{taskId:task.taskId,route:{nodeId:'worker',workspaceId:'acceptance',requiredCapabilities:['acceptance'],...route}}).value;
       const until=async predicate=>{const end=Date.now()+5000;while(!predicate()){assert.ok(Date.now()<end,'progress timed out');await new Promise(resolve=>setTimeout(resolve,10));}};

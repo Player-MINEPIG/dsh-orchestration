@@ -11,7 +11,7 @@ import {executionWorkspace} from '../../packages/task-system/dist/remote/project
 
 test('trusted managed workspace announcement → project settings → coordinator child claim creates native session in the selected executor repository', {timeout:20000},async()=>{
  const planner=await createNativeHarness({config:{role:'planner',nodeId:'planner',schedulerEnabled:false,projectAgentOptions:{provider:'test-offline',model:'script'}}});
- const worker=await createNativeHarness({config:{role:'executor',nodeId:'worker',schedulerEnabled:false},script:[{name:'task_submit_result',args:{outcome:'success',summary:'Verified selected repository cwd',reportTitle:'Workspace evidence',reportBody:'The native session uses the owner-authorized original repository.'}}]});
+ const worker=await createNativeHarness({executionRoot:true,config:{role:'executor',nodeId:'worker',schedulerEnabled:false},script:[{name:'task_submit_result',args:{outcome:'success',summary:'Verified selected repository cwd',reportTitle:'Workspace evidence',reportBody:'The native session uses the owner-authorized original repository.'}}]});
  const stores=['server','client','worker'].map(n=>new RecoveryStore(join(worker.dir,n+'.sqlite')));let gateway,client,executor,server;
  try {
   const registry=await attachWorkspaceRegistry(planner),coordinator=join(planner.dir,'scheduler-local'),repository=join(worker.dir,'existing-repository');mkdirSync(coordinator);mkdirSync(repository);const official=await registry.create(coordinator,'Scheduler-only directory');

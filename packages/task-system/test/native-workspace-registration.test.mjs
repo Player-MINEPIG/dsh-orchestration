@@ -1,4 +1,4 @@
-import {registerExecutor,publishModels} from '../../../tests/dsh/executor-fixture.mjs';
+import {registerExecutor} from '../../../tests/dsh/executor-fixture.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
@@ -7,7 +7,7 @@ import { createNativeHarness } from '../../../tests/dsh/native-harness.mjs';
 import { ExecutorWorker, RecoveryStore, nativeExecutionAdapter } from '../dist/remote/api.js';
 
 for (const transport of ['local', 'remote']) test(`${transport} delegated sessions retain isolated cwd and history without creating sidebar workspaces`, async () => {
-  const h = await createNativeHarness({config:{projectAgentOptions:{provider:'test-offline',model:'script'}},script:[1,2].map(i=>({name:'task_submit_result',args:{outcome:'success',summary:`Child ${i}`,reportTitle:`Child ${i}`,reportBody:`Retained child evidence ${i}`}}))});
+  const h = await createNativeHarness({executionRoot:true,config:{projectAgentOptions:{provider:'test-offline',model:'script'}},script:[1,2].map(i=>({name:'task_submit_result',args:{outcome:'success',summary:`Child ${i}`,reportTitle:`Child ${i}`,reportBody:`Retained child evidence ${i}`}}))});
   let worker, store;
   try {
     const l=h.ledger, runtime=h.ctx.taskSystem.projects, registered=new Map();
@@ -47,7 +47,7 @@ for (const transport of ['local', 'remote']) test(`${transport} delegated sessio
       assert.equal(run.state,'succeeded');assert.equal(run.parentRunId,parent.runId);
       assert.equal(run.projectContext.project.projectId,projectId);
       const session=await h.ctx.sessionPersistence.open(attempt.sessionId,'read');
-      try{assert.match(session.header.cwd,/delegated-tasks/);assert.ok(existsSync(session.header.cwd));paths.push(session.header.cwd);}finally{await session.close();}
+      try{assert.ok(session.header.cwd.startsWith(join(h.dir,'.dsh','delegated')+'/'),'recursive task cwd remains beneath the authorized repository delegation directory');assert.ok(existsSync(session.header.cwd));paths.push(session.header.cwd);}finally{await session.close();}
       assert.equal(l.history(child.task.taskId).reports.length,1);
       assert.deepEqual([...registered.keys()],[project.workspace],'internal execution must not register or attach its cwd as another project');
     }
