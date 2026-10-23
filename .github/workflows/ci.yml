@@ -1,13 +1,36 @@
 name: Current product checks
 on:
   pull_request:
-    branches: [dev, main]
+    branches: [dev]
   workflow_dispatch:
+    inputs:
+      operation:
+        type: choice
+        options: [verify, promote]
+        default: verify
+        required: true
+      candidate_sha:
+        description: Exact dev commit to verify or promote
+        type: string
+        required: true
+      verification_run_id:
+        description: Successful verify run ID (promote only)
+        type: string
+      tag:
+        description: v followed by the tested task-system version (promote only)
+        type: string
+      acceptance_json:
+        description: Device results and explicit user confirmation (promote only)
+        type: string
+      confirm:
+        description: Confirm the recorded device results and user authorization (promote only)
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ inputs.operation == 'promote' && 'release-main' || format('{0}-{1}', github.workflow, github.ref) }}
+  cancel-in-progress: ${{ inputs.operation != 'promote' }}
 defaults:
   run:
     shell: bash
@@ -15,12 +38,32 @@ env:
   TZ: UTC
   DSH_TELEMETRY_DISABLED: '1'
 jobs:
+  candidate:
+    name: Candidate boundary
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.operation == 'verify' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      statuses: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.19.0'
+      - run: node scripts/ci/release-control.mjs prepare
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
   core:
+    needs: candidate
+    if: ${{ !cancelled() && (github.event_name == 'pull_request' || (inputs.operation == 'verify' && needs.candidate.result == 'success')) }}
     name: Core (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: ${{ fromJSON(github.event_name == 'workflow_dispatch' && '["ubuntu-latest","macos-latest"]' || '["ubuntu-latest"]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:
@@ -32,6 +75,8 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: npm run build && npm run build:fixtures
       - run: mkdir -p .runtime/ci-results
+      - name: Release and PR safety contracts
+        run: node --test tests/ci/*.test.mjs
       - name: Ledger, projects, workflows, schedules and remote protocol
         run: npm run test:core 2>&1 | tee .runtime/ci-results/core.log
       - name: JEV
@@ -52,11 +97,13 @@ jobs:
           name: core-${{ matrix.os }}-${{ github.sha }}
           path: .runtime/ci-results
   native:
+    needs: candidate
+    if: ${{ !cancelled() && (github.event_name == 'pull_request' || (inputs.operation == 'verify' && needs.candidate.result == 'success')) }}
     name: Native DSH (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: ${{ fromJSON(github.event_name == 'workflow_dispatch' && '["ubuntu-latest","macos-latest"]' || '["ubuntu-latest"]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
     steps:
@@ -80,6 +127,8 @@ jobs:
           name: native-${{ matrix.os }}-${{ github.sha }}
           path: .runtime/ci-results
   ui:
+    needs: candidate
+    if: ${{ !cancelled() && (github.event_name == 'pull_request' || (inputs.operation == 'verify' && needs.candidate.result == 'success')) }}
     name: UI (${{ matrix.timezone }})
     strategy:
       fail-fast: false
@@ -115,6 +164,8 @@ jobs:
           name: ui-${{ strategy.job-index }}-${{ github.sha }}
           path: .runtime/ci-results
   distribution:
+    needs: candidate
+    if: ${{ !cancelled() && (github.event_name == 'pull_request' || (inputs.operation == 'verify' && needs.candidate.result == 'success')) }}
     name: Installed packages
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -135,3 +186,84 @@ jobs:
         with:
           name: distribution-${{ github.sha }}
           path: .runtime/ci-results
+
+  full-ci:
+    name: Full CI receipt
+    needs: [candidate, core, native, ui, distribution]
+    if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.operation == 'verify' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      statuses: write
+    env:
+      CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.19.0'
+      - uses: actions/download-artifact@v4
+        with:
+          name: distribution-${{ github.sha }}
+          path: .runtime/release-candidate
+      - name: Bind tested packages to complete CI
+        run: node scripts/ci/release-control.mjs manifest
+        env:
+          VERIFY_RESULTS: ${{ needs.candidate.result }},${{ needs.core.result }},${{ needs.native.result }},${{ needs.ui.result }},${{ needs.distribution.result }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-candidate-${{ inputs.candidate_sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .runtime/release-candidate
+          if-no-files-found: error
+          retention-days: 30
+      - name: Record Full CI status
+        if: always()
+        run: node scripts/ci/release-control.mjs full-status
+        env:
+          FULL_RESULT: ${{ job.status }}
+
+  promote:
+    name: Promote release
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.operation == 'promote' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+      statuses: write
+    env:
+      CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+      VERIFICATION_RUN_ID: ${{ inputs.verification_run_id }}
+      RELEASE_TAG: ${{ inputs.tag }}
+      ACCEPTANCE_JSON: ${{ inputs.acceptance_json }}
+      RELEASE_CONFIRM: ${{ inputs.confirm }}
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.19.0'
+      - name: Resolve immutable verification artifact
+        id: receipt
+        run: node scripts/ci/release-control.mjs resolve
+      - uses: actions/download-artifact@v4
+        with:
+          artifact-ids: ${{ steps.receipt.outputs.artifact_id }}
+          run-id: ${{ inputs.verification_run_id }}
+          github-token: ${{ github.token }}
+          path: .runtime/release-candidate
+          merge-multiple: true
+      - name: Validate acceptance and atomically fast-forward main with version tag
+        run: node scripts/ci/release-control.mjs promote
+      - name: Preserve validated release record, including failed pushes
+        uses: actions/upload-artifact@v4
+        if: ${{ always() && steps.receipt.outcome == 'success' }}
+        with:
+          name: release-record-${{ inputs.candidate_sha }}-${{ github.run_id }}
+          path: .runtime/release-candidate/release-annotation.json
+          if-no-files-found: ignore
+          retention-days: 90

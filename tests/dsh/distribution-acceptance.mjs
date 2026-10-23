@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { DSH_VERSION, ensureOfficialRuntime } from '../../scripts/ci/runtime-install.mjs';
+import { preserveTestedPackage } from '../../scripts/ci/tested-package.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const resultsDirectory = resolve(process.env.DSH_CI_RESULTS_DIR ?? join(root, '.runtime/ci-results'));
@@ -41,7 +42,9 @@ try {
   assert.ok(pack.files.some(file => file.path === 'dist/task-pack/plugin.mjs'));
   assert.ok(pack.files.some(file => file.path === 'dist/task-pack/activity/plugin.mjs'));
   assert.ok(!pack.files.some(file => file.path.startsWith('src/')));
-  stage('built-tarball', { filename: pack.filename, integrity: pack.integrity });
+  const testedPackage = preserveTestedPackage(pack, tarball, resultsDirectory);
+  receipt.packages = [testedPackage];
+  stage('built-tarball', { ...testedPackage, integrity: pack.integrity });
   const profile = 'task-native-acceptance';
   dsh(['plugin', '--profile', profile, 'add', tarball]);
   const profileDir = join(env.DSH_HOME, 'profiles', profile);

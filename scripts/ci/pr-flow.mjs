@@ -10,9 +10,8 @@ export function checkPullRequestRoute(event, { eventName, repository }) {
   }
   const head = pr.head.ref;
   const base = pr.base.ref;
-  if (base === 'main' && head === 'dev') return 'Accepted route: dev → main.';
-  if (base === 'dev' && head && head !== 'dev') return `Accepted route: ${head} → dev.`;
-  throw new Error('Open feature PRs to dev. Only the same repository dev branch may open a promotion PR to main.');
+  if (base === 'dev' && head && head !== 'dev' && head !== 'main') return `Accepted route: ${head} → dev.`;
+  throw new Error('Open feature PRs to dev. Release main through the verified fast-forward promotion workflow, not a PR.');
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

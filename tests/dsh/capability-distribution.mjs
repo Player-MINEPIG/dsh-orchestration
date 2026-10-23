@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { DSH_VERSION, ensureOfficialRuntime } from '../../scripts/ci/runtime-install.mjs';
+import { preserveTestedPackage } from '../../scripts/ci/tested-package.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const resultsDirectory = resolve(process.env.DSH_CI_RESULTS_DIR ?? join(root, '.runtime/ci-results'));
@@ -27,7 +28,7 @@ function stage(name, facts = {}) { receipt.stages.push({ name, ok: true, ...fact
 function pack(directory) {
   const output = JSON.parse(run('npm', ['pack', '--json', '--pack-destination', scratch], { cwd: join(root, 'packages', directory) }))[0];
   assert.ok(output.files.some(file => file.path.startsWith(directory === 'jev' ? 'lib/' : 'dist/')));
-  receipt.packages.push({ name: output.name, filename: output.filename, integrity: output.integrity });
+  receipt.packages.push({ ...preserveTestedPackage(output, join(scratch, output.filename), resultsDirectory), integrity: output.integrity });
   return join(scratch, output.filename);
 }
 async function boot(profile, capability, patch, absent = false) {

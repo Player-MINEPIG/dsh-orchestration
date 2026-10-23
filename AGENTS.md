@@ -8,4 +8,6 @@
 
 主 checkout 保持在已集成并核实的 `main`。开发前阅读 [开发与发布流程](docs/DEVELOPMENT.md)，fetch 并核对 `origin/dev`、`origin/main` 和已部署版本。保全 WIP 后，从最新已核实的 `origin/dev` 创建新的 `codex/` 分支和独立工作树。
 
-功能通过 PR 进入 `dev`。真机验收、记录被测 SHA 与包 checksum、取得用户明确确认后，才通过 `dev` → `main` PR 发布。被测 SHA 必须等于 PR head；验收期间冻结 `dev`，head 变化后重新验收。长期分支之间使用 merge，随后通过 `main` → `dev` PR 同步。交付后核对已合入 PR 的门禁和最终提交树，再仅快进主 checkout 到已核实的 `origin/main`，报告分支、HEAD、验收证据和 WIP 位置。
+功能通过 PR 进入 `dev`，日常门禁只跑 Linux。发布前在 `dev` 对固定候选 SHA 手动运行完整 Linux/macOS CI，使用其保留的同一 tarball 完成真机验收，并取得用户明确确认。通过受信 `main` 的发布工作流校验记录后，将 `main` 快进到该候选并原子创建版本 tag；不得用 PR 合并、重打包或伪造验收替代。`dev` 可继续推进，但被测候选和包 checksum 不得变化，且候选必须仍包含当前 `main`。详见流程中的验收 JSON、权限失败处理与门禁要求。
+
+交付后核对完整 CI、验收记录和最终 refs，再仅快进主 checkout 到已核实的 `origin/main`，报告分支、HEAD、tag、验收证据和 WIP 位置。纯开发交付不得声称已发布；没有真实验收与用户确认时保留在 `dev`。
