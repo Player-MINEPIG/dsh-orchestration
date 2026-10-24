@@ -25,8 +25,10 @@ test('real HTTP source pairing validates before bind, persists identity, accepts
   await assert.rejects(client.send('heartbeat','stale-sample',{sampledAt:0,runtimeReady:true,activeExecutions:0},{diagnostic:true}),/STALE_HEARTBEAT_SAMPLE/);assert.deepEqual(before(),{pairs:[],nodes:[]});
   const sameNodeStore=new RecoveryStore(join(dir,'collision.sqlite'));const sameNode=new RemoteClient({endpoint:`http://127.0.0.1:${port}/commands`,nodeId:'planner',audience:'planner',authMode:'trusted-network',trustedNetwork:{address:'127.0.0.1',port,localAddress:'127.0.0.1',allowHttp:true},store:sameNodeStore});await assert.rejects(sameNode.executorIdentity({diagnostic:true}),/NODE_ID_COLLISION/);await sameNode.dispose();sameNodeStore.close();assert.deepEqual(before(),{pairs:[],nodes:[]});
   const identity=await client.executorIdentity();assert.equal(identity.nodeId,'new-device');assert.equal(ledger.getNode('new-device').models.length,0);
-  await client.send('heartbeat','foreign-catalog',{sampledAt:Date.now(),runtimeReady:true,activeExecutions:0,providerStatus:{state:'not-probed',providers:[],executionRoutes:[{nodeId:'someone-else',provider:'p',model:'m',requiredCapabilities:[]}]}});
+  ledger.setNodeCapabilities('operator-capabilities','new-device',['activity.reports.v1']);
+  await client.send('heartbeat','foreign-catalog',{sampledAt:Date.now(),runtimeReady:true,activeExecutions:0,providerStatus:{state:'not-probed',providers:[],executionRoutes:[{nodeId:'someone-else',provider:'p',model:'m',requiredCapabilities:['untrusted.v1']}]}});
   assert.deepEqual(ledger.getNode('new-device').models,[],'legacy heartbeat metadata cannot grant or replace executor models');
+  assert.deepEqual(ledger.getNode('new-device').capabilities,['activity.reports.v1'],'authenticated heartbeat cannot replace operator capabilities with self-reported grants');
   const request=ledger.executionModels.request('requested-catalog',{nodeId:'new-device'}).catalog.request;
   const result={state:'success',observedAt:Date.now(),complete:true,models:[{provider:'p',model:'m'}]};
   const remote=new RemoteLedgerClient(client,'new-device');
@@ -39,6 +41,10 @@ test('real HTTP source pairing validates before bind, persists identity, accepts
   const replay=await fetch(`http://127.0.0.1:${port}/commands`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({version:2,authMode:'trusted-network',nodeId:'new-device',audience:'planner',commandId:'replayed-model-change',nonce:'replayed-model-nonce',sequence:1,issuedAt:Date.now(),expiresAt:Date.now()+30000,operation:'heartbeat',payload:{sampledAt:Date.now(),runtimeReady:true,activeExecutions:0,providerStatus:{state:'ready',providers:[],executionRoutes:[{nodeId:'new-device',provider:'evil',model:'changed',requiredCapabilities:[]}]}}})});assert.equal(replay.status,409);assert.equal((await replay.json()).error,'OUT_OF_ORDER');assert.deepEqual(ledger.getNode('new-device').models,[{provider:'p',model:'m',reasoningEfforts:[]}]);assert.deepEqual(store.networkPairings(),[{address:'127.0.0.1',nodeId:'new-device'}]);
   assert.equal((await client.executorIdentity()).executorId,identity.executorId);
   await gateway.dispose();store.close();store=new RecoveryStore(state);mount(policy.peers);assert.equal((await client.executorIdentity()).executorId,identity.executorId);
+  assert.deepEqual(ledger.getNode('new-device').capabilities,['activity.reports.v1']);
+  ledger.setNodeCapabilities('operator-revoke-capabilities','new-device',[]);
+  await client.send('heartbeat','after-capability-revocation',{sampledAt:Date.now(),runtimeReady:true,activeExecutions:0,providerStatus:{state:'not-probed',providers:[],executionRoutes:[{nodeId:'new-device',provider:'p',model:'m',requiredCapabilities:['activity.reports.v1']}]}});
+  assert.deepEqual(ledger.getNode('new-device').capabilities,[],'normal heartbeat must preserve operator revocation');
   const intruderStore=new RecoveryStore(join(dir,'intruder.sqlite'));const intruder=new RemoteClient({endpoint:`http://127.0.0.1:${port}/commands`,nodeId:'renamed-device',audience:'planner',authMode:'trusted-network',trustedNetwork:{address:'127.0.0.1',port,localAddress:'127.0.0.1',allowHttp:true},store:intruderStore});
   await assert.rejects(intruder.executorIdentity({diagnostic:true}),/WRONG_NODE/);await intruder.dispose();intruderStore.close();
   await gateway.dispose();removeNetworkPairings(state,['127.0.0.1']);mount([]);assert.deepEqual(store.networkPairings(),[]);await assert.rejects(client.executorIdentity({diagnostic:true}),/NETWORK_PEER_REQUIRED/);

@@ -7,6 +7,7 @@ import {
   readProfilePatches,
 } from "@deepseek-ai/dsh-app-boot";
 import { withFileLock, writeFileAtomic } from "@deepseek-ai/dsh-atomic-write";
+import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { readFile } from "node:fs/promises";
@@ -14,7 +15,7 @@ import { dirname, join, resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { parseDocument, isSeq } from "yaml";
 import { z } from "zod";
-import { digest, EXECUTOR_OPERATIONS } from "./remote/protocol.js";
+import { digest, EXECUTOR_OPERATIONS, identifier } from "./remote/protocol.js";
 import { readNetworkPairings, removeNetworkPairings } from "./network-pairings.js";
 import {
   validateNetworkEndpoint,
@@ -38,7 +39,7 @@ const peer = z
     audience:z.string().optional(),
     operations:z.array(z.enum(connectionOperations)).optional(),
     workspaces:names.optional(),
-    capabilities:names.optional(),
+    capabilities:z.array(z.string().trim().refine(identifier, "Invalid capability identifier")).max(128).optional(),
   })
   .strict();
 const target = z
@@ -134,7 +135,7 @@ function projection(ctx: Context, config: Raw, exists: boolean) {
     listenPort: listen.port ?? null,
     routePath: config.routePath ?? "/dsh-task/v1/commands",
     serviceAudience: config.audience ?? (exists ? "task-coordinator" : ""),
-    peers: (Array.isArray(network.peers)?network.peers.map(asRaw):[]).map(peer=>({address:peer.address,nodeId:peer.nodeId ?? "",nickname:peer.nickname || peer.nodeId || peer.address,executionEnabled:typeof peer.executionEnabled === "boolean" ? peer.executionEnabled : ["executor","both"].includes(String(peer.role))})),
+    peers: (Array.isArray(network.peers)?network.peers.map(asRaw):[]).map(peer=>({address:peer.address,nodeId:peer.nodeId ?? "",nickname:peer.nickname || peer.nodeId || peer.address,capabilities:peer.capabilities ?? [],executionEnabled:typeof peer.executionEnabled === "boolean" ? peer.executionEnabled : ["executor","both"].includes(String(peer.role))})),
     outbound: publicEndpoint(coordinator.endpoint)
       ? {
           endpoint: publicEndpoint(coordinator.endpoint),
@@ -212,7 +213,7 @@ function nextConfig(
         "Signed mode shares the existing DSH listener; network peers are configured through the existing signed identity flow",
       );
   } else {
-    const changed = value.listenAddress !== (asRaw(network.listen).address ?? "") || value.listenPort !== (asRaw(network.listen).port ?? null) || !isDeepStrictEqual(value.peers.map(peer=>({address:peer.address,nickname:peer.nickname,executionEnabled:peer.executionEnabled ?? false})),previous.map(peer=>({address:peer.address,nickname:peer.nickname || peer.nodeId || peer.address,executionEnabled:typeof peer.executionEnabled === "boolean" ? peer.executionEnabled : ["executor","both"].includes(String(peer.role))})));
+    const changed = value.listenAddress !== (asRaw(network.listen).address ?? "") || value.listenPort !== (asRaw(network.listen).port ?? null) || !isDeepStrictEqual(value.peers.map(peer=>({address:peer.address,nickname:peer.nickname,capabilities:peer.capabilities ?? previous.find(row=>row.address===peer.address)?.capabilities ?? [],executionEnabled:peer.executionEnabled ?? false})),previous.map(peer=>({address:peer.address,nickname:peer.nickname || peer.nodeId || peer.address,capabilities:peer.capabilities ?? [],executionEnabled:typeof peer.executionEnabled === "boolean" ? peer.executionEnabled : ["executor","both"].includes(String(peer.role))})));
     if (value.listenerEnabled || changed) {
       if (!value.listenAddress || value.listenPort === null)
         reject(
@@ -256,7 +257,7 @@ function nextConfig(
         allowedAddresses,
         peers: value.peers.map(row=>{
           const original=previous.find(peer=>peer.address===row.address || (peer.nodeId && peer.nodeId===row.nodeId));
-          return {...original,address:row.address,nodeId:String(original?.nodeId || (original ? paired.get(String(original.address)) : "") || ""),nickname:row.nickname,executionEnabled:row.executionEnabled ?? (original ? typeof original.executionEnabled === "boolean" ? original.executionEnabled : ["executor","both"].includes(String(original.role)) : false),audience:value.serviceAudience,operations:Array.isArray(original?.operations)?original.operations:[...connectionOperations],workspaces:Array.isArray(original?.workspaces)?original.workspaces:[],capabilities:Array.isArray(original?.capabilities)?original.capabilities:[]};
+          return {...original,address:row.address,nodeId:String(original?.nodeId || (original ? paired.get(String(original.address)) : "") || ""),nickname:row.nickname,executionEnabled:row.executionEnabled ?? (original ? typeof original.executionEnabled === "boolean" ? original.executionEnabled : ["executor","both"].includes(String(original.role)) : false),audience:value.serviceAudience,operations:Array.isArray(original?.operations)?original.operations:[...connectionOperations],workspaces:Array.isArray(original?.workspaces)?original.workspaces:[],capabilities:row.capabilities ?? (Array.isArray(original?.capabilities)?original.capabilities:[])};
         }),
       };
       if (value.listenerEnabled)
@@ -353,6 +354,21 @@ export async function saveConnectionSettings(ctx: Context, input: unknown) {
           reject("STARTUP_CONFLICT", "Connection changed before saving");
         return value;
       });
+      const configuredPeers = asRaw(value.trustedNetwork).peers;
+      if (Array.isArray(configuredPeers)) {
+        for (const configured of configuredPeers.map(asRaw)) {
+          const nodeId = String(configured.nodeId || "");
+          const prior = before.values.peers.find(peer => peer.address === configured.address || (peer.nodeId && peer.nodeId === nodeId));
+          if (!prior || !nodeId || prior.nodeId !== nodeId || nodeId === task.config.nodeId ||
+              isDeepStrictEqual(prior.capabilities, configured.capabilities) ||
+              !task.ledger.nodeStatuses().some(node => node.nodeId === nodeId)) continue;
+          task.ledger.setNodeCapabilities(
+            `peer-capabilities:${randomUUID()}`,
+            nodeId,
+            names.parse(configured.capabilities),
+          );
+        }
+      }
       removeNetworkPairings(resolve(String(original.statePath ?? join(dirname(task.config.databasePath),"remote-execution.sqlite"))),unbound.map(peer=>peer.address));
       for(const peer of removed)if(peer.nodeId)task.ledger.deactivatePairedExecutor(`remove-peer:${digest([request.expected,peer.nodeId])}`,peer.nodeId);
     } else {
