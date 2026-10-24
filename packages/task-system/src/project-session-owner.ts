@@ -118,6 +118,7 @@ export class ProjectSessionOwner {
       agent.ctx.on("session/event", (session, event) => {
         if (session !== agent.session || event.type !== "user/message") return;
         const id = String(session.id), messageId = event.data.id;
+        if (!this.custody(id).some(item => item.message.id === messageId)) return;
         void sessions.flush(session).then(() => {
           const remaining = this.custody(id).filter(item => item.message.id !== messageId);
           if (remaining.length) this.custodyDb.prepare("UPDATE project_session_owner_custody SET data=? WHERE session=?").run(JSON.stringify(remaining), id);

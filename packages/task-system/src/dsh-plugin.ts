@@ -2163,6 +2163,7 @@ export class TaskSystemService extends Service {
   private lastHeartbeatSample = 0;
   private lastRuntimeReady?: boolean;
   private ledgerClosed = false;
+  private shutdown?: Promise<void>;
   private resultRecoveryCursor = 0;
   readonly sessionCollaboration: SessionCollaboration;
   constructor(
@@ -2237,10 +2238,15 @@ export class TaskSystemService extends Service {
     await provider.dispose();
     this.providers.delete(provider);
   }
-  async close(): Promise<void> {
-    if (this.ledgerClosed) return;
+  close(): Promise<void> {
+    if (this.shutdown) return this.shutdown;
     this.accepting = false;
-    await this.sessionPortal.close();
+    const portal = this.sessionPortal.close();
+    return this.shutdown = Promise.resolve().then(() => this.closeOwned(portal));
+  }
+  private async closeOwned(portal: Promise<void>): Promise<void> {
+    if (this.ledgerClosed) return;
+    await portal;
     this.localHeartbeat(true);
     this.observationSubscription?.lifecycle.abort(
       new Error("task system is draining"),

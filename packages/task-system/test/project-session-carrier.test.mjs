@@ -81,10 +81,10 @@ for (const [name, text] of [
 test("local reads expire without polling while unfinished reads and mutation outcomes remain", async t => {
   t.mock.timers.enable({ apis: ["Date"], now: 1_000 });
   const db = new DatabaseSync(":memory:");
-  let finishRead;
+  let finishRead, finishMutation;
   const owner = new ProjectSessionOwnerCarrier(ledger(db), async () => ({}), () => catalog, async (_request, callId) => {
     if (callId === "unfinished-read") return new Promise(resolve => { finishRead = resolve; });
-    if (callId === "unfinished-mutation") return new Promise(() => {});
+    if (callId === "unfinished-mutation") return new Promise(resolve => { finishMutation = resolve; });
     return { ready: true };
   });
   const read = { kind: "native", binding, operation: { kind: "native-capabilities" } };
@@ -104,7 +104,7 @@ test("local reads expire without polling while unfinished reads and mutation out
     t.mock.timers.tick(120_001);
     await owner.perform(read, "new-read");
     assert.deepEqual(db.prepare("SELECT id FROM project_session_owner_calls ORDER BY id").all().map(row => row.id), ["completed-mutation", "new-read", "unfinished-mutation"]);
-  } finally { await owner.dispose(); db.close(); }
+  } finally { finishRead?.({ ready: true }); finishMutation?.({ ready: true }); await owner.dispose(); db.close(); }
 });
 
 test("owner polling preserves large Unicode results and an acknowledgement lost after commit", async () => {
@@ -154,10 +154,10 @@ test("a lifecycle retry can recover from unavailability with the same immutable 
 
 test("an interrupted native mutation is uncertain instead of executing again after restart", async () => {
   const db = new DatabaseSync(":memory:");
-  let executions = 0;
+  let executions = 0, stopFirst;
   const request = { kind: "native", binding, operation: { kind: "session-prompt", requestId: "native-request", mode: "queue", content: [{ type: "text", text: "one input" }] } };
-  const first = new ProjectSessionOwnerCarrier(ledger(db), async () => ({}), () => catalog, async () => { executions++; return new Promise(() => {}); });
-  void first.perform(request, "native-command");
+  const first = new ProjectSessionOwnerCarrier(ledger(db), async () => ({}), () => catalog, async () => { executions++; return new Promise((_resolve,reject) => { stopFirst = reject; }); });
+  void first.perform(request, "native-command").catch(() => {});
   await new Promise(resolve => setImmediate(resolve));
   const restarted = new ProjectSessionOwnerCarrier(ledger(db), async () => ({}), () => catalog, async () => { executions++; return { accepted: true }; });
   try {
@@ -165,7 +165,7 @@ test("an interrupted native mutation is uncertain instead of executing again aft
     assert.equal(executions, 1);
     await assert.rejects(restarted.perform(request, "native-command"), { code: "PROJECT_SESSION_UNCERTAIN" });
     assert.equal(executions, 1);
-  } finally { await first.dispose(); await restarted.dispose(); db.close(); }
+  } finally { stopFirst?.(new TaskError("UNAVAILABLE", "Interrupted fixture stopped")); await first.dispose(); await restarted.dispose(); db.close(); }
 });
 
 test("bounded exchange refuses a foreign receipt and discards an expired read receipt", async () => {
@@ -182,4 +182,8 @@ test("bounded exchange refuses a foreign receipt and discards an expired read re
   abort.abort();
   await pending;
   db.close();
+});
+
+test('carrier stop drains durable local outcomes and parked waiters never query a closed database',async()=>{
+ const db=new DatabaseSync(':memory:');let finish,entered;const started=new Promise(resolve=>entered=resolve);const owner=new ProjectSessionOwnerCarrier(ledger(db),async()=>({}),()=>catalog,async()=>{entered();return new Promise(resolve=>finish=resolve);});const central=new ProjectSessionCarrier(ledger(db),'mbp',(request,callId)=>owner.perform(request,callId),authorize);const request={kind:'native',binding,operation:{kind:'file-upload-finish',uploadId:'fixture-upload'}};const pending=central.request('mbp','stop-inflight',request).then(value=>({value}),error=>({code:error.code}));await started;let drained=false;const stopping=Promise.all([central.dispose(),owner.dispose()]).then(()=>drained=true);await Promise.resolve();assert.equal(drained,false);await assert.rejects(central.request('mbp','late-request',request),{code:'UNAVAILABLE'});await assert.rejects(owner.perform(request,'late-owner'),{code:'UNAVAILABLE'});finish({receiptId:'durable-fixture-receipt'});await stopping;assert.ok(db.prepare('SELECT result FROM project_session_owner_calls WHERE id=?').get('stop-inflight').result);assert.ok(db.prepare('SELECT result FROM project_session_carrier_calls WHERE id=?').get('stop-inflight').result);db.close();assert.deepEqual(await pending,{code:'PROJECT_SESSION_PENDING'});
 });

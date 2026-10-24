@@ -47,6 +47,8 @@ export class ProjectSessionService {
   private readonly native: ProjectNativeOwner;
   private readonly db;
   private started = false;
+  private closed = false;
+  private closing?: Promise<void>;
   private timer?: ReturnType<typeof setInterval>;
   constructor(private readonly task: TaskSystemService, private ctx: Context) {
     this.db = task.ledger.managementDatabase();
@@ -93,6 +95,7 @@ export class ProjectSessionService {
       checkCurrent: request => this.projects().checkPlacement(request), commit: (request, next) => this.projects().commitPlacement(request, next),
     });
   }
+  private assertOpen() { if (this.closed) throw new TaskError("UNAVAILABLE", "Project session hosting is stopping"); }
   bindContext(ctx: Context) { this.ctx = ctx; this.owner.bindContext(ctx); }
   private projects() {
     if (!this.task.projects) throw new TaskError("UNAVAILABLE", "Central project authority is unavailable");
@@ -108,6 +111,7 @@ export class ProjectSessionService {
     if (!this.projects().snapshotForNode(nodeId).projects.some(project => project.id === projectId)) throw new TaskError("FORBIDDEN", "Project is outside this peer's scope");
   }
   private async central(request: ProjectSessionAction, commandId: string): Promise<unknown> {
+    this.assertOpen();
     if (this.task.config.centralMode === "host") return this.centralAction(this.task.config.nodeId, commandId, request);
     const remote = this.ctx.get("remoteExecution");
     if (!remote?.coordinatorLedger || remote.settingsSnapshot().paused) throw new TaskError("UNAVAILABLE", "Central project connection is unavailable");
@@ -129,20 +133,35 @@ export class ProjectSessionService {
     return { revision: digest({ available, workspaces }), available, workspaces };
   }
   async start() {
-    if (this.started) return;
+    if (this.started || this.closed) return;
     this.started = true;
     if (this.task.config.centralMode === "host") this.carrier.publish(this.task.config.nodeId, this.catalog());
     else this.ownerCarrier.start();
     await this.owner.recover();
     this.timer = setInterval(() => {
-      if (this.task.config.centralMode === "host") {
-        this.carrier.publish(this.task.config.nodeId, this.catalog());
-        for (const operation of this.placements.outstanding()) void this.placements.move(operation.request).catch(() => {});
-      }
+      if (this.closed) return;
+      try {
+        if (this.task.config.centralMode === "host") {
+          this.carrier.publish(this.task.config.nodeId, this.catalog());
+          for (const operation of this.placements.outstanding()) void this.placements.move(operation.request).catch(() => {});
+        }
+      } catch { this.ctx.logger.warn("Project session refresh deferred until the next refresh"); }
     }, 2000);
   }
-  async close() { if (this.timer) clearInterval(this.timer); this.native.dispose(); this.owner.dispose(); await this.ownerCarrier.dispose(); }
+  close(): Promise<void> {
+    if (this.closing) return this.closing;
+    this.closed = true;
+    return this.closing = Promise.resolve().then(() => this.closeOwned());
+  }
+  private async closeOwned() {
+    if (this.timer) clearInterval(this.timer);
+    this.native.dispose();
+    this.owner.dispose();
+    await Promise.all([this.carrier.dispose(), this.ownerCarrier.dispose()]);
+  }
+
   async ownerExecute(request: ProjectOwnerRequest, callId: string): Promise<unknown> {
+    this.assertOpen();
     if (request.kind === "lifecycle") return this.owner.handle(request.command);
     return this.native.invoke(request.binding, request.operation, callId);
   }
@@ -159,6 +178,7 @@ export class ProjectSessionService {
     if (access !== "read" && !sameProjectSession(this.reference(binding.projectId), binding)) throw new TaskError("CONFLICT", "Project has a newer primary session generation");
   }
   async executionSettings(projectId: string): Promise<unknown> {
+    this.assertOpen();
     if (this.task.config.centralMode !== "host") return this.central({ kind: "application", input: { kind: "execution-settings", projectId } }, `settings-${randomUUID()}`);
     this.carrier.publish(this.task.config.nodeId, this.catalog());
     const original = this.projects().executionSettings(projectId), binding = this.reference(projectId);
@@ -167,6 +187,7 @@ export class ProjectSessionService {
       coordinatorOptions: { nodeId: this.task.config.nodeId, roots: [], nodes: catalogs.map(row => ({ nodeId: row.nodeId, label: row.nodeId, catalogRevision: row.revision, state: row.available && Date.now() - row.observedAt < 15000 ? "ready" : "offline" })), workspaces: catalogs.flatMap(row => row.workspaces.map(workspace => ({ ...workspace, nodeId: row.nodeId, catalogRevision: row.revision, state: row.available && Date.now() - row.observedAt < 15000 ? "ready" : "offline" }))) } };
   }
   async saveExecutionSettings(input: unknown): Promise<unknown> {
+    this.assertOpen();
     const request = projectSessionSettings.parse(input);
     if (this.task.config.centralMode !== "host") return this.central({ kind: "application", input: { kind: "save-execution-settings", input: request } }, request.commandId);
     const hash = digest(request), policy = this.db.prepare("SELECT digest FROM project_session_settings_receipts WHERE command=?").get(request.commandId);
@@ -201,6 +222,7 @@ export class ProjectSessionService {
     return this.executionSettings(request.projectId);
   }
   async conversation(projectId: string, generation?: number): Promise<unknown> {
+    this.assertOpen();
     if (this.task.config.centralMode !== "host") return this.central({ kind: "application", input: { kind: "conversation", projectId, generation } }, `conversation-${randomUUID()}`);
     const binding = this.reference(projectId, generation), project = this.projects().placementProject(projectId);
     if (binding.kind === "managed") {
@@ -215,6 +237,7 @@ export class ProjectSessionService {
       sessions: this.db.prepare("SELECT session,generation,summary,created FROM pr_sessions WHERE owner=? ORDER BY generation DESC LIMIT 100").all(projectId) };
   }
   async nativeConversation(input: unknown): Promise<unknown> {
+    this.assertOpen();
     const request = nativeInput.parse(input), callId = request.commandId ?? (!projectNativeOperationWrites(request.operation) ? `native-${randomUUID()}` : undefined);
     if (!callId) throw new TaskError("INVALID", "A stable native command ID is required");
     if (this.task.config.centralMode !== "host") return this.central({ kind: "application", input: { kind: "native-conversation", input: { ...request, commandId: callId } } }, callId);
@@ -229,11 +252,13 @@ export class ProjectSessionService {
     return this.carrier.request(binding.nodeId, callId, { kind: "native", binding, operation: request.operation });
   }
   async sendExecutorMessage(input: unknown): Promise<unknown> {
+    this.assertOpen();
     const request = executorInput.parse(input);
     if (this.task.config.centralMode !== "host") return this.central({ kind: "application", input: { kind: "send-executor-message", input: request } }, request.commandId);
     return this.projects().sendExecutorMessage(request);
   }
   async handoff(projectId: string, commandId = `handoff-${randomUUID()}`): Promise<unknown> {
+    this.assertOpen();
     if (this.task.config.centralMode !== "host") return this.central({ kind: "application", input: { kind: "handoff", projectId, commandId } }, commandId);
     const previous = this.placements.status(commandId);
     if (previous) {
@@ -244,11 +269,16 @@ export class ProjectSessionService {
     }
     const binding = this.reference(projectId);
     if (binding.kind === "managed") return this.projects().handoff(projectId);
+    this.carrier.publish(this.task.config.nodeId, this.catalog());
+    const catalog = this.carrier.catalogs().find(item => item.nodeId === binding.nodeId);
+    if (!catalog?.available || Date.now() - catalog.observedAt >= 15000 || !catalog.workspaces.some(item => item.workspaceId === binding.workspaceId && item.path === binding.cwd))
+      throw new TaskError("WORKSPACE_POLICY", "Original registered workspace is unavailable or changed");
     const settings = this.task.ledger.projectExecutionSettings.read(projectId);
-    await this.placements.move({ operationId: commandId, projectId, expectedRevision: settings.revision, old: binding, sessionId: `project-session-${randomUUID()}`, selection: { nodeId: binding.nodeId, workspaceId: binding.workspaceId, workspaceRevision: binding.workspaceRevision }, allowedNodeIds: settings.allowedNodeIds, executionBindings: settings.executionBindings });
+    await this.placements.move({ operationId: commandId, projectId, expectedRevision: settings.revision, old: binding, sessionId: `project-session-${randomUUID()}`, selection: { nodeId: binding.nodeId, workspaceId: binding.workspaceId, workspaceRevision: catalog.revision }, allowedNodeIds: settings.allowedNodeIds, executionBindings: settings.executionBindings });
     return this.conversation(projectId);
   }
   async centralAction(nodeId: string, commandId: string, input: unknown): Promise<unknown> {
+    this.assertOpen();
     if (this.task.config.centralMode !== "host") throw new TaskError("FORBIDDEN", "Only the central host owns project session authority");
     this.authorizePeer(nodeId);
     const request = projectSessionAction.parse(input);

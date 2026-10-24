@@ -61,6 +61,8 @@ function unwrap(value: unknown): Json {
 export class ProjectSessionCarrier {
   private readonly db;
   private readonly local = new Map<string, Promise<void>>();
+  private stopped = false;
+  private closing?: Promise<void>;
   constructor(
     ledger: Pick<TaskLedger, "managementDatabase">,
     readonly nodeId: string,
@@ -79,21 +81,25 @@ export class ProjectSessionCarrier {
     }
   }
   catalogs() {
+    if (this.stopped) throw new TaskError("UNAVAILABLE", "Project session carrier is stopping");
     return this.db.prepare("SELECT node,data,observed FROM project_session_host_catalog ORDER BY node").all().map(row => ({
       nodeId: String(row.node), ...ProjectHostCatalog.parse(JSON.parse(String(row.data))), observedAt: Number(row.observed),
     }));
   }
   lookup(callId: string) {
+    if (this.stopped) throw new TaskError("UNAVAILABLE", "Project session carrier is stopping");
     const row = this.db.prepare("SELECT node,request FROM project_session_carrier_calls WHERE id=?").get(callId);
     return row ? { nodeId: String(row.node), request: ProjectOwnerRequest.parse(JSON.parse(String(row.request))) } : undefined;
   }
   publish(nodeId: string, catalog: ProjectHostCatalog) {
+    if (this.stopped) throw new TaskError("UNAVAILABLE", "Project session carrier is stopping");
     this.authorizePeer(nodeId);
     const parsed = bounded(ProjectHostCatalog.parse(catalog));
     this.db.prepare("INSERT INTO project_session_host_catalog VALUES(?,?,?) ON CONFLICT(node) DO UPDATE SET data=excluded.data,observed=excluded.observed")
       .run(nodeId, canonical(parsed), Date.now());
   }
   async request(nodeId: string, requestId: string, input: ProjectOwnerRequest, signal?: AbortSignal): Promise<Json> {
+    if (this.stopped) throw new TaskError("UNAVAILABLE", "Project session carrier is stopping");
     this.authorizePeer(nodeId);
     this.expireReads();
     const parsed = bounded(ProjectOwnerRequest.parse(input)), digest = hash(canonical(parsed));
@@ -109,6 +115,7 @@ export class ProjectSessionCarrier {
     }
     const deadline = Date.now() + 12_000;
     while (!signal?.aborted) {
+      if (this.stopped) throw new TaskError("PROJECT_SESSION_PENDING", "Original project session request remains recorded while the carrier is stopping");
       const row = this.db.prepare("SELECT result FROM project_session_carrier_calls WHERE id=?").get(requestId);
       if (row?.result) return unwrap(JSON.parse(String(row.result)));
       if (Date.now() >= deadline) throw new TaskError("PROJECT_SESSION_PENDING", "Project session operation remains pending on its original owner");
@@ -129,6 +136,7 @@ export class ProjectSessionCarrier {
     this.db.prepare("UPDATE project_session_carrier_calls SET result=? WHERE id=?").run(canonical(result), callId);
   }
   exchange(nodeId: string, input: unknown): ProjectSessionExchangeResult {
+    if (this.stopped) throw new TaskError("UNAVAILABLE", "Project session carrier is stopping");
     this.authorizePeer(nodeId);
     this.expireReads();
     const parsed = bounded(exchangeInput.parse(input));
@@ -164,6 +172,11 @@ export class ProjectSessionCarrier {
     return bounded({ ...(result ? { acknowledged: { callId: result.callId, index: result.index, count: result.count, digest: result.digest } } : {}),
       ...(pending ? { call: { callId: String(pending.id), request: ProjectOwnerRequest.parse(JSON.parse(String(pending.request))) } } : {}) });
   }
+  dispose(): Promise<void> {
+    this.stopped = true;
+    return this.closing ??= Promise.allSettled([...this.local.values()]).then(() => {});
+  }
+
 }
 
 export class ProjectSessionOwnerCarrier {
@@ -199,6 +212,7 @@ export class ProjectSessionOwnerCarrier {
     const pieces = pending ? fragments(String(pending.result), String(pending.id)) : [];
     const result = pending ? { callId: String(pending.id), index: Number(pending.part), count: pieces.length, digest: hash(String(pending.result)), text: pieces[Number(pending.part)]! } : undefined;
     const response = bounded(exchangeResult.parse(await this.exchange(bounded(result ? { result } : { catalog: this.catalog() }))));
+    if (this.stopped) return;
     if (response.acknowledged && result && canonical(response.acknowledged) === canonical({ callId: result.callId, index: result.index, count: result.count, digest: result.digest }))
       this.db.prepare("UPDATE project_session_owner_calls SET part=MAX(part,?) WHERE id=?").run(result.index + 1, result.callId);
     if (!response.call || this.stopped) return;
@@ -206,6 +220,7 @@ export class ProjectSessionOwnerCarrier {
     await this.perform(request, callId).catch(() => {});
   }
   perform(request: ProjectOwnerRequest, callId: string): Promise<Json> {
+    if (this.stopped) return Promise.reject(new TaskError("UNAVAILABLE", "Project session owner carrier is stopping"));
     this.expireReads();
     const pending = this.running.get(callId);
     if (pending) return pending;
@@ -240,7 +255,7 @@ export class ProjectSessionOwnerCarrier {
   async dispose() {
     this.stopped = true;
     if (this.timer) clearInterval(this.timer);
-    await this.pending?.catch(() => {});
+    await Promise.allSettled([...(this.pending ? [this.pending] : []), ...this.running.values()]);
   }
 }
 

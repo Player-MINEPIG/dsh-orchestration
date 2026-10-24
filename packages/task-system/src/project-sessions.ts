@@ -63,8 +63,9 @@ export class ProjectSessions {
       record = this.save({ request, state: "preparing", prepared: null, frozen: null, decision: null });
     }
     const operation = this.drive(record).catch(async error => {
+      if (!(error instanceof TaskError) || !["BUSY", "WORKSPACE_POLICY", "FORBIDDEN", "INVALID", "CONFLICT"].includes(error.code)) throw error;
       const current = this.status(request.operationId);
-      if (current?.state === "preparing" && error instanceof TaskError && ["BUSY", "WORKSPACE_POLICY", "FORBIDDEN", "INVALID", "CONFLICT"].includes(error.code)) {
+      if (current?.state === "preparing") {
         const next = current.prepared ? nativeProjectSession.parse(current.prepared.binding) : null;
         const aborted = this.save({ ...current, state: "aborting", decision: { outcome: "abort", operationId: request.operationId, projectId: request.projectId, old: request.old, next } });
         await this.resolveAbort(aborted);
