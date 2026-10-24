@@ -875,6 +875,8 @@ window.__ModuleLoader__.load({
     const startupKeys = {
       task: [
         "role",
+        "centralMode",
+        "executionEnabled",
         "databasePath",
         "nodeId",
         "nodeCapacities",
@@ -902,7 +904,7 @@ window.__ModuleLoader__.load({
         typeof value !== "object" ||
         Array.isArray(value) ||
         Object.keys(value).some((key) => !keys.includes(key)) ||
-        (!partial && keys.some((key) => !["nodeCapacities","databasePath","nodeId","executionAgentPreset","executionTools"].includes(key) && !Object.hasOwn(value, key)))
+        (!partial && keys.some((key) => !["centralMode","executionEnabled","nodeCapacities","databasePath","nodeId","executionAgentPreset","executionTools"].includes(key) && !Object.hasOwn(value, key)))
       )
         throw new Error("Invalid startup values");
       for (const [key, entry] of Object.entries(value)) {
@@ -915,9 +917,11 @@ window.__ModuleLoader__.load({
         if (
           (key === "role" &&
             !["planner", "executor", "both"].includes(entry)) ||
+          (key === "centralMode" && !["host", "remote"].includes(entry)) ||
           ([
             "planningDecisionEnabled",
             "sessionDecisionEnabled",
+            "executionEnabled",
             "taskSessionsEnabled",
             "paused",
           ].includes(key) &&

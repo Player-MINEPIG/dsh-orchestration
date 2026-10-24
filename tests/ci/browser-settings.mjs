@@ -44,7 +44,7 @@ export async function testSettings(browser, { output } = {}) {
             h(settings.StartupRow, { t: key => settings.zh[key] ?? key, target, row, writable: options.writable !== false, decisionAvailable: options.decisionAvailable !== false,
               readExecutionPresets: async () => ({ items: [{ id: 'ptc', label: 'PTC', available: true }, { id: 'codex', label: 'Codex', available: true }] }),
               saveCoordinator: fixture.coordinator,
-              saveStartup: async input => { fixture.writes.push(structuredClone(input)); if (fixture.fail) throw { details: { reason: 'STARTUP_CONFLICT' } }; fixture.values = { ...fixture.values, ...input.changes }; },
+              saveStartup: async input => { settings.saveStartupDescriptor.parameters[0].codec.create().parse(input); fixture.writes.push(structuredClone(input)); if (fixture.fail) throw { details: { reason: 'STARTUP_CONFLICT' } }; fixture.values = { ...fixture.values, ...input.changes }; },
               checkConnection: async input => { fixture.checks.push(structuredClone(input)); return { connected: true, paused: true }; },
               onSaved: async () => { fixture.reads++; row.values = fixture.values; return { [target]: { values: fixture.values } }; },
             }),
@@ -56,12 +56,12 @@ export async function testSettings(browser, { output } = {}) {
       };
       window.mountStartupSettings = () => {
         root.unmount(); root = ReactDOM.createRoot(document.getElementById('root'));
-        const fixture = window.fixture = { reads: 0, writes: [], snapshot: { writable: true, remote: null, task: { entryId: 'task-system', decisionAvailable: true, values: { role: 'both', nodeId: 'immutable-node', databasePath: '/fixture/tasks.sqlite', executionAgentPreset: 'ptc', executionTools: null, planningDecisionEnabled: true, sessionDecisionEnabled: false } } } };
+        const fixture = window.fixture = { reads: 0, writes: [], snapshot: { writable: true, applies: 'plugin-restart', remote: null, task: { entryId: 'task-system', decisionAvailable: true, values: { role: 'both', centralMode: 'host', executionEnabled: true, nodeId: 'immutable-node', databasePath: '/fixture/tasks.sqlite', executionAgentPreset: 'ptc', executionTools: null, planningDecisionEnabled: true, sessionDecisionEnabled: false } } } };
         root.render(h(settings.StartupSettings, { t: key => settings.zh[key] ?? key,
-          startup: async () => { fixture.reads++; return structuredClone(fixture.snapshot); },
+          startup: async () => { fixture.reads++; return settings.startupDescriptor.result.create().parse(structuredClone(fixture.snapshot)); },
           readExecutionPresets: async () => ({ items: [{ id: 'ptc', label: 'PTC', available: true }] }),
           readConnectionSettings: async () => ({ exists: false, writable: false, revision: 0, values: { authMode: 'trusted-network', listenerEnabled: false, listenAddress: '127.0.0.1', listenPort: 18440, routePath: '/dsh-task/v1/commands', serviceAudience: 'scheduler', peers: [], outbound: null } }),
-          saveStartup: async input => { fixture.writes.push(structuredClone(input)); fixture.snapshot.task.values = { ...fixture.snapshot.task.values, ...input.changes }; }, onSaved: () => {},
+          saveStartup: async input => { settings.saveStartupDescriptor.parameters[0].codec.create().parse(input); fixture.writes.push(structuredClone(input)); fixture.snapshot.task.values = { ...fixture.snapshot.task.values, ...input.changes }; }, onSaved: () => {},
         }));
       };
       window.mountGrants = () => {
@@ -135,7 +135,7 @@ export async function testSettings(browser, { output } = {}) {
 
     await page.evaluate(() => mountStartupSettings());
     await execution.uncheck();
-    await page.evaluate(() => { fixture.snapshot.task.values.role = 'executor'; fixture.snapshot.task.values.sessionDecisionEnabled = true; });
+    await page.evaluate(() => { fixture.snapshot.task.values.role = 'executor'; fixture.snapshot.task.values.centralMode = 'remote'; fixture.snapshot.task.values.executionEnabled = true; fixture.snapshot.task.values.sessionDecisionEnabled = true; });
     await page.getByRole('button', { name: '刷新启动配置', exact: true }).click();
     await page.waitForFunction(() => fixture.reads === 2);
     assert.equal(await role.inputValue(), 'host', 'refresh retains an edited startup draft');
