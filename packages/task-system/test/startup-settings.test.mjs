@@ -385,3 +385,15 @@ test('local owner delivery permits later configuration saves without exporting l
   const polling=f.task.sessionPortal.ownerCarrier.poll();await p.entered;p.finish();await polling;
   assert.deepEqual(Object.keys(p.packets[0]),['catalog']);
 });
+
+test('failed peer capability save cannot change the bound scheduler node',async t=>{
+  const f=fixture(t);
+  f.ledger.registerPairedExecutor('peer-registration','peer');
+  f.remoteRow.options.config.trustedNetwork={listen:{address:'127.0.0.1',port:8443},allowHttp:true,allowedAddresses:['127.0.0.2'],peers:[{address:'127.0.0.2',nodeId:'peer',nickname:'Peer',executionEnabled:true,audience:'planner',operations:[],workspaces:[],capabilities:[]}]};
+  const before=await readConnectionSettings(f.ctx),node=f.ledger.getNode('peer'),config=structuredClone(f.remoteRow.options.config);
+  f.host.fail=true;
+  await assert.rejects(saveConnectionSettings(f.ctx,{expected:before.revision,value:{...before.values,peers:before.values.peers.map(peer=>({...peer,capabilities:['activity.reports.v1']}))}}));
+  assert.deepEqual(f.ledger.getNode('peer'),node);
+  assert.deepEqual(f.remoteRow.options.config,config);
+  assert.equal(f.writes.length,0);
+});

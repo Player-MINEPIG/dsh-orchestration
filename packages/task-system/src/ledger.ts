@@ -2551,6 +2551,16 @@ export class TaskLedger {
       return node;
     });
   }
+  setNodeCapabilities(commandId: string, nodeId: string, capabilities: string[]) {
+    this.planner();
+    for (const capability of capabilities) text(capability, "capability", 256);
+    return this.command(commandId, "setNodeCapabilities", {nodeId, capabilities}, () => {
+      const node = this.getNode(nodeId);
+      node.capabilities = [...capabilities];
+      this.put("node", nodeId, node);
+      return node;
+    });
+  }
   setNodeCapacity(commandId: string, nodeId: string, maxConcurrent: number) {
     this.planner();
     finite(maxConcurrent, 1, 32, "node capacity");
