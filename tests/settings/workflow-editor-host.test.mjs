@@ -57,7 +57,7 @@ test("workflow navigation stays local to the authenticated iframe and restores p
     hostTheme: () => "light",
     watchTheme: () => () => {},
     sendTheme() {},
-    h: (type, props) => ({ type, props }),
+    h: (type, props, ...children) => ({ type, props, children }),
   });
   vm.runInContext(
     methods +
@@ -74,6 +74,7 @@ test("workflow navigation stays local to the authenticated iframe and restores p
       jobs.forEach((fn) => fn());
       await new Promise((resolve) => setImmediate(resolve));
     }
+    rendered = rendered.type === "iframe" ? rendered : rendered.children.find((child) => child?.type === "iframe");
     return rendered;
   }
   await render();

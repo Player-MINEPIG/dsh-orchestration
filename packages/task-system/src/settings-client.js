@@ -13,6 +13,8 @@ window.__ModuleLoader__.load({
       Modal,
     } = require("@deepseek-ai/dsh-client-ui-primitives");
     const h = React.createElement;
+    const { Context: ClientContext } = require("@deepseek-ai/cordis");
+    /*__PROJECT_NATIVE_CLIENT__*/
     const keys = [
       "schedulerEnabled",
       "autoExecute",
@@ -3281,6 +3283,7 @@ h(
       "sendTaskMessage",
       "sendExecutorMessage",
       "projectConversation",
+      "projectNativeConversation",
       "sendProjectMessage",
       "handoffProject",
       "reviewProjectTask",
@@ -3368,12 +3371,73 @@ h(
       go(target){if(!["tasks","projects","fullpanel"].includes(target))return;this.target=target;for(const listener of this.listeners)listener(target);}
       subscribe(listener){this.listeners.add(listener);return()=>this.listeners.delete(listener);}
     }
-    function ProjectPanel({ invoke, directoryApi, navigation }) {
+    function ProjectNativeOverlay({ frame, nativeClient, invoke, descriptor, covered }) {
+      const root = React.useRef(null), content = React.useRef(null);
+      const [status, setStatus] = React.useState({ state: "connecting", message: "正在连接项目所属设备…" });
+      const [retry, setRetry] = React.useState(0), [toast, setToast] = React.useState(null);
+      const openRecipient = () => frame.current?.contentDocument?.querySelector('[data-action="recipient"]')?.click();
+      React.useLayoutEffect(() => {
+        const document = frame.current?.contentDocument;
+        if (!document) return;
+        const css = document.createElement("style");
+        css.textContent = "[data-project-conversation-host][data-native-primary] > *{visibility:hidden!important;pointer-events:none!important}";
+        document.head.append(css);
+        let seat, animation;
+        const resize = new ResizeObserver(() => schedule());
+        const update = () => {
+          animation = undefined;
+          const next = document.querySelector("[data-project-conversation-host]");
+          if (next !== seat) { if (seat) { seat.removeAttribute("data-native-primary"); resize.unobserve(seat); } seat = next; if (seat) resize.observe(seat); }
+          if (!root.current) return;
+          if (!seat || !seat.getClientRects().length) { root.current.style.display = "none"; return; }
+          if (!seat.hasAttribute("data-native-primary")) seat.setAttribute("data-native-primary", "");
+          const box = seat.getBoundingClientRect(), outer = frame.current.getBoundingClientRect();
+          const notification = document.getElementById("toast");
+          const shown = notification && !notification.hidden && notification.textContent.trim();
+          const toastBox = shown ? notification.getBoundingClientRect() : null;
+          const nextToast = shown ? { text: shown, status: notification.dataset.status, left: outer.left + toastBox.left, top: outer.top + toastBox.top, width: toastBox.width } : null;
+          setToast((value) => JSON.stringify(value) === JSON.stringify(nextToast) ? value : nextToast);
+          Object.assign(root.current.style, { display: "flex", left: `${outer.left + box.left}px`, top: `${outer.top + box.top}px`, width: `${box.width}px`, height: `${box.height}px` });
+        };
+        const schedule = () => { if (animation === undefined) animation = requestAnimationFrame(update); };
+        const mutation = new MutationObserver(schedule);
+        mutation.observe(document.body, { childList: true, subtree: true, attributes: true });
+        resize.observe(frame.current);
+        document.addEventListener("scroll", schedule, true);
+        window.addEventListener("resize", schedule);
+        update();
+        return () => { mutation.disconnect(); resize.disconnect(); css.remove(); seat?.removeAttribute("data-native-primary"); if (animation !== undefined) cancelAnimationFrame(animation); document.removeEventListener("scroll", schedule, true); window.removeEventListener("resize", schedule); };
+      }, [frame]);
+      React.useEffect(() => {
+        const abort = new AbortController();
+        let mounted;
+        setStatus({ state: "connecting", message: "正在连接项目所属设备…" });
+        const recipient = openRecipient;
+        nativeClient.mount(content.current, descriptor, invoke, { signal: abort.signal, onRecipient: recipient,
+          onState: (value) => { if (!abort.signal.aborted) setStatus(value); } }).then((value) => {
+          if (abort.signal.aborted) void value.dispose(); else mounted = value;
+        }, (error) => { if (!abort.signal.aborted) setStatus({ state: "error", message: error?.message || "项目会话无法连接。" }); });
+        return () => { abort.abort(); if (mounted) void mounted.dispose(); };
+      }, [nativeClient, invoke, retry]);
+      const blocked = status.state !== "ready";
+      return h("section", { ref: root, "data-project-native-host": "", "aria-label": "项目统筹原生会话", inert: covered ? "" : undefined,
+        style: { position: "fixed", zIndex: 1001, display: "none", flexDirection: "column", minHeight: 0,
+          visibility: covered ? "hidden" : "visible", background: "var(--dsw-alias-bg-base,#fff)", color: "var(--dsw-alias-label-primary)" } },
+        h("div", { ref: content, style: { height: "100%", minHeight: 0, opacity: blocked ? 0.5 : 1, pointerEvents: blocked ? "none" : "auto" } }),
+        blocked && h("div", { role: status.state === "error" ? "alert" : "status", style: { position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 12, padding: 24, background: "var(--dsw-alias-bg-base,#fff)" } },
+          h("p", null, status.message), h("button", { type: "button", onClick: openRecipient }, "选择对话对象"), status.state === "error" && h("button", { type: "button", onClick: () => setRetry((value) => value + 1) }, "重新连接")),
+        toast && h("div", { role: "status", "data-project-native-toast": "", style: { position: "fixed", zIndex: 1002, left: toast.left, top: toast.top, width: toast.width,
+          boxSizing: "border-box", padding: "12px 18px", borderRadius: 10, pointerEvents: "none", fontSize: 12,
+          background: toast.status === "done" ? "#dcfce7" : toast.status === "error" ? "#fee2e2" : "var(--dsw-alias-bg-base,#fff)",
+          color: toast.status === "done" ? "#166534" : toast.status === "error" ? "#991b1b" : "inherit" } }, toast.text));
+    }
+    function ProjectPanel({ invoke, directoryApi, navigation, nativeClient }) {
       const frame = React.useRef(null),
         [html, setHtml] = React.useState(null),
         [page, setPage] = React.useState({method: "projectPage", context: null}),
         [error, setError] = React.useState(null),
-        [detailFullscreen, setDetailFullscreen] = React.useState(false);
+        [detailFullscreen, setDetailFullscreen] = React.useState(false),
+        [nativeConversation, setNativeConversation] = React.useState(null);
       const frameReady=React.useRef(false);
       const sendNavigation = () => {
         if(!navigation?.target)return;
@@ -3384,6 +3448,7 @@ h(
       React.useEffect(() => {
         let active = true;
         frameReady.current=false;
+        setNativeConversation(null);
         invoke(page.method).then(
           (value) => {
             if (active) {
@@ -3403,6 +3468,16 @@ h(
       }, [invoke, page]);
       React.useEffect(() => {
         const listener = async (event) => {
+          if (event.source === frame.current?.contentWindow && event.data?.channel === "dsh-project-runtime" && event.data.method === "nativeConversation") {
+            const input = event.data.input;
+            const descriptor = input?.descriptor;
+            if (input?.primary && descriptor?.kind === "native" && typeof descriptor.projectId === "string" &&
+                descriptor.projectId === input.projectId && Number.isSafeInteger(descriptor.generation) &&
+                typeof descriptor.nodeId === "string" && typeof descriptor.sessionId === "string") {
+              setNativeConversation({ descriptor, covered: input.covered === true });
+            } else setNativeConversation(null);
+            return;
+          }
           if(event.source===frame.current?.contentWindow && event.data?.channel==="dsh-project-runtime" && event.data.method==="navigateAcknowledged"){
             if(navigation?.target===event.data.input)navigation.target=null;
             return;
@@ -3485,7 +3560,7 @@ h(
         return h("div", { role: "alert", style: { padding: 24 } }, error);
       if (!html)
         return h("div", { style: { padding: 24 } }, "正在加载项目与任务…");
-      return h("iframe", {
+      return h("div", { style: { position: "relative", isolation: "isolate", zIndex: detailFullscreen ? 1000 : 0, width: "100%", height: "100%", minHeight: 0 } }, h("iframe", {
         ref: frame,
         title: page.method === "workflowPage" ? "项目工作流" : "项目与任务",
         srcDoc: html,
@@ -3501,7 +3576,10 @@ h(
           background: "transparent",
           colorScheme: "inherit",
         },
-      });
+      }), nativeConversation && h(ProjectNativeOverlay, {
+        key: [nativeConversation.descriptor.projectId, nativeConversation.descriptor.generation, nativeConversation.descriptor.nodeId, nativeConversation.descriptor.sessionId].join(":"),
+        frame, nativeClient, invoke, descriptor: nativeConversation.descriptor, covered: nativeConversation.covered,
+      }));
     }
 
     /** Native commands are log-only; rc.2 intentionally hides command-only blank chats.
@@ -3699,6 +3777,7 @@ h(
         );
       };
       const projectNavigation = new ProjectNavigation();
+      const projectNativeClient = createProjectNativeClient({ React, Context: ClientContext, modules: ctx.modules });
       const projectDirectoryApi = {
         list: path => {const service=ctx.get("uiWorkspace");if(!service)throw Error("DSH 目录浏览服务尚未加载，请稍后重试");return service.listDirectory(path);},
         pick: () => {const service=ctx.get("uiWorkspace");if(!service)throw Error("DSH 目录选择服务尚未加载");return service.pickDirectory();},
@@ -3712,7 +3791,7 @@ h(
             {
               name: "main",
               key: "dsh-task-projects",
-              inject: () => ({ invoke, directoryApi: projectDirectoryApi, navigation:projectNavigation }),
+              inject: () => ({ invoke, directoryApi: projectDirectoryApi, navigation:projectNavigation, nativeClient: projectNativeClient }),
             },
             ProjectPanel,
           ),
@@ -3841,7 +3920,7 @@ h(
       );
     }
     return {
-      inject: ["slots", "locale", "configForms", "remote", "remote.settings"],
+      inject: ["modules", "slots", "locale", "configForms", "remote", "remote.settings"],
       apply,
       Controller,
       SessionTaskMonitor,
