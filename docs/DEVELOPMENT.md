@@ -1,6 +1,6 @@
 # Develop on dev; release an exact commit
 
-Keep the primary checkout on `main`. Develop in isolated worktrees from `dev`. Feature PRs enter `dev`; accepted releases fast-forward `main` to the exact tested dev commit and create an annotated version tag. The default branch remains `main`. No workflow deploys to devices or changes their runtime configuration.
+Keep the primary checkout on `dev` and fast-forward it only to verified `origin/dev`. Develop in isolated worktrees from `dev`. Feature PRs enter `dev`; accepted releases fast-forward `main` to the exact tested dev commit and create an annotated version tag. The repository default branch remains `main`. No workflow deploys to devices or changes their runtime configuration.
 
 ## Start a feature
 
@@ -58,7 +58,7 @@ The Actions manual form has no file upload. A concise sentence or semicolon-sepa
 2. The derived tag is `v` followed by the tested `@dsh-task/task-system` version, for example `v0.2.51`. Its target is the tested SHA. Prepare versions on `dev` before verification, not during promotion.
 3. The trusted main controller reads candidate manifests as data. It validates the successful same-repository dev dispatch and attempt, immutable artifact, package bytes, acceptance record, current ancestry and tag. It uploads the detailed record, confirms its immutable artifact ID/name/run/attempt/digest through GitHub, writes `Release approved`, then pushes `main` and the annotated tag in one ordinary `git push --atomic` transaction. It never force pushes. The tag body contains only the short summary and Full CI link; detailed records stay in Actions artifacts. The approval status links to that promotion run, where its record can be downloaded.
 4. Verify both remote refs and the workflow result. Retrying the same candidate, summary and Full CI link converges, even from another promotion run. Each attempt keeps its own detailed artifact. An existing tag with a different target or body is rejected; retrying does not rewrite its original record or tag. Version tags matching `v*` prohibit updates and deletion. A concurrent incompatible main update or tag creation makes the atomic push fail without partially changing refs.
-5. Fetch and only fast-forward the primary `main` checkout to verified `origin/main`. Report main/dev SHAs, tag, CI run, device evidence and WIP locations.
+5. Fetch and only fast-forward the primary `dev` checkout to verified `origin/dev`. Report main/dev SHAs, tag, CI run, device evidence and WIP locations.
 
 `main` now identifies the tested commit itself. It remains in `dev` history, so no main-to-dev synchronization PR is needed. There is no automatic release on a PR merge, push, or CI success.
 
