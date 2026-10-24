@@ -323,6 +323,7 @@ interface HostWebServer {
 }
 /** An independently replaceable taskSystem service supplies only this structural ledger seam. */
 export interface TaskSystemPort {
+  sessionPortal?: { beginConfigurationEdit(): Promise<() => void> };
   programs?: ProgramRegistry;
   executionDirectories?: { validatedRoot(): string | null };
   ledger: LedgerPort;
@@ -605,7 +606,10 @@ export class RemoteExecutionService extends Service {
     );
     this.configurationPaused = true;
     const releases: (() => void)[] = [];
+    let resumeProjectSessions: (() => void) | undefined;
     try {
+      const task = this.ctx.get("taskSystem") as TaskSystemPort | undefined;
+      resumeProjectSessions = await task?.sessionPortal?.beginConfigurationEdit();
       if (this.returnInbox) releases.push(await this.returnInbox.beginConfigurationEdit());
       if (this.modelControl)
         releases.push(await this.modelControl.beginConfigurationEdit());
@@ -637,10 +641,12 @@ export class RemoteExecutionService extends Service {
         if (this.configurationRelease === release)
           this.configurationRelease = undefined;
         release();
+        resumeProjectSessions?.();
       };
     } catch (error) {
       for (const release of releases.reverse()) release();
       this.configurationPaused = false;
+      resumeProjectSessions?.();
       throw error;
     }
   }

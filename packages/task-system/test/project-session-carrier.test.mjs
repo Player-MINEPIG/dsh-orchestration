@@ -221,3 +221,45 @@ test("completed acknowledgements carry the next FIFO call, with whole-packet fal
     await assert.rejects(central.request("mbp", "next", { ...next, binding: { ...binding, generation: 3 } }), { code: "CONFLICT" });
   } finally { abort.abort(); await first; await second; await central.dispose(); db.close(); }
 });
+
+
+test("owner configuration guard rejects active writes and unacknowledged outcomes, then recovers after acknowledgement", async () => {
+  const db = new DatabaseSync(":memory:");
+  const finish = Promise.withResolvers();
+  let exchanges = 0;
+  const owner = new ProjectSessionOwnerCarrier(ledger(db), async input => {
+    exchanges++;
+    const { text, ...acknowledged } = input.result;
+    return { acknowledged };
+  }, () => catalog, () => finish.promise);
+  const request = { kind: "native", binding, operation: { kind: "session-cancel" } };
+  try {
+    const work = owner.perform(request, "write");
+    await assert.rejects(owner.beginConfigurationEdit(), { code: "CONFIGURATION_BUSY" });
+    finish.resolve({ cancelled: true }); await work;
+    await assert.rejects(owner.beginConfigurationEdit(), { code: "CONFIGURATION_BUSY" });
+    await owner.poll();
+    const release = await owner.beginConfigurationEdit();
+    await owner.poll();assert.equal(exchanges, 1);
+    await assert.rejects(owner.perform(request, "late-write"), { code: "CONFIGURATION_BUSY" });
+    release();
+    assert.deepEqual(await owner.perform(request, "write"), { cancelled: true });
+  } finally { finish.resolve({ cancelled: true }); await owner.dispose(); db.close(); }
+});
+
+test("owner configuration drain consumes an in-flight result acknowledgement before checking unfinished work", async () => {
+  const db = new DatabaseSync(":memory:");
+  const entered = Promise.withResolvers(), finish = Promise.withResolvers();
+  const owner = new ProjectSessionOwnerCarrier(ledger(db), async input => {
+    entered.resolve();await finish.promise;
+    const { text, ...acknowledged } = input.result;
+    return { acknowledged };
+  }, () => catalog, async () => ({ cancelled: true }));
+  try {
+    await owner.perform({kind:"native",binding,operation:{kind:"session-cancel"}}, "finished-write");
+    const poll=owner.poll();await entered.promise;
+    const acquiring=owner.beginConfigurationEdit();finish.resolve();
+    const release=await acquiring;await poll;
+    release();
+  } finally { finish.resolve();await owner.dispose();db.close(); }
+});

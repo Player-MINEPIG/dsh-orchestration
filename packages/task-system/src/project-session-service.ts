@@ -48,6 +48,7 @@ export class ProjectSessionService {
   private readonly db;
   private started = false;
   private closed = false;
+  private configurationPaused = false;
   private closing?: Promise<void>;
   private timer?: ReturnType<typeof setInterval>;
   constructor(private readonly task: TaskSystemService, private ctx: Context) {
@@ -89,14 +90,34 @@ export class ProjectSessionService {
     const service = this;
     this.native = new ProjectNativeOwner({ get ctx() { return service.ctx; }, authorizeBinding: (binding, access) => this.owner.admit(binding, access), withAgent: (binding, operation) => this.owner.withAgent(binding, operation) });
     this.ownerCarrier = new ProjectSessionOwnerCarrier(task.ledger, input => this.central({ kind: "exchange", input }, `exchange-${randomUUID()}`), () => this.catalog(), (request, callId) => this.ownerExecute(request, callId));
-    this.carrier = new ProjectSessionCarrier(task.ledger, task.config.nodeId, (request, callId) => this.ownerCarrier.perform(request, callId), nodeId => this.authorizePeer(nodeId));
+    this.carrier = new ProjectSessionCarrier(task.ledger, task.config.nodeId, (request, callId) => this.ownerCarrier.perform(request, callId), nodeId => this.authorizePeer(nodeId), (callId, result) => this.ownerCarrier.acknowledgeLocalResult(callId, result));
     this.placements = new ProjectSessions(task.ledger, {
       owner: (nodeId, command) => this.carrier.request(nodeId, command.kind === "status" ? `status-${randomUUID()}` : `placement-${digest(command)}`, { kind: "lifecycle", command }),
       continuation: request => this.captureContinuation(request),
       checkCurrent: request => this.projects().checkPlacement(request), commit: (request, next) => this.projects().commitPlacement(request, next),
     });
   }
-  private assertOpen() { if (this.closed) throw new TaskError("UNAVAILABLE", "Project session hosting is stopping"); }
+  private assertOpen() {
+    if (this.closed) throw new TaskError("UNAVAILABLE", "Project session hosting is stopping");
+    if (this.configurationPaused) throw new TaskError("CONFIGURATION_BUSY", "Project session configuration is changing");
+  }
+  async beginConfigurationEdit(): Promise<() => void> {
+    this.assertOpen();
+    this.configurationPaused = true;
+    try {
+      const release = await this.ownerCarrier.beginConfigurationEdit();
+      let released = false;
+      return () => {
+        if (released) return;
+        released = true;
+        release();
+        this.configurationPaused = false;
+      };
+    } catch (error) {
+      this.configurationPaused = false;
+      throw error;
+    }
+  }
   bindContext(ctx: Context) { this.ctx = ctx; this.owner.bindContext(ctx); }
   private projects() {
     if (!this.task.projects) throw new TaskError("UNAVAILABLE", "Central project authority is unavailable");
@@ -140,7 +161,7 @@ export class ProjectSessionService {
     else this.ownerCarrier.start();
     await this.owner.recover();
     this.timer = setInterval(() => {
-      if (this.closed) return;
+      if (this.closed || this.configurationPaused) return;
       try {
         if (this.task.config.centralMode === "host") {
           this.carrier.publish(this.task.config.nodeId, this.catalog());
