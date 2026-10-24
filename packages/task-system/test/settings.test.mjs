@@ -936,3 +936,30 @@ test('selecting the same execution preset explicitly clears a legacy mask in one
  assert.deepEqual(JSON.parse(JSON.stringify(change.changes)),{executionTools:null,executionAgentPreset:'ptc'});
  const descriptor=ui.projectDescriptors.find(x=>x.method==='executionPresets');assert.ok(descriptor);assert.deepEqual(Array.from(descriptor.parameters),[]);
 });
+
+
+test("browser startup codecs accept host deployment fields and reject invalid deployment edits", () => {
+  const ui = client(), snapshotCodec = ui.startupDescriptor.result.create();
+  const values = { role: "executor", centralMode: "remote", executionEnabled: false,
+    nodeId: "ordinary-session-node", executionAgentPreset: "ptc", executionTools: null,
+    planningDecisionEnabled: false, sessionDecisionEnabled: false };
+  const view = startupDescriptor.result.create().parse({ writable: true, applies: "plugin-restart",
+    task: { entryId: "task-system", decisionAvailable: true, values }, remote: null });
+  assert.equal(snapshotCodec.parse(view), view);
+  assert.equal(ui.startupDraft("task", view.task.values).centralMode, "remote");
+  assert.equal(ui.startupDraft("task", view.task.values).executionEnabled, false);
+  const browserEdit = ui.saveStartupDescriptor.parameters[0].codec.create();
+  const hostEdit = saveStartupDescriptor.parameters[0].codec.create();
+  for (const changes of [{ centralMode: "host" }, { executionEnabled: true }]) {
+    const input = { target: "task", expected: values, changes };
+    assert.equal(browserEdit.parse(input), input);
+    assert.deepEqual(hostEdit.parse(input).changes, changes);
+  }
+  for (const changes of [{ centralMode: "planner" }, { centralMode: null }, { executionEnabled: "false" }, { executionEnabled: 1 }]) {
+    assert.throws(() => snapshotCodec.parse({ ...view, task: { ...view.task, values: { ...values, ...changes } } }), /Invalid startup value/);
+    assert.throws(() => browserEdit.parse({ target: "task", expected: values, changes }), /Invalid startup value/);
+    assert.throws(() => hostEdit.parse({ target: "task", expected: values, changes }));
+  }
+  const legacy = { ...values }; delete legacy.centralMode; delete legacy.executionEnabled;
+  assert.doesNotThrow(() => snapshotCodec.parse({ ...view, task: { ...view.task, values: legacy } }));
+});
