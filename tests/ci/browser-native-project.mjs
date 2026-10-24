@@ -60,7 +60,7 @@ async function startHost() {
 
 export async function testNativeProject(browser, { output } = {}) {
   const host = await startHost();
-  const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+  const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, locale: 'zh-CN' });
   await context.addInitScript(() => { Object.defineProperty(crypto, 'randomUUID', { value: undefined }); Object.defineProperty(crypto, 'subtle', { value: undefined }); });
   const page = await context.newPage();
   const errors = [], nativeCalls = [], placementCalls = [], nativeFailures = [];
@@ -84,10 +84,10 @@ export async function testNativeProject(browser, { output } = {}) {
     console.log('native browser: real Host ready');
     await page.goto(host.url);
     await page.waitForFunction(() => !document.querySelector('[data-dsh-boot]'));
-    const preview = page.getByRole('button', { name: '继续', exact: true });
-    if (await preview.isVisible()) await preview.click();
-    const welcome = page.getByRole('heading', { name: '开始使用', exact: true });
-    if (await welcome.isVisible()) await page.getByRole('button', { name: '关闭', exact: true }).click();
+    const preview = page.getByRole('dialog', { name: '预览版说明', exact: true });
+    await preview.waitFor();
+    await preview.getByRole('button', { name: '继续', exact: true }).click();
+    await preview.waitFor({ state: 'hidden' });
     await page.getByRole('button', { name: '项目与任务', exact: true }).click();
     const frame = page.frameLocator('iframe[title="项目与任务"]');
     await frame.getByRole('button', { name: '项目', exact: true }).click();
