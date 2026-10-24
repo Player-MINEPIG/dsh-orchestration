@@ -34,4 +34,7 @@ export type ProjectCollaborationInput = ProjectSessionInput | {
   sessionId?: never;
   cwd?: never;
   composition?: never;
+} | {
+  action: "project-session";
+  request: import("../project-session-service.js").ProjectSessionAction;
 };

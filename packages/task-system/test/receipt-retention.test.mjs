@@ -64,3 +64,23 @@ test('read-only access to a pre-expiry ledger does not require a schema write',t
   ledger=TaskLedger.open(file,{readOnly:true});assert.deepEqual(ledger.commandReceipt('original'),first);ledger.close();
   ledger=TaskLedger.open(file);t.after(()=>ledger.close());assert.deepEqual(ledger.createTask('original',{title:'Old receipt'}),first);
 });
+
+test('project session poll receipts expire while admissions and placement writes remain replayable', t=>{
+  const store=new RecoveryStore(join(directory(t),'project-session.sqlite'));t.after(()=>store.close());
+  const requests=[
+    ['poll',{kind:'exchange',input:{}}],
+    ['read',{kind:'application',input:{kind:'conversation',projectId:'p'}}],
+    ['write',{kind:'application',input:{kind:'native-conversation',input:{operation:{kind:'session-prompt'}}}}],
+    ['placement',{kind:'application',input:{kind:'save-execution-settings',input:{}}}],
+  ];
+  for(const [index,[key,request]] of requests.entries()){
+    const payload={input:{action:'project-session',request}};
+    store.admit({...envelope(index+1,'projectCollaborate',key),payload},1000);
+    store.complete('worker',key,{accepted:true});
+    store.saveOutbound(key,{operation:'projectCollaborate',payload,state:'done'},1000);
+  }
+  store.admit(envelope(5,'listWork','next'),1001+TTL);
+  store.saveOutbound('next',{operation:'listWork',state:'done'},1001+TTL);
+  for(const key of ['poll','read']){assert.equal(store.receipt('worker',key),undefined);assert.equal(store.outbound(key),undefined);}
+  for(const key of ['write','placement']){assert.equal(store.receipt('worker',key).state,'done');assert.equal(store.outbound(key).state,'done');}
+});
