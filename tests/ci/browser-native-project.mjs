@@ -71,7 +71,11 @@ export async function testNativeProject(browser, { output } = {}) {
     if (!response.url().includes('/api/taskPluginSettings/projectNativeConversation')) return;
     void response.json().then(value => {
       if (value.result?.ok === false) nativeFailures.push({ operation: response.request().postDataJSON()?.payload?.args?.input?.operation, error: value.result.error });
-      if (value.result?.ok === true && value.result.value?.framePart) frameParts += 1;
+      if (value.result?.ok === true) {
+        const result = value.result.value;
+        const batches = Array.isArray(result?.polls) ? result.polls.map(leaf => leaf.result) : [result];
+        for (const batch of batches) if (batch?.framePart) frameParts += 1;
+      }
     }).catch(() => {});
   });
   page.on('request', request => {

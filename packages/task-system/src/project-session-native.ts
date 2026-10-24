@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { homedir } from "node:os";
+import { gzipSync } from "node:zlib";
 import { z } from "zod";
 import type { Context } from "@deepseek-ai/cordis";
 import type { Agent } from "@deepseek-ai/dsh-agent";
@@ -99,6 +100,15 @@ const followRequest = z.strictObject({
   maxMessages: z.number().int().positive().max(500).optional(),
   turnWindow: windowSchema.optional(),
 });
+const readStream = z.enum([
+  "events", "access", "workspace", "session-control", "session-follow",
+]);
+const readPoll = z.strictObject({
+  stream: readStream,
+  cursor: z.string().min(1).max(100).optional(),
+  request: followRequest.optional(),
+}).refine(value => value.request === undefined || value.stream === "session-follow",
+  "Only a session follow accepts a read poll request");
 const pageRequest = z.strictObject({
   throughSeq: sequence,
   beforeSeq: sequence.optional(),
@@ -155,6 +165,12 @@ export type ProjectSessionNativeBinding = z.infer<
   typeof ProjectSessionNativeBindingSchema
 >;
 export const ProjectNativeOperation = z.discriminatedUnion("kind", [
+  z.strictObject({
+    kind: z.literal("stream-polls"),
+    codec: z.literal("gzip").optional(),
+    polls: z.array(readPoll).min(1).max(5),
+  }).refine(value => new Set(value.polls.map(poll => poll.stream)).size === value.polls.length,
+    "A native poll group requires distinct streams"),
   z.strictObject({ kind: z.literal("native-capabilities") }),
   z.strictObject({ kind: z.literal("session-list") }),
   z.strictObject({ kind: z.literal("session-projections") }),
@@ -292,14 +308,20 @@ type PollResult = {
   frames: ProjectNativeJson[];
   cursor: string;
   closed?: boolean;
+  encodedFrames?: { encoding: "gzip"; decodedBytes: number; data: string };
   framePart?: {
     id: string;
     offset: number;
     totalBytes: number;
     data: string;
     eof: boolean;
+    encoding?: "gzip-frame" | "gzip-frames";
+    decodedBytes?: number;
   };
 };
+type HeldDelivery =
+  | { kind: "frame"; value: ProjectNativeJson }
+  | { kind: "failed"; error: unknown };
 type InteractionResolution =
   | { kind: "next" }
   | { kind: "result"; value: unknown };
@@ -313,6 +335,7 @@ interface StreamState {
   readonly id: string;
   readonly binding: string;
   readonly stream: StreamName;
+  readonly codec: "gzip" | undefined;
   readonly abort: AbortController;
   readonly iterator: AsyncIterator<unknown>;
   readonly cached: Map<string, PollResult>;
@@ -320,8 +343,13 @@ interface StreamState {
   touchedAt: number;
   pending?: Promise<IteratorResult<unknown>>;
   polling?: Promise<PollResult>;
+  closed?: boolean;
   expiry?: ReturnType<typeof setTimeout>;
-  frame?: { id: string; bytes: Buffer; offset: number };
+  delivery?:
+    | HeldDelivery
+    | { kind: "parts"; id: string; bytes: Buffer; offset: number;
+        encoding?: "gzip-frame" | "gzip-frames"; decodedBytes?: number;
+        following?: HeldDelivery };
 }
 type ScopedServices = <K extends string & keyof Context>(
   name: K,
@@ -435,6 +463,8 @@ function error(code: string, message: string): never {
 
 export class ProjectNativeOwner {
   private readonly streams = new Map<string, StreamState>();
+  private opening = 0;
+  private stopped = false;
   private readonly uploads = new Map<string, UploadState>();
   private readonly events = new Map<string, EventState>();
   private readonly maxBytes: number;
@@ -573,6 +603,9 @@ export class ProjectNativeOwner {
         break;
       case "stream-poll":
         result = await this.poll(binding, operation);
+        break;
+      case "stream-polls":
+        result = await this.pollGroup(binding, operation);
         break;
       case "stream-close":
         this.closeCursor(binding, operation.stream, operation.cursor);
@@ -722,6 +755,7 @@ export class ProjectNativeOwner {
     return value;
   }
   dispose(): void {
+    this.stopped = true;
     for (const stream of [...this.streams.values()]) this.close(stream);
     for (const upload of [...this.uploads.values()]) {
       upload.abort.abort();
@@ -1028,14 +1062,44 @@ export class ProjectNativeOwner {
         command.definitionId === "@deepseek-ai/dsh-permission-presets",
     );
   }
+  private async pollGroup(
+    binding: ProjectSessionNativeBinding,
+    operation: Extract<ProjectNativeOperation, { kind: "stream-polls" }>,
+  ) {
+    if (this.maxBytes < 7 * 1024)
+      error("INVALID_BUDGET", "Native poll groups require a result budget of at least 7 KiB");
+    for (const poll of operation.polls) {
+      if (!poll.cursor) continue;
+      const state = this.stateFor(binding, poll.stream, poll.cursor);
+      if (state.codec !== operation.codec)
+        error("STREAM_CODEC_CHANGED", "Native stream encoding cannot change during a cursor");
+      if (!state.cached.has(poll.cursor) && poll.cursor !== `${state.id}:${state.next}`)
+        error("STREAM_CURSOR_EXPIRED", "Native poll cursor is stale; reopen the stream");
+    }
+    return { polls: await Promise.all(operation.polls.map(async poll => {
+      try {
+        return { stream: poll.stream, result: await this.poll(binding, { kind: "stream-poll", ...poll }, operation.codec) };
+      } catch (failure) {
+        return { stream: poll.stream, error: failure instanceof ProjectSessionNativeError ? failure.code : "STREAM_FAILED" };
+      }
+    })) };
+  }
+  private pollBudget(stream: StreamName): number {
+    if (this.maxBytes < 7 * 1024 || !readStream.safeParse(stream).success) return this.maxBytes;
+    return 1024 + Math.floor((this.maxBytes - 7 * 1024) * (stream === "session-follow" ? 29 : 3) / 41);
+  }
   private async poll(
     binding: ProjectSessionNativeBinding,
     operation: Extract<ProjectNativeOperation, { kind: "stream-poll" }>,
+    codec?: "gzip",
   ): Promise<PollResult> {
+    if (this.stopped) error("STREAM_RESET", "Native session hosting is stopping");
     let state: StreamState;
     let cursor = operation.cursor;
     if (cursor) {
       state = this.stateFor(binding, operation.stream, cursor);
+      if (state.codec !== codec)
+        error("STREAM_CODEC_CHANGED", "Native stream encoding cannot change during a cursor");
       const cached = state.cached.get(cursor);
       if (cached) return cached;
       if (cursor !== `${state.id}:${state.next}`)
@@ -1044,15 +1108,25 @@ export class ProjectNativeOwner {
           "Native poll cursor is stale; reopen the stream",
         );
     } else {
-      if (this.streams.size >= 32)
+      if (this.streams.size + this.opening >= 32)
         error("STREAM_LIMIT", "Too many active project native streams");
       const abort = new AbortController();
       const id = randomUUID();
-      const source = await this.open(binding, operation, abort.signal, id);
+      this.opening++;
+      let source: AsyncIterable<unknown>;
+      try {
+        source = await this.open(binding, operation, abort.signal, id);
+      } catch (failure) {
+        abort.abort();
+        throw failure;
+      } finally {
+        this.opening--;
+      }
       state = {
         id,
         binding: bindingKey(binding),
         stream: operation.stream,
+        codec,
         abort,
         iterator: source[Symbol.asyncIterator](),
         cached: new Map(),
@@ -1060,6 +1134,10 @@ export class ProjectNativeOwner {
         touchedAt: Date.now(),
       };
       this.streams.set(id, state);
+      if (this.stopped) {
+        this.close(state);
+        error("STREAM_RESET", "Native session hosting is stopping");
+      }
       cursor = `${id}:0`;
     }
     state.touchedAt = Date.now();
@@ -1070,6 +1148,7 @@ export class ProjectNativeOwner {
     const activeCursor = cursor;
     state.polling = this.readPoll(state)
       .then((result) => {
+        if (state.closed) error("STREAM_RESET", "Native stream was closed while polling");
         state.cached.set(activeCursor, result);
         while (state.cached.size > 8) {
           const oldest = state.cached.keys().next().value;
@@ -1083,55 +1162,94 @@ export class ProjectNativeOwner {
     return state.polling;
   }
   private async readPoll(state: StreamState): Promise<PollResult> {
+    const budget = this.pollBudget(state.stream);
     const result: PollResult = {
       frames: [],
       cursor: `${state.id}:${state.next + 1}`,
     };
-    if (state.frame) {
-      this.framePart(state, result);
+    if (state.delivery?.kind === "parts") {
+      this.framePart(state, result, budget);
       state.next++;
       return result;
     }
-    state.pending ??= state.iterator.next();
-    let timer: ReturnType<typeof setTimeout> | undefined;
     const timeout = Symbol("poll-timeout");
+    const started = Date.now();
+    let collectedBytes = 2;
     try {
-      const next = await Promise.race([
-        state.pending,
-        new Promise<typeof timeout>((resolve) => {
-          timer = setTimeout(() => resolve(timeout), this.pollWaitMs);
-        }),
-      ]);
-      if (next !== timeout) {
-        state.pending = undefined;
-        if (next.done) result.closed = true;
-        else {
-          const frame = json(next.value);
-          result.frames.push(frame);
-          if (Buffer.byteLength(JSON.stringify(result)) > this.maxBytes) {
-            const bytes = Buffer.from(JSON.stringify(frame));
-            if (bytes.byteLength > logicalFrameMaxBytes)
-              error("FRAME_TOO_LARGE", "Native logical frame exceeds 8 MiB");
-            state.frame = { id: randomUUID(), bytes, offset: 0 };
-            result.frames.length = 0;
-            this.framePart(state, result);
+      if (state.delivery?.kind === "failed") throw state.delivery.error;
+      while (result.frames.length < 32) {
+        if (state.closed) error("STREAM_RESET", "Native stream was closed while polling");
+        let frame: ProjectNativeJson;
+        if (state.delivery?.kind === "frame") {
+          frame = state.delivery.value;
+          state.delivery = undefined;
+        } else {
+          state.pending ??= Promise.resolve().then(() => state.iterator.next());
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          let next: IteratorResult<unknown> | typeof timeout;
+          try {
+            next = await Promise.race([
+              state.pending,
+              new Promise<typeof timeout>(resolve => {
+                timer = setTimeout(() => resolve(timeout), result.frames.length ? 0 : this.pollWaitMs);
+              }),
+            ]);
+          } finally {
+            if (timer !== undefined) clearTimeout(timer);
           }
+          if (state.closed) error("STREAM_RESET", "Native stream was closed while polling");
+          if (next === timeout) break;
+          state.pending = undefined;
+          if (next.done) { result.closed = true; break; }
+          frame = json(next.value);
         }
+        const bytes = Buffer.from(JSON.stringify(frame));
+        if (bytes.byteLength > logicalFrameMaxBytes)
+          error("FRAME_TOO_LARGE", "Native logical frame exceeds 8 MiB");
+        const nextBytes = collectedBytes + bytes.byteLength + (result.frames.length ? 1 : 0);
+        if (state.codec === "gzip" ? nextBytes > 64 * 1024 :
+          Buffer.byteLength(JSON.stringify({ ...result, frames: [...result.frames, frame] })) > budget) {
+          if (result.frames.length) state.delivery = { kind: "frame", value: frame };
+          else {
+            const compressed = state.codec === "gzip" ? gzipSync(bytes) : undefined;
+            state.delivery = compressed && compressed.byteLength < bytes.byteLength ?
+              { kind: "parts", id: randomUUID(), bytes: compressed, offset: 0, encoding: "gzip-frame", decodedBytes: bytes.byteLength } :
+              { kind: "parts", id: randomUUID(), bytes, offset: 0 };
+            this.framePart(state, result, budget);
+          }
+          break;
+        }
+        result.frames.push(frame);
+        collectedBytes = nextBytes;
+        if (Date.now() - started >= 5) break;
       }
-      state.next++;
-      return result;
     } catch (failure) {
-      this.close(state);
-      throw failure;
-    } finally {
-      if (timer !== undefined) clearTimeout(timer);
+      if (result.frames.length && !state.closed) {
+        state.delivery = { kind: "failed", error: failure };
+      } else { this.close(state); throw failure; }
     }
+    if (state.codec === "gzip" && Buffer.byteLength(JSON.stringify(result)) > budget) {
+      const bytes = Buffer.from(JSON.stringify(result.frames));
+      const compressed = gzipSync(bytes);
+      result.frames = [];
+      result.encodedFrames = { encoding: "gzip", decodedBytes: bytes.byteLength, data: compressed.toString("base64") };
+      if (Buffer.byteLength(JSON.stringify(result)) > budget) {
+        result.encodedFrames = undefined;
+        const following = state.delivery;
+        if (following?.kind === "parts") error("STREAM_RESET", "Native delivery already contains frame parts");
+        state.delivery = { kind: "parts", id: randomUUID(), bytes: compressed, offset: 0, encoding: "gzip-frames", decodedBytes: bytes.byteLength, following };
+        delete result.closed;
+        this.framePart(state, result, budget);
+      }
+    }
+    state.next++;
+    return result;
   }
-  private framePart(state: StreamState, result: PollResult): void {
-    const frame = state.frame;
-    if (!frame) error("STREAM_RESET", "Native frame is no longer available");
+  private framePart(state: StreamState, result: PollResult, budget: number): void {
+    const frame = state.delivery;
+    if (frame?.kind !== "parts") error("STREAM_RESET", "Native frame is no longer available");
     const offset = frame.offset;
-    const bytes = Math.min(22 * 1024, Math.floor(((this.maxBytes - 512) * 3) / 4));
+    const bytes = Math.min(22 * 1024, Math.floor(((budget - 512) * 3) / 4));
     const end = Math.min(offset + bytes, frame.bytes.byteLength);
     result.framePart = {
       id: frame.id,
@@ -1139,9 +1257,10 @@ export class ProjectNativeOwner {
       totalBytes: frame.bytes.byteLength,
       data: frame.bytes.subarray(offset, end).toString("base64"),
       eof: end === frame.bytes.byteLength,
+      ...(frame.encoding ? { encoding: frame.encoding, decodedBytes: frame.decodedBytes } : {}),
     };
     this.checkSize(result, "FRAME_TOO_LARGE");
-    if (result.framePart.eof) state.frame = undefined;
+    if (result.framePart.eof) state.delivery = frame.following;
     else frame.offset = end;
   }
   private stateFor(
@@ -1170,9 +1289,11 @@ export class ProjectNativeOwner {
     this.close(this.stateFor(binding, stream, cursor));
   }
   private close(state: StreamState): void {
+    if (state.closed) return;
+    state.closed = true;
     state.abort.abort();
     this.streams.delete(state.id);
-    state.frame = undefined;
+    state.delivery = undefined;
     if (state.expiry !== undefined) clearTimeout(state.expiry);
     const events = this.events.get(state.id);
     if (events) {
