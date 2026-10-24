@@ -1131,7 +1131,7 @@ export class ProjectNativeOwner {
     const frame = state.frame;
     if (!frame) error("STREAM_RESET", "Native frame is no longer available");
     const offset = frame.offset;
-    const bytes = Math.min(24576, Math.floor(((this.maxBytes - 512) * 3) / 4));
+    const bytes = Math.min(22 * 1024, Math.floor(((this.maxBytes - 512) * 3) / 4));
     const end = Math.min(offset + bytes, frame.bytes.byteLength);
     result.framePart = {
       id: frame.id,

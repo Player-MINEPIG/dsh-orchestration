@@ -4,7 +4,8 @@ import { mkdtempSync, mkdirSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { createHash, generateKeyPairSync, randomBytes, randomUUID } from "node:crypto";
+import { DatabaseSync } from "node:sqlite";
 import { deflateSync } from "node:zlib";
 import { Context } from "@deepseek-ai/cordis";
 import { Loader } from "@deepseek-ai/cordis-plugin-loader";
@@ -15,6 +16,9 @@ import {
   ProjectNativeOwner,
   ProjectNativeOperation,
 } from "../dist/project-session-native.js";
+import { ProjectSessionCarrier, ProjectSessionOwnerCarrier } from "../dist/project-session-carrier.js";
+import { RemoteClient, RemoteLedgerClient, RecoveryStore } from "../dist/remote/api.js";
+import { IdentityVerifier, parseCommandEnvelope, DEFAULT_MAX_BODY_BYTES, DEFAULT_MAX_RESPONSE_BYTES } from "../dist/remote/protocol.js";
 
 function pngBytes(width = 1, height = 1) {
   const chunk = (name, bytes) => {
@@ -1374,5 +1378,109 @@ test("cold list, catalogs, access and event readiness never restore or drive the
       await first.ctx.fiber.dispose();
       rmSync(first.dir, { recursive: true, force: true });
     }
+  }
+});
+
+test("five actual SDK streams use single-fragment outcomes and replay an ACK carrying one real prompt effect", async t => {
+  const h = await createOwner();
+  const centralDb = new DatabaseSync(":memory:"), ownerDb = new DatabaseSync(":memory:");
+  const store = new RecoveryStore(join(h.dir, "carrier-outbound.sqlite"));
+  const keys = generateKeyPairSync("ed25519");
+  const verifier = new IdentityVerifier({ audience: "central", peers: [{ keyId: "owner-key", nodeId: h.binding.nodeId, audience: "central", publicKey: keys.publicKey, operations: ["projectCollaborate"], workspaces: [], capabilities: [] }] });
+  const central = new ProjectSessionCarrier({ managementDatabase: () => centralDb }, "central", async () => { throw Error("wrong owner"); }, node => assert.equal(node, h.binding.nodeId));
+  let sequence = 0, exchanges = 0, dropped = false, combined = 0, nativeParts = 0;
+  const receipts = [], operations = [];
+  const client = new RemoteClient({
+    endpoint: "https://fixture.invalid/commands", nodeId: h.binding.nodeId, audience: "central", keyId: "owner-key", privateKey: keys.privateKey, store,
+    fetch: async (_url, options) => {
+      assert.ok(Buffer.byteLength(options.body) <= DEFAULT_MAX_BODY_BYTES);
+      const envelope = parseCommandEnvelope(options.body, "ed25519");
+      assert.equal(verifier.verify(envelope).nodeId, h.binding.nodeId);
+      const input = envelope.payload.input.request.input;
+      if (input.result) {
+        const result = JSON.parse(input.result.text);
+        if (result.kind === "value" && result.value?.framePart) {
+          assert.equal(input.result.count, 1, "The entire canonical native outcome fits one existing carrier text fragment");
+          assert.ok(Buffer.byteLength(input.result.text) <= 32 * 1024);
+          assert.ok(Buffer.from(result.value.framePart.data, "base64").byteLength <= 22 * 1024);
+          nativeParts++;
+        }
+      }
+      const response = central.exchange(h.binding.nodeId, input);
+      if (response.acknowledged && response.call) combined++;
+      const receipt = JSON.stringify({ commandId: envelope.commandId, state: "done", result: { value: response } });
+      assert.ok(Buffer.byteLength(receipt) <= DEFAULT_MAX_RESPONSE_BYTES);
+      receipts.push({ input, response });
+      return new Response(receipt, { headers: { "content-type": "application/json" } });
+    },
+  });
+  const remote = new RemoteLedgerClient(client, h.binding.nodeId);
+  const owner = new ProjectSessionOwnerCarrier({ managementDatabase: () => ownerDb }, async input => {
+    const response = await remote.projectCollaborate(h.binding.nodeId, `exchange-${++exchanges}`, { action: "project-session", request: { kind: "exchange", input } });
+    if (response.acknowledged && response.call?.callId === "one-real-prompt" && !dropped) { dropped = true; throw Error("lost ACK carrying the next prompt"); }
+    return response;
+  }, () => ({ revision: "1", available: true, workspaces: [] }), (request, callId) => h.owner.invoke(request.binding, request.operation, callId));
+  const abort = new AbortController();
+  const enqueue = (operation, callId = `read-${++sequence}`) => {
+    const request = { kind: "native", binding: h.binding, operation };
+    operations.push(request);
+    const promise = central.request(h.binding.nodeId, callId, request, abort.signal);
+    promise.catch(() => {});
+    return { callId, request, promise };
+  };
+  const drain = async calls => {
+    for (let polls = 0; calls.some(call => !centralDb.prepare("SELECT result FROM project_session_carrier_calls WHERE id=?").get(call.callId)?.result); polls++) {
+      assert.ok(polls < 100);
+      try { await owner.poll(); } catch (error) { assert.match(error.message, /lost ACK/); }
+    }
+    return Promise.all(calls.map(call => call.promise));
+  };
+  try {
+    const reply = "真实原生回复🌏".repeat(6000);
+    h.model.script = [reply];
+    const before = enqueue({ kind: "native-capabilities" });
+    const prompt = enqueue({ kind: "session-prompt", requestId: "one-real-prompt", mode: "queue", content: [{ type: "text", text: "Read this same owner conversation." }] }, "one-real-prompt");
+    const streams = ["events", "access", "workspace", "session-control", "session-follow"];
+    const opening = streams.map(stream => enqueue({ kind: "stream-poll", stream, ...(stream === "session-follow" ? { request: { assistantStream: true, maxMessages: 500 } } : {}) }));
+    await owner.poll();
+    await assert.rejects(owner.poll(), /lost ACK carrying/);
+    await owner.poll();
+    const { agent } = await h.ctx.sessionController.resolveAgent(h.binding.sessionId);
+    await agent.whenIdle();
+    let batches = await drain([before, prompt, ...opening]);
+    assert.ok(dropped);
+    assert.deepEqual(await central.request(h.binding.nodeId, "one-real-prompt", prompt.request), { accepted: true });
+    assert.equal(h.model.requests.length, 1, "Lost ACK and repeated receipt cause exactly one actual SDK model effect");
+    await assert.rejects(central.request(h.binding.nodeId, "one-real-prompt", { ...prompt.request, binding: { ...h.binding, generation: 99 } }), { code: "CONFLICT" });
+    batches = batches.slice(2);
+    const chunks = [];
+    let offset = 0, frameId, totalBytes;
+    for (let rounds = 0; ; rounds++) {
+      assert.ok(rounds < 50);
+      const batch = batches[4];
+      assert.ok(Buffer.byteLength(JSON.stringify(batch)) <= 48 * 1024);
+      const part = batch.framePart;
+      assert.ok(part, "The full real SDK snapshot must use native frame parts");
+      const bytes = Buffer.from(part.data, "base64");
+      frameId ??= part.id; totalBytes ??= part.totalBytes;
+      assert.equal(part.id, frameId); assert.equal(part.totalBytes, totalBytes); assert.equal(part.offset, offset);
+      chunks.push(bytes); offset += bytes.byteLength;
+      assert.equal(part.eof, offset === totalBytes);
+      if (part.eof) break;
+      const calls = streams.map((stream, index) => enqueue({ kind: "stream-poll", stream, cursor: batches[index].cursor }));
+      batches = await drain(calls);
+    }
+    const snapshot = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks)));
+    const original = await h.ctx.sessionController.page({ address: { kind: "session", sessionId: h.binding.sessionId }, throughSeq: snapshot.cursor, maxMessages: 500 }, abort.signal);
+    assert.deepEqual(snapshot.records, original.records);
+    assert.ok(JSON.stringify(snapshot).includes(reply));
+    assert.ok(nativeParts > 2 && combined > 5);
+    assert.ok(h.authorizations.length >= operations.length, "Fresh admission remains on every native invocation");
+    const replay = receipts.filter(item => item.input.result?.callId === before.callId);
+    assert.equal(replay.length, 2);
+    assert.deepEqual(replay[0], replay[1], "The same completed ACK re-delivers the same pending next call after loss");
+    t.diagnostic(`${operations.length} native calls, ${exchanges} signed exchanges, ${nativeParts} single-carrier native parts, ${combined} ACK/next responses`);
+  } finally {
+    abort.abort(); await central.dispose(); await owner.dispose(); client.dispose(); store.close(); centralDb.close(); ownerDb.close(); await h.dispose();
   }
 });
