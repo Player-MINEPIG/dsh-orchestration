@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
-import { generateKeyPairSync } from "node:crypto";
+import { createHash, generateKeyPairSync } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -186,4 +186,38 @@ test("bounded exchange refuses a foreign receipt and discards an expired read re
 
 test('carrier stop drains durable local outcomes and parked waiters never query a closed database',async()=>{
  const db=new DatabaseSync(':memory:');let finish,entered;const started=new Promise(resolve=>entered=resolve);const owner=new ProjectSessionOwnerCarrier(ledger(db),async()=>({}),()=>catalog,async()=>{entered();return new Promise(resolve=>finish=resolve);});const central=new ProjectSessionCarrier(ledger(db),'mbp',(request,callId)=>owner.perform(request,callId),authorize);const request={kind:'native',binding,operation:{kind:'file-upload-finish',uploadId:'fixture-upload'}};const pending=central.request('mbp','stop-inflight',request).then(value=>({value}),error=>({code:error.code}));await started;let drained=false;const stopping=Promise.all([central.dispose(),owner.dispose()]).then(()=>drained=true);await Promise.resolve();assert.equal(drained,false);await assert.rejects(central.request('mbp','late-request',request),{code:'UNAVAILABLE'});await assert.rejects(owner.perform(request,'late-owner'),{code:'UNAVAILABLE'});finish({receiptId:'durable-fixture-receipt'});await stopping;assert.ok(db.prepare('SELECT result FROM project_session_owner_calls WHERE id=?').get('stop-inflight').result);assert.ok(db.prepare('SELECT result FROM project_session_carrier_calls WHERE id=?').get('stop-inflight').result);db.close();assert.deepEqual(await pending,{code:'PROJECT_SESSION_PENDING'});
+});
+
+
+test("completed acknowledgements carry the next FIFO call, with whole-packet fallback and immutable retries", async () => {
+  const db = new DatabaseSync(":memory:");
+  const central = new ProjectSessionCarrier(ledger(db), "aws", async () => null, authorize);
+  const abort = new AbortController();
+  const previousId = "ack-" + "\u0000".repeat(196);
+  const read = { kind: "native", binding, operation: { kind: "native-capabilities" } };
+  const next = { kind: "native", binding, operation: { kind: "session-prompt", requestId: "next", mode: "queue", content: [{ type: "text", text: "" }] } };
+  const overhead = Buffer.byteLength(JSON.stringify({ call: { callId: "next", request: next } }));
+  next.operation.content[0].text = "\\".repeat(Math.floor((60 * 1024 - overhead - 256) / 2));
+  const first = central.request("mbp", previousId, read, abort.signal).catch(error => error);
+  const second = central.request("mbp", "next", next, abort.signal).catch(error => error);
+  try {
+    assert.equal(central.exchange("mbp", {}).call.callId, previousId);
+    const text = JSON.stringify({ kind: "value", value: { ready: true } });
+    const digest = createHash("sha256").update(text).digest("hex");
+    const half = Math.floor(text.length / 2);
+    const part = { callId: previousId, count: 2, digest, index: 0, text: text.slice(0, half) };
+    assert.throws(() => central.exchange("aws", { result: part }), { code: "FORBIDDEN" });
+    assert.equal(central.exchange("mbp", { result: part }).call, undefined, "A nonfinal receipt does not advance to another call");
+    const final = { ...part, index: 1, text: text.slice(half) };
+    const acknowledged = central.exchange("mbp", { result: final });
+    assert.ok(acknowledged.acknowledged);
+    assert.equal(acknowledged.call, undefined, "An oversized ACK plus call falls back to ACK-only");
+    assert.deepEqual(central.exchange("mbp", { result: final }), acknowledged);
+    assert.deepEqual(await first, { ready: true });
+    const pulled = central.exchange("mbp", {});
+    assert.equal(pulled.call.callId, "next");
+    assert.ok(Buffer.byteLength(JSON.stringify(pulled)) <= 60 * 1024);
+    assert.ok(Buffer.byteLength(JSON.stringify({ ...acknowledged, ...pulled })) > 60 * 1024);
+    await assert.rejects(central.request("mbp", "next", { ...next, binding: { ...binding, generation: 3 } }), { code: "CONFLICT" });
+  } finally { abort.abort(); await first; await second; await central.dispose(); db.close(); }
 });

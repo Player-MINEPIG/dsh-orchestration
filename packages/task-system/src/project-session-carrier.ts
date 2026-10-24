@@ -142,6 +142,7 @@ export class ProjectSessionCarrier {
     const parsed = bounded(exchangeInput.parse(input));
     if (parsed.catalog) this.publish(nodeId, parsed.catalog);
     const result = parsed.result;
+    let completed = false;
     if (result) {
       const owned = this.db.prepare("SELECT node,result FROM project_session_carrier_calls WHERE id=?").get(result.callId);
       if (!owned) return { acknowledged: { callId: result.callId, index: result.index, count: result.count, digest: result.digest } };
@@ -166,11 +167,14 @@ export class ProjectSessionCarrier {
         const parsedResult = outcome.parse(JSON.parse(text));
         if (owned.result && owned.result !== canonical(parsedResult)) throw new TaskError("CONFLICT", "Project session outcome changed");
         this.db.prepare("UPDATE project_session_carrier_calls SET result=? WHERE id=?").run(canonical(parsedResult), result.callId);
+        completed = true;
       }
     }
-    const pending = result ? undefined : this.db.prepare("SELECT id,request FROM project_session_carrier_calls WHERE node=? AND result IS NULL ORDER BY rowid LIMIT 1").get(nodeId);
-    return bounded({ ...(result ? { acknowledged: { callId: result.callId, index: result.index, count: result.count, digest: result.digest } } : {}),
-      ...(pending ? { call: { callId: String(pending.id), request: ProjectOwnerRequest.parse(JSON.parse(String(pending.request))) } } : {}) });
+    const pending = !result || completed ? this.db.prepare("SELECT id,request FROM project_session_carrier_calls WHERE node=? AND result IS NULL ORDER BY rowid LIMIT 1").get(nodeId) : undefined;
+    const acknowledgement = result ? { acknowledged: { callId: result.callId, index: result.index, count: result.count, digest: result.digest } } : {};
+    const response = { ...acknowledgement,
+      ...(pending ? { call: { callId: String(pending.id), request: ProjectOwnerRequest.parse(JSON.parse(String(pending.request))) } } : {}) };
+    return bounded(result && Buffer.byteLength(JSON.stringify(response)) > MAX_PACKET_BYTES ? acknowledgement : response);
   }
   dispose(): Promise<void> {
     this.stopped = true;
