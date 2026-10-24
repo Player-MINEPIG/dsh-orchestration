@@ -6,7 +6,6 @@ import { validateRegistration } from "./protocol.js";
 import { sendRegistration } from "./service.js";
 import { registerProjectCommands } from "./commands.js";
 import { flushRegistrations } from "./client.js";
-import { SessionCollaboration, collaborationAuthority, type CollaborationPort } from "../project-collaboration/session.js";
 import type {} from "../remote/index.js";
 export const name = "dsh-project-registration";
 export const inject = ["tools", "taskSystem"];
@@ -37,19 +36,7 @@ export const Config: z<Config> = z.object({
   tokenEnv: z.string().required(false),
 });
 export function apply(ctx: Context, config: Config) {
-  const collaboration = new SessionCollaboration(
-    ctx.taskSystem.ledger,
-    ctx.taskSystem.config.nodeId,
-    (nodeId, commandId, input) => {
-      const invoke = collaborationAuthority(
-        ctx.taskSystem.config.role,
-        ctx.taskSystem.ledger as unknown as { projectCollaborate?: CollaborationPort },
-        ctx.get("remoteExecution") as unknown as Parameters<typeof collaborationAuthority>[2],
-      );
-      return invoke(nodeId, commandId, input);
-    },
-    agent => Boolean(ctx.taskSystem.native?.scopeFor(agent)),
-  );
+  const collaboration = ctx.taskSystem.sessionCollaboration;
   const dispatch: NonNullable<
     typeof ctx.taskSystem.sessionProjectDispatch
   > = async (agent, input, callId) => {

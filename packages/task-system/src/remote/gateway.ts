@@ -454,7 +454,8 @@ export function validatePayload(envelope: CommandEnvelope): void {
       break;
     }
     case "sessionMessages":
-      fields(p, []);
+      fields(p, [], ["kind"]);
+      insist(p.kind === undefined || p.kind === "completion" || p.kind === "message", "INVALID_MESSAGE_KIND");
       break;
     case "sessionMessageReply":
       fields(p, ["messageId", "state", "reply"]);
@@ -783,6 +784,7 @@ export class RemoteGateway {
           `pair:${digest([peer.nodeId, envelope.commandId])}`,
           peer.nodeId,
           undefined,
+          peer.executionEnabled,
         );
       let result: unknown;
       switch (envelope.operation) {
@@ -914,10 +916,10 @@ export class RemoteGateway {
             503,
           );
           let bytes = 0;
-          result = (await ledger.pendingSessionMessages(peer.nodeId)).filter(
+          result = (await ledger.pendingSessionMessages(peer.nodeId, p.kind === "completion" || p.kind === "message" ? {kind:p.kind} : undefined)).filter(
             (m) => {
               if (
-                !(peer.managedAccess || peer.workspaces.includes(m.workspaceId))
+                !(m.completion?.origin.kind === "session" && m.completion.origin.nodeId === peer.nodeId && m.nodeId === peer.nodeId || peer.managedAccess || peer.workspaces.includes(m.workspaceId))
               )
                 return false;
               const size = Buffer.byteLength(JSON.stringify(m));
@@ -1421,7 +1423,7 @@ export class RemoteGateway {
       );
       insist(
         m.nodeId === peer.nodeId &&
-          (peer.managedAccess || peer.workspaces.includes(m.workspaceId)),
+          (m.completion?.origin.kind === "session" && m.completion.origin.nodeId === peer.nodeId || peer.managedAccess || peer.workspaces.includes(m.workspaceId)),
         "SESSION_MESSAGE_DENIED",
         403,
       );

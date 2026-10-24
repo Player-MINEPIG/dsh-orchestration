@@ -34,6 +34,7 @@ const peer = z
     nodeId: z.string().trim().default(""),
     nickname: z.string().trim().min(1).max(100),
     role:role.optional(),
+    executionEnabled:z.boolean().optional(),
     audience:z.string().optional(),
     operations:z.array(z.enum(connectionOperations)).optional(),
     workspaces:names.optional(),
@@ -133,7 +134,7 @@ function projection(ctx: Context, config: Raw, exists: boolean) {
     listenPort: listen.port ?? null,
     routePath: config.routePath ?? "/dsh-task/v1/commands",
     serviceAudience: config.audience ?? (exists ? "task-coordinator" : ""),
-    peers: (Array.isArray(network.peers)?network.peers.map(asRaw):[]).map(peer=>({address:peer.address,nodeId:peer.nodeId ?? "",nickname:peer.nickname || peer.nodeId || peer.address})),
+    peers: (Array.isArray(network.peers)?network.peers.map(asRaw):[]).map(peer=>({address:peer.address,nodeId:peer.nodeId ?? "",nickname:peer.nickname || peer.nodeId || peer.address,executionEnabled:typeof peer.executionEnabled === "boolean" ? peer.executionEnabled : ["executor","both"].includes(String(peer.role))})),
     outbound: publicEndpoint(coordinator.endpoint)
       ? {
           endpoint: publicEndpoint(coordinator.endpoint),
@@ -211,7 +212,7 @@ function nextConfig(
         "Signed mode shares the existing DSH listener; network peers are configured through the existing signed identity flow",
       );
   } else {
-    const changed = value.listenAddress !== (asRaw(network.listen).address ?? "") || value.listenPort !== (asRaw(network.listen).port ?? null) || !isDeepStrictEqual(value.peers.map(peer=>({address:peer.address,nickname:peer.nickname})),previous.map(peer=>({address:peer.address,nickname:peer.nickname || peer.nodeId || peer.address})));
+    const changed = value.listenAddress !== (asRaw(network.listen).address ?? "") || value.listenPort !== (asRaw(network.listen).port ?? null) || !isDeepStrictEqual(value.peers.map(peer=>({address:peer.address,nickname:peer.nickname,executionEnabled:peer.executionEnabled ?? false})),previous.map(peer=>({address:peer.address,nickname:peer.nickname || peer.nodeId || peer.address,executionEnabled:typeof peer.executionEnabled === "boolean" ? peer.executionEnabled : ["executor","both"].includes(String(peer.role))})));
     if (value.listenerEnabled || changed) {
       if (!value.listenAddress || value.listenPort === null)
         reject(
@@ -255,7 +256,7 @@ function nextConfig(
         allowedAddresses,
         peers: value.peers.map(row=>{
           const original=previous.find(peer=>peer.address===row.address || (peer.nodeId && peer.nodeId===row.nodeId));
-          return {...original,address:row.address,nodeId:String(original?.nodeId || (original ? paired.get(String(original.address)) : "") || ""),nickname:row.nickname,role:"executor" as const,audience:value.serviceAudience,operations:[...connectionOperations],workspaces:Array.isArray(original?.workspaces)?original.workspaces:[],capabilities:Array.isArray(original?.capabilities)?original.capabilities:[]};
+          return {...original,address:row.address,nodeId:String(original?.nodeId || (original ? paired.get(String(original.address)) : "") || ""),nickname:row.nickname,executionEnabled:row.executionEnabled ?? (original ? typeof original.executionEnabled === "boolean" ? original.executionEnabled : ["executor","both"].includes(String(original.role)) : false),audience:value.serviceAudience,operations:Array.isArray(original?.operations)?original.operations:[...connectionOperations],workspaces:Array.isArray(original?.workspaces)?original.workspaces:[],capabilities:Array.isArray(original?.capabilities)?original.capabilities:[]};
         }),
       };
       if (value.listenerEnabled)

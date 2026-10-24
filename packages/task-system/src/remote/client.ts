@@ -463,8 +463,9 @@ export class RemoteClient {
 export class RemoteLedgerClient implements LedgerPort {
   pendingSessionMessages(
     _nodeId: string,
+    options?: {kind?: "completion" | "message"},
   ): Promise<import("./ports.js").SessionMessage[]> {
-    return this.command("sessionMessages", `messages-${randomUUID()}`, {});
+    return this.command("sessionMessages", `messages-${randomUUID()}`, options?.kind ? {kind:options.kind} : {});
   }
   completeSessionMessage(
     commandId: string,

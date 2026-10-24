@@ -30,6 +30,7 @@ import type {
 import type { DispatchRecord, RecoveryStore } from "./store.js";
 
 export interface WorkerOptions {
+  deliverTaskReturns?: boolean;
   ledger: LedgerPort;
   provider: ExecutionProvider;
   store: RecoveryStore;

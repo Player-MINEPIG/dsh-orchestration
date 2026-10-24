@@ -1,3 +1,5 @@
+import { CentralTaskControl, type CentralTaskControl as TaskControl } from "../central-control.js";
+import { SessionCommand, SessionDispatcherAuthority } from "../session-commands.js";
 import { createHash } from "node:crypto";
 import { basename, isAbsolute, normalize } from "node:path";
 import { canonical, TaskError, type TaskLedger } from "../ledger.js";
@@ -12,14 +14,20 @@ const fail = (code: string, message: string): never => { throw new TaskError(cod
 export function validateCollaborationInput(value: unknown): asserts value is ProjectCollaborationInput {
   if (!value || typeof value !== "object" || Array.isArray(value)) fail("INVALID", "Expected collaboration input");
   const p = value as Record<string, unknown>;
-  const keys = ["action", "sessionId", "cwd", "projectId", "title", "goal", "summary", "route", "description", "nodeId", "executionModel", "composition"];
+  if (p.action === "control") {
+    if (Object.keys(p).some(key=>!["action","control"].includes(key)) || !CentralTaskControl.safeParse(p.control).success) fail("INVALID", "Invalid central task control");
+    return;
+  }
+  const keys = ["action", "sessionId", "cwd", "projectId", "title", "goal", "summary", "route", "description", "nodeId", "executionModel", "composition", "command"];
   if (Object.keys(p).some(k => !keys.includes(k)) || canonical(p).length > 64_000) fail("INVALID", "Unknown or oversized collaboration input");
-  if (!["activate", "status", "nodes", "dispatch", "update", "submit"].includes(String(p.action))) fail("INVALID", "Unknown collaboration action");
-  for (const key of keys.filter(k => k !== "route" && k !== "executionModel" && k !== "composition")) {
+  if (!["session", "activate", "status", "nodes", "dispatch", "update", "submit"].includes(String(p.action))) fail("INVALID", "Unknown collaboration action");
+  for (const key of keys.filter(k => k !== "route" && k !== "executionModel" && k !== "composition" && k !== "command")) {
     const v = p[key];
     if (v !== undefined && (typeof v !== "string" || v.length > (key === "description" || key === "summary" ? 20_000 : 4096) || v.includes("\0"))) fail("INVALID", `Invalid ${key}`);
   }
   if (typeof p.sessionId !== "string" || !p.sessionId.trim() || p.sessionId.length > 200 || typeof p.cwd !== "string" || !isAbsolute(p.cwd)) fail("INVALID", "A session and absolute working directory are required");
+  if (p.action === "session" && !SessionCommand.safeParse(p.command).success) fail("INVALID", "Invalid session command");
+  else if (p.action !== "session" && p.command !== undefined) fail("INVALID", "Command requires session action");
   if(p.composition!==undefined) {
     const c=p.composition;
     if(!c || typeof c!=="object" || Array.isArray(c))fail("INVALID","Invalid origin composition");
@@ -44,12 +52,14 @@ export function validateCollaborationInput(value: unknown): asserts value is Pro
 export class ProjectCollaborationAuthority {
   private db;
   private wb;
+  private sessions;
   private queue: Promise<unknown> = Promise.resolve();
-  constructor(private ledger: TaskLedger, private options: { planner?: Pick<TaskPlanner, "plan" | "apply"> | (() => Pick<TaskPlanner, "plan" | "apply"> | undefined) } = {}) {
+  constructor(private ledger: TaskLedger, private options: { control?: (commandId:string,input:TaskControl)=>unknown | Promise<unknown>; planner?: Pick<TaskPlanner, "plan" | "apply"> | (() => Pick<TaskPlanner, "plan" | "apply"> | undefined) } = {}) {
     ledger.assertManagementWritable();
     this.db = ledger.managementDatabase();
     this.wb = new Workbench(ledger);
     this.wb.prepareRegistration();
+    this.sessions = new SessionDispatcherAuthority(ledger);
     this.db.exec(`CREATE TABLE IF NOT EXISTS collaboration_bindings (binding_id TEXT PRIMARY KEY, project_id TEXT NOT NULL, owner_node_id TEXT NOT NULL, session_id TEXT NOT NULL, cwd TEXT NOT NULL, data TEXT NOT NULL, UNIQUE(owner_node_id, session_id, cwd));
       CREATE TABLE IF NOT EXISTS collaboration_commands (command_id TEXT PRIMARY KEY, digest TEXT NOT NULL, result TEXT);`);
   }
@@ -60,7 +70,7 @@ export class ProjectCollaborationAuthority {
   projectCollaborate(nodeId: string, commandId: string, input: ProjectCollaborationInput): Promise<Json> {
     const run = this.queue.then(() => {
       validateCollaborationInput(input);
-      return input.action==="dispatch" ? this.ledger.withDispatchOrigin({kind:"session",nodeId,sessionId:input.sessionId,cwd:input.cwd,...(input.composition?{composition:input.composition}:{})},()=>this.execute(nodeId,commandId,input)) : this.execute(nodeId,commandId,input);
+      return (input.action === "dispatch" || input.action === "session") ? this.ledger.withDispatchOrigin({kind:"session",nodeId,sessionId:input.sessionId,cwd:input.cwd,...(input.composition?{composition:input.composition}:{})},()=>this.execute(nodeId,commandId,input)) : this.execute(nodeId,commandId,input);
     });
     this.queue = run.catch(() => {});
     return run;
@@ -69,22 +79,51 @@ export class ProjectCollaborationAuthority {
     validateCollaborationInput(input);
     if (!nodeId || !commandId || commandId.length > 200) fail("INVALID", "Missing command identity");
     const node = this.ledger.nodeStatuses().map(n => this.ledger.getNode(n.nodeId)).find(n => n.nodeId === nodeId);
-    if (!node?.enabled) fail("FORBIDDEN", "An enabled registered node is required");
-    input = { ...input, cwd: normalize(input.cwd) };
+    if (!node?.enabled && nodeId !== this.ledger.nodeId) fail("FORBIDDEN", "An enabled registered node is required");
+    if (input.action !== "control") input = { ...input, cwd: normalize(input.cwd) };
     const key = `collaboration:${hash([nodeId, commandId])}`;
     const digest = hash(input);
     const old = this.db.prepare("SELECT digest,result FROM collaboration_commands WHERE command_id=?").get(key);
     if (old && old.digest !== digest) fail("CONFLICT", "Command ID reused with different collaboration input");
     if (old?.result) return JSON.parse(String(old.result));
     this.db.prepare("INSERT OR IGNORE INTO collaboration_commands VALUES(?,?,NULL)").run(key, digest);
+    if (input.action === "control") {
+      const task = this.ledger.getTask(input.control.taskId), origin = task.dispatchOrigin;
+      if (origin?.kind !== "session" || origin.nodeId !== nodeId) fail("FORBIDDEN", "Device controls are restricted to this device's original tasks");
+      if (!this.options.control) fail("UNAVAILABLE", "Central task controls unavailable");
+      const result = json(await this.options.control!(key, input.control));
+      this.db.prepare("UPDATE collaboration_commands SET result=? WHERE command_id=?").run(canonical(result), key);
+      return result;
+    }
+    if (input.action === "session") {
+      const result = {confirmed:true,result:this.sessions.execute(nodeId, key, input)};
+      this.db.prepare("UPDATE collaboration_commands SET result=? WHERE command_id=?").run(canonical(result), key);
+      return result;
+    }
     if (this.collaborationSummaries(nodeId).some(b => b.sessionId === input.sessionId && b.cwd !== input.cwd)) fail("CONFLICT", "Session is already bound to a different working directory");
     const bindingId = hash([nodeId, input.sessionId, input.cwd]);
     let binding = this.collaborationSummaries(nodeId).find(b => b.sessionId === input.sessionId && b.cwd === input.cwd);
     if (input.action === "activate") {
       if (binding && input.projectId && input.projectId !== binding.projectId) fail("CONFLICT", "Session already belongs to another project");
       if (!binding) {
-        const existing = input.projectId ? this.collaborationSummaries(nodeId).find(b => b.projectId === input.projectId && b.cwd === input.cwd) : undefined;
-        if (input.projectId && !existing) fail("FORBIDDEN", "Only an owned collaboration project at this working directory can be attached");
+        const project = input.projectId ? this.wb.snapshot().projects.find(p => p.projectId === input.projectId && p.state !== "archived") : undefined;
+        if (input.projectId && !project) fail("FORBIDDEN", "Central project is not available");
+        if (project && nodeId === this.ledger.nodeId && this.db.prepare("SELECT 1 FROM sqlite_master WHERE name='pr_projects'").get()) {
+          const managed = this.db.prepare("SELECT cwd FROM pr_projects WHERE id=?").get(project.projectId);
+          if (managed) {
+            let permitted = managed.cwd === input.cwd;
+            if (this.db.prepare("SELECT 1 FROM sqlite_master WHERE name='pr_project_workspaces'").get()) {
+              const row = this.db.prepare("SELECT workspace FROM pr_project_workspaces WHERE project=?").get(project.projectId);
+              if (row) {
+                const workspace = JSON.parse(String(row.workspace));
+                if (workspace.nodeId === nodeId && workspace.path === input.cwd) permitted = true;
+              }
+            }
+            if (!permitted) fail("FORBIDDEN", "Open this project's authorized local workspace before binding");
+          }
+        }
+        const existingBacklog = project ? this.wb.snapshot().backlogs.find(b => b.projectId === project.projectId) : undefined;
+        const existing = project ? {projectId:project.projectId, backlogId:existingBacklog?.backlogId ?? `session-backlog-${hash(project.projectId)}`, ownerNodeId:nodeId, sessionId:input.sessionId, cwd:input.cwd, title:project.title, goal:project.goal, summary:"", state:"active" as const, updatedAt:this.ledger.managementNow()} : undefined;
         binding = existing ? { ...existing, sessionId: input.sessionId } : {
           projectId: `collab-${bindingId}`, backlogId: `collab-backlog-${bindingId}`, ownerNodeId: nodeId,
           sessionId: input.sessionId, cwd: input.cwd, title: input.title?.trim() || basename(input.cwd) || "Local project",
@@ -92,9 +131,10 @@ export class ProjectCollaborationAuthority {
         };
         this.db.prepare("INSERT INTO collaboration_bindings VALUES(?,?,?,?,?,?)").run(bindingId, binding.projectId, nodeId, input.sessionId, input.cwd, canonical(binding));
       }
+      this.sessions.select(nodeId, input.sessionId, input.cwd, binding.projectId);
       const creation = `collab-create:${hash(binding.projectId)}`;
-      this.wb.manage(`${creation}:project`, "create_project", { projectId: binding.projectId, title: binding.title, goal: binding.goal, state: "active" });
-      this.wb.manage(`${creation}:backlog`, "create_backlog", { backlogId: binding.backlogId, projectId: binding.projectId, title: "会话协作任务", goal: binding.goal, state: "open", priority: "normal" });
+      if (!this.wb.snapshot().projects.some(p => p.projectId === binding!.projectId)) this.wb.manage(`${creation}:project`, "create_project", { projectId: binding.projectId, title: binding.title, goal: binding.goal, state: "active" });
+      if (!this.wb.snapshot().backlogs.some(b => b.backlogId === binding!.backlogId)) this.wb.manage(`${creation}:backlog`, "create_backlog", { backlogId: binding.backlogId, projectId: binding.projectId, title: "会话协作任务", goal: binding.goal, state: "open", priority: "normal" });
     } else if (input.action !== "nodes" && !binding) fail("COLLABORATION_NOT_ACTIVE", "Activate this session's project first");
     if (binding && input.projectId && binding.projectId !== input.projectId) fail("FORBIDDEN", "Project differs from the session binding");
     let result: Json;

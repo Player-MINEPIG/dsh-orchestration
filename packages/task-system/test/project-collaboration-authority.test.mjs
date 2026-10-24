@@ -34,11 +34,11 @@ test('central activation persists real workbench records, restores binding, scop
   const restored = new ProjectCollaborationAuthority(f.ledger);
   assert.equal((await restored.projectCollaborate('mbp', 'restore', { ...f.input, action: 'activate' })).projectId, a.projectId);
   await assert.rejects(f.call('changed-key', 'activate', { projectId: 'arbitrary-central-project' }), { code: 'CONFLICT' });
-  await assert.rejects(restored.projectCollaborate('other', 'steal', { ...f.input, action: 'activate', projectId: a.projectId }), { code: 'FORBIDDEN' });
+  assert.equal((await restored.projectCollaborate('other', 'attach-authorized-peer', {...f.input,action:'activate',projectId:a.projectId})).projectId,a.projectId);
   await assert.rejects(f.call('wrong-cwd', 'activate', { cwd: '/other', projectId: a.projectId }), { code: 'CONFLICT' });
   const attached = await f.call('attach', 'activate', { sessionId: 'second-session', projectId: a.projectId });
   assert.equal(attached.projectId, a.projectId);
-  assert.equal(f.authority.collaborationSummaries('other').length, 0);
+  assert.equal(f.authority.collaborationSummaries('other').length, 1);
   const unrelated = f.ledger.createTask('private', { title: 'Private unrelated task' }).value;
   const status = await f.call('status', 'status');
   assert.equal(status.tasks.some(x => x.taskId === unrelated.taskId), false);

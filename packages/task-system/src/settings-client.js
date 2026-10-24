@@ -124,7 +124,7 @@ window.__ModuleLoader__.load({
       executorDecisionHint:
         "The project or temporary-task rule fixes the directory. The decision selects a legal new or existing Task session.",
       executorDecisionInactive:
-        "These execution settings are retained but inactive for the Scheduler role.",
+        "Local task execution is disabled. Session selection settings are retained.",
       decisionModelEntry: "Executor decision model settings",
       decisionModelStatus:
         "Uses the existing decision-model configuration. If no valid decision is available, the default Task session/workspace policy applies.",
@@ -379,7 +379,7 @@ window.__ModuleLoader__.load({
       decisionClose: "关闭模型配置",
       decisionDependencyRequired: "需要安装并启用 dsh-jev-plugin 决策插件后才能使用。启用后请刷新启动配置。",
       startupError_STARTUP_DECISION_REQUIRED: "请先安装并启用 dsh-jev-plugin 决策插件，再开启决策功能。",
-      schedulerDecisionTitle: "调度端 · 选择执行者",
+      schedulerDecisionTitle: "中央服务 · 选择执行者",
       schedulerDecisionHint:
         "调度端使用现有 task_plan 决策工具提出执行者建议；应用建议时校验权威执行端目录与权限。",
       planningDecisionEnabled: "启用调度端执行者决策",
@@ -388,11 +388,11 @@ window.__ModuleLoader__.load({
       schedulerDecisionModelEntry: "选择调度端决策预设",
       schedulerDecisionSetup:
         "在本页分别选择调度端与执行端的决策预设；预设内容在独立“决策”设置中管理。",
-      executorDecisionTitle: "执行端 · 会话选择",
+      executorDecisionTitle: "本机执行 · 会话选择",
       executorDecisionHint:
         "工作目录按项目或临时任务规则确定；决策只选择合法的 Task 会话，新建或复用。",
       executorDecisionInactive:
-        "这些执行配置予以保留，但在“调度端”角色下不生效。",
+        "本机未启用任务执行，会话选择配置保留。",
       decisionModelEntry: "选择执行端决策预设",
       decisionModelStatus:
         "使用本机选择的决策预设；没有有效决策时，按项目/临时目录规则确定工作区，并创建或复用合法会话。",
@@ -1055,7 +1055,7 @@ window.__ModuleLoader__.load({
         const before=this.snapshot(); if (!before.count || before.invalid || before.busy) return false;
         this.saving=true;this.message="";this.emit();let saved=0;
         const items=[...this.items.values()].filter(row=>row.meta?.dirty).sort((a,b)=>Number(a.meta.restart)-Number(b.meta.restart) || Number(b.id==="startup-task")-Number(a.id==="startup-task"));
-        try { for (const row of items) { if (await row.save() !== true) {this.message=saved ? "部分设置已保存；未完成的草稿已保留。请查看错误提示。" : "未能保存，草稿已保留。请查看错误提示。";return false;} saved++; } this.message=this.snapshot().retained?"所选角色设置已保存；隐藏角色草稿保留，尚未提交。":"设置已保存。";return true; }
+        try { for (const row of items) { if (await row.save() !== true) {this.message=saved ? "部分设置已保存；未完成的草稿已保留。请查看错误提示。" : "未能保存，草稿已保留。请查看错误提示。";return false;} saved++; } this.message=this.snapshot().retained?"所选设置已保存，未提交的草稿保留。":"设置已保存。";return true; }
         catch {this.message=saved ? "部分设置已保存；其余草稿已保留。" : "未能保存，草稿已保留。";return false;}
         finally {this.saving=false;this.emit();}
       }
@@ -1586,10 +1586,14 @@ window.__ModuleLoader__.load({
         trusted ? h("div",{"data-outbound-local-address":true},input("targetLocalAddress","本机外连来源地址")) : null,
         mismatch ? h("div",{role:"note","data-outbound-mismatch":true},h("p",{style:hintStyle},`现有协议地址与目标绑定不一致。以上字段来自协议地址；原目标为 ${originalTarget?.address}:${originalTarget?.port}。原配置保持不变，编辑这组连接或点击同步后，保存会按以上地址统一绑定。`),h(Button,{variant:"outline",disabled,onClick:onSynchronize},"按当前地址同步")) : null);
     }
+    function deployment(values) {
+      return {centralMode:values.centralMode ?? (values.role === "executor" ? "remote" : "host"),executionEnabled:values.executionEnabled ?? ["executor","both"].includes(values.role)};
+    }
     function startupDraft(target, values) {
       return target === "task"
         ? {
             role: values.role,
+            ...deployment(values),
             executionAgentPreset:values.executionAgentPreset ?? "ptc",
             followExecutionPreset:values.executionTools === null,
             databasePath: values.databasePath ?? "",
@@ -1610,16 +1614,16 @@ window.__ModuleLoader__.load({
     function startupChanges(target, values, draft, migrate = false, role = values.role, authMode) {
       let retainedDirty = false;
       const invalid = [],
-        next = target==="task" ? { role: draft.role } : {};
-      if (target==="task" && !["planner", "executor", "both"].includes(draft.role))
-        invalid.push("role");
+        next = target==="task" ? {centralMode:draft.centralMode,executionEnabled:draft.executionEnabled} : {};
+      if (target === "task" && values.centralMode === undefined && values.executionEnabled === undefined && JSON.stringify(deployment(values)) === JSON.stringify(deployment(draft))) {delete next.centralMode;delete next.executionEnabled;}
+      if (target === "task" && (!["host","remote"].includes(draft.centralMode) || typeof draft.executionEnabled !== "boolean")) invalid.push("centralMode");
       if (target === "task") {
-        if(role!=="planner" && draft.followExecutionPreset) {
+        if(draft.executionEnabled && draft.followExecutionPreset) {
           next.executionAgentPreset=String(draft.executionAgentPreset ?? "").trim();
           next.executionTools=null;
           if(!next.executionAgentPreset) invalid.push("executionAgentPreset");
         }
-        if(role!=="executor" && values.databasePath!==undefined){next.databasePath=String(draft.databasePath).trim();if(!next.databasePath.startsWith("/") || next.databasePath.includes("\0"))invalid.push("databasePath");}
+        if(draft.centralMode === "host" && values.databasePath!==undefined){next.databasePath=String(draft.databasePath).trim();if(!next.databasePath.startsWith("/") || next.databasePath.includes("\0"))invalid.push("databasePath");}
         if (values.nodeCapacities) {
           next.nodeCapacities = (draft.nodeCapacities ?? []).map(node => ({nodeId: node.nodeId, maxConcurrent: Number(node.maxConcurrent)}));
           if (next.nodeCapacities.length !== values.nodeCapacities.length ||
@@ -1635,7 +1639,7 @@ window.__ModuleLoader__.load({
           if (typeof next[key] !== "boolean") invalid.push(key);
         }
       } else {
-        if(role!=="planner") {
+        {
         next.paused = draft.paused;
         if (typeof next.paused !== "boolean") invalid.push("paused");
         const trusted = authMode ? authMode === "trusted-network" : !!values.trustedNetworkTarget || values.endpoint === null;
@@ -1743,12 +1747,12 @@ window.__ModuleLoader__.load({
       const [draft, setDraft] = React.useState(() =>
         ({...startupDraft(target, row.values),...initialDraft}),
       );
-      const presetCatalog = useReadSnapshot(readExecutionPresets, target === "task" && draft.role !== "planner" && !!readExecutionPresets);
+      const presetCatalog = useReadSnapshot(readExecutionPresets, target === "task" && draft.executionEnabled && !!readExecutionPresets);
       const [status, setStatus] = React.useState({ saving: false });
       const [connection, setConnection] = React.useState({ checking: false });
       const edit = (key, value) => {
         setConnection({ checking: false });
-        if (key === "role") onRoleChange?.(value);
+        if (["centralMode","executionEnabled"].includes(key)) onRoleChange?.({...deployment(draft),[key]:value});
         setDraft((old) => ({
           ...old,
           [key]: value,
@@ -1768,10 +1772,11 @@ window.__ModuleLoader__.load({
         }));
         setStatus({ saving: false });
       };
-      const currentRole=target==="task"?draft.role:(connectionRole ?? row.values.role);
+      const policy=target === "task" ? deployment(draft) : typeof connectionRole === "object" && connectionRole ? connectionRole : deployment(row.values);
+      const currentRole=policy.centralMode === "remote" ? "executor" : policy.executionEnabled ? "both" : "planner";
       const allParsed=startupChanges(target,expected,draft,false,"both",connectionAuthMode);
       const parsed = startupChanges(target, expected, draft,false,currentRole,connectionAuthMode);
-      const hiddenDraft=parsed.retainedDirty || (target==="remote" && currentRole==="planner" && (Object.keys(allParsed.changes).length>0 || allParsed.retainedDirty)) || (target==="task" && currentRole==="executor" && Object.hasOwn(allParsed.changes,"databasePath"));
+      const hiddenDraft=parsed.retainedDirty;
       React.useEffect(()=>{if(!allParsed.dirty && !allParsed.retainedDirty){setExpected(row.values);setDraft(startupDraft(target,row.values));}},[row.values]);
       const workspaceInvalid=false;
       const disabled =
@@ -1779,8 +1784,8 @@ window.__ModuleLoader__.load({
         status.saving ||
         connection.checking ||
         (target === "remote" && (!row.loaded || row.loaderDisabled));
-      const executor = currentRole === "executor" || currentRole === "both";
-      const planner = currentRole === "planner" || currentRole === "both";
+      const executor = target === "remote" || policy.executionEnabled;
+      const planner = policy.centralMode === "host";
       const save = async (migrate = false, selectedDraft = draft) => {
         const update = startupChanges(target, expected, selectedDraft, migrate,currentRole,connectionAuthMode);
         if (
@@ -1800,7 +1805,7 @@ window.__ModuleLoader__.load({
           const current = await onSaved();
           const savedValues=current?.[target]?.values ?? {...expected,...update.changes};
           setExpected(savedValues);
-          if(target==="remote" && currentRole!=="planner" && selectedDraft.connectionTouched && !update.retainedDirty) setDraft(old=>({...old,...outboundFields(savedValues.endpoint,savedValues.audience,savedValues.trustedNetworkTarget),endpoint:savedValues.endpoint,connectionTouched:false}));
+          if(target==="remote" && selectedDraft.connectionTouched && !update.retainedDirty) setDraft(old=>({...old,...outboundFields(savedValues.endpoint,savedValues.audience,savedValues.trustedNetworkTarget),endpoint:savedValues.endpoint,connectionTouched:false}));
           setStatus({ saving: false, saved: true });
           return true;
         } catch (error) {
@@ -1816,7 +1821,7 @@ window.__ModuleLoader__.load({
         }
       };
 
-      const discardStartup = () => {setExpected(row.values);setDraft(startupDraft(target,row.values));setConnection({checking:false});onRoleChange?.(row.values.role);setStatus({saving:false});};
+      const discardStartup = () => {setExpected(row.values);setDraft(startupDraft(target,row.values));setConnection({checking:false});onRoleChange?.(deployment(row.values));setStatus({saving:false});};
       useSaveParticipant(saveCoordinator, `startup-${target}`, {meta:{dirty:parsed.dirty,retainedDirty:hiddenDraft,invalid:workspaceInvalid || parsed.invalid.length>0 || !writable,busy:status.saving || connection.checking,restart:startupNeedsRestart(target,parsed.changes)},save:()=>save(),discard:discardStartup});
       const field = (key, label = key) =>
         h(
@@ -1872,7 +1877,7 @@ window.__ModuleLoader__.load({
       return h("section", {"data-startup-target":"remote",hidden:!visible},
         !row.loaded || row.loaderDisabled ? h("p",{role:"note",style:hintStyle},t("startupRemoteDisabled")) : null,
         h("div", {"data-connection-role":"executor",hidden:!executor,style:{order:2}},
-          h("h3",{style:headingStyle},"执行端 · 连接调度端"),
+          h("h3",{style:headingStyle},"连接中央服务"),
 h(
               "div",
               {"data-collaboration-controls":true,style:{order:0}},
@@ -2071,7 +2076,7 @@ h(
               onClick: () => {
                 setDraft(startupDraft(target, row.values));
                 setConnection({ checking: false });
-                onRoleChange?.(row.values.role);
+                onRoleChange?.(deployment(row.values));
                 setStatus({ saving: false });
               },
             },
@@ -2082,11 +2087,13 @@ h(
       }
       return h("div", {"data-startup-target":"task"},
         h(SettingsArea, {id:"task-local",title:"本机与工作区",description:"以下设置属于当前连接的 DSH 服务设备。任务中心显示的中央任务进度不改变设置的所属设备。"},
-          field("role"),
+          h("label",{className:"task-connection-field"},h("span",null,"中央账本"),h("select",{id:"task-startup-task-centralMode",value:draft.centralMode,disabled,onChange:event=>edit("centralMode",event.target.value)},h("option",{value:"host"},"在本机托管中央服务"),h("option",{value:"remote"},"连接远端中央服务"))),
+          h("label",{className:"task-switch-row"},"允许本机接受任务执行",h(Switch,{label:"允许本机接受任务执行",checked:draft.executionEnabled,disabled,onChange:value=>edit("executionEnabled",value)})),
+          h("p",{style:hintStyle},"普通会话可连接中央项目并调度任务。本机执行权限、工具和工作区授权单独管理。远端不可达时保留待确认状态，不创建本机中央账本。"),
           row.values.nodeId ? h("div",{"data-local-node-identity":true},h("h3",null,executor?"执行端 ID（本机实例）":"本机节点 ID"),h("code",{style:{overflowWrap:"anywhere"}},row.values.nodeId),h("p",{style:hintStyle},"此稳定身份不随连接地址或调度端改变；节点昵称单独设置。")) : null,
-          h("div",{hidden:!planner,"data-task-database-settings":true},h("h3",null,"调度端任务数据库"),h("label",{className:"task-connection-field"},h("span",null,"SQLite 数据库文件路径"),h("input",{id:"task-startup-task-databasePath",style:controlStyle,value:draft.databasePath,disabled,onChange:event=>edit("databasePath",event.target.value)})),h("p",{style:hintStyle},"填写此设备上的绝对文件路径。保存后重建任务服务并加载目标库，不搬移旧数据，也不覆盖目标库；不存在的文件将创建新账本及新的调度端身份。原数据库保留。")),
+          h("div",{hidden:!planner,"data-task-database-settings":true},h("h3",null,"中央任务数据库"),h("label",{className:"task-connection-field"},h("span",null,"SQLite 数据库文件路径"),h("input",{id:"task-startup-task-databasePath",style:controlStyle,value:draft.databasePath,disabled,onChange:event=>edit("databasePath",event.target.value)})),h("p",{style:hintStyle},"填写此设备上的绝对文件路径。保存后重建任务服务并加载目标库，不搬移旧数据，也不覆盖目标库；不存在的文件将创建新账本及新的调度端身份。原数据库保留。")),
           executor ? h("section",{"data-execution-agent-preset":true,className:"task-directory-card"},
-            h("h3",null,"执行端 · DSH Agent preset"),
+            h("h3",null,"本机执行 · DSH Agent preset"),
             h("p",{style:hintStyle},"为新的任务执行会话选择本机已注册的插件组合。工具、提示词和权限由该 preset 提供；任务权限仍可收窄。执行模型继续采用任务路由，已有会话保留其记录的 preset。"),
             h("label",{htmlFor:"task-execution-agent-preset"},"新执行会话的 Agent preset"),
             h("select",{id:"task-execution-agent-preset",style:controlStyle,value:draft.executionAgentPreset,disabled:disabled || !presetCatalog.state.value,onChange:event=>setDraft(value=>({...value,executionAgentPreset:event.target.value,followExecutionPreset:true}))},
@@ -2102,7 +2109,7 @@ h(
             h("div",null,renderProjectDirectory?.()),
             h("div",null,renderExecutionDirectory?.())),
           ),
-        h(SettingsArea, {id:"task-connections",title:"协作连接",description:"调度端监听和执行端连接分别启用；未启用的一侧可留空。远程领取与本机自动执行独立生效。"},
+        h(SettingsArea, {id:"task-connections",title:"协作连接",description:"中央服务监听与本机连接分别配置。远程领取与本机自动执行独立生效。"},
           renderConnection?.(),
           h("div",null,
         planner ? h("div", {"data-task-node-capacities": true},
@@ -2116,11 +2123,11 @@ h(
           !draft.nodeCapacities?.length ? h("p", {style:hintStyle}, t("nodeCapacityEmpty")) : null) : null,
 
           )),
-        h(SettingsArea,{id:"task-decisions",title:"决策模型",description:"两种用途分别绑定 JEV 预设；角色与决策开关共享本机启动配置草稿；目录单独保存。"},
+        h(SettingsArea,{id:"task-decisions",title:"决策模型",description:"两种用途分别绑定 JEV 预设；决策开关共享本机启动配置草稿，目录单独保存。"},
           h("div",{className:"task-decision-grid"},
             h("div",{"data-task-scheduler-decision":true},
               h("h3",null,t("schedulerDecisionTitle")),h("p",{style:hintStyle},t("schedulerDecisionHint")),
-              !planner ? h("p",{style:hintStyle},"当前角色为执行端，此用途不生效。") : null,
+              !planner ? h("p",{style:hintStyle},"本机未托管中央服务，执行者选择由中央配置。") : null,
               decisionToggle("planningDecisionEnabled",planner),
               renderDecisionModels?.("planner")),
             h("div",{"data-task-executor-decision":true},
@@ -2179,7 +2186,7 @@ h(
               onClick: () => {
                 setDraft(startupDraft(target, row.values));
                 setConnection({ checking: false });
-                onRoleChange?.(row.values.role);
+                onRoleChange?.(deployment(row.values));
                 setStatus({ saving: false });
               },
             },
@@ -2276,7 +2283,8 @@ h(
       const paused=savedPaused ?? current?.paused;
       React.useEffect(()=>{if(current)onAuthMode?.(current.values.authMode);},[current?.values.authMode]);
       const edit=(key,next)=>{setExpected(old=>old ?? current.revision);setDraft(old=>({...old ?? current.values,[key]:next}));setStatus({saving:false});};
-      const planner=role==="planner" || role==="both",executor=role==="executor" || role==="both";
+      const policy=typeof role === "object" && role ? role : deployment({role});
+      const planner=policy.centralMode === "host",executor=true;
       const schedulerKeys=["listenerEnabled","listenAddress","listenPort","routePath","serviceAudience","peers"];
       const outboundEditor=value?.outbound?._fields;
       const outboundParsed=outboundEditor?buildOutbound(outboundEditor,value.authMode==="trusted-network"):null;
@@ -2318,7 +2326,8 @@ h(
             h("p",{style:hintStyle},"允许此节点连接并执行分配给它的任务。新会话使用 PTC 和默认工具。"),
             check ? h("p",{role:"status"},check) : evidence?.state==="unpaired" ? h("p",{style:hintStyle},"尚未连接") : null,
             h("div",{style:{display:"flex",justifyContent:"space-between",gap:12,flexWrap:"wrap"}},
-              h(Button,{variant:"outline",disabled:status.saving || !current.writable,onClick:()=>{setChecks(old=>{const copy={...old};delete copy[row.address];return copy;});edit("peers",value.peers.filter((_,i)=>i!==index));}},"移除执行端节点"),
+              h("label",{className:"task-switch-row"},"允许此设备领取执行任务",h(Switch,{label:"允许此设备领取执行任务",checked:row.executionEnabled ?? ["executor","both"].includes(row.role),disabled:status.saving || !current.writable,onChange:enabled=>edit("peers",value.peers.map((peer,i)=>i===index?{...peer,executionEnabled:enabled}:peer))})),
+              h(Button,{variant:"outline",disabled:status.saving || !current.writable,onClick:()=>{setChecks(old=>{const copy={...old};delete copy[row.address];return copy;});edit("peers",value.peers.filter((_,i)=>i!==index));}},"移除设备连接"),
               h(Button,{variant:"outline",disabled:status.saving,onClick:async()=>{
                 if(!saved || row.nickname!==saved.nickname || row.address!==saved.address){setChecks(old=>({...old,[row.address]:"此节点草稿尚未保存，未检测。"}));return;}
                 try{const snapshot=await read(),item=snapshot.peersStatus?.find(peer=>peer.address===row.address);replace(snapshot);
@@ -2327,10 +2336,10 @@ h(
                 }catch{setChecks(old=>({...old,[row.address]:"检测状态读取失败，未确认连接。"}));}
               }},"检测")));
         }),
-        h(Button,{variant:"outline",disabled:!current.writable || status.saving || value.authMode!=="trusted-network",onClick:()=>edit("peers",[...value.peers,{address:"",nodeId:"",nickname:""}])},"添加执行端节点"),
+        h(Button,{variant:"outline",disabled:!current.writable || status.saving || value.authMode!=="trusted-network",onClick:()=>edit("peers",[...value.peers,{address:"",nodeId:"",nickname:"",executionEnabled:false}])},"添加设备连接"),
         ),
         !current.exists ? h("div",{"data-connection-role":"executor",hidden:!executor,style:{order:2}},
-          h("h3",null,"执行端 · 连接调度端"),h("p",{style:hintStyle},"执行端主动连接调度端任务协议地址，不需要配置一个供调度端反向调用的执行端监听。可按需要填写外连地址。"),
+          h("h3",null,"连接中央服务"),h("p",{style:hintStyle},"本机通过中央服务的任务协议地址建立连接。会话协作与任务执行分别授权。"),
           h(OutboundConnectionFields,{fields:outgoingFields,edit:editOutbound,disabled:status.saving || !current.writable,trusted:value.authMode==="trusted-network",idPrefix:"task-connection-outbound",mismatch:!outbound._fields && outboundMismatch(outbound.endpoint,outbound.target),originalTarget:outbound.target,onSynchronize:()=>edit("outbound",{...outbound,_fields:outgoingFields})}),
           executor && outboundParsed?.invalid.length ? h("p",{role:"note",style:hintStyle},"当前执行端未启用，不完整草稿已保留；启用前需补全调度端地址、端口、路径、受众标识和本机来源地址。") : null,
           ) : null,
@@ -2366,9 +2375,9 @@ h(
         state.value?.task?.entryId +
         JSON.stringify(state.value?.task?.values);
       React.useEffect(() => {
-        setTaskRole(state.value?.task?.values.role ?? null);
+        setTaskRole(state.value?.task ? deployment(state.value.task.values) : null);
       }, [savedRoleKey]);
-      const role = taskRole ?? state.value?.task?.values.role;
+      const role = taskRole ?? deployment(state.value?.task?.values ?? {});
       const afterSave = async () => {
         // Clear the old connection summary before reading the new plugin state.
         onSaved();
@@ -2960,7 +2969,7 @@ h(
       if(state.value?.enabled===false)return null;
       const change=async item=>{setSaving(true);setNotice("");try {const value=await setGrant({registryId:item.registryId,enabled:!item.enabled,expectedRevision:state.value.revision});replace(value);setNotice(item.enabled?"本机工作区已停用；已运行任务保留原上下文。":"本机工作区已启用；调度端收到公告且通过连接授权后可选择。");}catch(reason){const failure=reason?.rpcError??reason;setNotice(["CONFLICT","WORKSPACE_GRANT_CONFLICT"].includes(failure?.details?.reason)?"授权已被其他操作更改，请刷新后重试。":failure?.details?.reason==="CONFIGURATION_BUSY"?"本机仍有活动执行或待回传结果，暂不能更改授权。":"目录授权保存失败，请检查目录是否存在并刷新；没有自动授权其他目录。");}finally {setSaving(false);}};
       return h("section",{"data-executor-workspace-grants":true,className:"task-workspace-grants"},
-        h("h3",{style:headingStyle},"执行端 · 本机工作区"),
+        h("h3",{style:headingStyle},"本机执行 · 工作区"),
         h("p",{style:hintStyle},"受信网络调度可选择此设备已登记且有效的 DSH 工作区；可在此停用特定目录。静态连接仍遵循其目录授权。这里只管理本机目录，不接受调度端传入任意路径。"),
         state.loading&&!state.value?h("p",{role:"status"},"正在读取本机工作区…"):null,
         state.failed?h("p",{role:"alert"},"本机工作区读取失败，请刷新重试。"):null,
@@ -3190,7 +3199,7 @@ h(
           h("details",null,h("summary",null,"部署与技术详情"),h(ReadOnly,{key:refreshKey,t,read:props.read,queryIdentity:props.queryIdentity}))),
         ),
         h("div", {"data-task-save-bar":true},
-          h("p",{role:"status",style:{...hintStyle,margin:"0 0 8px"}},saveState.message || (saveState.count ? `有 ${saveState.count} 处未保存修改。${saveState.restart ? "包含需重启插件的变更。" : "保存后即时生效，已有运行保持原配置。"}` : saveState.retained ? "有未选角色的草稿保留，当前不提交；切回对应角色可继续编辑。" : "设置已保存；修改后在此统一保存。")),
+          h("p",{role:"status",style:{...hintStyle,margin:"0 0 8px"}},saveState.message || (saveState.count ? `有 ${saveState.count} 处未保存修改。${saveState.restart ? "包含需重启插件的变更。" : "保存后即时生效，已有运行保持原配置。"}` : saveState.retained ? "有未选配置的草稿保留，当前不提交；切回对应配置可继续编辑。" : "设置已保存；修改后在此统一保存。")),
           h("div",{style:{display:"flex",flexWrap:"wrap",gap:8}},
             h(Button,{variant:"outline",disabled:!saveState.count || saveState.invalid || saveState.busy,onClick:()=>saveCoordinator.saveAll()},saveState.busy ? "保存中…" : saveState.restart ? "保存并重启插件" : "保存设置"),
             h(Button,{variant:"outline",disabled:(!saveState.count && !saveState.retained) || saveState.busy,onClick:()=>saveCoordinator.discardAll()},"丢弃全部草稿")))

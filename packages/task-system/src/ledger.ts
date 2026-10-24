@@ -352,14 +352,14 @@ export class TaskLedger {
     const run=this.getRun(binding.runId);
     return run.coordinatorSession?.sessionId===sessionId && run.state==="running" ? binding : undefined;
   }
-  bindDispatcher(commandId:string,input:Omit<DispatcherSession,"runId">) {
+  bindDispatcher(commandId:string,input:Omit<DispatcherSession,"runId"> & {backlogId?:string}) {
     this.planner();
     return this.command(commandId,"bindDispatcher",input,()=>{
       const task=this.getTask(input.taskId),origin=task.dispatchOrigin;
       if(origin?.kind!=="session" || origin.nodeId!==input.nodeId || origin.sessionId!==input.sessionId)fail("FORBIDDEN","Only the session that created this draft can coordinate it");
       if(this.dispatcherForSession(input.nodeId,input.sessionId))fail("CONFLICT","This session already coordinates an active task");
       if(this.list<Run>("run",task.taskId).length || !["ready","waiting"].includes(task.state))fail("CONFLICT","Dispatcher registration requires a new unexecuted draft");
-      new Workbench(this).linkDispatcherTask(`pr:${input.projectId}`,task.taskId);
+      new Workbench(this).linkDispatcherTask(input.backlogId ?? `pr:${input.projectId}`,task.taskId);
       const run=this.newRun({taskId:input.taskId}, {coordinatorSession:{nodeId:input.nodeId,sessionId:input.sessionId}});
       run.coordinatorSession={nodeId:input.nodeId,sessionId:input.sessionId};run.state="running";
       run.dispatchOrigin={kind:"system",nodeId:input.nodeId};
@@ -2441,13 +2441,13 @@ export class TaskLedger {
       this.newRun(input),
     );
   }
-  registerPairedExecutor(commandId:string,nodeId:string,providerStatus?:unknown) {
+  registerPairedExecutor(commandId:string,nodeId:string,providerStatus?:unknown,executionEnabled=true) {
     id(nodeId);
     const prior=this.get<NodeCapability>("node",nodeId),managed=this.get<{managed:true}>("pairedExecutor",nodeId);
     if(prior && !managed)return prior;
     const advertised=providerStatus===undefined && prior ? {models:prior.models,capabilities:prior.capabilities} : pairedExecutorModels(nodeId,providerStatus);
-    const next:NodeCapability={nodeId,roles:["executor"],...advertised,workspaceIds:prior?.workspaceIds ?? [],enabled:true,maxConcurrent:prior?.maxConcurrent ?? 1,lastSeenAt:this.now()};
-    return this.command(commandId,"registerPairedExecutor",{nodeId,providerStatus:providerStatus ?? null},()=>{this.put("pairedExecutor",nodeId,{managed:true});this.put("node",nodeId,next);return next;});
+    const next:NodeCapability={nodeId,roles:[executionEnabled ? "executor" : "planner"],...advertised,workspaceIds:prior?.workspaceIds ?? [],enabled:true,maxConcurrent:prior?.maxConcurrent ?? 1,lastSeenAt:this.now()};
+    return this.command(commandId,"registerPairedExecutor",{nodeId,providerStatus:providerStatus ?? null,executionEnabled},()=>{this.put("pairedExecutor",nodeId,{managed:true});this.put("node",nodeId,next);return next;});
   }
   deactivatePairedExecutor(commandId:string,nodeId:string) {
     const node=this.get<NodeCapability>("node",nodeId);
@@ -3457,11 +3457,11 @@ export class TaskLedger {
       return message;
     });
   }
-  pendingSessionMessages(nodeId: string) {
+  pendingSessionMessages(nodeId: string, options?: {kind?: "completion" | "message"}) {
     return this.list<import("./remote/ports.js").SessionMessage>(
       "sessionMessage",
     )
-      .filter((m) => m.nodeId === nodeId && m.state === "queued" && (!m.nextAttemptAt || m.nextAttemptAt<=this.now()))
+      .filter((m) => (!options?.kind || (options.kind === "completion" ? Boolean(m.completion) : !m.completion)) && m.nodeId === nodeId && m.state === "queued" && (!m.nextAttemptAt || m.nextAttemptAt<=this.now()))
       .slice(0, 4);
   }
   completeSessionMessage(

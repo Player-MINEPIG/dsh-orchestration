@@ -1,0 +1,217 @@
+{
+  "base": "7ca2d01c23aa43c01f552ceddf21f3fcc8ca7309",
+  "environment": {
+    "os": "macOS",
+    "node": "v26.5.1",
+    "dsh": "0.2.1-rc.2",
+    "runtime": "isolated pinned official runtime",
+    "externalModel": "scripted"
+  },
+  "check": {
+    "command": "npm run check",
+    "exitCode": 0,
+    "suites": [
+      {
+        "suite": "core",
+        "tests": 498,
+        "pass": 497,
+        "fail": 0,
+        "skipped": 1
+      },
+      {
+        "suite": "native",
+        "tests": 196,
+        "pass": 196,
+        "fail": 0,
+        "skipped": 0
+      },
+      {
+        "suite": "ui",
+        "tests": 186,
+        "pass": 186,
+        "fail": 0,
+        "skipped": 0
+      },
+      {
+        "suite": "official",
+        "tests": 44,
+        "pass": 44,
+        "fail": 0,
+        "skipped": 0
+      },
+      {
+        "suite": "jev",
+        "tests": 67,
+        "pass": 67,
+        "fail": 0,
+        "skipped": 0
+      },
+      {
+        "suite": "dashboard",
+        "tests": 52,
+        "pass": 52,
+        "fail": 0,
+        "skipped": 0
+      },
+      {
+        "suite": "task-pack",
+        "tests": 106,
+        "pass": 106,
+        "fail": 0,
+        "skipped": 0
+      },
+      {
+        "suite": "management",
+        "tests": 26,
+        "pass": 22,
+        "fail": 0,
+        "skipped": 4
+      }
+    ]
+  },
+  "distribution": {
+    "command": "npm run test:distribution",
+    "exitCode": 0,
+    "ok": true,
+    "stages": [
+      {
+        "name": "official-pinned-runtime",
+        "ok": true
+      },
+      {
+        "name": "@dsh-task/task-system",
+        "ok": true
+      },
+      {
+        "name": "actual-plugin-add",
+        "ok": true
+      },
+      {
+        "name": "persistent-base-backed-composition",
+        "ok": true
+      },
+      {
+        "name": "native-config-schema",
+        "ok": true
+      },
+      {
+        "name": "boot-both-persistent-and-dispose",
+        "ok": true
+      },
+      {
+        "name": "boot-planner-persistent-and-dispose",
+        "ok": true
+      },
+      {
+        "name": "boot-executor-persistent-and-dispose",
+        "ok": true
+      },
+      {
+        "name": "actual-plugin-remove-retains-data",
+        "ok": true
+      },
+      {
+        "name": "boot-after-removal",
+        "ok": true
+      }
+    ],
+    "packages": [
+      {
+        "name": "@dsh-task/task-system",
+        "version": "0.2.51",
+        "filename": "dsh-task-task-system-0.2.51.tgz",
+        "sha256": "01500ef1d59765e01287b5aa56fd501bc74e7485c6d2515ae7dcd106a4ffbe38"
+      }
+    ]
+  },
+  "capabilities": {
+    "ok": true,
+    "stages": [
+      {
+        "name": "official-pinned-runtime",
+        "ok": true
+      },
+      {
+        "name": "jev-actual-plugin-add",
+        "ok": true
+      },
+      {
+        "name": "jev-real-cli-boot",
+        "ok": true
+      },
+      {
+        "name": "jev-actual-plugin-remove",
+        "ok": true
+      },
+      {
+        "name": "jev-boot-after-remove",
+        "ok": true
+      },
+      {
+        "name": "remote-actual-plugin-add",
+        "ok": true
+      },
+      {
+        "name": "remote-real-cli-boot",
+        "ok": true
+      },
+      {
+        "name": "remote-actual-plugin-remove-retains-recovery",
+        "ok": true
+      },
+      {
+        "name": "remote-boot-after-remove",
+        "ok": true
+      }
+    ],
+    "packages": [
+      {
+        "name": "dsh-jev-plugin",
+        "version": "0.3.4",
+        "filename": "dsh-jev-plugin-0.3.4.tgz",
+        "sha256": "a9e200336cc7810acb1f25ac120cc58900be93c9a788df98a7f33104c1182595"
+      },
+      {
+        "name": "@dsh-task/task-system",
+        "version": "0.2.51",
+        "filename": "dsh-task-task-system-0.2.51.tgz",
+        "sha256": "01500ef1d59765e01287b5aa56fd501bc74e7485c6d2515ae7dcd106a4ffbe38"
+      }
+    ],
+    "includeFeishu": false
+  },
+  "browser": {
+    "command": "npm run test:browser",
+    "exitCode": 0,
+    "groups": [
+      {
+        "name": "settings",
+        "status": "passed"
+      },
+      {
+        "name": "executor alerts",
+        "status": "passed"
+      },
+      {
+        "name": "task center polling selection",
+        "status": "passed"
+      }
+    ]
+  },
+  "skips": [
+    "One source-IP test requires a macOS 127.0.0.2 loopback alias; verifier coverage remains active.",
+    "Four management tests require externally supplied private fixtures."
+  ],
+  "review": {
+    "model": "GPT-6.1-Sol",
+    "reasoning": "high",
+    "authority": "VERIFIED",
+    "configurationAndUi": "VERIFIED"
+  },
+  "limitations": [
+    "Local macOS/Node 26 evidence; Linux/Node 24 PR checks remain pending.",
+    "No real-device production acceptance or live external-model call.",
+    "No Feishu-specific distribution run.",
+    "No production install, main promotion or tag."
+  ]
+}

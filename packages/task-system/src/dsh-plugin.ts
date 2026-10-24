@@ -1,3 +1,6 @@
+import type {} from "@deepseek-ai/cordis-plugin-loader";
+import { SessionCollaboration, collaborationAuthority } from "./project-collaboration/session.js";
+import { deploymentPolicy, ledgerRole, type DeploymentPolicy } from "./deployment.js";
 import { mountDispatcherTools } from "./dispatcher-tools.js";
 import { initializeTaskSessionTitle, taskSessionTitle } from "./session-titles.js";
 import { TaskReturnDelivery } from "./task-returns.js";
@@ -102,6 +105,8 @@ export interface Config {
   projectAgentOptions?: ProjectAgentOptions | null;
   nodeId?: string;
   role?: Role;
+  centralMode?: DeploymentPolicy["centralMode"];
+  executionEnabled?: boolean;
   keepAlive?: boolean;
   maintenanceIntervalMs?: number;
   leaseTtlMs?: number;
@@ -174,7 +179,9 @@ const PlainConfig: z<Config> = z.object({
   nodeId: z.string().default(""),
   role: z
     .union([z.const("planner"), z.const("executor"), z.const("both")])
-    .default("both"),
+    .required(false),
+  centralMode: z.union([z.const("host"), z.const("remote")]).required(false),
+  executionEnabled: z.boolean().required(false),
   keepAlive: z.boolean().default(true),
   maintenanceIntervalMs: z.number().min(100).step(1).default(1000),
   leaseTtlMs: z.number().min(1000).step(1).default(60000),
@@ -297,6 +304,8 @@ function liveConfig(input: Config): ResolvedConfig {
       ]),
     ) as Config,
   ) as ResolvedConfig;
+  const policy = deploymentPolicy(config);
+  Object.assign(config, policy, { role: ledgerRole(policy) });
   for (const key of [...LIVE_SETTING_KEYS, ...LIVE_STARTUP_KEYS]) {
     const ref: unknown = input[key];
     if (isVolatile(ref))
@@ -338,7 +347,7 @@ const READ_TOOLS = [
   "task_nodes",
 ];
 const PLANNING_TOOLS = [
-  "project_list", "project_bind_session", "task_bind_dispatcher", "task_submit_result", "task_retry_return",
+  "project_start", "project_list", "project_bind_session", "task_bind_dispatcher", "task_submit_result", "task_retry_return",
   ...READ_TOOLS,
   "task_create",
   "task_dispatch",
@@ -354,7 +363,7 @@ const PLANNING_TOOLS = [
   "task_alerts",
 ];
 const OWNED_TOOLS = [...READ_TOOLS, "task_report", "task_submit_result"];
-type ResolvedConfig = Omit<Required<Config>, "safeRetry"> & {
+type ResolvedConfig = Omit<Required<Config>, "safeRetry"> & DeploymentPolicy & {
   safeRetry: Required<SafeRetryConfig>;
 };
 type OutcomeInput = Omit<Settlement, keyof LeaseRef>;
@@ -2153,6 +2162,7 @@ export class TaskSystemService extends Service {
   private lastRuntimeReady?: boolean;
   private ledgerClosed = false;
   private resultRecoveryCursor = 0;
+  readonly sessionCollaboration: SessionCollaboration;
   constructor(
     ctx: Context,
     readonly config: ResolvedConfig,
@@ -2161,6 +2171,7 @@ export class TaskSystemService extends Service {
   ) {
     super(ctx, "taskSystem");
     this.taskReturns = new TaskReturnDelivery(ctx);
+    this.sessionCollaboration = new SessionCollaboration(ledger, config.nodeId, (nodeId, commandId, input) => collaborationAuthority(config.centralMode, ledger, this.ctx.get("remoteExecution"))(nodeId, commandId, input), agent => Boolean(this.native?.scopeFor(agent)));
     this.executionDirectories = new ExecutionDirectories(ledger.managementDatabase());
     ledger.executionDirectoryReady=()=>{try{return !!this.executionDirectories.validatedRoot();}catch{return false;}};
     const inventory=new ExecutionModelInventory({llm:()=>this.ctx.get("llm"),nativeReady:()=>!!this.native,officialBackends:()=>this.config.officialBackends,officialAvailable:backend=>!!this.ctx.get("subagents")?.getProvider(backend),temporaryWorkspaceReady:()=>ledger.executionDirectoryReady?.()===true});
@@ -2191,7 +2202,7 @@ export class TaskSystemService extends Service {
   }
   beginConfigurationEdit(): () => void {
     if (
-      this.configurationPaused ||
+      this.configurationPaused || this.returnJob ||
       [...this.providers].some((provider) => provider.activeCount > 0)
     )
       throw new TaskError("CONFIGURATION_BUSY", "Native execution is active");
@@ -2209,7 +2220,7 @@ export class TaskSystemService extends Service {
         "Startup configuration is changing",
       );
     if (!this.accepting) throw new Error("task system is draining");
-    if (this.config.role === "planner")
+    if (!this.config.executionEnabled)
       throw new Error("planner role cannot execute native workloads");
   }
   attach(provider: NativeExecutionProvider): void {
@@ -2445,8 +2456,8 @@ export class TaskSystemService extends Service {
   tick(): void {
     if (!this.accepting) return;
     this.recoverResults();
-    if(!this.returnJob) {
-      const messages=this.ledger.pendingSessionMessages(this.config.nodeId).filter(message=>message.completion);
+    if(!this.configurationPaused && this.config.centralMode === "host" && !this.returnJob) {
+      const messages=this.ledger.pendingSessionMessages(this.config.nodeId,{kind:"completion"});
       const job=(async()=>{
         for(const message of messages) {
           try {
@@ -2465,11 +2476,11 @@ export class TaskSystemService extends Service {
       const job=this.ledger.refreshNodeModels(this.config.nodeId).catch(error=>this.ctx.logger.warn("local model directory unavailable: %s",error)).finally(()=>{if(this.localCatalogJob===job)this.localCatalogJob=undefined;});
       this.localCatalogJob=job;
     }
-    if (this.config.role !== "executor" && this.config.healthAlerts)
+    if (this.config.centralMode === "host" && this.config.healthAlerts)
       this.ledger.reconcileNodeHealth(`native-health:${randomUUID()}`);
     if (this.ledger.recoveryNeeded())
       this.ledger.recoverExpired(`recover:${randomUUID()}`);
-    if (this.config.role !== "executor" && this.config.schedulerEnabled) {
+    if (this.config.centralMode === "host" && this.config.schedulerEnabled) {
       for (const schedule of this.ledger.scheduleDue()) {
         // One scheduled slot per tick, including after restart. Each slot has
         // a durable occurrence identity; queueing never asserts it executed.
@@ -2486,10 +2497,10 @@ export class TaskSystemService extends Service {
         }
       }
     }
-    if (this.config.role !== "executor") {
+    if (this.config.centralMode === "host") {
       try { this.workflows.tick({ scheduleEnabled: this.config.schedulerEnabled }); } catch (error) { this.ctx.logger.warn("workflow maintenance failed: %s", error); }
     }
-    if (this.config.role === "both" && this.programs.catalog().length && !this.programWorker) {
+    if (this.config.centralMode === "host" && this.config.executionEnabled && this.programs.catalog().length && !this.programWorker) {
       this.programStore = new RecoveryStore(this.config.databasePath === ":memory:" ? ":memory:" : `${this.config.databasePath}.program-executions`);
       const workspaces = () => this.ledger.registeredWorkspaces(this.config.nodeId).flatMap(workspace => {
         if (workspace.state !== "ready" || !this.ledger.getNode(this.config.nodeId).workspaceIds.includes(workspace.workspaceId)) return [];
@@ -2509,7 +2520,7 @@ export class TaskSystemService extends Service {
     }
     this.projects?.tick();
     const native = this.native;
-    if (this.config.role === "planner" || !native) return;
+    if (!this.config.executionEnabled || !native) return;
     for (const run of this.ledger.pendingRuns(this.config.nodeId)) {
       if (run.route?.execution) continue;
       if (
@@ -2562,6 +2573,13 @@ function taskWithin(
 
 export async function apply(ctx: Context, input: Config): Promise<void> {
   const config = liveConfig(input);
+  const configuredRemote = [...(ctx.get("loader")?.entries() ?? [])].find(entry => entry.options.name === "@dsh-task/task-system/remote")?.options.config;
+  if (configuredRemote?.coordinator && input.centralMode === undefined && input.role !== "planner") {
+    if (configuredRemote.exposeHttp) throw new Error("Ambiguous legacy authority: select one central host or remote connection before starting");
+    config.centralMode = "remote";
+    config.role = ledgerRole(config);
+  }
+  if (config.centralMode === "host" && configuredRemote?.coordinator && input.centralMode !== undefined) throw new Error("A hosted central authority cannot also connect to a different central authority");
   const profile = ctx.get("profileContext") as { dir?: string } | undefined;
   config.nodeId = resolveDeviceNodeId(config.nodeId, {
     profileDir: profile?.dir,
@@ -2640,7 +2658,7 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
       return workflowInputPage(configuration.input??null,args);
     },
   }));
-  if (config.role !== "executor") {
+  if (config.centralMode === "host") {
     service.projects = new ProjectRuntime(
       ctx,
       ledger,
@@ -2648,7 +2666,7 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
       config.role,
       config.projectAgentOptions,
     );
-    const collaboration = new ProjectCollaborationAuthority(ledger, { planner: () => service.projects?.planner });
+    const collaboration = new ProjectCollaborationAuthority(ledger, { planner: () => service.projects?.planner, control:(commandId,input)=>service.projects!.actOnTask({...input,commandId}) });
     service.projects.collaboration = collaboration;
     ledger.projectCollaborate = collaboration.projectCollaborate.bind(collaboration);
     ctx.inject(["workspaceRegistry"], async () => {
@@ -2662,12 +2680,11 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
     if (timer) clearInterval(timer);
     await service.close();
   });
-  if (config.role === "planner" && config.localNode)
-    throw new Error("planner cannot bootstrap a local executor");
-  if (config.role === "executor" && config.remoteNodes.length)
+
+  if (config.centralMode === "remote" && config.remoteNodes.length)
     throw new Error("executor cannot bootstrap other nodes");
   const configuredNodes: NodeBootstrap[] = [
-    ...(config.localNode
+    ...(config.localNode && config.executionEnabled
       ? [
           {
             ...config.localNode,
@@ -2722,7 +2739,7 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
       lastSeenAt: new Date().toISOString(),
     });
   }
-  if (config.role !== "planner" && config.workspaceRoots.length)
+  if (config.executionEnabled && config.workspaceRoots.length)
     service.workspaces = new WorkspaceManager(
       ledger,
       config.nodeId,
@@ -2763,7 +2780,7 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
       }
     }, config.maintenanceIntervalMs);
 
-  if (config.role !== "planner") {
+  if (config.executionEnabled) {
     ctx.inject(
       ["agents", "agentLoop", "sessions", "sessionPersistence", "llm"],
       (nativeCtx: Context) => {
@@ -2795,7 +2812,7 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
     commandId: string; requestId?: string; title?: string; description?: string;
     route?: Claim["run"]["route"]; nodeId?: string; executionModel?: ExecutionModelChoice; workspaceId?: string;
   }, exec: ToolRunContext) => Promise<Json>) | undefined;
-  if (config.role !== "executor") {
+  if (config.centralMode === "host") {
     const planningCtx = ctx;
     planningCtx.inject(["systemPrompt"], (promptCtx) => {
       promptCtx.systemPrompt.section({
@@ -2822,7 +2839,7 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
           config.decisionTtlMs,
         ),
       () => {
-        if (config.role === "executor")
+        if (config.centralMode === "remote")
           throw new Error("executor cannot apply task plans");
       },
       Date.now,
@@ -3047,7 +3064,7 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
     );
   }
 
-  if(config.role!=="executor")mountDispatcherTools(ctx,service);
+  mountDispatcherTools(ctx,service);
 
   ctx.tools.register(
     defineTool({
@@ -3058,6 +3075,7 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
       output,
       execute: async (args, exec) => {
         const bound = service.native?.scopeFor(exec.agent);
+        if (!bound && (config.centralMode === "remote" || (exec.agent && service.sessionCollaboration.binding(exec.agent)?.state === "active"))) return json(await service.sessionCollaboration.command(exec.agent, {kind:"query"}, String(exec.callId)));
         if (bound?.external) {
           if (!bound.collaboration)
             throw new Error("coordinator collaboration unavailable");
@@ -3071,7 +3089,7 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
       },
     }),
   );
-  if (config.role !== "executor")
+  if (config.centralMode === "host")
     ctx.tools.register(
       defineTool({
         name: "task_curate",
@@ -3118,6 +3136,7 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
         if(!bound) {
           const project=await service.sessionProjectNodes?.(exec.agent,String(exec.callId));
           if(project?.handled)return project.value;
+          if (exec.agent && service.sessionCollaboration.binding(exec.agent)?.state === "active") return json(await service.sessionCollaboration.invoke(exec.agent,"nodes",{},String(exec.callId)));
         }
         if(bound?.external) {
           if(!bound.collaboration?.nodes)throw new TaskError("CATALOG_UNSUPPORTED","Coordinator does not provide this executor catalog view");
@@ -3125,7 +3144,7 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
         }
         const nodeId =
           bound?.ref.nodeId ??
-          (config.role === "executor" ? config.nodeId : undefined);
+          (config.centralMode === "remote" ? config.nodeId : undefined);
         await Promise.all(ledger.decisionCatalog().nodes.filter(node=>node.enabled&&(!nodeId||node.nodeId===nodeId)).map(node=>ledger.refreshNodeModels(node.nodeId)));
         return json(
           ledger
@@ -3149,7 +3168,7 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
       },
     }),
   );
-  if (config.role !== "executor")
+  if (config.centralMode === "host")
     ctx.tools.register(
       defineTool({
         name: "task_alerts",
@@ -3173,6 +3192,7 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
       output,
       execute: async (args, exec) => {
         const bound = service.native?.scopeFor(exec.agent);
+        if (!bound && (config.centralMode === "remote" || (exec.agent && service.sessionCollaboration.binding(exec.agent)?.state === "active"))) return json(await service.sessionCollaboration.command(exec.agent, {kind:"history",taskId:args.taskId}, String(exec.callId)));
         if (bound?.external) {
           if (!bound.collaboration)
             throw new Error("coordinator collaboration unavailable");
@@ -3188,8 +3208,7 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
       },
     }),
   );
-  if (config.role !== "executor")
-    ctx.tools.register(
+  ctx.tools.register(
       defineTool({
         name: "task_create",
         description:
@@ -3223,6 +3242,10 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
           const bound = service.native?.scopeFor(exec.agent);
           if (bound?.external)
             throw new Error("external tasks must use scoped task_dispatch");
+          if (!bound && (config.centralMode === "remote" || (exec.agent && service.sessionCollaboration.binding(exec.agent)?.state === "active"))) {
+            if (args.acceptanceCriteria || args.priorityOverride || args.targetAt) throw new TaskError("INVALID", "Project draft creation accepts title, description, goal and confirmation only");
+            return json(await service.sessionCollaboration.command(exec.agent, {kind:"create",title:args.title,...(args.policy?{policy:args.policy as TaskPolicy}:{}),...(args.description!==undefined?{description:args.description}:{}),...(args.goal!==undefined?{goal:args.goal}:{}),...(args.requiresConfirmation!==undefined?{requiresConfirmation:args.requiresConfirmation}:{})}, args.commandId));
+          }
           return json(
             ledger.createTask(args.commandId, {
               title: args.title,
@@ -3263,7 +3286,7 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
         }),
       }),
     );
-  if (config.role !== "executor")
+  if (config.centralMode === "host")
     ctx.tools.register(
       defineTool({
         name: "task_repair_dispatch",
@@ -3393,12 +3416,14 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
               "INVALID",
               "policy/display are available only for owned child dispatch",
             );
-          const project = await service.sessionProjectDispatch?.(
-            exec.agent,
-            args,
-            String(exec.callId),
-          );
+          const sessionBinding = exec.agent ? service.sessionCollaboration.binding(exec.agent) : undefined;
+          const managedLocal = config.centralMode === "host" && sessionBinding?.projectId && ledger.managementDatabase().prepare("SELECT 1 FROM pr_projects WHERE id=?").get(sessionBinding.projectId);
+          const project = !managedLocal ? await service.sessionProjectDispatch?.(exec.agent, args, String(exec.callId)) : undefined;
           if (project?.handled) return project.value;
+          if (!managedLocal && exec.agent && service.sessionCollaboration.binding(exec.agent)?.state === "active") {
+            if (!args.title || args.taskId || args.requestId || args.workspaceId || args.configuration !== undefined) throw new TaskError("INVALID", "Project dispatch requires title/description and uses its central binding");
+            return json(await service.sessionCollaboration.invoke(exec.agent,"dispatch",{title:args.title,description:args.description ?? args.title,...(args.route?{route:args.route}:{}),...(args.nodeId?{nodeId:args.nodeId}:{}),...(args.executionModel?{executionModel:args.executionModel}:{})},String(exec.callId),args.commandId));
+          }
           if (!dispatchPlanned)
             throw new TaskError(
               "FORBIDDEN",
@@ -3431,7 +3456,7 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
                   node.roles.some(
                     (role) => role === "executor" || role === "both",
                   ) &&
-                  !(config.role === "planner" && node.nodeId === config.nodeId),
+                  !(!config.executionEnabled && node.nodeId === config.nodeId),
               );
             const nodeId =
               args.route?.nodeId ??
@@ -3490,7 +3515,7 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
         }),
     }),
   );
-  if (config.role !== "planner")
+  if (config.executionEnabled)
     ctx.tools.register(
       defineTool({
         name: "codex_delegate",
@@ -3561,7 +3586,7 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
               body: args.body,
             }),
           );
-        if (config.role === "executor")
+        if (config.centralMode === "remote")
           throw new Error(
             "executor task_note requires an owned execution agent",
           );
@@ -3611,7 +3636,9 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
           exec.signal.throwIfAborted();
           if (bound?.external && !bound.collaboration)
             throw new Error("coordinator collaboration unavailable");
-          state = bound?.external
+          state = !bound && (config.centralMode === "remote" || (exec.agent && service.sessionCollaboration.binding(exec.agent)?.state === "active"))
+            ? await service.sessionCollaboration.command(exec.agent,{kind:"wait",taskId:args.taskId,quietMs:args.quietMs ?? 1000},`${exec.callId}:${Date.now()}`) as ReturnType<TaskLedger["allSettled"]>
+            : bound?.external
             ? await bound.collaboration!.wait(args.taskId, args.quietMs ?? 1000)
             : bound
               ? ledger.scopedAllSettled({
@@ -3714,6 +3741,10 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
         },
         output,
         execute: async (args, exec) => {
+          if (!service.native?.scopeFor(exec.agent) && (config.centralMode === "remote" || (exec.agent && service.sessionCollaboration.binding(exec.agent)?.state === "active"))) {
+            const result = await service.sessionCollaboration.command(exec.agent, {kind:"result",outcome:args.outcome as Settlement["outcome"],summary:args.summary,...(args.reportBody!==undefined?{report:{title:args.reportTitle ?? "Coordinator result",body:args.reportBody,...(args.reportData!==undefined?{data:json(args.reportData)}:{}),...(args.reportArtifactIds?{artifactIds:args.reportArtifactIds}:{})}}:{})}, String(exec.callId));
+            exec.concludeTurn(); return json(result);
+          }
           const dispatcher=exec.agent ? ledger.dispatcherForSession(config.nodeId,String(exec.agent.id)) : undefined;
           if(dispatcher && !service.native?.scopeFor(exec.agent)) {
             if(realpathSync(exec.agent!.session.header.cwd ?? "")!==dispatcher.cwd)throw new TaskError("FORBIDDEN","Coordinator workspace changed");
@@ -3755,7 +3786,7 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
         },
       }),
     );
-  if (config.role !== "executor")
+  if (config.centralMode === "host")
     ctx.tools.register(
       defineTool({
         name: "task_cancel",
@@ -3796,7 +3827,7 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
       output,
       execute: async (args) => {
         if (args.action === "due") return json(ledger.scheduleDue());
-        if (config.role === "executor")
+        if (config.centralMode === "remote")
           throw new Error("executor role may only inspect due schedules");
         if (!args.value) throw new Error("schedule action requires value");
         if (["create","update","enable"].includes(args.action)) {
@@ -3845,7 +3876,7 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
       },
     }),
   );
-  if (config.role !== "executor")
+  if (config.centralMode === "host")
     ctx.tools.register(
       defineTool({
         name: "task_observations",
@@ -3897,7 +3928,7 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
       execute: async (args, exec) => {
         const bound = service.native?.scopeFor(exec.agent);
         if (args.action === "provision") {
-          if (config.role === "planner" || bound)
+          if (!config.executionEnabled || bound)
             throw new Error(
               "workspace provisioning requires an unowned executor/operator caller",
             );

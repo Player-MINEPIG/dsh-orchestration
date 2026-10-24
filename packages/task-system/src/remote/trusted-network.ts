@@ -4,7 +4,7 @@ import type { RecoveryStore } from './store.js'
 import type { AuthorizedPeer, CommandEnvelope, Role, TransportIdentity } from './protocol.js'
 
 export interface NetworkEndpoint { address: string; port: number }
-export interface TrustedNetworkPeer extends AuthorizedPeer { address: string; role: Role; nickname?: string }
+export interface TrustedNetworkPeer extends AuthorizedPeer { address: string; role?: Role; executionEnabled?: boolean; nickname?: string }
 export interface TrustedNetworkPolicy {
   listen: NetworkEndpoint
   /** Explicit acknowledgement that the operator supplies a trusted network. */
@@ -49,9 +49,11 @@ export function validateTrustedNetwork(policy: TrustedNetworkPolicy): TrustedNet
     const address = exactAddress(peer.address)
     insist(allowedAddresses.includes(address),'PEER_NOT_ALLOWLISTED')
     insist((peer.nodeId === '' || identifier(peer.nodeId)) && identifier(peer.audience),'INVALID_PEER')
-    insist(['planner','executor','both'].includes(peer.role),'INVALID_PEER_ROLE')
+    insist(peer.role === undefined || ['planner','executor','both'].includes(peer.role),'INVALID_PEER_ROLE')
+    insist(peer.executionEnabled === undefined || typeof peer.executionEnabled === 'boolean','INVALID_PEER_EXECUTION')
+    const executionEnabled = peer.executionEnabled ?? (peer.role === 'executor' || peer.role === 'both')
     insist([peer.operations,peer.workspaces,peer.capabilities].every(values => Array.isArray(values) && values.length <= 128 && values.every(identifier)), 'INVALID_PEER_GRANTS')
-    return Object.freeze({ ...peer,address,operations: Object.freeze([...peer.operations]),workspaces: Object.freeze([...peer.workspaces]),capabilities: Object.freeze([...peer.capabilities]) })
+    return Object.freeze({ ...peer,executionEnabled,address,operations: Object.freeze([...peer.operations]),workspaces: Object.freeze([...peer.workspaces]),capabilities: Object.freeze([...peer.capabilities]) })
   })
   insist(new Set(peers.map(peer => peer.address)).size === peers.length,'DUPLICATE_NETWORK_PEER')
   // One source address owns one sequence stream and logical executor identity.
@@ -82,14 +84,15 @@ export class TrustedNetworkVerifier {
   verify(envelope: CommandEnvelope, now = Date.now(), transport?: TransportIdentity): AuthorizedPeer {
     insist(envelope.version === 2 && envelope.authMode === 'trusted-network' && !('signature' in envelope) && !('keyId' in envelope),'AUTH_MODE_MISMATCH',401)
     const peer = networkPeer(this.policy,transport)
-    insist(peer.role === 'executor' || peer.role === 'both','EXECUTOR_ROLE_REQUIRED',403)
     const bound=peer.nodeId || this.pairings?.networkPairings().find(row=>row.address===peer.address)?.nodeId
     insist(bound ? bound===envelope.nodeId : this.pairings && ['heartbeat','executorIdentity'].includes(envelope.operation),'WRONG_NODE',403)
     insist(identifier(envelope.nodeId),'INVALID_PEER',403)
     insist(envelope.audience === this.audience && peer.audience === this.audience,'WRONG_AUDIENCE',403)
     insist(envelope.issuedAt <= now + 5000 && envelope.expiresAt >= now && envelope.issuedAt >= now - 60000 && envelope.expiresAt > envelope.issuedAt && envelope.expiresAt - envelope.issuedAt <= 60000,'STALE_REQUEST',401)
-    if(!this.pairings) { insist(peer.operations.includes(envelope.operation),'OPERATION_DENIED',403);return peer; }
-    return {...peer,nodeId:envelope.nodeId,operations:EXECUTOR_OPERATIONS,managedAccess:true,networkSource:peer.address}
+    if(!this.pairings) { insist(peer.operations.includes(envelope.operation),'OPERATION_DENIED',403);insist(peer.executionEnabled || ['executorIdentity','projectCollaborate','projectSnapshot','sessionMessages','sessionMessageReply','receipt'].includes(envelope.operation),'EXECUTION_DISABLED',403);return peer; }
+    const operations = peer.executionEnabled !== true ? EXECUTOR_OPERATIONS.filter(operation => ['executorIdentity','projectCollaborate','projectSnapshot','sessionMessages','sessionMessageReply','receipt'].includes(operation)) : EXECUTOR_OPERATIONS
+    insist(operations.includes(envelope.operation),'OPERATION_DENIED',403)
+    return {...peer,nodeId:envelope.nodeId,operations,managedAccess:true,networkSource:peer.address}
   }
   admitIdentity(envelope:CommandEnvelope,peer:AuthorizedPeer): void {
     if(!this.pairings || !peer.networkSource)return;

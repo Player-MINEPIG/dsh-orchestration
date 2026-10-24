@@ -1,3 +1,6 @@
+import { validateCollaborationInput } from "./authority.js";
+import type { ProjectCollaborationInput } from "./types.js";
+import type { SessionCommand } from "../session-commands.js";
 import type { Agent } from "@deepseek-ai/dsh-agent";
 import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -5,9 +8,10 @@ import { isAbsolute, resolve } from "node:path";
 import { ProtocolError } from "../remote/protocol.js";
 import { TaskError, type TaskLedger } from "../ledger.js";
 
-export type CollaborationAction = "activate" | "status" | "nodes" | "dispatch" | "update" | "submit";
+export type CollaborationAction = "session" | "activate" | "status" | "nodes" | "dispatch" | "update" | "submit";
 export interface CollaborationInput {
   action: CollaborationAction;
+  command?: SessionCommand;
   sessionId: string;
   cwd: string;
   composition?: Extract<import("../contracts.js").DispatchOrigin,{kind:"session"}>["composition"];
@@ -105,7 +109,7 @@ export class SessionCollaboration {
       throw new TaskError("COLLABORATION_PENDING", `请求 ${commandId} 已保存在本机，中央尚未确认。恢复连接后以相同 requestId 和内容重试；不要创建重复任务。`);
     }
   }
-  async activate(agent: Agent, title?: string, projectId?: string) {
+  async activate(agent: Agent, title?: string, projectId?: string, goal?: string) {
     const identity = this.identity(agent), prior = this.binding(agent);
     if (prior?.state === "active") {
       if (projectId && projectId !== prior.projectId) throw new TaskError("CONFLICT", "请先 /project leave 再连接另一个项目。");
@@ -120,7 +124,7 @@ export class SessionCollaboration {
       input = op.input;
     } else {
       commandId = `collaboration-${randomUUID()}`;
-      input = { action: "activate", ...identity, projectId: projectId ?? prior?.projectId, ...(title ? { title } : {}) };
+      input = { action: "activate", ...identity, projectId: projectId ?? prior?.projectId, ...(title ? { title } : {}), ...(goal ? {goal} : {}) };
     }
     const binding: SessionBinding = { ...identity, nodeId: this.nodeId, state: "pending", activationId: commandId };
     this.save(binding);
@@ -138,6 +142,19 @@ export class SessionCollaboration {
     if (current?.activationId !== commandId || current.state === "paused") return { binding: current, result, paused: true };
     this.save({ ...binding, state: "active", projectId: result.projectId });
     return { binding: this.binding(agent), result };
+  }
+  async command(agent: Agent | undefined, command: SessionCommand, requestId: string) {
+    const identity = this.identity(agent), binding = this.binding(agent);
+    if (command.kind !== "projects" && (binding?.state !== "active" || !binding.projectId)) throw new TaskError("FORBIDDEN", "Bind the current session to a central project first");
+    if (!requestId?.trim() || requestId.length > 200) throw new TaskError("INVALID", "A stable command ID is required");
+    const selected = agent!.session.requestHeader()?.config;
+    const provider = selected?.provider ?? agent!.options.provider, model = selected?.model ?? agent!.options.model;
+    const effort = selected?.reasoningEffort ?? agent!.options.reasoningEffort;
+    const preset = agent!.ctx.get("agentPresets")?.composedPreset(agent!.ctx) ?? agent!.session.header.agentPreset;
+    const composition = provider && model ? {provider,model,...(effort?{reasoningEffort:String(effort)}:{}),tools:agent!.ctx.tools.schemas(agent).map(tool=>tool.name),...(preset?{preset}:{})} : undefined;
+    const response = await this.send(`session-${hash(`${identity.sessionId}:${command.kind}:${requestId}`)}`, {action:"session", ...identity, command, ...(binding?.projectId?{projectId:binding.projectId}:{}), ...(composition?{composition}:{})});
+    if (!response || response.confirmed !== true || !("result" in response)) throw new TaskError("COLLABORATION_PENDING", "Central session command has no confirmed receipt");
+    return response.result;
   }
   leave(agent: Agent) {
     const binding = this.binding(agent);
@@ -176,13 +193,13 @@ export class SessionCollaboration {
 /** A configured coordinator remains authoritative while paused or offline. */
 export function collaborationAuthority(
   role: string,
-  local: { projectCollaborate?: CollaborationPort },
-  remote?: { settingsSnapshot(): { coordinatorConfigured: boolean; paused: boolean }; coordinatorLedger?: { projectCollaborate?: CollaborationPort } },
+  local: { projectCollaborate?: (nodeId: string, commandId: string, input: ProjectCollaborationInput) => unknown },
+  remote?: { settingsSnapshot(): { coordinatorConfigured: boolean; paused: boolean }; coordinatorLedger?: { projectCollaborate?: (nodeId: string, commandId: string, input: ProjectCollaborationInput) => unknown } },
 ): CollaborationPort {
   const settings = remote?.settingsSnapshot();
-  const needsRemote = role === "executor" || settings?.coordinatorConfigured === true || Boolean(remote?.coordinatorLedger);
+  const needsRemote = role === "remote" || role === "executor" || settings?.coordinatorConfigured === true || Boolean(remote?.coordinatorLedger);
   const port = needsRemote ? remote?.coordinatorLedger : local;
   if ((needsRemote && settings?.paused) || !port?.projectCollaborate)
     throw new TaskError("UNAVAILABLE", "配置的中央协作接口当前不可用；本机不会代建第二个中央项目。");
-  return port.projectCollaborate.bind(port);
+  return (nodeId, commandId, input) => { validateCollaborationInput(input); return port.projectCollaborate!(nodeId, commandId, input); };
 }
