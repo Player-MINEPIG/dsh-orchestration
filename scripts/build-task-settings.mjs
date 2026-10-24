@@ -2,14 +2,12 @@ import { Script } from "node:vm";
 import { createRequire } from "node:module";
 import { copyFileSync, readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-copyFileSync(
-  fileURLToPath(
-    new URL("../packages/task-system/src/settings-client.js", import.meta.url),
-  ),
-  fileURLToPath(
-    new URL("../packages/task-system/dist/settings-client.js", import.meta.url),
-  ),
-);
+const settingsClient = readFileSync(new URL("../packages/task-system/src/settings-client.js", import.meta.url), "utf8");
+const nativeClient = readFileSync(new URL("../packages/task-system/src/project-native-client.js", import.meta.url), "utf8");
+if (!settingsClient.includes("/*__PROJECT_NATIVE_CLIENT__*/")) throw new Error("Project native client placeholder is missing");
+const settingsBundle = settingsClient.replace("/*__PROJECT_NATIVE_CLIENT__*/", () => nativeClient);
+new Script(settingsBundle, { filename: "settings-client.js" });
+writeFileSync(new URL("../packages/task-system/dist/settings-client.js", import.meta.url), settingsBundle);
 
 const require = createRequire(
   new URL("../packages/task-system/package.json", import.meta.url),

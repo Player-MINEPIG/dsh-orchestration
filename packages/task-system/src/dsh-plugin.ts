@@ -3,6 +3,7 @@ import { SessionCollaboration, collaborationAuthority } from "./project-collabor
 import { deploymentPolicy, ledgerRole, type DeploymentPolicy } from "./deployment.js";
 import { mountDispatcherTools } from "./dispatcher-tools.js";
 import { initializeTaskSessionTitle, taskSessionTitle } from "./session-titles.js";
+import { ProjectSessionService } from "./project-session-service.js";
 import { TaskReturnDelivery } from "./task-returns.js";
 import { ExecutionModelChoice } from "./execution-models.js";
 import { resolveDeviceNodeId } from "./device-identity.js";
@@ -2117,6 +2118,7 @@ export class TaskSystemService extends Service {
   }
   registerOriginContinuation(adapter:import("./task-returns.js").OriginContinuationAdapter) {return this.taskReturns.register(adapter);}
   readonly taskReturns: TaskReturnDelivery;
+  readonly sessionPortal: ProjectSessionService;
   withDispatchOrigin<T>(agent: Agent | undefined, operation: () => T): T {
     const selected = agent?.session.requestHeader()?.config;
     const provider=selected?.provider ?? agent?.options.provider;
@@ -2161,6 +2163,7 @@ export class TaskSystemService extends Service {
   private lastHeartbeatSample = 0;
   private lastRuntimeReady?: boolean;
   private ledgerClosed = false;
+  private shutdown?: Promise<void>;
   private resultRecoveryCursor = 0;
   readonly sessionCollaboration: SessionCollaboration;
   constructor(
@@ -2172,6 +2175,7 @@ export class TaskSystemService extends Service {
     super(ctx, "taskSystem");
     this.taskReturns = new TaskReturnDelivery(ctx);
     this.sessionCollaboration = new SessionCollaboration(ledger, config.nodeId, (nodeId, commandId, input) => collaborationAuthority(config.centralMode, ledger, this.ctx.get("remoteExecution"))(nodeId, commandId, input), agent => Boolean(this.native?.scopeFor(agent)));
+    this.sessionPortal = new ProjectSessionService(this, ctx);
     this.executionDirectories = new ExecutionDirectories(ledger.managementDatabase());
     ledger.executionDirectoryReady=()=>{try{return !!this.executionDirectories.validatedRoot();}catch{return false;}};
     const inventory=new ExecutionModelInventory({llm:()=>this.ctx.get("llm"),nativeReady:()=>!!this.native,officialBackends:()=>this.config.officialBackends,officialAvailable:backend=>!!this.ctx.get("subagents")?.getProvider(backend),temporaryWorkspaceReady:()=>ledger.executionDirectoryReady?.()===true});
@@ -2234,8 +2238,15 @@ export class TaskSystemService extends Service {
     await provider.dispose();
     this.providers.delete(provider);
   }
-  async close(): Promise<void> {
+  close(): Promise<void> {
+    if (this.shutdown) return this.shutdown;
     this.accepting = false;
+    const portal = this.sessionPortal.close();
+    return this.shutdown = Promise.resolve().then(() => this.closeOwned(portal));
+  }
+  private async closeOwned(portal: Promise<void>): Promise<void> {
+    if (this.ledgerClosed) return;
+    await portal;
     this.localHeartbeat(true);
     this.observationSubscription?.lifecycle.abort(
       new Error("task system is draining"),
@@ -2645,6 +2656,10 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
   const service = new TaskSystemService(ctx, config, ledger, results);
   ctx.inject(["agents","agentLoop","sessions","sessionPersistence","tools","systemPrompt"],returnCtx=>{
     service.taskReturns.bindContext(returnCtx);
+    service.sessionPortal.bindContext(returnCtx);
+  });
+  ctx.inject(["agents", "sessions", "sessionPersistence", "tools", "systemPrompt", "sessionController", "typert", "workspaceRegistry", "remoteAccess", "commands", "fileUploads", "attachments", "fs"], nativeCtx => {
+    service.sessionPortal.bindContext(nativeCtx);
   });
   ctx.tools.register(defineTool({
     name: "workflow_input_read",
@@ -2666,7 +2681,7 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
       config.role,
       config.projectAgentOptions,
     );
-    const collaboration = new ProjectCollaborationAuthority(ledger, { planner: () => service.projects?.planner, control:(commandId,input)=>service.projects!.actOnTask({...input,commandId}) });
+    const collaboration = new ProjectCollaborationAuthority(ledger, { projectSession: async (nodeId, commandId, request) => json(await service.sessionPortal.centralAction(nodeId, commandId, request)), planner: () => service.projects?.planner, control:(commandId,input)=>service.projects!.actOnTask({...input,commandId}) });
     service.projects.collaboration = collaboration;
     ledger.projectCollaborate = collaboration.projectCollaborate.bind(collaboration);
     ctx.inject(["workspaceRegistry"], async () => {
@@ -2674,6 +2689,9 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
     });
     service.addDrain(() => service.projects!.close());
   }
+  ctx.inject(["agents", "sessions", "sessionPersistence"], () => {
+    void service.sessionPortal.start().catch(error => ctx.logger.warn(`Project session hosting unavailable: ${String(error)}`));
+  });
   // One disposer owns admission, timers, native drain, then database close.
   let timer: ReturnType<typeof setInterval> | undefined;
   ctx.effect(() => async () => {
@@ -3417,7 +3435,7 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
               "policy/display are available only for owned child dispatch",
             );
           const sessionBinding = exec.agent ? service.sessionCollaboration.binding(exec.agent) : undefined;
-          const managedLocal = config.centralMode === "host" && sessionBinding?.projectId && ledger.managementDatabase().prepare("SELECT 1 FROM pr_projects WHERE id=?").get(sessionBinding.projectId);
+          const managedLocal = config.centralMode === "host" && sessionBinding?.projectId && !service.projects?.nativeSession(String(exec.agent?.id)) && ledger.managementDatabase().prepare("SELECT 1 FROM pr_projects WHERE id=?").get(sessionBinding.projectId);
           const project = !managedLocal ? await service.sessionProjectDispatch?.(exec.agent, args, String(exec.callId)) : undefined;
           if (project?.handled) return project.value;
           if (!managedLocal && exec.agent && service.sessionCollaboration.binding(exec.agent)?.state === "active") {

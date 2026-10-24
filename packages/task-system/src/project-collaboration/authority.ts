@@ -8,12 +8,18 @@ import type { ExecutionRoute, Json } from "../contracts.js";
 import type { TaskPlanner } from "../planning.js";
 import type { CollaborationSummary, ProjectCollaborationInput } from "./types.js";
 import { ExecutionModelChoice } from "../execution-models.js";
+import { projectSessionAction, type ProjectSessionAction } from "../project-session-service.js";
 const hash = (value: unknown) => createHash("sha256").update(canonical(value)).digest("hex");
 const json = (value: unknown): Json => JSON.parse(JSON.stringify(value));
 const fail = (code: string, message: string): never => { throw new TaskError(code, message); };
 export function validateCollaborationInput(value: unknown): asserts value is ProjectCollaborationInput {
   if (!value || typeof value !== "object" || Array.isArray(value)) fail("INVALID", "Expected collaboration input");
   const p = value as Record<string, unknown>;
+  if (p.action === "project-session") {
+    if (Object.keys(p).some(key => !["action", "request"].includes(key)) || !projectSessionAction.safeParse(p.request).success)
+      fail("INVALID", "Invalid project session operation");
+    return;
+  }
   if (p.action === "control") {
     if (Object.keys(p).some(key=>!["action","control"].includes(key)) || !CentralTaskControl.safeParse(p.control).success) fail("INVALID", "Invalid central task control");
     return;
@@ -54,7 +60,7 @@ export class ProjectCollaborationAuthority {
   private wb;
   private sessions;
   private queue: Promise<unknown> = Promise.resolve();
-  constructor(private ledger: TaskLedger, private options: { control?: (commandId:string,input:TaskControl)=>unknown | Promise<unknown>; planner?: Pick<TaskPlanner, "plan" | "apply"> | (() => Pick<TaskPlanner, "plan" | "apply"> | undefined) } = {}) {
+  constructor(private ledger: TaskLedger, private options: { projectSession?: (nodeId:string,commandId:string,input:ProjectSessionAction)=>Promise<Json>; control?: (commandId:string,input:TaskControl)=>unknown | Promise<unknown>; planner?: Pick<TaskPlanner, "plan" | "apply"> | (() => Pick<TaskPlanner, "plan" | "apply"> | undefined) } = {}) {
     ledger.assertManagementWritable();
     this.db = ledger.managementDatabase();
     this.wb = new Workbench(ledger);
@@ -68,6 +74,14 @@ export class ProjectCollaborationAuthority {
     return rows.map(r => JSON.parse(String(r.data)) as CollaborationSummary);
   }
   projectCollaborate(nodeId: string, commandId: string, input: ProjectCollaborationInput): Promise<Json> {
+    if (input.action === "project-session") {
+      validateCollaborationInput(input);
+      const node = this.ledger.nodeStatuses().find(status => status.nodeId === nodeId);
+      if (nodeId !== this.ledger.nodeId && (!node || !this.ledger.getNode(nodeId).enabled))
+        return Promise.reject(new TaskError("FORBIDDEN", "An enabled registered node is required"));
+      if (!this.options.projectSession) return Promise.reject(new TaskError("UNAVAILABLE", "Project session service is unavailable"));
+      return this.options.projectSession(nodeId, commandId, input.request);
+    }
     const run = this.queue.then(() => {
       validateCollaborationInput(input);
       return (input.action === "dispatch" || input.action === "session") ? this.ledger.withDispatchOrigin({kind:"session",nodeId,sessionId:input.sessionId,cwd:input.cwd,...(input.composition?{composition:input.composition}:{})},()=>this.execute(nodeId,commandId,input)) : this.execute(nodeId,commandId,input);
@@ -75,7 +89,7 @@ export class ProjectCollaborationAuthority {
     this.queue = run.catch(() => {});
     return run;
   }
-  private async execute(nodeId: string, commandId: string, input: ProjectCollaborationInput): Promise<Json> {
+  private async execute(nodeId: string, commandId: string, input: Exclude<ProjectCollaborationInput, {action:"project-session"}>): Promise<Json> {
     validateCollaborationInput(input);
     if (!nodeId || !commandId || commandId.length > 200) fail("INVALID", "Missing command identity");
     const node = this.ledger.nodeStatuses().map(n => this.ledger.getNode(n.nodeId)).find(n => n.nodeId === nodeId);

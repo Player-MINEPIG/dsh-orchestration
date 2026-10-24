@@ -2,6 +2,7 @@ import { chromium } from 'playwright';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
+import { testNativeProject } from './browser-native-project.mjs';
 import { testSettings } from './browser-settings.mjs';
 import { testExecutorAlerts } from './browser-executor-alerts.mjs';
 import { testTaskCenterSelection } from '../../scripts/validation/task-center-selection-browser.mjs';
@@ -12,7 +13,7 @@ const browser = await chromium.launch({ headless: true, ...(process.env.DSH_BROW
 const results = [];
 console.log(`Browser evidence: ${output}`);
 try {
-  for (const [name, run] of [['settings', testSettings], ['executor alerts', testExecutorAlerts], ['task center polling selection', testTaskCenterSelection]]) {
+  for (const [name, run] of [['settings', testSettings], ['executor alerts', testExecutorAlerts], ['task center polling selection', testTaskCenterSelection], ['production native project conversation', testNativeProject]]) {
     try {
       const result = await run(browser, { output });
       results.push({ name, status: 'passed', result });

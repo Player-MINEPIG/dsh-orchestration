@@ -413,7 +413,7 @@ export class RecoveryStore {
           id,
           hash,
           "pending",
-          isTransientReceipt(envelope.operation)
+          isTransientReceipt(envelope.operation, envelope.payload)
             ? now + TRANSIENT_RECEIPT_TTL_MS
             : null,
         );
@@ -632,7 +632,7 @@ export class RecoveryStore {
         .run(
           id,
           canonical(data),
-          isTransientReceipt(operation) ? now + TRANSIENT_RECEIPT_TTL_MS : null,
+          isTransientReceipt(operation, data && typeof data === "object" && !Array.isArray(data) ? data.payload : undefined) ? now + TRANSIENT_RECEIPT_TTL_MS : null,
         );
     });
   }

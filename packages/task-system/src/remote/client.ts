@@ -72,7 +72,8 @@ export interface ClientOptions {
 /** Existing key material is injected by the host. This package never generates or saves credentials. */
 export class RemoteClient {
   private options: ClientOptions;
-  private busy = false;
+  private readonly busy = new Set<string>();
+  private readonly projectTails = new Map<string, Promise<unknown>>();
   private configurationPaused = false;
   private queued = 0;
   private tail: Promise<unknown> = Promise.resolve();
@@ -135,7 +136,7 @@ export class RemoteClient {
   }
   beginConfigurationEdit(): () => void {
     insist(
-      !this.configurationPaused && !this.busy && this.queued === 0,
+      !this.configurationPaused && this.busy.size === 0 && this.queued === 0,
       "CONFIGURATION_BUSY",
       409,
     );
@@ -198,7 +199,9 @@ export class RemoteClient {
       ...(options?.signal ? [options.signal] : []),
     ]);
     this.queued++;
-    const request = this.tail
+    const lane = this.sendLane(operation, payload);
+    const tail = lane === "default" ? this.tail : this.projectTails.get(lane) ?? Promise.resolve();
+    const request = tail
       .then(() =>
         this.sendOwned(
           operation,
@@ -206,13 +209,23 @@ export class RemoteClient {
           payload,
           signal,
           options?.diagnostic,
+          lane,
         ),
       )
       .finally(() => {
         this.queued--;
       });
-    this.tail = request.catch(() => undefined);
+    if (lane === "default") this.tail = request.catch(() => undefined);
+    else this.projectTails.set(lane, request.catch(() => undefined));
     return request;
+  }
+  private sendLane(operation: Operation, payload: Record<string, Json>): string {
+    const input = payload.input;
+    if (operation !== "projectCollaborate" || !isRecord(input) || input.action !== "project-session" || !isRecord(input.request)) return "default";
+    const request = input.request;
+    if (request.kind === "exchange" || request.kind === "decision") return "project-owner";
+    if (request.kind === "application" && isRecord(request.input)) return request.input.kind === "authorize-owner" ? "project-owner" : "project-application";
+    return "default";
   }
   private async sendOwned(
     operation: Operation,
@@ -220,10 +233,11 @@ export class RemoteClient {
     payload: Record<string, Json>,
     signal?: AbortSignal,
     diagnostic = false,
+    lane = "default",
   ): Promise<CommandReceipt> {
     insist(this.active && !signal?.aborted, "TRANSPORT_ABORTED", 503);
-    insist(!this.busy, "CLIENT_SEND_IN_PROGRESS", 409);
-    this.busy = true;
+    insist(!this.busy.has(lane), "CLIENT_SEND_IN_PROGRESS", 409);
+    this.busy.add(lane);
     try {
       // Shared stores allocate unique sequences, but independent connections can
       // arrive out of order. Retry only an explicit pre-admission rejection,
@@ -424,7 +438,7 @@ export class RemoteClient {
         }
       }
     } finally {
-      this.busy = false;
+      this.busy.delete(lane);
     }
   }
   async retryPendingObservations(
@@ -455,7 +469,7 @@ export class RemoteClient {
   async dispose(): Promise<void> {
     this.active = false;
     this.lifetime.abort();
-    await this.tail;
+    await Promise.all([this.tail, ...this.projectTails.values()]);
   }
 }
 
