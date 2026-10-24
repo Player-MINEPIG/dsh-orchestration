@@ -1,8 +1,127 @@
+async function decodeNativeGzip(bytes, decodedBytes, limit, signal) {
+  if (typeof DecompressionStream !== "function" || !Number.isSafeInteger(decodedBytes) || decodedBytes < 1 || decodedBytes > limit ||
+      bytes.byteLength < 1 || bytes.byteLength > 8388608) throw new Error("项目会话压缩帧大小无效。");
+  const reader = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip")).getReader();
+  const cancel = () => { void reader.cancel(signal.reason).catch(() => {}); };
+  signal?.addEventListener("abort", cancel, { once: true });
+  const chunks = [];
+  let size = 0;
+  try {
+    for (;;) {
+      if (signal?.aborted) throw signal.reason ?? new DOMException("Aborted", "AbortError");
+      const { done, value } = await reader.read();
+      if (signal?.aborted) throw signal.reason ?? new DOMException("Aborted", "AbortError");
+      if (done) break;
+      size += value.byteLength;
+      if (size > decodedBytes || size > limit) throw new Error("项目会话压缩帧超出解码限制。");
+      chunks.push(value);
+    }
+    if (size !== decodedBytes) throw new Error("项目会话压缩帧长度不符。");
+    const decoded = new Uint8Array(size);
+    let offset = 0;
+    for (const chunk of chunks) { decoded.set(chunk, offset); offset += chunk.byteLength; }
+    return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(decoded));
+  } finally {
+    signal?.removeEventListener("abort", cancel);
+    await reader.cancel().catch(() => {});
+  }
+}
+async function decodeNativeFrameList(bytes, decodedBytes, signal) {
+  const frames = await decodeNativeGzip(bytes, decodedBytes, 65536, signal);
+  if (!Array.isArray(frames) || !frames.length || frames.length > 32) throw new Error("项目会话压缩帧集合无效。");
+  return frames;
+}
+
+function createNativeReadPolls(execute, lifetime) {
+  const queued = [];
+  const codec = typeof DecompressionStream === "function" ? "gzip" : undefined;
+  let timer, running = false, closed = false;
+  const close = (stream, result) => {
+    if (typeof result?.cursor === "string") void execute({ kind: "stream-close", stream, cursor: result.cursor }).catch(() => {});
+  };
+  const schedule = () => {
+    if (!closed && !running && timer === undefined && queued.length)
+      timer = setTimeout(() => { timer = undefined; void flush(); }, 0);
+  };
+  async function flush() {
+    if (closed || running) return;
+    const entries = [], streams = new Set();
+    for (let index = 0; index < queued.length && entries.length < 5;) {
+      const entry = queued[index];
+      if (entry.cancelled) { queued.splice(index, 1); entry.finish(); continue; }
+      if (streams.has(entry.poll.stream)) { index++; continue; }
+      queued.splice(index, 1); entries.push(entry); streams.add(entry.poll.stream);
+    }
+    if (!entries.length) return;
+    running = true;
+    let response;
+    try {
+      response = await execute({ kind: "stream-polls", ...(codec ? { codec } : {}), polls: entries.map(entry => entry.poll) });
+      if (!response || !Array.isArray(response.polls) || response.polls.length !== entries.length ||
+          new TextEncoder().encode(JSON.stringify(response)).byteLength > 49152)
+        throw new Error("项目会话数据流响应不完整。");
+      const results = new Map();
+      for (const item of response.polls) {
+        if (!item || !streams.has(item.stream) || results.has(item.stream) ||
+            (typeof item.error === "string" ? !item.error.length || item.error.length > 200 || item.result !== undefined :
+              item.error !== undefined || !item.result || !Array.isArray(item.result.frames) || typeof item.result.cursor !== "string"))
+          throw new Error("项目会话数据流响应不完整。");
+        results.set(item.stream, item);
+      }
+      const prepared = await Promise.allSettled(entries.map(entry => {
+        const item = results.get(entry.poll.stream);
+        return entry.cancelled || closed || item.error ? undefined : entry.prepare(item.result);
+      }));
+      const deliveries = entries.map((entry, index) => ({ entry, prepared: prepared[index] }));
+      deliveries.sort((left, right) => Number(right.entry.poll.stream === "session-follow") - Number(left.entry.poll.stream === "session-follow"));
+      for (const { entry, prepared } of deliveries) {
+        const item = results.get(entry.poll.stream);
+        if (entry.cancelled || closed) close(entry.poll.stream, item.result);
+        else if (item.error) entry.reject(Object.assign(new Error("项目会话数据流暂时不可用。"), { code: item.error }));
+        else if (prepared.status === "rejected") { close(entry.poll.stream, item.result); entry.reject(prepared.reason); }
+        else entry.resolve(prepared.value);
+      }
+    } catch (error) {
+      if (Array.isArray(response?.polls))
+        for (const item of response.polls) if (item && streams.has(item.stream)) close(item.stream, item.result);
+      for (const entry of entries) entry.reject(error);
+    } finally {
+      for (const entry of entries) entry.finish();
+      running = false; schedule();
+    }
+  }
+  const stop = () => {
+    closed = true;
+    if (timer !== undefined) clearTimeout(timer);
+    timer = undefined;
+    for (const entry of queued.splice(0)) { entry.cancel(); entry.finish(); }
+  };
+  lifetime.addEventListener("abort", stop, { once: true });
+  if (lifetime.aborted) stop();
+  return {
+    next(poll, signal, prepare = result => result) {
+      if (closed || signal?.aborted) return Promise.reject(signal?.reason ?? lifetime.reason ?? new DOMException("Aborted", "AbortError"));
+      if (queued.length >= 32) return Promise.reject(new Error("项目会话数据流请求过多。"));
+      return new Promise((resolve, reject) => {
+        const entry = { poll, prepare, resolve, reject, cancelled: false,
+          cancel() { entry.cancelled = true; reject(signal?.reason ?? lifetime.reason ?? new DOMException("Aborted", "AbortError")); },
+          finish() { signal?.removeEventListener("abort", entry.cancel); lifetime.removeEventListener("abort", entry.cancel); } };
+        signal?.addEventListener("abort", entry.cancel, { once: true });
+        lifetime.addEventListener("abort", entry.cancel, { once: true });
+        queued.push(entry); schedule();
+      });
+    },
+  };
+}
+
 function createProjectNativeClient({ React, Context, modules }) {
   const h = React.createElement;
-  const basePlugins = [
+  const corePlugins = [
     "dsh-typert-registry", "dsh-api-gateway", "dsh-api-remotes", "dsh-api-remote-access",
-    "dsh-api-session-controller", "dsh-api-workspace-controller", "dsh-client-ui-renderer",
+    "dsh-api-session-controller", "dsh-api-workspace-controller",
+  ];
+  const basePlugins = [
+    "dsh-client-ui-renderer",
     "dsh-client-locale", "dsh-client-shortcuts", "dsh-client-ui-session", "dsh-client-ui-workspace",
     "dsh-client-ui-settings", "dsh-client-ui-conversation", "dsh-client-ui-chat",
     "dsh-client-ui-attachment", "dsh-client-ui-tool", "dsh-client-ui-sidebar-right", "dsh-client-resources",
@@ -95,43 +214,68 @@ function createProjectNativeClient({ React, Context, modules }) {
           projectId: binding.projectId, generation: binding.generation, commandId, operation,
         })), signal);
       };
+      const readPolls = createNativeReadPolls(execute, lifetime.signal);
       async function* pollNative(stream, request, signal) {
         let cursor, pending;
+        const prepare = async batch => {
+          aborted(signal);
+          if (!batch || !Array.isArray(batch.frames) || typeof batch.cursor !== "string") throw new Error("项目会话数据流响应不完整。");
+          cursor = batch.cursor;
+          const frames = [];
+          if (batch.encodedFrames !== undefined) {
+            const encoded = batch.encodedFrames;
+            if (pending || batch.frames.length || batch.framePart !== undefined || typeof DecompressionStream !== "function" ||
+                !encoded || encoded.encoding !== "gzip" || typeof encoded.data !== "string" || encoded.data.length > 65536)
+              throw new Error("项目会话压缩数据格式无效。");
+            const raw = atob(encoded.data);
+            if (!raw.length || btoa(raw) !== encoded.data) throw new Error("项目会话压缩数据编码无效。");
+            frames.push(...await decodeNativeFrameList(Uint8Array.from(raw, value => value.charCodeAt(0)), encoded.decodedBytes, signal));
+          } else if (batch.framePart !== undefined) {
+            const part = batch.framePart;
+            if (batch.frames.length || !part || typeof part.id !== "string" || !part.id.length || part.id.length > 200 ||
+                !Number.isSafeInteger(part.totalBytes) || part.totalBytes <= 0 || part.totalBytes > 8388608 ||
+                !Number.isSafeInteger(part.offset) || typeof part.data !== "string" || part.data.length > 32768 || typeof part.eof !== "boolean") throw new Error("项目会话历史分片格式无效。");
+            if (part.encoding !== undefined && (typeof DecompressionStream !== "function" || !["gzip-frame", "gzip-frames"].includes(part.encoding) ||
+                !Number.isSafeInteger(part.decodedBytes) || part.decodedBytes <= 0 || part.decodedBytes > (part.encoding === "gzip-frames" ? 65536 : 8388608)) ||
+                part.encoding === undefined && part.decodedBytes !== undefined || part.encoding === "gzip-frames" && part.totalBytes > 66560)
+              throw new Error("项目会话历史压缩格式无效。");
+            const raw = atob(part.data);
+            if (!raw.length || raw.length > 24576 || btoa(raw) !== part.data) throw new Error("项目会话历史分片编码无效。");
+            if (!pending) {
+              if (part.offset !== 0) throw new Error("项目会话历史缺少起始分片。");
+              pending = { id: part.id, bytes: new Uint8Array(part.totalBytes), offset: 0, encoding: part.encoding, decodedBytes: part.decodedBytes };
+            }
+            if (part.id !== pending.id || part.totalBytes !== pending.bytes.length || part.offset !== pending.offset || part.encoding !== pending.encoding || part.decodedBytes !== pending.decodedBytes ||
+                part.offset + raw.length > part.totalBytes || part.eof !== (part.offset + raw.length === part.totalBytes)) throw new Error("项目会话历史分片不连续。");
+            pending.bytes.set(Uint8Array.from(raw, value => value.charCodeAt(0)), pending.offset);
+            pending.offset += raw.length;
+            if (part.eof) {
+              const payload = pending;
+              const frame = payload.encoding === "gzip-frames" ? await decodeNativeFrameList(payload.bytes, payload.decodedBytes, signal) :
+                payload.encoding ? await decodeNativeGzip(payload.bytes, payload.decodedBytes, 8388608, signal) :
+                JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(payload.bytes));
+              aborted(signal);
+              pending = undefined;
+              if (payload.encoding === "gzip-frames") frames.push(...frame);
+              else frames.push(frame);
+            }
+          } else {
+            if (pending) throw new Error("项目会话历史分片尚未完整。");
+            frames.push(...batch.frames);
+          }
+          aborted(signal);
+          if (batch.closed && pending) throw new Error("项目会话历史传输提前结束。");
+          return { frames, cursor: batch.cursor, closed: batch.closed };
+        };
         try {
           while (!signal?.aborted) {
-            const batch = await execute({ kind: "stream-poll", stream,
+            const poll = { stream,
               ...(cursor === undefined ? {} : { cursor }),
-              ...(request === undefined || stream === "user-question-wait" && cursor !== undefined ? {} : { request }) }, signal);
-            if (!batch || !Array.isArray(batch.frames) || typeof batch.cursor !== "string") throw new Error("项目会话数据流响应不完整。");
-            cursor = batch.cursor;
-            if (batch.framePart !== undefined) {
-              const part = batch.framePart;
-              if (batch.frames.length || !part || typeof part.id !== "string" || !part.id.length || part.id.length > 200 ||
-                  !Number.isSafeInteger(part.totalBytes) || part.totalBytes <= 0 || part.totalBytes > 8388608 ||
-                  !Number.isSafeInteger(part.offset) || typeof part.data !== "string" || part.data.length > 32768 || typeof part.eof !== "boolean") throw new Error("项目会话历史分片格式无效。");
-              const raw = atob(part.data);
-              if (!raw.length || raw.length > 24576 || btoa(raw) !== part.data) throw new Error("项目会话历史分片编码无效。");
-              if (!pending) {
-                if (part.offset !== 0) throw new Error("项目会话历史缺少起始分片。");
-                pending = { id: part.id, bytes: new Uint8Array(part.totalBytes), offset: 0 };
-              }
-              if (part.id !== pending.id || part.totalBytes !== pending.bytes.length || part.offset !== pending.offset ||
-                  part.offset + raw.length > part.totalBytes || part.eof !== (part.offset + raw.length === part.totalBytes)) throw new Error("项目会话历史分片不连续。");
-              pending.bytes.set(Uint8Array.from(raw, value => value.charCodeAt(0)), pending.offset);
-              pending.offset += raw.length;
-              if (part.eof) {
-                const frame = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(pending.bytes));
-                pending = undefined;
-                aborted(signal); yield frame;
-              }
-            } else {
-              if (pending) throw new Error("项目会话历史分片尚未完整。");
-              for (const frame of batch.frames) { aborted(signal); yield frame; }
-            }
-            if (batch.closed) {
-              if (pending) throw new Error("项目会话历史传输提前结束。");
-              return;
-            }
+              ...(request === undefined || stream === "user-question-wait" && cursor !== undefined ? {} : { request }) };
+            const batch = stream === "user-question-wait" || stream === "session-page" ?
+              await prepare(await execute({ kind: "stream-poll", ...poll }, signal)) : await readPolls.next(poll, signal, prepare);
+            for (const frame of batch.frames) { aborted(signal); yield frame; }
+            if (batch.closed) return;
           }
         } finally {
           pending = undefined;
@@ -329,6 +473,13 @@ function createProjectNativeClient({ React, Context, modules }) {
             return { ok: true, value: staged.value };
           } catch (error) { return { ok: false, error: failure(error) }; }
         } });
+        for (const name of corePlugins) { aborted(lifetime.signal); ctx.plugin(await importPlugin(name)); }
+        await waitFor({ getSnapshot: () => !!ctx.get("sessions"), subscribe: (listener) => { const timer = setInterval(listener, 25); return () => clearInterval(timer); } }, Boolean, lifetime.signal);
+        await waitFor(ctx.connection.generation, (value) => value !== undefined, lifetime.signal);
+        await ctx.sessions.refresh();
+        await waitFor(ctx.sessions.list, (state) => !!state.byId[binding.sessionId], lifetime.signal);
+        reference = ctx.sessions.retain(binding.sessionId, { source: "projectConversation", signal: lifetime.signal });
+        await cancellable(reference.ready, lifetime.signal);
         const plugins = [...basePlugins];
         if (capabilities.files && capabilities.commands) plugins.push("dsh-client-ui-input-trigger", "dsh-client-ui-commands");
         if (capabilities.files && capabilities.commands && capabilities.modelSelect) plugins.push("dsh-client-ui-model-selection");
@@ -353,11 +504,6 @@ function createProjectNativeClient({ React, Context, modules }) {
         });
         ctx.slots.inject("project.native.conversation", () => ctx.slots.register({ name: "project.native.conversation" }, Conversation));
         await waitFor({ getSnapshot: () => !!ctx.get("conversation"), subscribe: (listener) => { const timer = setInterval(listener, 25); return () => clearInterval(timer); } }, Boolean, lifetime.signal);
-        await waitFor(ctx.connection.generation, (value) => value !== undefined, lifetime.signal);
-        await ctx.sessions.refresh();
-        await waitFor(ctx.sessions.list, (state) => !!state.byId[binding.sessionId], lifetime.signal);
-        reference = ctx.sessions.retain(binding.sessionId, { source: "projectConversation", signal: lifetime.signal });
-        await cancellable(reference.ready, lifetime.signal);
         aborted(lifetime.signal);
         const promptAccess = ctx.remoteAccess.source("session", binding.sessionId, "session/prompt");
         const updateAccess = () => ctx.conversation.blocks.set(binding.sessionId, promptAccess.getSnapshot() === true ? undefined : { reason: "当前会话仅可查看，无法发送新消息。" });

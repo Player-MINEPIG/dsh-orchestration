@@ -68,6 +68,7 @@
     "packages/task-system/test/project-session-carrier.test.mjs"
   ],
   "native": [
+    "packages/task-system/test/project-native-client.test.mjs",
     "packages/task-system/test/execution-agent-preset.test.mjs",
     "packages/task-system/test/managed-workspace.test.mjs",
     "packages/task-system/test/native-ad-hoc-planning.test.mjs",
