@@ -210,6 +210,7 @@ test("native read groups reject duplicate, writable and cross-binding members", 
 
 test("native read groups drain actual SDK frames and retain independent replay and admission", async () => {
   const h = await createOwner();
+  const observed = new AbortController();
   try {
     const streams = ["session-follow", "events", "access", "workspace", "session-control"];
     const opening = await invoke(h, { kind: "stream-polls", polls: streams.map(stream => ({ stream,
@@ -219,27 +220,47 @@ test("native read groups drain actual SDK frames and retain independent replay a
     assert.equal(h.authorizations[0][1], "read");
     assert.equal(opening.polls.length, 5);
     for (const item of opening.polls) assert.ok(item.result?.cursor, JSON.stringify(item));
+    const initial = await pollUntil(h, "session-follow", opening.polls[0].result, frame => frame.type === "snapshot");
+    const snapshot = initial.frames.find(frame => frame.type === "snapshot");
+    const completed = (async () => {
+      for await (const frame of h.ctx.sessionController.follow({ address: { kind: "session", sessionId: h.binding.sessionId } }, observed.signal)) {
+        const terminal = frame.type === "event" ? frame.event : frame.type === "snapshot" ?
+          frame.records.map(record => record.event).find(event => event.type === "turn/end" && event.seq > snapshot.cursor) : undefined;
+        if (terminal?.type === "turn/end") return terminal;
+      }
+      assert.fail("The public SDK follow ended before the requested turn completed");
+    })();
+    completed.catch(() => {});
     await invoke(h, { kind: "session-prompt", requestId: "grouped-real-sdk", mode: "queue", content: [{ type: "text", text: "Reply once." }] });
-    const { agent } = await h.ctx.sessionController.resolveAgent(h.binding.sessionId);
-    await agent.whenIdle();
-    const polls = opening.polls.map(item => ({ stream: item.stream, cursor: item.result.cursor }));
-    const group = await invoke(h, { kind: "stream-polls", polls });
-    const follow = group.polls.find(item => item.stream === "session-follow").result;
-    assert.ok(follow.frames.length > 1, "The ready actual SDK turn is not restricted to one frame per remote request");
-    assert.ok(follow.frames.some(frame => frame.type === "event" && frame.event.type === "assistant/message"));
-    const seqs = follow.frames.filter(frame => frame.type === "event").map(frame => frame.event.seq);
-    assert.ok(seqs.every(Number.isSafeInteger));
-    assert.deepEqual(seqs, [...seqs].sort((a, b) => a - b));
-    assert.ok(Buffer.byteLength(JSON.stringify(group)) <= 48 * 1024);
+    const terminal = await completed;
+    assert.equal(h.model.requests.length, 1, "The public terminal event proves that the one queued request actually ran");
+    let polls = opening.polls.map(item => ({ stream: item.stream, cursor: item.stream === "session-follow" ? initial.cursor : item.result.cursor }));
+    let group = await invoke(h, { kind: "stream-polls", polls });
     assert.deepEqual(await invoke(h, { kind: "stream-polls", polls }), group);
-    assert.equal(h.model.requests.length, 1);
+    const frames = [...initial.frames];
+    for (let index = 0; ; index++) {
+      assert.ok(index < 64, "Finite polls must deliver the completed public turn");
+      assert.ok(Buffer.byteLength(JSON.stringify(group)) <= 48 * 1024);
+      frames.push(...group.polls.find(item => item.stream === "session-follow").result.frames);
+      if (frames.some(frame => frame.type === "event" && frame.event.seq === terminal.seq)) break;
+      polls = group.polls.map(item => ({ stream: item.stream, cursor: item.result.cursor }));
+      group = await invoke(h, { kind: "stream-polls", polls });
+    }
+    const events = frames.filter(frame => frame.type === "event").map(frame => frame.event);
+    assert.ok(events.some(event => event.type === "assistant/message"));
+    const seqs = events.map(event => event.seq);
+    assert.ok(seqs.every(Number.isSafeInteger));
+    assert.equal(new Set(seqs).size, seqs.length);
+    assert.deepEqual(seqs, [...seqs].sort((a, b) => a - b));
+    const page = await h.ctx.sessionController.page({ address: { kind: "session", sessionId: h.binding.sessionId }, throughSeq: terminal.seq, maxMessages: 500 }, observed.signal);
+    assert.deepEqual(events, JSON.parse(JSON.stringify(page.records.filter(record => record.event.seq > snapshot.cursor).map(record => record.event))));
     const before = h.authorizations.length;
     await assert.rejects(h.owner.invoke({ ...h.binding, generation: 99 }, { kind: "stream-polls", polls }, "other-binding"));
     assert.equal(h.authorizations.length, before + 1);
-    const invalid = [{ stream: "events", cursor: opening.polls[1].result.cursor }, { stream: "access", cursor: follow.cursor }];
+    const invalid = [{ stream: "events", cursor: polls[1].cursor }, { stream: "access", cursor: group.polls[0].result.cursor }];
     await assert.rejects(invoke(h, { kind: "stream-polls", polls: invalid }), { code: "STREAM_RESET" });
     assert.deepEqual(await invoke(h, { kind: "stream-poll", ...polls[1] }), group.polls[1].result);
-  } finally { await h.dispose(); }
+  } finally { observed.abort(); await h.dispose(); }
 });
 
 test("native grouped polls retain held frames and isolate a failing source", async () => {
@@ -327,7 +348,7 @@ test("native grouped polls preflight small budgets and reserve concurrent openin
   } finally { small.dispose(); await h.dispose(); }
 });
 
-test("gzip negotiation is cursor-bound and one compressed result preserves a ready semantic frame collection", async () => {
+test("gzip negotiation is cursor-bound and one compressed result preserves a ready semantic frame collection", async t => {
   const h = await createOwner();
   const original = h.ctx.sessionController.follow;
   let release;
@@ -338,6 +359,7 @@ test("gzip negotiation is cursor-bound and one compressed result preserves a rea
   try {
     const opening = await invoke(h, { kind: "stream-polls", codec: "gzip", polls: [{ stream: "session-follow" }] });
     const cursor = opening.polls[0].result.cursor;
+    t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
     release();
     const operation = { kind: "stream-polls", codec: "gzip", polls: [{ stream: "session-follow", cursor }] };
     const result = (await invoke(h, operation)).polls[0].result;
@@ -352,6 +374,33 @@ test("gzip negotiation is cursor-bound and one compressed result preserves a rea
     await assert.rejects(invoke(h, { kind: "stream-poll", ...operation.polls[0] }), { code: "STREAM_CODEC_CHANGED" });
     const plain = await invoke(h, { kind: "stream-poll", stream: "session-follow" });
     await assert.rejects(invoke(h, { kind: "stream-polls", codec: "gzip", polls: [{ stream: "session-follow", cursor: plain.cursor }] }), { code: "STREAM_CODEC_CHANGED" });
+  } finally { h.ctx.sessionController.follow = original; await h.dispose(); }
+});
+
+test("native drain work limits split a ready stream without losing frames or reducing to one frame per poll", async t => {
+  const h = await createOwner();
+  const original = h.ctx.sessionController.follow;
+  const frames = Array.from({ length: 20 }, (_, index) => ({ type: "test", seq: index }));
+  h.ctx.sessionController.follow = () => (async function* () {
+    for (const [index, frame] of frames.entries()) {
+      if ((index + 1) % 5 === 0) t.mock.timers.tick(5);
+      yield frame;
+    }
+  })();
+  try {
+    t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
+    let cursor;
+    const received = [], batches = [];
+    for (let index = 0; ; index++) {
+      assert.ok(index < 5);
+      const result = (await invoke(h, { kind: "stream-polls", polls: [{ stream: "session-follow", ...(cursor ? { cursor } : {}) }] })).polls[0].result;
+      cursor = result.cursor;
+      received.push(...result.frames);
+      batches.push(result.frames.length);
+      if (result.closed) break;
+    }
+    assert.deepEqual(batches, [5, 5, 5, 5, 0]);
+    assert.deepEqual(received, frames);
   } finally { h.ctx.sessionController.follow = original; await h.dispose(); }
 });
 
