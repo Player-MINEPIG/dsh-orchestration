@@ -11,7 +11,7 @@ export function isTransientReceipt(operation: unknown, payload?: unknown): boole
       if (["execution-settings", "conversation", "authorize-owner"].includes(String(input.kind))) return true;
       if (input.kind === "native-conversation" && record(input.input) && record(input.input.operation)) {
         const native = input.input.operation;
-        return ["native-capabilities", "session-list", "session-projections", "session-page", "settings-describe", "stream-close", "model-catalog", "skills-list", "permissions-catalog", "commands-list", "attachment-read"].includes(String(native.kind)) ||
+        return ["native-capabilities", "session-list", "session-projections", "session-page", "session-excerpt", "settings-describe", "stream-close", "model-catalog", "skills-list", "permissions-catalog", "commands-list", "attachment-read"].includes(String(native.kind)) ||
           native.kind === "stream-poll" && native.stream !== "user-question-wait";
       }
     }

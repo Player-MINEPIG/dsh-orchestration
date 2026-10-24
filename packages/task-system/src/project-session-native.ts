@@ -150,6 +150,7 @@ export const ProjectNativeOperation = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("native-capabilities") }),
   z.strictObject({ kind: z.literal("session-list") }),
   z.strictObject({ kind: z.literal("session-projections") }),
+  z.strictObject({ kind: z.literal("session-excerpt") }),
   z.strictObject({
     kind: z.literal("session-page"),
     throughSeq: sequence,
@@ -478,6 +479,7 @@ export class ProjectNativeOwner {
           await ctx.sessionController.projections({ sessionId }, signal),
         );
         break;
+      case "session-excerpt": result = await this.excerpt(sessionId, signal); break;
       case "session-page": {
         const { kind: _, ...request } = operation;
         result = await ctx.sessionController.page(
@@ -735,6 +737,34 @@ export class ProjectNativeOwner {
     value: SessionProjectionBaseline,
   ): SessionProjectionBaseline {
     return { ...value, values: this.projectionValues(value.values) };
+  }
+  private async excerpt(sessionId: SessionId, signal: AbortSignal) {
+    const ctx = this.options.ctx;
+    const projection = await ctx.sessionController.projections({ sessionId }, signal);
+    if (!projection || projection.kind !== "sequenced") error("UNAVAILABLE", "An exact ordinary session cut is unavailable");
+    const asOfSeq = projection.asOfSeq;
+    const page = asOfSeq < 0 ? { records: [], hasMore: false } : await ctx.sessionController.page({ address: { kind: "session", sessionId }, throughSeq: asOfSeq, maxMessages: 16 }, signal);
+    const message = z.object({ role: z.enum(["user", "assistant"]), source: z.object({ kind: z.string() }).passthrough(), content: z.array(z.object({ type: z.string(), text: z.string().optional() }).passthrough()) }).passthrough();
+    const rows: string[] = [];
+    for (const record of page.records) {
+      const event = record.event;
+      let value: unknown;
+      if (event.type === "user/message") value = event.data;
+      else if (event.type === "assistant/message") value = z.object({ message: z.unknown() }).passthrough().parse(event.data).message;
+      else continue;
+      const parsed = message.safeParse(value);
+      if (!parsed.success || !["user", "model", "dsh-task-result"].includes(parsed.data.source.kind)) continue;
+      const text = parsed.data.content.filter(part => part.type === "text").map(part => part.text ?? "").join("\n");
+      if (text) rows.push(`[${parsed.data.role}] ${text}`);
+    }
+    const all = Array.from(rows.join("\n")), maximum = Math.min(all.length, 12000);
+    let low = 0, high = maximum;
+    while (low < high) {
+      const count = Math.ceil((low + high) / 2), summary = all.slice(all.length - count).join("");
+      if (Buffer.byteLength(JSON.stringify({ asOfSeq, summary, truncated: page.hasMore || count < all.length })) <= 12 * 1024) low = count;
+      else high = count - 1;
+    }
+    return { asOfSeq, summary: all.slice(all.length - low).join(""), truncated: page.hasMore || low < all.length };
   }
   private projectionResult(
     value: SessionProjectionsValue,

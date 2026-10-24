@@ -12,7 +12,7 @@ import { ProjectNativeOperation, ProjectNativeOwner, projectNativeOperationWrite
 import { ProjectSessionCarrier, ProjectSessionOwnerCarrier, ProjectHostCatalog, type ProjectOwnerRequest, type ProjectSessionExchange } from "./project-session-carrier.js";
 import { ProjectSessionOwner } from "./project-session-owner.js";
 import { ProjectSessions, type ProjectSessionMove } from "./project-sessions.js";
-import { nativeProjectSession, projectSessionDecision, projectSessionReference, sameProjectSession, type ProjectSessionReference } from "./project-session-protocol.js";
+import { nativeProjectSession, projectSessionPrepare, projectSessionContinuation, projectSessionDecision, projectSessionReference, sameProjectSession, type ProjectSessionReference, type ProjectSessionContinuation } from "./project-session-protocol.js";
 
 const id = z.string().min(1).max(200);
 const selection = z.object({ kind: z.literal("registered"), nodeId: id, workspaceId: id, catalogRevision: id }).strict();
@@ -92,6 +92,7 @@ export class ProjectSessionService {
     this.carrier = new ProjectSessionCarrier(task.ledger, task.config.nodeId, (request, callId) => this.ownerCarrier.perform(request, callId), nodeId => this.authorizePeer(nodeId));
     this.placements = new ProjectSessions(task.ledger, {
       owner: (nodeId, command) => this.carrier.request(nodeId, command.kind === "status" ? `status-${randomUUID()}` : `placement-${digest(command)}`, { kind: "lifecycle", command }),
+      continuation: request => this.captureContinuation(request),
       checkCurrent: request => this.projects().checkPlacement(request), commit: (request, next) => this.projects().commitPlacement(request, next),
     });
   }
@@ -164,6 +165,36 @@ export class ProjectSessionService {
     this.assertOpen();
     if (request.kind === "lifecycle") return this.owner.handle(request.command);
     return this.native.invoke(request.binding, request.operation, callId);
+  }
+  private async captureContinuation(request: ProjectSessionMove): Promise<ProjectSessionContinuation> {
+    const source = request.old;
+    let summary = "", sourceSeq: number | null = null, truncated = false;
+    if (source.kind === "native") {
+      const excerpt = z.object({ asOfSeq: z.number().int().min(-1), summary: z.string(), truncated: z.boolean() }).strict().parse(await this.carrier.request(source.nodeId, `continuation-${digest({ operationId: request.operationId, source })}`, { kind: "native", binding: source, operation: { kind: "session-excerpt" } }));
+      const previous = this.db.prepare("SELECT operation FROM pr_session_locations WHERE session=?").get(source.sessionId);
+      const inherited = previous ? this.placements.status(String(previous.operation))?.continuation?.summary : undefined;
+      summary = [inherited, excerpt.summary].filter(Boolean).join("\n");
+      sourceSeq = excerpt.asOfSeq; truncated = excerpt.truncated;
+    } else {
+      const history = await this.projects().legacyConversation(source.projectId, source.sessionId, source.generation, source.cwd);
+      const messages = history.messages.filter(item => !item.executor);
+      summary = messages.slice(-16).map(item => `[${item.role}] ${item.text}`).join("\n");
+      const stored = await this.ctx.sessionPersistence.stat(SessionId(source.sessionId));
+      sourceSeq = stored?.eventCount === undefined ? null : stored.eventCount - 1;
+      truncated = messages.length > 16;
+    }
+    let characters = Array.from(summary);
+    if (characters.length > 12000) { characters = characters.slice(-12000); truncated = true; }
+    const tasks = this.projects().snapshot().tasks.filter(task => task.project === request.projectId).slice(0, 32).map(task => ({ taskId: task.id, state: task.status, runId: task.runId ?? null, reportId: task.reportId ?? null }));
+    let continuation = projectSessionContinuation.parse({ source, summary: characters.join(""), sourceSeq, truncated, tasks });
+    const prepare = { kind: "prepare", operationId: request.operationId, projectId: request.projectId, generation: source.generation + 1, sessionId: request.sessionId, workspaceId: request.selection.workspaceId, workspaceRevision: request.selection.workspaceRevision };
+    while (!projectSessionPrepare.safeParse({ ...prepare, continuation }).success) {
+      if (characters.length > 512) { characters = characters.slice(Math.min(512, characters.length)); continuation = { ...continuation, summary: characters.join(""), truncated: true }; }
+      else if (continuation.tasks.length) continuation = { ...continuation, tasks: continuation.tasks.slice(0, -1), truncated: true };
+      else if (characters.length) { characters = []; continuation = { ...continuation, summary: "", truncated: true }; }
+      else throw new TaskError("PROJECT_SESSION_SIZE", "Frozen continuation cannot fit its encoded preparation budget");
+    }
+    return continuation;
   }
   private reference(projectId: string, generation?: number): ProjectSessionReference {
     const project = this.projects().placementProject(projectId);

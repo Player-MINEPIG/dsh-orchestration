@@ -5,12 +5,12 @@ import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import { isAbsolute } from "node:path";
 import { z } from "zod";
-import { TaskError, type TaskLedger } from "./ledger.js";
+import { canonical, TaskError, type TaskLedger } from "./ledger.js";
 import {
-  nativeProjectSession, projectSessionCommand, projectSessionDecision, projectSessionReference,
+  nativeProjectSession, projectSessionContinuation, projectContinuationDigest, projectSessionCommand, projectSessionDecision, projectSessionReference,
   sameProjectSession, type NativeProjectSession, type ProjectSessionCommand,
   type ProjectSessionDecision, type ProjectSessionEvidence, type ProjectSessionPrepare,
-  type ProjectSessionReference, type ProjectSessionStatus,
+  type ProjectSessionReference, type ProjectSessionStatus, type ProjectSessionContinuation,
 } from "./project-session-protocol.js";
 
 export interface ProjectSessionNative {
@@ -27,7 +27,7 @@ export interface ProjectSessionOwnerPorts {
 }
 const recordBase = {
   operationId: z.string().min(1).max(200), intent: z.enum(["prepare", "freeze"]),
-  binding: projectSessionReference, evidenceId: z.string().min(1).max(200),
+  binding: projectSessionReference, evidenceId: z.string().min(1).max(200), continuation: projectSessionContinuation.nullable().default(null),
 };
 const ownerRecord = z.discriminatedUnion("phase", [
   z.object({ ...recordBase, phase: z.literal("pending") }).strict(),
@@ -56,6 +56,7 @@ export class ProjectSessionOwner {
   private readonly stopListening: () => void;
   private stopped = false;
   private readonly lifecycle = new WeakMap<Agent, AbortSignal>();
+  private readonly mountedContinuations = new WeakSet<Agent>();
   private readonly tracked = new WeakSet<Agent>();
   private readonly closing = new Set<string>();
   private readonly replaying = new Set<string>();
@@ -79,6 +80,11 @@ export class ProjectSessionOwner {
       this.trackCustody(agent);
       if (signal) { this.tracked.add(agent); this.lifecycle.set(agent, signal); }
       signal?.addEventListener("abort", () => this.closing.add(id), { once: true });
+      const stored = this.db.prepare("SELECT data FROM project_session_owner_operations WHERE session=? AND json_extract(data,'$.intent')='prepare' ORDER BY rowid DESC LIMIT 1").get(id);
+      if (stored) {
+        const prepared = ownerRecord.parse(JSON.parse(String(stored.data)));
+        if (prepared.continuation) this.mountContinuation(agent, prepared.continuation);
+      }
       const record = this.unresolved(id);
       if (!record) return;
       const hold = this.holds.get(String(agent.id)) ?? this.newHold(record);
@@ -108,6 +114,15 @@ export class ProjectSessionOwner {
         throw error;
       }
     });
+  }
+  private mountContinuation(agent: Agent, continuation: ProjectSessionContinuation) {
+    if (this.mountedContinuations.has(agent)) return;
+    const prompts = agent.ctx.get("systemPrompt");
+    if (!prompts) throw new TaskError("UNAVAILABLE", "Ordinary session prompt assembly is unavailable");
+    prompts.context({ name: "project-session-continuation", order: 110, required: true, interpolate: false,
+      text: () => `Previous project session ${continuation.source.nodeId}/${continuation.source.sessionId}, generation ${continuation.source.generation}.\nConversation excerpt:\n${continuation.summary}\nCentral task references:\n${JSON.stringify(continuation.tasks)}\nContinue these existing tasks from their central records. Do not duplicate completed or uncertain work.`,
+    });
+    this.mountedContinuations.add(agent);
   }
   private trackCustody(agent: Agent) {
     const sessions = agent.ctx.get("sessions");
@@ -215,7 +230,7 @@ export class ProjectSessionOwner {
   private evidence(record: OwnerRecord): ProjectSessionStatus {
     if (record.phase === "pending") return { kind: "pending", operationId: record.operationId, binding: record.binding };
     const kind = record.phase === "held" ? record.intent === "prepare" ? "prepared" : "frozen" : record.phase;
-    return { kind, operationId: record.operationId, binding: record.binding, evidenceId: record.evidenceId };
+    return { kind, operationId: record.operationId, binding: record.binding, evidenceId: record.evidenceId, ...(record.continuation ? { continuationDigest: projectContinuationDigest(record.continuation) } : {}) };
   }
   status(operationId: string, sessionId: string): ProjectSessionStatus {
     const record = this.read(operationId, sessionId);
@@ -246,11 +261,22 @@ export class ProjectSessionOwner {
     }
   }
   private async prepare(input: ProjectSessionPrepare): Promise<ProjectSessionStatus> {
-    const previous = this.read(input.operationId, input.sessionId);
+    if (input.continuation && (input.continuation.source.projectId !== input.projectId || input.continuation.source.generation !== input.generation - 1 || input.continuation.source.sessionId === input.sessionId))
+      throw new TaskError("FORBIDDEN", "Continuation source does not match the preceding project generation");
+    let previous = this.read(input.operationId, input.sessionId);
     if (previous) {
       const binding = previous.binding;
       if (previous.intent !== "prepare" || binding.kind !== "native" || binding.projectId !== input.projectId || binding.generation !== input.generation || binding.workspaceId !== input.workspaceId || binding.workspaceRevision !== input.workspaceRevision)
         throw new TaskError("CONFLICT", "Prepare retry changed its immutable binding");
+      if (input.continuation) {
+        if (previous.continuation && canonical(previous.continuation) !== canonical(input.continuation)) throw new TaskError("CONFLICT", "Prepared continuation changed during retry");
+        if (!previous.continuation) {
+          if (previous.phase === "active" || previous.phase === "released") throw new TaskError("CONFLICT", "Continuation cannot be added after activation");
+          previous = this.save({ ...previous, continuation: input.continuation });
+        }
+        const agent = this.holds.get(input.sessionId)?.agent;
+        if (agent) this.mountContinuation(agent, input.continuation);
+      }
       if (previous.phase === "active" || previous.phase === "released") return this.evidence(previous);
       return this.restoreHold(previous);
     }
@@ -258,7 +284,7 @@ export class ProjectSessionOwner {
     if (workspace.workspaceId !== input.workspaceId || workspace.workspaceRevision !== input.workspaceRevision || !isAbsolute(workspace.cwd))
       throw new TaskError("WORKSPACE_POLICY", "Owner workspace registration changed");
     const binding = nativeProjectSession.parse({ kind: "native", projectId: input.projectId, generation: input.generation, nodeId: this.nodeId, sessionId: input.sessionId, ...workspace });
-    const record = this.save({ operationId: input.operationId, intent: "prepare", binding, phase: "pending", evidenceId: randomUUID() });
+    const record = this.save({ operationId: input.operationId, intent: "prepare", binding, phase: "pending", evidenceId: randomUUID(), continuation: input.continuation ?? null });
     const hold = this.newHold(record);
     void this.ports.native.create({ sessionId: SessionId(binding.sessionId), cwd: binding.cwd }).then(result => {
       if (String(result.sessionId) !== binding.sessionId) throw new TaskError("CONFLICT", "Native create replaced the prepared identity");
@@ -321,7 +347,7 @@ export class ProjectSessionOwner {
     }
     const other = this.unresolved(binding.sessionId);
     if (other && (other.phase === "pending" || other.phase === "held")) throw new TaskError("BUSY", "Another placement owns this session");
-    const record: OwnerRecord = { operationId, intent: "freeze", binding, phase: "pending", evidenceId: randomUUID() };
+    const record: OwnerRecord = { operationId, intent: "freeze", binding, phase: "pending", evidenceId: randomUUID(), continuation: null };
     const hold = this.newHold(record);
     const live = this.ctx.agents.get(SessionId(binding.sessionId));
     if (live) {

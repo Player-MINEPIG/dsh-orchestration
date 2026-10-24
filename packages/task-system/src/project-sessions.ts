@@ -1,9 +1,9 @@
 import { z } from "zod";
 import { canonical, TaskError, type TaskLedger } from "./ledger.js";
 import {
-  nativeProjectSession, projectSessionDecision, projectSessionEvidence, projectSessionReference, projectSessionStatus,
+  nativeProjectSession, projectSessionContinuation, projectContinuationDigest, projectSessionDecision, projectSessionEvidence, projectSessionReference, projectSessionStatus,
   sameProjectSession, type NativeProjectSession, type ProjectSessionCommand, type ProjectSessionDecision,
-  type ProjectSessionEvidence,
+  type ProjectSessionEvidence, type ProjectSessionContinuation,
 } from "./project-session-protocol.js";
 
 export const projectSessionMove = z.object({
@@ -17,13 +17,14 @@ export const projectSessionMove = z.object({
 export type ProjectSessionMove = z.infer<typeof projectSessionMove>;
 const placementRecord = z.object({
   request: projectSessionMove, state: z.enum(["preparing", "committed", "complete", "aborting", "aborted"]),
-  prepared: projectSessionEvidence.nullable(), frozen: projectSessionEvidence.nullable(), decision: projectSessionDecision.nullable(),
+  continuation: projectSessionContinuation.nullable().default(null), prepared: projectSessionEvidence.nullable(), frozen: projectSessionEvidence.nullable(), decision: projectSessionDecision.nullable(),
 }).strict();
 export type ProjectSessionPlacement = z.infer<typeof placementRecord>;
 export interface ProjectSessionsPorts {
   owner(nodeId: string, command: ProjectSessionCommand): Promise<unknown>;
   checkCurrent(request: ProjectSessionMove): void;
   commit(request: ProjectSessionMove, next: NativeProjectSession): void;
+  continuation?(request: ProjectSessionMove): Promise<ProjectSessionContinuation>;
 }
 
 export class ProjectSessions {
@@ -60,10 +61,10 @@ export class ProjectSessions {
     if (!record) {
       this.ports.checkCurrent(request);
       if (this.outstanding().some(item => item.request.projectId === request.projectId)) throw new TaskError("BUSY", "Project location change is already pending");
-      record = this.save({ request, state: "preparing", prepared: null, frozen: null, decision: null });
+      record = this.save({ request, state: "preparing", continuation: null, prepared: null, frozen: null, decision: null });
     }
     const operation = this.drive(record).catch(async error => {
-      if (!(error instanceof TaskError) || !["BUSY", "WORKSPACE_POLICY", "FORBIDDEN", "INVALID", "CONFLICT"].includes(error.code)) throw error;
+      if (!(error instanceof TaskError) || !["BUSY", "WORKSPACE_POLICY", "FORBIDDEN", "INVALID", "CONFLICT", "PROJECT_SESSION_SIZE"].includes(error.code)) throw error;
       const current = this.status(request.operationId);
       if (current?.state === "preparing") {
         const next = current.prepared ? nativeProjectSession.parse(current.prepared.binding) : null;
@@ -105,6 +106,13 @@ export class ProjectSessions {
         const frozen = await this.receipt(request.old.nodeId, { kind: "freeze", operationId: request.operationId, binding: request.old }, "frozen");
         if (!sameProjectSession(frozen.binding, request.old)) throw new TaskError("FORBIDDEN", "Frozen owner session does not match the old generation");
         record = this.save({ ...record, frozen });
+      }
+      if (this.ports.continuation) {
+        if (!record.continuation) record = this.save({ ...record, continuation: projectSessionContinuation.parse(await this.ports.continuation(request)) });
+        if (!record.continuation) throw new TaskError("CONFLICT", "Placement continuation is unavailable");
+        const prepared = await this.receipt(request.selection.nodeId, { kind: "prepare", operationId: request.operationId, projectId: request.projectId, generation: request.old.generation + 1, sessionId: request.sessionId, workspaceId: request.selection.workspaceId, workspaceRevision: request.selection.workspaceRevision, continuation: record.continuation }, "prepared");
+        if (prepared.continuationDigest !== projectContinuationDigest(record.continuation)) throw new TaskError("FORBIDDEN", "Owner did not confirm the immutable prepared continuation");
+        record = this.save({ ...record, prepared });
       }
       if (!record.prepared) throw new TaskError("CONFLICT", "Placement has no prepared evidence");
       const next = nativeProjectSession.parse(record.prepared.binding);

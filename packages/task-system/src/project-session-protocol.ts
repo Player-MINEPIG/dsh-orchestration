@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { z } from "zod";
 
 const identity = {
@@ -25,11 +26,20 @@ export const projectSessionDecision = z.discriminatedUnion("outcome", [
 export type ProjectSessionDecision = z.infer<typeof projectSessionDecision>;
 export type ProjectSessionCommit = Extract<ProjectSessionDecision, { outcome: "commit" }>;
 
+export const projectSessionContinuation = z.object({
+  source: projectSessionReference,
+  summary: z.string().max(20000), sourceSeq: z.number().int().min(-1).nullable(), truncated: z.boolean(),
+  tasks: z.array(z.object({ taskId: z.string().min(1).max(200), state: z.string().max(200), runId: z.string().min(1).max(200).nullable(), reportId: z.string().min(1).max(200).nullable() }).strict()).max(64),
+}).strict();
+export type ProjectSessionContinuation = z.infer<typeof projectSessionContinuation>;
+export const projectContinuationDigest = (value: ProjectSessionContinuation) => createHash("sha256").update(JSON.stringify(projectSessionContinuation.parse(value))).digest("hex");
+
 export const projectSessionPrepare = z.object({
   kind: z.literal("prepare"), operationId: z.string().min(1).max(200), projectId: z.string().min(1).max(200),
   generation: z.number().int().positive(), sessionId: z.string().min(1).max(200),
   workspaceId: z.string().min(1).max(200), workspaceRevision: z.string().min(1).max(200),
-}).strict();
+  continuation: projectSessionContinuation.optional(),
+}).strict().refine(value => Buffer.byteLength(JSON.stringify(JSON.stringify(value))) <= 24 * 1024, "Prepared context exceeds its encoded 24 KiB budget");
 export type ProjectSessionPrepare = z.infer<typeof projectSessionPrepare>;
 export const projectSessionCommand = z.discriminatedUnion("kind", [
   projectSessionPrepare,
@@ -42,7 +52,7 @@ export type ProjectSessionCommand = z.infer<typeof projectSessionCommand>;
 
 export const projectSessionEvidence = z.object({
   kind: z.enum(["prepared", "frozen", "active", "released"]),
-  operationId: z.string().min(1).max(200), binding: projectSessionReference, evidenceId: z.string().min(1).max(200),
+  operationId: z.string().min(1).max(200), binding: projectSessionReference, evidenceId: z.string().min(1).max(200), continuationDigest: z.string().regex(/^[a-f0-9]{64}$/).optional(),
 }).strict();
 export type ProjectSessionEvidence = z.infer<typeof projectSessionEvidence>;
 export const projectSessionStatus = z.discriminatedUnion("kind", [
