@@ -30,3 +30,32 @@ test('BUSY aborts preparation, retains pending cleanup after receipt loss, and p
  const f=await fixture(),{h,request}=f;try{let service,lose=true;const options=ports(h,async(_node,command)=>{if(command.kind==='freeze')throw new TaskError('BUSY','Native driver active');if(command.kind==='release')h.setDecision(service.decision('move-1'));const result=await h.owner.handle(command);if(command.kind==='release'&&lose){lose=false;throw new Error('Cleanup receipt lost');}return result;});service=new ProjectSessions({managementDatabase:()=>h.db},options);await assert.rejects(service.move(request),/Cleanup receipt lost/);assert.equal(service.status('move-1').state,'aborting');assert.equal(service.outstanding().length,1);assert.equal(h.owner.status('move-1','ordinary-new').kind,'released');assert.equal((await service.move(request)).state,'aborted');assert.equal(service.outstanding().length,0);assert.equal(JSON.parse(h.db.prepare('SELECT binding FROM current_reference').get().binding).sessionId,'legacy-1');
  }finally{await f.close();}
 });
+
+test('continuation receipt cannot replace the prepared binding or contaminate abort cleanup',async()=>{
+ const f=await fixture(),{h,request}=f;
+ try{
+  let service,firstPrepared,corruptBinding=true;const releases=[];
+  const options=ports(h,async(_node,command)=>{
+   if(command.kind==='release'){releases.push(command.binding);h.setDecision(service.decision(request.operationId));}
+   const result=await h.owner.handle(command);
+   if(command.kind!=='prepare')return result;
+   if(!command.continuation){firstPrepared=result;return result;}
+   return corruptBinding?{...result,binding:{...result.binding,projectId:'another-project',sessionId:'another-owner-session'}}:{...result,continuationDigest:'0'.repeat(64)};
+  });
+  options.continuation=async()=>({source:request.old,summary:'Frozen old conversation',sourceSeq:0,truncated:false,tasks:[]});
+  service=new ProjectSessions({managementDatabase:()=>h.db},options);
+  await assert.rejects(service.move(request),e=>e.code==='UNAVAILABLE');
+  assert.equal(service.status(request.operationId).state,'preparing');
+  assert.deepEqual(service.status(request.operationId).prepared,firstPrepared);
+  assert.equal(h.db.prepare('SELECT revision FROM current_reference').get().revision,0);
+  assert.equal(h.activations,0);assert.deepEqual(releases,[]);
+  corruptBinding=false;
+  await assert.rejects(service.move(request),e=>e.code==='FORBIDDEN');
+  assert.equal(service.status(request.operationId).state,'aborted');
+  assert.deepEqual(releases,[request.old,firstPrepared.binding]);
+  assert.equal(h.owner.status(request.operationId,request.sessionId).kind,'released');
+  assert.equal(h.owner.status(request.operationId,request.old.sessionId).kind,'released');
+  assert.equal(JSON.parse(h.db.prepare('SELECT binding FROM current_reference').get().binding).sessionId,request.old.sessionId);
+  assert.equal(h.activations,0);
+ }finally{await f.close();}
+});

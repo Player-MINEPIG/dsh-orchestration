@@ -110,7 +110,7 @@ export class ProjectSessions {
       if (this.ports.continuation) {
         if (!record.continuation) record = this.save({ ...record, continuation: projectSessionContinuation.parse(await this.ports.continuation(request)) });
         if (!record.continuation) throw new TaskError("CONFLICT", "Placement continuation is unavailable");
-        const prepared = await this.receipt(request.selection.nodeId, { kind: "prepare", operationId: request.operationId, projectId: request.projectId, generation: request.old.generation + 1, sessionId: request.sessionId, workspaceId: request.selection.workspaceId, workspaceRevision: request.selection.workspaceRevision, continuation: record.continuation }, "prepared");
+        const prepared = await this.receipt(request.selection.nodeId, { kind: "prepare", operationId: request.operationId, projectId: request.projectId, generation: request.old.generation + 1, sessionId: request.sessionId, workspaceId: request.selection.workspaceId, workspaceRevision: request.selection.workspaceRevision, continuation: record.continuation }, "prepared", nativeProjectSession.parse(record.prepared?.binding));
         if (prepared.continuationDigest !== projectContinuationDigest(record.continuation)) throw new TaskError("FORBIDDEN", "Owner did not confirm the immutable prepared continuation");
         record = this.save({ ...record, prepared });
       }
