@@ -4,7 +4,8 @@ import { mkdtempSync, mkdirSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { deflateSync } from "node:zlib";
 import { Context } from "@deepseek-ai/cordis";
 import { Loader } from "@deepseek-ai/cordis-plugin-loader";
 import { agentCarrier } from "@deepseek-ai/dsh-agent";
@@ -14,6 +15,42 @@ import {
   ProjectNativeOwner,
   ProjectNativeOperation,
 } from "../dist/project-session-native.js";
+
+function pngBytes(width = 1, height = 1) {
+  const chunk = (name, bytes) => {
+    const type = Buffer.from(name),
+      body = Buffer.concat([type, bytes]);
+    let crc = 0xffffffff;
+    for (const byte of body) {
+      crc ^= byte;
+      for (let bit = 0; bit < 8; bit++)
+        crc = crc & 1 ? 0xedb88320 ^ (crc >>> 1) : crc >>> 1;
+    }
+    const length = Buffer.alloc(4),
+      checksum = Buffer.alloc(4);
+    length.writeUInt32BE(bytes.length);
+    checksum.writeUInt32BE((crc ^ 0xffffffff) >>> 0);
+    return Buffer.concat([length, body, checksum]);
+  };
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(width, 0);
+  header.writeUInt32BE(height, 4);
+  header[8] = 8;
+  header[9] = 6;
+  const pixels = randomBytes(width * height * 4);
+  const rows = [];
+  for (let row = 0; row < height; row++)
+    rows.push(
+      Buffer.from([0]),
+      pixels.subarray(row * width * 4, (row + 1) * width * 4),
+    );
+  return Buffer.concat([
+    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+    chunk("IHDR", header),
+    chunk("IDAT", deflateSync(Buffer.concat(rows))),
+    chunk("IEND", Buffer.alloc(0)),
+  ]);
+}
 
 async function createOwner(existing) {
   const dir =
@@ -440,25 +477,23 @@ test("real Agent-scoped waterfalls retain pending approval/questions and reject 
       }),
       (error) => error.code === "INTERACTION_EXPIRED",
     );
-    agent.ctx
-      .get("tools")
-      .register(
-        defineTool({
-          name: "owner_approval",
-          description: "Exercise the real approval service.",
-          parameters: {},
-          output: {
-            schema: { type: "string" },
-            render: (_args, result) => [{ type: "text", text: result }],
-          },
-          execute: (_args, execution) =>
-            h.ctx.approval.request({
-              agent: execution.agent,
-              toolName: "owner_approval",
-              reason: "Read owner workspace",
-            }),
-        }),
-      );
+    agent.ctx.get("tools").register(
+      defineTool({
+        name: "owner_approval",
+        description: "Exercise the real approval service.",
+        parameters: {},
+        output: {
+          schema: { type: "string" },
+          render: (_args, result) => [{ type: "text", text: result }],
+        },
+        execute: (_args, execution) =>
+          h.ctx.approval.request({
+            agent: execution.agent,
+            toolName: "owner_approval",
+            reason: "Read owner workspace",
+          }),
+      }),
+    );
     h.model.script = [
       { name: "owner_approval", args: {} },
       "Approved owner operation.",
@@ -793,33 +828,7 @@ test("chunked owner upload produces a real session receipt consumed by the nativ
 test("small native images use SDK admission and authorized bounded attachment reads", async () => {
   const h = await createOwner();
   try {
-    const { deflateSync } = await import("node:zlib");
-    const chunk = (name, bytes) => {
-      const type = Buffer.from(name),
-        body = Buffer.concat([type, bytes]);
-      let crc = 0xffffffff;
-      for (const byte of body) {
-        crc ^= byte;
-        for (let bit = 0; bit < 8; bit++)
-          crc = crc & 1 ? 0xedb88320 ^ (crc >>> 1) : crc >>> 1;
-      }
-      const length = Buffer.alloc(4),
-        checksum = Buffer.alloc(4);
-      length.writeUInt32BE(bytes.length);
-      checksum.writeUInt32BE((crc ^ 0xffffffff) >>> 0);
-      return Buffer.concat([length, body, checksum]);
-    };
-    const header = Buffer.alloc(13);
-    header.writeUInt32BE(1, 0);
-    header.writeUInt32BE(1, 4);
-    header[8] = 8;
-    header[9] = 6;
-    const png = Buffer.concat([
-      Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
-      chunk("IHDR", header),
-      chunk("IDAT", deflateSync(Buffer.from([0, 0, 0, 0, 255]))),
-      chunk("IEND", Buffer.alloc(0)),
-    ]);
+    const png = pngBytes();
     const image = {
       type: "image",
       mediaType: "image/png",
@@ -827,7 +836,7 @@ test("small native images use SDK admission and authorized bounded attachment re
       name: "owner.png",
     };
     const projections = await invoke(h, { kind: "session-projections" });
-    assert.equal(projections.values.imageLimits.maxImageBytes, 16384);
+    assert.equal(projections.values.imageLimits.maxImageBytes, 8 * 1024 * 1024);
     assert.equal(projections.values.imageLimits.maxImagesPerMessage, 1);
     await assert.rejects(
       invoke(h, {
@@ -841,11 +850,13 @@ test("small native images use SDK admission and authorized bounded attachment re
     await assert.rejects(
       invoke(h, {
         kind: "session-prompt",
-        requestId: "too-large-image",
+        requestId: "inline-image-must-use-chunks",
         mode: "queue",
-        content: [{ ...image, data: Buffer.alloc(16385).toString("base64") }],
+        content: [
+          { ...image, data: Buffer.alloc(48 * 1024).toString("base64") },
+        ],
       }),
-      (error) => error.code === "IMAGE_LIMIT",
+      /Too big|too_big/i,
     );
     await invoke(h, {
       kind: "session-prompt",
@@ -894,6 +905,198 @@ test("small native images use SDK admission and authorized bounded attachment re
       /not found|not reachable|not referenced|invalid|unavailable/i,
     );
   } finally {
+    await h.dispose();
+  }
+});
+
+test("a real MiB PNG uses bounded upload packets and reaches the SDK model and attachment reader", async () => {
+  const h = await createOwner();
+  const foreign = { ...h.binding, generation: h.binding.generation + 1 };
+  const owner = new ProjectNativeOwner({
+    ctx: h.ctx,
+    authorizeBinding: async (binding) => {
+      assert.deepEqual(
+        binding,
+        binding.generation === foreign.generation ? foreign : h.binding,
+      );
+    },
+    withAgent: h.withAgent,
+  });
+  const packetSizes = [];
+  const call = async (operation, binding = h.binding) => {
+    packetSizes.push(Buffer.byteLength(JSON.stringify({ binding, operation })));
+    const value = await owner.invoke(binding, operation, randomUUID());
+    packetSizes.push(Buffer.byteLength(JSON.stringify(value)));
+    return value;
+  };
+  const upload = async (bytes, image) => {
+    const start = await call({
+      kind: "file-upload-start",
+      name: "screenshot.png",
+      bytes: bytes.byteLength,
+      image,
+    });
+    for (let offset = 0, index = 0; offset < bytes.byteLength; index++) {
+      const end = Math.min(offset + start.chunkBytes, bytes.byteLength);
+      await call({
+        kind: "file-upload-part",
+        uploadId: start.uploadId,
+        index,
+        data: bytes.subarray(offset, end).toString("base64"),
+      });
+      offset = end;
+    }
+    return start;
+  };
+  try {
+    const png = pngBytes(512, 512);
+    assert.ok(png.byteLength > 1024 * 1024);
+    const sha256 = createHash("sha256").update(png).digest("hex");
+    const start = await upload(png, { mediaType: "image/png", sha256 });
+    await assert.rejects(
+      call({
+        kind: "session-prompt",
+        requestId: "unfinished-image",
+        mode: "queue",
+        content: [{ type: "image-upload", uploadId: start.uploadId }],
+      }),
+      (error) => error.code === "IMAGE_UPLOAD_INCOMPLETE",
+    );
+    const receipt = await call({
+      kind: "file-upload-finish",
+      uploadId: start.uploadId,
+    });
+    assert.equal(receipt.file.attachmentId, `sha256:${sha256}`);
+    assert.equal(receipt.file.bytes, png.byteLength);
+    await assert.rejects(
+      call(
+        {
+          kind: "session-prompt",
+          requestId: "foreign-image",
+          mode: "queue",
+          content: [{ type: "image-upload", uploadId: start.uploadId }],
+        },
+        foreign,
+      ),
+      (error) => error.code === "UPLOAD_RESET",
+    );
+    let modelImage;
+    let modelBytes;
+    h.model.script = [
+      async (request) => {
+        modelImage = request.messages
+          .flatMap((message) => message.content)
+          .find((part) => part.type === "image");
+        assert.ok(
+          modelImage,
+          "The actual model request contains a native image block",
+        );
+        modelBytes = await h.ctx.attachments.readImage(modelImage.attachment);
+        return "The owner received the screenshot.";
+      },
+    ];
+    const prompt = {
+      kind: "session-prompt",
+      requestId: "ordinary-screenshot",
+      mode: "queue",
+      content: [{ type: "image-upload", uploadId: start.uploadId }],
+    };
+    assert.deepEqual(await call(prompt), { accepted: true });
+    const { agent } = await h.ctx.sessionController.resolveAgent(
+      h.binding.sessionId,
+    );
+    await agent.whenIdle();
+    assert.equal(h.model.requests.length, 1);
+    assert.equal(modelImage.attachment.width, 512);
+    assert.equal(modelImage.attachment.height, 512);
+    assert.ok(modelBytes.data.byteLength > 16384);
+    const projections = await call({ kind: "session-projections" });
+    const page = await call({
+      kind: "session-page",
+      throughSeq: projections.asOfSeq,
+      maxMessages: 10,
+    });
+    const follow = await call({
+      kind: "stream-poll",
+      stream: "session-follow",
+    });
+    for (const value of [page, follow]) {
+      assert.ok(
+        JSON.stringify(value).includes(modelImage.attachment.attachmentId),
+      );
+      assert.ok(!JSON.stringify(value).includes(png.toString("base64")));
+    }
+    await call({
+      kind: "stream-close",
+      stream: "session-follow",
+      cursor: follow.cursor,
+    });
+    const received = [];
+    for (let offset = 0; ; ) {
+      const part = await call({
+        kind: "attachment-read",
+        attachmentId: modelImage.attachment.attachmentId,
+        offset,
+      });
+      received.push(Buffer.from(part.data, "base64"));
+      offset += received.at(-1).byteLength;
+      if (part.eof) break;
+    }
+    assert.deepEqual(Buffer.concat(received), Buffer.from(modelBytes.data));
+    assert.deepEqual(await call(prompt), { accepted: true });
+    await agent.whenIdle();
+    assert.equal(
+      h.model.requests.length,
+      1,
+      "SDK request identity deduplicates the staged image prompt",
+    );
+    assert.ok(packetSizes.every((bytes) => bytes < 48 * 1024));
+
+    await assert.rejects(
+      call({
+        kind: "file-upload-start",
+        bytes: 8 * 1024 * 1024 + 1,
+        image: { mediaType: "image/png" },
+      }),
+      /Too big|too_big/i,
+    );
+    const badDigest = await upload(pngBytes(), {
+      mediaType: "image/png",
+      sha256: "0".repeat(64),
+    });
+    await assert.rejects(
+      call({ kind: "file-upload-finish", uploadId: badDigest.uploadId }),
+      (error) => error.code === "UPLOAD_DIGEST",
+    );
+    await call({ kind: "file-upload-abort", uploadId: badDigest.uploadId });
+    const wrongMime = await upload(pngBytes(), { mediaType: "image/jpeg" });
+    await call({ kind: "file-upload-finish", uploadId: wrongMime.uploadId });
+    await assert.rejects(
+      call({
+        ...prompt,
+        requestId: "wrong-mime",
+        content: [{ type: "image-upload", uploadId: wrongMime.uploadId }],
+      }),
+      /media|mime|format|match/i,
+    );
+    const plainHttp = await upload(pngBytes(), { mediaType: "image/png" });
+    await call({ kind: "file-upload-finish", uploadId: plainHttp.uploadId });
+    assert.deepEqual(
+      await call({
+        ...prompt,
+        requestId: "owner-digest-without-browser-subtle",
+        content: [{ type: "image-upload", uploadId: plainHttp.uploadId }],
+      }),
+      { accepted: true },
+    );
+    await agent.whenIdle();
+    owner.dispose();
+    await assert.rejects(
+      call(prompt),
+      (error) => error.code === "UPLOAD_RESET",
+    );
+  } finally {
+    owner.dispose();
     await h.dispose();
   }
 });

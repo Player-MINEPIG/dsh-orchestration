@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { z } from "zod";
 import type { Context } from "@deepseek-ai/cordis";
@@ -20,6 +20,7 @@ import type {
   SessionProjectionsValue,
   SessionProjectionBaseline,
   SessionFollowFrame,
+  SessionPromptRequest,
 } from "@deepseek-ai/dsh-api-session-controller";
 import type {
   WorkspaceFollowFrame,
@@ -36,6 +37,14 @@ import type {} from "@deepseek-ai/dsh-permission-presets";
 import type {} from "@deepseek-ai/dsh-commands";
 
 const key = z.string().min(1).max(200);
+const uploadMaxBytes = 8 * 1024 * 1024;
+const imageMetadata = z.strictObject({
+  mediaType: z.enum(["image/png", "image/jpeg", "image/webp", "image/gif"]),
+  sha256: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/)
+    .optional(),
+});
 const sequence = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const textPart = z.strictObject({
   type: z.literal("text"),
@@ -51,8 +60,19 @@ const imagePart = z.strictObject({
   data: z.string().max(22000),
   name: z.string().max(255).optional(),
 });
+const uploadedImagePart = z.strictObject({
+  type: z.literal("image-upload"),
+  uploadId: key,
+});
 const promptContent = z
-  .array(z.discriminatedUnion("type", [textPart, filePart, imagePart]))
+  .array(
+    z.discriminatedUnion("type", [
+      textPart,
+      filePart,
+      imagePart,
+      uploadedImagePart,
+    ]),
+  )
   .min(1)
   .max(100)
   .refine(
@@ -206,11 +226,8 @@ export const ProjectNativeOperation = z.discriminatedUnion("kind", [
   z.strictObject({
     kind: z.literal("file-upload-start"),
     name: z.string().min(1).max(255).optional(),
-    bytes: z
-      .number()
-      .int()
-      .min(0)
-      .max(8 * 1024 * 1024),
+    image: imageMetadata.optional(),
+    bytes: z.number().int().min(0).max(uploadMaxBytes),
   }),
   z.strictObject({
     kind: z.literal("file-upload-part"),
@@ -289,6 +306,7 @@ interface UploadState {
   readonly binding: string;
   readonly id: string;
   readonly name: string | undefined;
+  readonly image: z.infer<typeof imageMetadata> | undefined;
   readonly bytes: number;
   readonly abort: AbortController;
   readonly chunks: Uint8Array[];
@@ -470,18 +488,32 @@ export class ProjectNativeOwner {
       }
       case "session-prompt": {
         const { kind: _, requestId, ...request } = operation;
-        const images = request.content.filter((part) => part.type === "image");
+        const images = request.content.filter(
+          (part) => part.type === "image" || part.type === "image-upload",
+        );
         if (
           images.length > 1 ||
-          images.some((part) => this.decode(part.data).byteLength > 16384)
+          images.some(
+            (part) =>
+              part.type === "image" &&
+              this.decode(part.data).byteLength > uploadMaxBytes,
+          )
         )
           error(
             "IMAGE_LIMIT",
-            "Project native images are limited to one image and 16 KiB per message",
+            "Project native images are limited to one image and 8 MiB per message",
           );
+        const content = await Promise.all(
+          request.content.map((part) =>
+            part.type === "image-upload"
+              ? this.uploadedImage(binding, part.uploadId)
+              : part,
+          ),
+        );
         result = await ctx.sessionController.prompt(
           {
             ...request,
+            content,
             requestId: brandString<SessionRequestId>(requestId),
             sessionId,
           },
@@ -682,8 +714,11 @@ export class ProjectNativeOwner {
     return {
       ...limits,
       mediaTypes: [...limits.mediaTypes],
-      maxImageBytes: Math.min(limits.maxImageBytes, 16384),
-      maxMessageImageBytes: Math.min(limits.maxMessageImageBytes, 16384),
+      maxImageBytes: Math.min(limits.maxImageBytes, uploadMaxBytes),
+      maxMessageImageBytes: Math.min(
+        limits.maxMessageImageBytes,
+        uploadMaxBytes,
+      ),
       maxImagesPerMessage: Math.min(limits.maxImagesPerMessage, 1),
     };
   }
@@ -743,6 +778,7 @@ export class ProjectNativeOwner {
       id: randomUUID(),
       binding: bindingKey(binding),
       name: operation.name,
+      image: operation.image,
       bytes: operation.bytes,
       receivedBytes: 0,
       abort: new AbortController(),
@@ -754,7 +790,7 @@ export class ProjectNativeOwner {
     return {
       uploadId: upload.id,
       chunkBytes: 24576,
-      maxBytes: 8 * 1024 * 1024,
+      maxBytes: uploadMaxBytes,
     };
   }
   private uploadFor(
@@ -837,6 +873,12 @@ export class ProjectNativeOwner {
     const files = this.options.ctx.get("fileUploads");
     if (!files)
       error("UNSUPPORTED", "The owner has no native file upload service");
+    if (upload.image?.sha256) {
+      const hash = createHash("sha256");
+      for (const chunk of upload.chunks) hash.update(chunk);
+      if (hash.digest("hex") !== upload.image.sha256)
+        error("UPLOAD_DIGEST", "Image bytes do not match the declared SHA-256");
+    }
     upload.phase = "finishing";
     const chunks = upload.chunks.slice();
     upload.result = files
@@ -864,6 +906,58 @@ export class ProjectNativeOwner {
         },
       );
     return upload.result;
+  }
+  private async uploadedImage(
+    binding: ProjectSessionNativeBinding,
+    id: string,
+  ): Promise<
+    Extract<SessionPromptRequest["content"][number], { type: "image" }>
+  > {
+    const upload = this.uploadFor(binding, id);
+    if (!upload.image || upload.phase !== "completed" || !upload.result)
+      error("IMAGE_UPLOAD_INCOMPLETE", "A completed image upload is required");
+    const metadata = upload.image;
+    const receipt = await upload.result;
+    return this.options.withAgent(binding, async (agent) => {
+      const ctx = this.options.ctx;
+      const file = ctx.get("fileUploads")?.resolve(agent, receipt.receiptId);
+      if (
+        !file ||
+        file.bytes !== upload.bytes ||
+        (metadata.sha256 && file.attachmentId !== `sha256:${metadata.sha256}`)
+      )
+        error(
+          "IMAGE_UPLOAD_INVALID",
+          "The image receipt or metadata is no longer valid",
+        );
+      const chunks: Uint8Array[] = [];
+      const hash = createHash("sha256");
+      let bytes = 0;
+      for await (const chunk of ctx.attachments.readFileStream(
+        file,
+        upload.abort.signal,
+      )) {
+        bytes += chunk.byteLength;
+        if (bytes > upload.bytes || bytes > uploadMaxBytes)
+          error("IMAGE_LIMIT", "Stored image exceeds its declared byte count");
+        hash.update(chunk);
+        chunks.push(chunk);
+      }
+      if (
+        bytes !== upload.bytes ||
+        `sha256:${hash.digest("hex")}` !== file.attachmentId
+      )
+        error(
+          "UPLOAD_DIGEST",
+          "Stored image bytes do not match the upload metadata",
+        );
+      return {
+        type: "image",
+        mediaType: metadata.mediaType,
+        data: Buffer.concat(chunks).toString("base64"),
+        name: upload.name,
+      };
+    });
   }
   private service<K extends string & keyof Context>(
     agent: Agent,
@@ -1220,8 +1314,8 @@ export class ProjectNativeOwner {
       modelCatalog: true,
       modelSelect: true,
       files: service("fileUploads") !== undefined,
-      uploadMaxBytes: 8 * 1024 * 1024,
-      imageMaxBytes: 16384,
+      uploadMaxBytes,
+      imageMaxBytes: uploadMaxBytes,
     }));
   }
   private async *access(
