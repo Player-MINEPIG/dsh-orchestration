@@ -1,3 +1,5 @@
+import { nativeProjectSession, type NativeProjectSession } from "./project-session-protocol.js";
+import type { ProjectSessionMove } from "./project-sessions.js";
 import { temporaryTaskDirectory,temporaryTaskMetadata } from "./remote/project-workspace.js";
 import type { TaskSystemService } from "./dsh-plugin.js";
 import type {} from "@deepseek-ai/dsh-session-persistence-jsonl";
@@ -6,6 +8,7 @@ import {
   SessionId,
   foldSurface,
   deriveEventMessage,
+  foldRequestHeader,
 } from "@deepseek-ai/dsh-session";
 import { createUserMessage, ReasoningEffortId } from "@deepseek-ai/dsh-llm";
 import { randomUUID, createHash } from "node:crypto";
@@ -94,6 +97,7 @@ export class ProjectRuntime {
     { done: Promise<void>; abort: AbortController }
   >();
   private accepting = true;
+  private readonly placementHandles = new Set<Awaited<ReturnType<Context["agents"]["resume"]>>>();
   private readonly resultRetries = new Map<string,Promise<unknown>>();
   planner?: TaskPlanner;
   private readonly temporaryCreations = new Map<
@@ -118,6 +122,7 @@ export class ProjectRuntime {
     this.db
       .exec(`CREATE TABLE IF NOT EXISTS pr_settings(id INTEGER PRIMARY KEY CHECK(id=1),root TEXT,revision INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS pr_project_workspaces(project TEXT PRIMARY KEY,workspace TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS pr_session_locations(session TEXT PRIMARY KEY,project TEXT NOT NULL,generation INTEGER NOT NULL,binding TEXT NOT NULL,operation TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS pr_task_presentation(task TEXT PRIMARY KEY,visibility TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS pr_report_reads(report TEXT NOT NULL,version TEXT NOT NULL,read_at TEXT NOT NULL,PRIMARY KEY(report,version));
       CREATE TABLE IF NOT EXISTS pr_task_routes(task TEXT PRIMARY KEY,route TEXT NOT NULL);
@@ -267,6 +272,62 @@ export class ProjectRuntime {
       executors:nodes.map(node=>({...this.ledger.executorWorkspaceCatalog(node.nodeId),enabled:node.enabled,state:this.ledger.nodeStatuses().find(status=>status.nodeId===node.nodeId)?.state ?? "unknown"})),
       effect:"新执行使用保存的限制；已领取继续原上下文，尚未领取且设置失效的请求需人工处理，不自动换目录。"};
   }
+  nativeSession(sessionId: string): NativeProjectSession | undefined {
+    const row = this.db.prepare("SELECT binding FROM pr_session_locations WHERE session=?").get(sessionId);
+    return row ? nativeProjectSession.parse(JSON.parse(String(row.binding))) : undefined;
+  }
+  placementProject(projectId: string) { this.authorize(); return { ...this.project(projectId) }; }
+  checkPlacement(input: ProjectSessionMove) {
+    this.authorize();
+    const project = this.project(input.projectId);
+    if (project.session !== input.old.sessionId || project.generation !== input.old.generation || this.ledger.projectExecutionSettings.read(project.id).revision !== input.expectedRevision)
+      throw new TaskError("CONFLICT", "Project settings changed; reload before saving");
+    if (project.state !== "ready") throw new TaskError("BUSY", "Project is changing its session");
+    this.validateExecutionBindings(input.allowedNodeIds, input.executionBindings);
+    if (this.ledger.dispatcherForSession(input.old.nodeId, input.old.sessionId) || this.db.prepare("SELECT command FROM pr_turns WHERE session=? AND state IN ('queued','running')").get(input.old.sessionId))
+      throw new TaskError("BUSY", "Wait for the original session's managed turn or dispatcher to settle");
+  }
+  commitPlacement(input: ProjectSessionMove, next: NativeProjectSession) {
+    this.checkPlacement(input);
+    const workspaceId = `pr:${input.projectId}:coordinator:${digest({ nodeId: next.nodeId, workspaceId: next.workspaceId, cwd: next.cwd }).slice(0, 24)}`;
+    const binding = { workspaceId, nodeId: next.nodeId, path: next.cwd, scope: "coordinator" };
+    this.ledger.registerCoordinatorWorkspace({ workspaceId, nodeId: next.nodeId, path: next.cwd, label: this.project(input.projectId).title, state: "ready", createdAt: now() });
+    this.ledger.projectExecutionSettings.save({ projectId: input.projectId, expectedRevision: input.expectedRevision, allowedNodeIds: input.allowedNodeIds, executionBindings: input.executionBindings });
+    this.db.prepare("INSERT INTO pr_project_workspaces VALUES(?,?) ON CONFLICT(project) DO UPDATE SET workspace=excluded.workspace").run(input.projectId, canonical(binding));
+    this.db.prepare("INSERT INTO pr_session_locations VALUES(?,?,?,?,?)").run(next.sessionId, input.projectId, next.generation, canonical(next), input.operationId);
+    this.db.prepare("INSERT INTO pr_sessions VALUES(?,?,?,?,?)").run(next.sessionId, input.projectId, next.generation, `Continues generation ${input.old.generation} on ${next.nodeId}`, now());
+    this.db.prepare("UPDATE pr_projects SET root=?,cwd=?,session=?,generation=?,state='ready' WHERE id=? AND session=? AND generation=?").run(next.cwd, next.cwd, next.sessionId, next.generation, input.projectId, input.old.sessionId, input.old.generation);
+    this.db.prepare("UPDATE wb_project_workspaces SET is_default=0,revision=revision+1 WHERE project_id=? AND is_default=1").run(input.projectId);
+    this.db.prepare("INSERT INTO wb_project_workspaces(project_id,workspace_id,node_id,is_default,revision) VALUES(?,?,?,1,1) ON CONFLICT(project_id,workspace_id) DO UPDATE SET is_default=1,revision=revision+1").run(input.projectId, workspaceId, next.nodeId);
+  }
+  async restoreManagedPlacement(binding: Extract<import("./project-session-protocol.js").ProjectSessionReference, { kind: "managed" }>) {
+    const project = this.project(binding.projectId);
+    if (this.nativeSession(binding.sessionId) || binding.nodeId !== this.nodeId) throw new TaskError("FORBIDDEN", "Managed placement belongs to another runtime");
+    const persistence = this.ctx.get("sessionPersistence");
+    if (!persistence) throw new TaskError("UNAVAILABLE", "Session persistence unavailable");
+    const read = await persistence.open(SessionId(binding.sessionId), "read");
+    let recorded;
+    try { recorded = foldRequestHeader((await read.read()).events); }
+    finally { await read.close(); }
+    const handle = await this.agents().resume({ resumeSessionId: SessionId(binding.sessionId),
+      agentOptions: recorded ? { provider: recorded.config.provider, model: recorded.config.model, ...(recorded.config.reasoningEffort ? { reasoningEffort: recorded.config.reasoningEffort } : {}) } : this.options(project.id),
+      setup: (agentCtx, agent) => {
+        agentCtx.tools.restrict({ allow: TOOLS });
+        agentCtx.tools.guard(exec => exec.agent === agent && TOOLS.includes(exec.name) ? undefined : "Project dispatch tools only");
+      },
+    });
+    this.placementHandles.add(handle);
+    return handle.agent;
+  }
+  saveExecutionPolicy(input: { projectId: string; expectedRevision: number; allowedNodeIds: string[] | null; executionBindings: Record<string, string> }) {
+    this.authorize();
+    if (this.project(input.projectId).state !== "ready") throw new TaskError("BUSY", "Project is changing its session");
+    this.validateExecutionBindings(input.allowedNodeIds, input.executionBindings);
+    return this.ledger.projectExecutionSettings.save({projectId:input.projectId,expectedRevision:input.expectedRevision,allowedNodeIds:input.allowedNodeIds,executionBindings:input.executionBindings});
+  }
+  legacyConversation(projectId: string, sessionId: string, generation: number, cwd: string) {
+    return this.readConversation({ ...this.project(projectId), session: sessionId, generation, cwd });
+  }
   private validateExecutionBindings(allowedNodeIds:string[]|null,executionBindings:Record<string,string>) {
     const nodes=this.ledger.decisionCatalog().nodes;
     for(const nodeId of allowedNodeIds ?? []) if(!nodes.some(node=>node.nodeId===nodeId&&node.roles.some(role=>role==="executor"||role==="both")))throw new TaskError("FORBIDDEN","Unknown executor in project policy");
@@ -278,6 +339,7 @@ export class ProjectRuntime {
   async saveExecutionSettings(input: {projectId:string;expectedRevision:number;allowedNodeIds:string[]|null;executionBindings:Record<string,string>;coordinatorWorkspace?:ProjectWorkspaceSelection}) {
     this.authorize();
     const p=this.project(input.projectId);
+    if(this.nativeSession(p.session))throw new TaskError("CONFLICT","Refresh project settings and use the owner workspace catalog for this native session");
     if(p.state!=="ready")throw new TaskError("BUSY","Project is changing its coordinator session");
     if(this.ledger.projectExecutionSettings.read(p.id).revision!==input.expectedRevision)throw new TaskError("CONFLICT","Project settings changed; reload before saving");
     this.validateExecutionBindings(input.allowedNodeIds,input.executionBindings);
@@ -656,6 +718,7 @@ export class ProjectRuntime {
     const persistence = this.ctx.get("sessionPersistence");
     for (const session of this.db.prepare("SELECT session FROM pr_sessions WHERE owner=? ORDER BY generation").all(row.id)) {
       const sessionId = SessionId(String(session.session));
+      if (this.nativeSession(String(sessionId))?.nodeId !== undefined) continue;
       const stored = await persistence?.stat(sessionId);
       const cwd = stored?.header.cwd;
       if (!cwd || !existsSync(cwd)) continue;
@@ -1216,6 +1279,7 @@ export class ProjectRuntime {
     );
   }
   private sendOwned(p: ProjectRow, commandId: string, contents: string) {
+    if (this.nativeSession(p.session)) throw new TaskError("FORBIDDEN", "Use the native owner conversation for this project session");
     const message = text(contents, 20000),
       command = text(commandId, 200);
     const agentOptions = this.options(p.id);
@@ -1400,6 +1464,49 @@ export class ProjectRuntime {
       text: input.text,
     });
   }
+  private executorConversationFor(p: ProjectRow) {
+    const messages: { id: string; role: string; text: string; time?: string; executor: string; sessionId: string; state: string }[] = [];
+    const tasks = p.taskId ? [p.taskId] : this.projectTaskIds(p.id);
+    const executorTargets = tasks.flatMap((taskId) =>
+      this.ledger
+        .sessionMessageTargets(taskId)
+        .map((s) => ({ ...s, title: this.ledger.getTask(taskId).title })),
+    );
+    for (const taskId of tasks)
+      for (const m of this.ledger.sessionMessages(taskId)) {
+        messages.push({
+          id: `direct:${m.messageId}`,
+          role: "user",
+          text: m.text,
+          time: m.createdAt,
+          executor: m.nodeId,
+          sessionId: m.sessionId,
+          state: m.state,
+        });
+        if (m.reply)
+          messages.push({
+            id: `direct-reply:${m.messageId}`,
+            role: "assistant",
+            text: m.reply,
+            time: m.updatedAt,
+            executor: m.nodeId,
+            sessionId: m.sessionId,
+            state: m.state,
+          });
+      }
+    return { messages, executorTargets };
+  }
+  executorConversationMetadata(projectId: string) {
+    this.authorize();
+    const original = this.executorConversationFor(this.project(projectId));
+    const result = { messages: original.messages.slice(-200), executorTargets: original.executorTargets.slice(-64), messagesTruncated: original.messages.length > 200, executorTargetsTruncated: original.executorTargets.length > 64 };
+    while (Buffer.byteLength(JSON.stringify(result)) > 48 * 1024) {
+      if (result.messages.length) { result.messages.shift(); result.messagesTruncated = true; }
+      else if (result.executorTargets.length) { result.executorTargets.shift(); result.executorTargetsTruncated = true; }
+      else break;
+    }
+    return result;
+  }
   private async readConversation(p: ProjectRow) {
     const handle = await (
       this.ctx.get("sessionPersistence") as Context["sessionPersistence"]
@@ -1446,34 +1553,8 @@ export class ProjectRuntime {
     } finally {
       await handle.close();
     }
-    const tasks = p.taskId ? [p.taskId] : this.projectTaskIds(p.id);
-    const executorTargets = tasks.flatMap((taskId) =>
-      this.ledger
-        .sessionMessageTargets(taskId)
-        .map((s) => ({ ...s, title: this.ledger.getTask(taskId).title })),
-    );
-    for (const taskId of tasks)
-      for (const m of this.ledger.sessionMessages(taskId)) {
-        messages.push({
-          id: `direct:${m.messageId}`,
-          role: "user",
-          text: m.text,
-          time: m.createdAt,
-          executor: m.nodeId,
-          sessionId: m.sessionId,
-          state: m.state,
-        });
-        if (m.reply)
-          messages.push({
-            id: `direct-reply:${m.messageId}`,
-            role: "assistant",
-            text: m.reply,
-            time: m.updatedAt,
-            executor: m.nodeId,
-            sessionId: m.sessionId,
-            state: m.state,
-          });
-      }
+    const { executorTargets, messages: directMessages } = this.executorConversationFor(p);
+    messages.push(...directMessages);
     messages.sort((a, b) => (a.time ?? "").localeCompare(b.time ?? ""));
     return {
       executorTargets,
@@ -2234,7 +2315,7 @@ export class ProjectRuntime {
     const tasks=all.tasks.filter(t=>ids.has(t.id)).map(t=>({...t,childAttention:t.childAttention.filter(row=>ids.has(row.taskId)),canHandle:false,canConfirm:false,canComplete:false,canRequestMaterials:false,canCancel:t.canCancel && raw.tasks.some(task=>task.taskId===t.id && task.dispatchOrigin?.kind==="session" && task.dispatchOrigin.nodeId===nodeId),canRetry:false,canRestore:false,canReconcile:false,canRequestStatus:t.canRequestStatus && raw.tasks.some(task=>task.taskId===t.id && task.dispatchOrigin?.kind==="session" && task.dispatchOrigin.nodeId===nodeId)}));
     for(const t of tasks)if(t.project!=="unassigned")projectIds.add(t.project);
     const runs=all.runs.filter(r=>ids.has(r.taskId)),runIds=new Set(runs.map(r=>r.id));
-    return {...all,workspaceOptions:{nodeId,roots:[],workspaces:[]},settings:{enabled:false},projects:all.projects.filter(p=>projectIds.has(p.id)).map(p=>({...p,canChat:false,sessionId:null})),tasks,runs,
+    return {...all,workspaceOptions:{nodeId,roots:[],workspaces:[]},settings:{enabled:false},projects:all.projects.filter(p=>projectIds.has(p.id)).map(p=>({...p,canChat:!!p.sessionId && !!this.nativeSession(p.sessionId),sessionId:p.sessionId && this.nativeSession(p.sessionId) ? p.sessionId : null})),tasks,runs,
       attempts:all.attempts.filter(a=>runIds.has(a.runId)),reports:all.reports.filter(r=>ids.has(r.taskId)),
       artifacts:all.artifacts.filter(a=>a.taskId&&ids.has(a.taskId)),milestones:all.milestones.filter(m=>projectIds.has(m.projectId)),schedules:all.schedules.filter(s=>ids.has(s.taskId)),
       projectCollaborations:all.projectCollaborations.filter(c=>c.ownerNodeId===nodeId),
@@ -2246,6 +2327,8 @@ export class ProjectRuntime {
     };
   }
   async close() {
+    await Promise.allSettled([...this.placementHandles].map(handle => handle.dispose()));
+    this.placementHandles.clear();
     this.accepting = false;
     await Promise.allSettled(this.resultRetries.values());
     await Promise.allSettled([...this.creations.values()].map((j) => j.done));

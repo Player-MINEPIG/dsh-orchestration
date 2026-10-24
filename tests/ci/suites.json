@@ -63,7 +63,9 @@
     "packages/task-system/test/remote/trusted-network.test.mjs",
     "packages/task-system/test/remote/workspace-grants.test.mjs",
     "packages/task-system/test/session-titles.test.mjs",
-    "packages/task-system/test/session-duty-authority.test.mjs"
+    "packages/task-system/test/session-duty-authority.test.mjs",
+    "packages/task-system/test/project-sessions.test.mjs",
+    "packages/task-system/test/project-session-carrier.test.mjs"
   ],
   "native": [
     "packages/task-system/test/execution-agent-preset.test.mjs",
@@ -95,7 +97,11 @@
     "tests/dsh/public-tools-admission.test.mjs",
     "tests/dsh/remote-native.test.mjs",
     "tests/dsh/trusted-network-native.test.mjs",
-    "tests/dsh/session-duty-authority.test.mjs"
+    "tests/dsh/session-duty-authority.test.mjs",
+    "packages/task-system/test/project-session-owner.test.mjs",
+    "packages/task-system/test/project-session-native-owner.test.mjs",
+    "packages/task-system/test/project-session-service.test.mjs",
+    "packages/task-system/test/project-session-remote.test.mjs"
   ],
   "ui": [
     "packages/task-system/test/executor-alerts.test.mjs",

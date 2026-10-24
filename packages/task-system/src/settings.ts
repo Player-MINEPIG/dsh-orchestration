@@ -2,6 +2,7 @@ import { ProtocolError } from "./remote/protocol.js";
 import { CentralTaskControl } from "./central-control.js";
 import { deploymentPolicy } from "./deployment.js";
 import type { ProjectRuntime } from "./project-runtime.js";
+import { ProjectNativeOperation } from "./project-session-native.js";
 import {executorAlertFingerprint} from "./executor-alerts.js";
 import { executorPanelSnapshot, type ExecutorPanelRecord } from "./executor-panel.js";
 import { ExecutionModelChoice, ExecutionModelsError, sameExecutionModel } from "./execution-models.js";
@@ -378,8 +379,8 @@ const projectInputs = {
   createScheduledPlan:scheduledPlanInput,
   controlScheduledPlan:scheduledPlanControl,
   projectExecutionSettings: z.object({projectId:z.string().min(1).max(200)}).strict(),
-  saveProjectExecutionSettings: z.object({projectId:z.string().min(1).max(200),expectedRevision:z.number().int().nonnegative(),allowedNodeIds:z.array(z.string().min(1).max(200)).max(128).nullable(),executionBindings:z.record(z.string().min(1).max(200),z.string().min(1).max(200)).refine(value=>Object.keys(value).length<=128),coordinatorWorkspace:z.discriminatedUnion("kind",[
-    z.object({kind:z.literal("registered"),nodeId:z.string().min(1),workspaceId:z.string().min(1)}).strict(),
+  saveProjectExecutionSettings: z.object({commandId:z.string().min(1).max(200).optional(),projectId:z.string().min(1).max(200),expectedRevision:z.number().int().nonnegative(),allowedNodeIds:z.array(z.string().min(1).max(200)).max(128).nullable(),executionBindings:z.record(z.string().min(1).max(200),z.string().min(1).max(200)).refine(value=>Object.keys(value).length<=128),coordinatorWorkspace:z.discriminatedUnion("kind",[
+    z.object({kind:z.literal("registered"),nodeId:z.string().min(1),workspaceId:z.string().min(1),catalogRevision:z.string().min(1).max(200).optional()}).strict(),
     z.object({kind:z.literal("directory"),nodeId:z.string().min(1),path:z.string().min(1).max(4096)}).strict(),
   ]).optional()}).strict(),
   setExecutorAlertDisposition:z.object({recordId:z.string().min(1).max(300),fingerprint:z.string().min(1).max(200),acknowledged:z.boolean()}).strict(),
@@ -450,7 +451,8 @@ const projectInputs = {
       text: z.string().min(1).max(20000),
     })
     .strict(),
-  projectConversation: z.object({ projectId: z.string().min(1) }).strict(),
+  projectConversation: z.object({ projectId: z.string().min(1), generation: z.number().int().nonnegative().optional() }).strict(),
+  projectNativeConversation: z.object({ commandId:z.string().min(1).max(200),projectId:z.string().min(1).max(200),generation:z.number().int().nonnegative().optional(),operation:ProjectNativeOperation }).strict(),
   sendProjectMessage: z
     .object({
       projectId: z.string().min(1),
@@ -458,7 +460,7 @@ const projectInputs = {
       text: z.string().min(1).max(20000),
     })
     .strict(),
-  handoffProject: z.object({ projectId: z.string().min(1) }).strict(),
+  handoffProject: z.object({ projectId: z.string().min(1),commandId:z.string().min(1).max(200).optional() }).strict(),
   actOnProjectTask: z
     .object({
       commandId: z.string().min(1).max(200),
@@ -584,8 +586,20 @@ export class TaskPluginSettings extends TypertRemoteService {
       ? { enabled: true, ...task.projects.settings() }
       : { enabled: false };
   }
-  async projectExecutionSettings(input:unknown) {const value=projectInputs.projectExecutionSettings.parse(input);return this.projectOperation(()=>this.projects().executionSettings(value.projectId));}
-  async saveProjectExecutionSettings(input:unknown) {return this.projectOperation(()=>this.projects().saveExecutionSettings(projectInputs.saveProjectExecutionSettings.parse(input)));}
+  async projectExecutionSettings(input:unknown) {
+    const value=projectInputs.projectExecutionSettings.parse(input), portal=this.ctx.get("taskSystem")?.sessionPortal;
+    return this.projectOperation(()=>portal ? portal.executionSettings(value.projectId) : this.projects().executionSettings(value.projectId));
+  }
+  async saveProjectExecutionSettings(input:unknown) {
+    const value=projectInputs.saveProjectExecutionSettings.parse(input), portal=this.ctx.get("taskSystem")?.sessionPortal;
+    if(portal && value.commandId && (!value.coordinatorWorkspace || value.coordinatorWorkspace.kind==="registered" && value.coordinatorWorkspace.catalogRevision))
+      return this.projectOperation(()=>portal.saveExecutionSettings(value));
+    return this.projectOperation(()=>{
+      const projects=this.projects(), current=projects.placementProject(value.projectId);
+      if(projects.nativeSession(current.session))throw new TaskError("CONFLICT","Refresh project settings to use the native owner's registered workspace catalog");
+      return projects.saveExecutionSettings(value);
+    });
+  }
   private executorGrantService() {
     const task=this.ctx.get("taskSystem"),remote=this.ctx.get("remoteExecution");
     if(!task || !deploymentPolicy(task.config).executionEnabled || !remote)throw new RemoteError("task/project","This host has no executor workspace grant service",{reason:"EXECUTOR_REQUIRED"});
@@ -749,11 +763,8 @@ export class TaskPluginSettings extends TypertRemoteService {
     );
   }
   async sendExecutorMessage(input: unknown) {
-    return this.projectOperation(() =>
-      this.projects().sendExecutorMessage(
-        projectInputs.sendExecutorMessage.parse(input),
-      ),
-    );
+    const value=projectInputs.sendExecutorMessage.parse(input), portal=this.ctx.get("taskSystem")?.sessionPortal;
+    return this.projectOperation(()=>portal ? portal.sendExecutorMessage(value) : this.projects().sendExecutorMessage(value));
   }
   async sendTaskMessage(input: unknown) {
     return this.projectOperation(() =>
@@ -761,23 +772,26 @@ export class TaskPluginSettings extends TypertRemoteService {
     );
   }
   async projectConversation(input: unknown) {
-    return this.projectOperation(() =>
-      this.projects().conversation(
-        projectInputs.projectConversation.parse(input).projectId,
-      ),
-    );
+    const value=projectInputs.projectConversation.parse(input), portal=this.ctx.get("taskSystem")?.sessionPortal;
+    return this.projectOperation(()=>portal ? portal.conversation(value.projectId,value.generation) : this.projects().conversation(value.projectId));
+  }
+  async projectNativeConversation(input: unknown) {
+    const value=projectInputs.projectNativeConversation.parse(input), portal=this.ctx.get("taskSystem")?.sessionPortal;
+    if(!portal)throw new RemoteError("task/project","Project session hosting is unavailable",{reason:"PROJECT_UNAVAILABLE"});
+    return this.projectOperation(()=>portal.nativeConversation(value));
   }
   async sendProjectMessage(input: unknown) {
-    return this.projectOperation(() =>
-      this.projects().send(projectInputs.sendProjectMessage.parse(input)),
-    );
+    const value=projectInputs.sendProjectMessage.parse(input);
+    return this.projectOperation(()=>{
+      const projects=this.projects(), project=projects.placementProject(value.projectId);
+      if(projects.nativeSession(project.session))
+        throw new TaskError("CONFLICT","Project session location changed; refresh the project conversation before sending");
+      return projects.send(value);
+    });
   }
   async handoffProject(input: unknown) {
-    return this.projectOperation(() =>
-      this.projects().handoff(
-        projectInputs.handoffProject.parse(input).projectId,
-      ),
-    );
+    const value=projectInputs.handoffProject.parse(input), portal=this.ctx.get("taskSystem")?.sessionPortal;
+    return this.projectOperation(()=>portal ? portal.handoff(value.projectId,value.commandId) : this.projects().handoff(value.projectId));
   }
   async setTaskPresentation(input:unknown){return this.projectOperation(()=>this.projects().setTaskPresentation(projectInputs.setTaskPresentation.parse(input)));}
   async getProjectReportPresentation(input:unknown){return this.projectOperation(()=>this.projects().reportPresentation(projectInputs.getProjectReportPresentation.parse(input)));}

@@ -42,3 +42,8 @@ test('actual owner survives SIGKILL before wake send and after active persistenc
  try {const seed=await crash('seed');await crash('remove-crash');await crash('active-crash');const child=spawn(process.execPath,[worker.pathname,'restore',dir],{stdio:['ignore','pipe','pipe']});let output='',error='';child.stdout.on('data',v=>output+=v);child.stderr.on('data',v=>error+=v);assert.equal(await new Promise(resolve=>child.once('exit',resolve)),0,error);assert.deepEqual(JSON.parse(output.trim()).ids,seed.ids);
  }finally{rmSync(dir,{recursive:true,force:true});}
 });
+
+test('cold freeze keeps previously queued native inputs inert and releases them in their original session',async()=>{
+ const {spawn}=await import('node:child_process');const worker=new URL('./fixtures/project-session-owner-crash.mjs',import.meta.url),dir=fixture();try{const seed=spawn(process.execPath,[worker.pathname,'seed-cold',dir],{stdio:['ignore','pipe','pipe','ipc']});let error='';seed.stderr.on('data',v=>error+=v);const ready=await new Promise((resolve,reject)=>{seed.once('message',resolve);seed.once('exit',code=>reject(new Error('seed '+code+' '+error)));});seed.kill('SIGKILL');await new Promise(resolve=>seed.once('exit',resolve));const restored=spawn(process.execPath,[worker.pathname,'freeze-cold',dir],{stdio:['ignore','pipe','pipe']});let output='';restored.stdout.on('data',v=>output+=v);restored.stderr.on('data',v=>error+=v);assert.equal(await new Promise(resolve=>restored.once('exit',resolve)),0,error);assert.deepEqual(JSON.parse(output.trim()).ids,ready.ids);
+ }finally{rmSync(dir,{recursive:true,force:true});}
+});

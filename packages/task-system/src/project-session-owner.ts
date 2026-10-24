@@ -1,6 +1,7 @@
 import type { Context } from "@deepseek-ai/cordis";
 import type { Agent } from "@deepseek-ai/dsh-agent";
 import { adoptSessionEvent, SessionSeq, SessionId, type UserMessage, type SessionEvent } from "@deepseek-ai/dsh-session";
+import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import { isAbsolute } from "node:path";
 import { z } from "zod";
@@ -47,50 +48,42 @@ interface Hold {
 
 export class ProjectSessionOwner {
   private readonly db;
+  private custodyDb: DatabaseSync;
+  private shutdownCustody?: DatabaseSync;
+  private readonly trackedIds = new Set<string>();
   private readonly holds = new Map<string, Hold>();
   private readonly operations = new Map<string, Promise<ProjectSessionStatus>>();
   private readonly stopListening: () => void;
+  private stopped = false;
+  private readonly lifecycle = new WeakMap<Agent, AbortSignal>();
   private readonly tracked = new WeakSet<Agent>();
   private readonly closing = new Set<string>();
   private readonly replaying = new Set<string>();
-  private readonly stopCustody: (() => void)[] = [];
   constructor(
     ledger: Pick<TaskLedger, "managementDatabase">,
-    private readonly ctx: Context,
+    private ctx: Context,
     readonly nodeId: string,
     private readonly ports: ProjectSessionOwnerPorts,
   ) {
     this.db = ledger.managementDatabase();
+    this.custodyDb = this.db;
     this.db.exec(`CREATE TABLE IF NOT EXISTS project_session_owner_operations(
       operation TEXT NOT NULL, session TEXT NOT NULL, phase TEXT NOT NULL, data TEXT NOT NULL,
       PRIMARY KEY(operation,session));
       CREATE TABLE IF NOT EXISTS project_session_owner_custody(session TEXT PRIMARY KEY, data TEXT NOT NULL);
       CREATE UNIQUE INDEX IF NOT EXISTS project_session_owner_hold ON project_session_owner_operations(session) WHERE phase IN ('pending','held');`);
-    this.stopCustody.push(ctx.on("agent/inbox/inserted", ({ agent }) => this.capture(agent)));
-    this.stopCustody.push(ctx.on("agent/inbox/discarded", ({ agent }) => {
-      if (!this.closing.has(String(agent.id))) this.capture(agent);
-    }));
-    this.stopCustody.push(ctx.on("session/event", (session, event) => {
-      if (event.type !== "user/message") return;
-      const id = String(session.id), messageId = event.data.id;
-      void this.ctx.sessions.flush(session).then(() => {
-        const remaining = this.custody(id).filter(item => item.message.id !== messageId);
-        if (remaining.length) this.db.prepare("UPDATE project_session_owner_custody SET data=? WHERE session=?").run(JSON.stringify(remaining), id);
-        else this.db.prepare("DELETE FROM project_session_owner_custody WHERE session=?").run(id);
-      }).catch(() => {});
-    }));
     this.stopListening = ctx.on("agent/created", async ({ agent, signal }) => {
       const id = String(agent.id);
       this.closing.delete(id);
-      if (signal) this.tracked.add(agent);
+      this.trackedIds.add(id);
+      this.trackCustody(agent);
+      if (signal) { this.tracked.add(agent); this.lifecycle.set(agent, signal); }
       signal?.addEventListener("abort", () => this.closing.add(id), { once: true });
       const record = this.unresolved(id);
       if (!record) return;
       const hold = this.holds.get(String(agent.id)) ?? this.newHold(record);
       try {
         this.checkAgent(agent, record.binding);
-        if (record.intent === "freeze" && record.phase === "pending" && (agent.inbox.nextTurn.length || agent.inbox.nextStep.length))
-          throw new TaskError("BUSY", "Original session has pending input");
         hold.agent = agent;
         this.restoreCustody(agent);
         this.capture(agent);
@@ -116,8 +109,31 @@ export class ProjectSessionOwner {
       }
     });
   }
+  private trackCustody(agent: Agent) {
+    const sessions = agent.ctx.get("sessions");
+    if (!sessions) throw new TaskError("UNAVAILABLE", "Native session persistence context is unavailable");
+    const stops = [
+      agent.ctx.on("agent/inbox/inserted", ({ agent: source }) => { if (source === agent) this.capture(agent); }),
+      agent.ctx.on("agent/inbox/discarded", ({ agent: source }) => { if (source === agent && !this.closing.has(String(agent.id))) this.capture(agent); }),
+      agent.ctx.on("session/event", (session, event) => {
+        if (session !== agent.session || event.type !== "user/message") return;
+        const id = String(session.id), messageId = event.data.id;
+        void sessions.flush(session).then(() => {
+          const remaining = this.custody(id).filter(item => item.message.id !== messageId);
+          if (remaining.length) this.custodyDb.prepare("UPDATE project_session_owner_custody SET data=? WHERE session=?").run(JSON.stringify(remaining), id);
+          else this.custodyDb.prepare("DELETE FROM project_session_owner_custody WHERE session=?").run(id);
+        }).catch(() => {});
+      }),
+    ];
+    agent.ctx.effect(() => () => {
+      for (const stop of stops) stop();
+      this.trackedIds.delete(String(agent.id));
+      if (this.stopped && !this.trackedIds.size) this.closeCustody();
+    });
+  }
+  bindContext(ctx: Context) { this.ctx = ctx; }
   private custody(sessionId: string): { target: "next-turn" | "next-step"; message: UserMessage }[] {
-    const row = this.db.prepare("SELECT data FROM project_session_owner_custody WHERE session=?").get(sessionId);
+    const row = this.custodyDb.prepare("SELECT data FROM project_session_owner_custody WHERE session=?").get(sessionId);
     if (!row) return [];
     const items = z.array(z.object({ target: z.enum(["next-turn", "next-step"]), message: z.unknown() })).parse(JSON.parse(String(row.data)));
     return items.map(item => {
@@ -128,12 +144,12 @@ export class ProjectSessionOwner {
   }
   private capture(agent: Agent) {
     const id = String(agent.id);
-    if (this.replaying.has(id) || !this.holds.has(id) && !this.db.prepare("SELECT session FROM project_session_owner_custody WHERE session=?").get(id)) return;
+    if (this.replaying.has(id) || !this.holds.has(id) && !this.custodyDb.prepare("SELECT session FROM project_session_owner_custody WHERE session=?").get(id)) return;
     const items = [
       ...agent.inbox.nextTurn.map(message => ({ target: "next-turn", message })),
       ...agent.inbox.nextStep.map(message => ({ target: "next-step", message })),
     ];
-    this.db.prepare("INSERT INTO project_session_owner_custody VALUES(?,?) ON CONFLICT(session) DO UPDATE SET data=excluded.data").run(id, JSON.stringify(items));
+    this.custodyDb.prepare("INSERT INTO project_session_owner_custody VALUES(?,?) ON CONFLICT(session) DO UPDATE SET data=excluded.data").run(id, JSON.stringify(items));
   }
   private restoreCustody(agent: Agent) {
     const id = String(agent.id), consumed = new Set(agent.session.snapshotEvents().flatMap(event => event.type === "user/message" ? [event.data.id] : []));
@@ -165,7 +181,7 @@ export class ProjectSessionOwner {
     return row ? ownerRecord.parse(JSON.parse(String(row.data))) : undefined;
   }
   private unresolved(sessionId: string): OwnerRecord | undefined {
-    const row = this.db.prepare("SELECT data FROM project_session_owner_operations WHERE session=? AND (phase IN ('pending','held') OR EXISTS(SELECT 1 FROM project_session_owner_custody WHERE session=project_session_owner_operations.session)) ORDER BY rowid DESC LIMIT 1").get(sessionId);
+    const row = this.db.prepare("SELECT data FROM project_session_owner_operations WHERE session=? AND (phase IN ('pending','held') OR EXISTS(SELECT 1 FROM project_session_owner_custody WHERE session=project_session_owner_operations.session AND data<>'[]')) ORDER BY rowid DESC LIMIT 1").get(sessionId);
     return row ? ownerRecord.parse(JSON.parse(String(row.data))) : undefined;
   }
   private save(record: OwnerRecord): OwnerRecord {
@@ -205,6 +221,7 @@ export class ProjectSessionOwner {
     return record ? this.evidence(record) : { kind: "missing" };
   }
   async handle(input: unknown): Promise<ProjectSessionStatus> {
+    if (this.stopped) throw new TaskError("UNAVAILABLE", "Session owner is stopping");
     const command = projectSessionCommand.parse(input);
     if (command.kind === "status") return this.status(command.operationId, command.sessionId);
     const sessionId = command.kind === "prepare" ? command.sessionId : command.binding.sessionId;
@@ -302,7 +319,7 @@ export class ProjectSessionOwner {
       return this.restoreHold(previous);
     }
     const other = this.unresolved(binding.sessionId);
-    if (other) throw new TaskError("BUSY", "Another placement owns this session");
+    if (other && (other.phase === "pending" || other.phase === "held")) throw new TaskError("BUSY", "Another placement owns this session");
     const record: OwnerRecord = { operationId, intent: "freeze", binding, phase: "pending", evidenceId: randomUUID() };
     const hold = this.newHold(record);
     const live = this.ctx.agents.get(SessionId(binding.sessionId));
@@ -372,6 +389,7 @@ export class ProjectSessionOwner {
     return this.evidence(released);
   }
   async admit(binding: ProjectSessionReference, access: "read" | "write"): Promise<void> {
+    if (this.stopped) throw new TaskError("UNAVAILABLE", "Session owner is stopping");
     this.checkBinding(binding);
     await this.ports.authorize(binding, access);
     if (access === "read") return;
@@ -386,7 +404,8 @@ export class ProjectSessionOwner {
       .map(row => this.evidence(ownerRecord.parse(JSON.parse(String(row.data)))));
   }
   async recover(): Promise<void> {
-    const rows = this.db.prepare("SELECT data FROM project_session_owner_operations WHERE phase IN ('active','released') AND EXISTS(SELECT 1 FROM project_session_owner_custody WHERE session=project_session_owner_operations.session) ORDER BY rowid DESC").all();
+    if (this.stopped) return;
+    const rows = this.db.prepare("SELECT data FROM project_session_owner_operations WHERE phase IN ('active','released') AND EXISTS(SELECT 1 FROM project_session_owner_custody WHERE session=project_session_owner_operations.session AND data<>'[]') ORDER BY rowid DESC").all();
     const restored = new Set<string>();
     for (const row of rows) {
       const record = ownerRecord.parse(JSON.parse(String(row.data)));
@@ -402,14 +421,28 @@ export class ProjectSessionOwner {
     return operation(agent);
   }
   dispose() {
+    if (this.stopped) return;
+    this.stopped = true;
     this.stopListening();
-    for (const stop of this.stopCustody) stop();
+    const location = this.db.location("main");
+    if (location) {
+      this.shutdownCustody = new DatabaseSync(location);
+      this.shutdownCustody.exec("PRAGMA busy_timeout=1000");
+      this.custodyDb = this.shutdownCustody;
+    }
     for (const hold of this.holds.values()) {
       this.closing.add(hold.record.binding.sessionId);
       hold.agent?.cancel({ kind: "disposed" }, { keepInbox: true });
       hold.readyReject(new TaskError("UNAVAILABLE", "Session owner is stopping"));
-      hold.release();
+      const lifecycle = hold.agent ? this.lifecycle.get(hold.agent) : undefined;
+      if (!hold.agent || lifecycle?.aborted) hold.release();
+      else lifecycle?.addEventListener("abort", () => hold.release(), { once: true });
     }
     this.holds.clear();
+    if (!this.trackedIds.size) this.closeCustody();
+  }
+  private closeCustody() {
+    this.shutdownCustody?.close();
+    this.shutdownCustody = undefined;
   }
 }

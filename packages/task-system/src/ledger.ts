@@ -2568,6 +2568,17 @@ export class TaskLedger {
       },
     );
   }
+  registerCoordinatorWorkspace(workspace: Workspace) {
+    this.assertManagementWritable();
+    if (!this.db.isTransaction) fail("FORBIDDEN", "Coordinator workspace metadata requires the placement transaction");
+    id(workspace.workspaceId);
+    id(workspace.nodeId);
+    text(workspace.path, "workspace path", 4000);
+    const prior = this.get<Workspace>("workspace", workspace.workspaceId);
+    if (prior && (prior.nodeId !== workspace.nodeId || prior.path !== workspace.path)) fail("CONFLICT", "Workspace identity cannot be rebound");
+    this.put("workspace", workspace.workspaceId, workspace);
+    return workspace;
+  }
   registerWorkspace(commandId: string, workspace: Workspace) {
     if (this.role === "executor" && workspace.nodeId !== this.nodeId)
       fail(
