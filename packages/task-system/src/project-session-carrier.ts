@@ -68,11 +68,15 @@ export class ProjectSessionCarrier {
     readonly nodeId: string,
     private readonly execute: (request: ProjectOwnerRequest, callId: string) => Promise<unknown>,
     private readonly authorizePeer: (nodeId: string) => void,
+    private readonly localResult?: (callId: string, result: string) => void,
   ) {
     this.db = ledger.managementDatabase();
     this.db.exec(`CREATE TABLE IF NOT EXISTS project_session_carrier_calls(id TEXT PRIMARY KEY,node TEXT NOT NULL,digest TEXT NOT NULL,request TEXT NOT NULL,result TEXT,expires INTEGER);
       CREATE TABLE IF NOT EXISTS project_session_carrier_parts(call_id TEXT NOT NULL,part INTEGER NOT NULL,count INTEGER NOT NULL,digest TEXT NOT NULL,text TEXT NOT NULL,PRIMARY KEY(call_id,part));
       CREATE TABLE IF NOT EXISTS project_session_host_catalog(node TEXT PRIMARY KEY,data TEXT NOT NULL,observed INTEGER NOT NULL);`);
+    if (this.localResult)
+      for (const row of this.db.prepare("SELECT id,result FROM project_session_carrier_calls WHERE node=? AND result IS NOT NULL").all(this.nodeId))
+        this.localResult(String(row.id), String(row.result));
   }
   private expireReads() {
     for (const row of this.db.prepare("SELECT id FROM project_session_carrier_calls WHERE expires<=?").all(Date.now())) {
@@ -134,6 +138,7 @@ export class ProjectSessionCarrier {
       result = { kind: "error", code };
     }
     this.db.prepare("UPDATE project_session_carrier_calls SET result=? WHERE id=?").run(canonical(result), callId);
+    this.localResult?.(callId, canonical(result));
   }
   exchange(nodeId: string, input: unknown): ProjectSessionExchangeResult {
     if (this.stopped) throw new TaskError("UNAVAILABLE", "Project session carrier is stopping");
@@ -186,6 +191,7 @@ export class ProjectSessionCarrier {
 export class ProjectSessionOwnerCarrier {
   private readonly db;
   private stopped = false;
+  private configurationPaused = false;
   private pending?: Promise<void>;
   private timer?: ReturnType<typeof setInterval>;
   private readonly running = new Map<string, Promise<Json>>();
@@ -203,8 +209,31 @@ export class ProjectSessionOwnerCarrier {
     void this.poll().catch(() => {});
   }
   poll(): Promise<void> {
-    if (this.stopped) return Promise.resolve();
+    if (this.stopped || this.configurationPaused) return Promise.resolve();
     return this.pending ??= this.receive().finally(() => { this.pending = undefined; });
+  }
+  async beginConfigurationEdit(): Promise<() => void> {
+    if (this.stopped || this.configurationPaused || this.running.size)
+      throw new TaskError("CONFIGURATION_BUSY", "Project session owner is active");
+    this.configurationPaused = true;
+    try {
+      await this.pending?.catch(() => {});
+      if (this.stopped) throw new TaskError("CONFIGURATION_BUSY", "Project session owner is stopping");
+      this.expireReads();
+      const unfinished = this.db.prepare("SELECT id,result,part FROM project_session_owner_calls").all()
+        .some(row => row.result === null || Number(row.part) < fragments(String(row.result), String(row.id)).length);
+      if (this.stopped || this.running.size || unfinished)
+        throw new TaskError("CONFIGURATION_BUSY", "Project session owner has unfinished operations");
+      let released = false;
+      return () => {
+        if (released) return;
+        released = true;
+        this.configurationPaused = false;
+      };
+    } catch (error) {
+      this.configurationPaused = false;
+      throw error;
+    }
   }
   private expireReads() {
     this.db.prepare("DELETE FROM project_session_owner_calls WHERE expires<=? AND result IS NOT NULL").run(Date.now());
@@ -219,18 +248,24 @@ export class ProjectSessionOwnerCarrier {
     if (this.stopped) return;
     if (response.acknowledged && result && canonical(response.acknowledged) === canonical({ callId: result.callId, index: result.index, count: result.count, digest: result.digest }))
       this.db.prepare("UPDATE project_session_owner_calls SET part=MAX(part,?) WHERE id=?").run(result.index + 1, result.callId);
-    if (!response.call || this.stopped) return;
+    if (!response.call || this.stopped || this.configurationPaused) return;
     const { callId, request } = response.call;
     await this.perform(request, callId).catch(() => {});
   }
   perform(request: ProjectOwnerRequest, callId: string): Promise<Json> {
     if (this.stopped) return Promise.reject(new TaskError("UNAVAILABLE", "Project session owner carrier is stopping"));
+    if (this.configurationPaused) return Promise.reject(new TaskError("CONFIGURATION_BUSY", "Project session configuration is changing"));
     this.expireReads();
     const pending = this.running.get(callId);
     if (pending) return pending;
     const work = this.performOwned(ProjectOwnerRequest.parse(request), callId).finally(() => this.running.delete(callId));
     this.running.set(callId, work);
     return work;
+  }
+  acknowledgeLocalResult(callId: string, result: string): void {
+    const row = this.db.prepare("SELECT result FROM project_session_owner_calls WHERE id=?").get(callId);
+    if (row?.result === result)
+      this.db.prepare("UPDATE project_session_owner_calls SET part=? WHERE id=?").run(fragments(result, callId).length, callId);
   }
   private async performOwned(request: ProjectOwnerRequest, callId: string): Promise<Json> {
     id.parse(callId);

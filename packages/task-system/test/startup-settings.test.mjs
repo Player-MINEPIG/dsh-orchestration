@@ -1,15 +1,20 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { generateKeyPairSync } from 'node:crypto'
+import { ProjectSessionService } from '../dist/project-session-service.js'
+import { RemoteClient, RemoteLedgerClient } from '../dist/remote/api.js'
+import { parseCommandEnvelope } from '../dist/remote/protocol.js'
 import { Context } from '@deepseek-ai/cordis'
 import { TaskLedger } from '../dist/ledger.js'
 import { TaskSystemService } from '../dist/dsh-plugin.js'
 import { RemoteExecutionService, Config as RemoteConfig } from '../dist/remote/index.js'
 import { RecoveryStore, ExecutorWorker, RemoteGateway, IdentityVerifier } from '../dist/remote/api.js'
+import { readConnectionSettings, saveConnectionSettings } from '../dist/connection-settings.js'
 import { readStartupSettings, saveStartupSettings, SaveStartupInput } from '../dist/startup-settings.js'
 import { startupDescriptor, saveStartupDescriptor } from '../dist/settings.js'
 
 function fixture(t) {
-  const ledger=TaskLedger.open(':memory:');t.after(()=>ledger.close())
+  const ledger=TaskLedger.open(':memory:');t.after(async()=>{await task.sessionPortal?.close();ledger.close()})
   for(const workspaceId of ['default','other']) ledger.registerWorkspace(`w-${workspaceId}`,{workspaceId,nodeId:'worker',path:`/tmp/${workspaceId}`,label:workspaceId,state:'ready',createdAt:new Date().toISOString()})
   ledger.registerNode('node',{nodeId:'worker',roles:['both'],models:[{provider:'fixture',model:'fixture',reasoningEfforts:[]}],capabilities:[],workspaceIds:['default','other'],enabled:true,lastSeenAt:new Date().toISOString()})
   const raw={role:'both',defaultWorkspaceId:'default',sessionDecisionEnabled:false,databasePath:'/tmp/private.sqlite',nodeId:'worker',executionTools:[],privateMarker:'NOT_A_REAL_SECRET',unknownExtension:{keep:true}}
@@ -21,7 +26,8 @@ function fixture(t) {
   const host={entries:()=>rows,edit:async(entry,change)=>{await host.before?.();const next=change(structuredClone(entry.options.config),{});if(host.fail) throw Error('Configuration for task-system is overridden by a home patch or command-line overlay');entry.options.config=next;if(entry===taskRow) Object.assign(task.config,next);writes.push(next)}}
   const task={ledger,config:{...raw},applyLiveNodeCapacities(){return TaskSystemService.prototype.applyLiveNodeCapacities.call(this)},providers:new Set(),configurationPaused:false,beginConfigurationEdit(){return TaskSystemService.prototype.beginConfigurationEdit.call(this)}}
   const store=new RecoveryStore(':memory:');t.after(()=>store.close())
-  const remote=new RemoteExecutionService(new Context(),remoteRaw,ledger,store)
+  const remoteCtx=new Context();remoteCtx.provide('taskSystem',task)
+  const remote=new RemoteExecutionService(remoteCtx,remoteRaw,ledger,store)
   const profile={overlays:[]}
   const decisions={};
   const ctx={get:key=>({configEditor:host,taskSystem:task,remoteExecution:remote,profileContext:profile,decisionModels:decisions.enabled===false?undefined:decisions})[key]}
@@ -281,4 +287,101 @@ test('execution preset CAS protects a concurrently changed old tool mask',async 
  const f=fixture(t);withPresetRegistry(f,{resolve:async id=>({id})});const request=input(f,'task',{executionAgentPreset:'ptc',executionTools:null});
  f.host.before=()=>{f.taskRow.options.config.executionTools=['read']};
  await assert.rejects(saveStartupSettings(f.ctx,request),error=>error.code==='STARTUP_CONFLICT');assert.equal(f.writes.length,0);assert.deepEqual(f.taskRow.options.config.executionTools,['read']);
+});
+
+
+function projectPolling(t, f, response = {}) {
+  const entered = Promise.withResolvers(), finish = Promise.withResolvers();
+  const packets = [];
+  const client = new RemoteClient({
+    endpoint: 'https://fixture.invalid/commands', nodeId: 'worker', audience: 'planner',
+    keyId: 'fixture', privateKey: generateKeyPairSync('ed25519').privateKey, store: f.store,
+    fetch: async (_url, options) => {
+      const envelope = parseCommandEnvelope(options.body, 'ed25519');
+      packets.push(envelope.payload.input.request.input);
+      if (packets.length === 1) { entered.resolve(); await finish.promise; }
+      return new Response(JSON.stringify({commandId:envelope.commandId,state:'done',result:{value:response}}));
+    },
+  });
+  f.remote.client = client;
+  f.remote.coordinatorLedger = new RemoteLedgerClient(client, 'worker');
+  f.task.sessionPortal = new ProjectSessionService(f.task, f.remote.ctx);
+  const owner = f.task.sessionPortal.ownerCarrier;
+  t.after(async () => { finish.resolve(); await f.task.sessionPortal.close(); await client.dispose(); });
+  return {owner, packets, entered:entered.promise, finish:() => finish.resolve()};
+}
+
+for (const [name, changes] of [['pause', {paused:true}], ['central address', {endpoint:'http://127.0.0.1:45678/new-commands'}], ['connection form', null]]) {
+  test(`catalog polling drains before saving ${name}, and stays paused through persistence`, async t => {
+    t.mock.timers.enable({apis:['setInterval']});
+    const f=fixture(t), p=projectPolling(t,f);
+    const editing=Promise.withResolvers(), persist=Promise.withResolvers();
+    f.host.before=async()=>{editing.resolve();await persist.promise;};
+    p.owner.start();await p.entered;
+    assert.throws(()=>f.remote.client.beginConfigurationEdit(),{code:'CONFIGURATION_BUSY'});
+    const connection=changes === null ? await readConnectionSettings(f.ctx) : null;
+    const saving=connection
+      ? saveConnectionSettings(f.ctx,{expected:connection.revision,value:{...connection.values,outbound:{...connection.values.outbound,endpoint:'http://127.0.0.1:45678/new-commands'}}})
+      : saveStartupSettings(f.ctx,input(f,'remote',changes));
+    p.finish();await editing.promise;
+    t.mock.timers.tick(2000);await p.owner.poll();
+    assert.equal(p.packets.length,1);
+    await assert.rejects(f.task.sessionPortal.conversation('new-call'),{code:'CONFIGURATION_BUSY'});
+    persist.resolve();await saving;
+    await p.owner.poll();assert.equal(p.packets.length,2);
+    assert.deepEqual(Object.keys(p.packets[0]),['catalog']);
+    assert.equal(f.task.configurationPaused,false);
+  });
+}
+
+test('a catalog response cannot admit a new owner write during configuration drain; persistence failure resumes polling',async t=>{
+  t.mock.timers.enable({apis:['setInterval']});
+  const f=fixture(t), binding={kind:'native',projectId:'p',generation:0,nodeId:'worker',sessionId:'s',workspaceId:'w',workspaceRevision:'r',cwd:'/tmp'};
+  const p=projectPolling(t,f,{call:{callId:'old-central-write',request:{kind:'native',binding,operation:{kind:'session-cancel'}}}});
+  let executions=0;f.task.sessionPortal.ownerExecute=async()=>{executions++;return {cancelled:true};};
+  p.owner.start();await p.entered;f.host.fail=true;
+  const saving=saveStartupSettings(f.ctx,input(f,'remote',{paused:true}));p.finish();
+  await assert.rejects(saving,{code:'STARTUP_OVERRIDE'});
+  assert.equal(executions,0);
+  assert.equal(f.ledger.managementDatabase().prepare('SELECT count(*) AS count FROM project_session_owner_calls').get().count,0);
+  assert.equal(f.task.configurationPaused,false);
+  await p.owner.poll();assert.equal(executions,1);
+});
+
+test('remote disposal keeps project polling paused until the settings owner releases its guard',async t=>{
+  t.mock.timers.enable({apis:['setInterval']});
+  const f=fixture(t), p=projectPolling(t,f);
+  p.owner.start();await p.entered;p.finish();await p.owner.poll();
+  const release=await f.remote.beginConfigurationEdit();
+  await f.remote.dispose();
+  t.mock.timers.tick(2000);await p.owner.poll();assert.equal(p.packets.length,1);
+  await f.task.sessionPortal.close();release();release();
+  t.mock.timers.tick(2000);await p.owner.poll();assert.equal(p.packets.length,1);
+});
+
+
+test('a genuinely busy shared transport still blocks saves and restores project polling after rejection',async t=>{
+  const f=fixture(t), p=projectPolling(t,f);
+  const busy=f.remote.coordinatorLedger.projectCollaborate('worker','business-inflight',{action:'project-session',request:{kind:'decision',operationId:'move'}});
+  await p.entered;
+  await assert.rejects(saveStartupSettings(f.ctx,input(f,'remote',{paused:true})),{code:'STARTUP_BUSY'});
+  p.finish();await busy;
+  await p.owner.poll();assert.equal(p.packets.length,2);
+  assert.equal(f.task.configurationPaused,false);
+});
+
+test('local owner delivery permits later configuration saves without exporting local results as remote outcomes',async t=>{
+  const f=fixture(t), p=projectPolling(t,f);
+  f.task.config.centralMode='host';
+  f.task.sessionPortal.ownerExecute=async()=>({cancelled:true});
+  const binding={kind:'native',projectId:'p',generation:0,nodeId:'worker',sessionId:'s',workspaceId:'w',workspaceRevision:'r',cwd:'/tmp'};
+  assert.deepEqual(await f.task.sessionPortal.carrier.request('worker','local-write',{kind:'native',binding,operation:{kind:'session-cancel'}}),{cancelled:true});
+  await saveStartupSettings(f.ctx,input(f,'remote',{paused:true}));
+  f.ledger.managementDatabase().prepare('UPDATE project_session_owner_calls SET part=0 WHERE id=?').run('local-write');
+  await f.task.sessionPortal.close();
+  f.task.sessionPortal=new ProjectSessionService(f.task,f.remote.ctx);
+  await saveStartupSettings(f.ctx,input(f,'remote',{paused:true}));
+  f.task.config.centralMode='remote';
+  const polling=f.task.sessionPortal.ownerCarrier.poll();await p.entered;p.finish();await polling;
+  assert.deepEqual(Object.keys(p.packets[0]),['catalog']);
 });
