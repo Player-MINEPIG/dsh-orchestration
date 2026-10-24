@@ -1,7 +1,8 @@
 import { createHash, createPublicKey, sign, verify } from 'node:crypto'
 import type { KeyObject } from 'node:crypto'
-import { posix, win32 } from 'node:path'
+import { posix } from 'node:path'
 import { z } from 'zod'
+import { isCanonicalWindowsWorkspacePath } from './workspace-path.js'
 
 /** Produced by a trusted native host before agent/model/workload dispatch. */
 export interface PreDispatchFailure { kind: 'native-provider-unavailable-v1'; code: 'NO_ADAPTER'; provider: string; model: string }
@@ -42,7 +43,7 @@ const executorWorkspace = z
           !/[\u0000-\u001f]/.test(path) &&
           (posix.isAbsolute(path)
             ? posix.normalize(path) === path
-            : win32.isAbsolute(path) && win32.normalize(path) === path),
+            : isCanonicalWindowsWorkspacePath(path)),
       ),
     state: z.enum(["ready", "unavailable", "revoked"]),
   })

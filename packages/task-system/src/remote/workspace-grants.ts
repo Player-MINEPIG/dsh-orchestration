@@ -4,6 +4,7 @@ import { z } from "zod";
 import { digest, insist, type ExecutorWorkspaceMetadata } from "./protocol.js";
 import type { RecoveryStore, LocalWorkspaceGrant } from "./store.js";
 import type { WorkspaceBinding } from "./ports.js";
+import { isCanonicalWindowsWorkspacePath } from "./workspace-path.js";
 export interface LocalWorkspaceRegistry {
   list(): { id: string; title?: string; path: string }[];
 }
@@ -27,7 +28,9 @@ export const SetLocalWorkspaceGrant = z
 export type SetLocalWorkspaceGrant = z.infer<typeof SetLocalWorkspaceGrant>;
 export function physicalWorkspace(path: string) {
   insist(
-    isAbsolute(path) && normalize(path) === path,
+    isAbsolute(path) &&
+      (normalize(path) === path ||
+        sep === "\\" && isCanonicalWindowsWorkspacePath(path)),
     "WORKSPACE_GRANT_PATH_INVALID",
     403,
   );
@@ -44,7 +47,7 @@ export function physicalWorkspace(path: string) {
       403,
     );
   }
-  insist(realpathSync(path) === path, "WORKSPACE_GRANT_PATH_CHANGED", 403);
+  insist(realpathSync(path) === normalize(path), "WORKSPACE_GRANT_PATH_CHANGED", 403);
   return path;
 }
 function available(path: string) {

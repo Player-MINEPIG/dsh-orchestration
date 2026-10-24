@@ -7,7 +7,8 @@ import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import { Config, RemoteExecutionService } from '../../dist/remote/index.js'
 import { RecoveryStore, RemoteClient, RemoteLedgerClient, RemoteGateway, IdentityVerifier, signEnvelope, authorizedWorkspace } from '../../dist/remote/api.js'
-import { executorWorkspaceSnapshot, localWorkspaceBindings } from '../../dist/remote/workspace-grants.js'
+import { TaskLedger } from '../../dist/ledger.js'
+import { executorWorkspaceSnapshot, localWorkspaceBindings, physicalWorkspace } from '../../dist/remote/workspace-grants.js'
 
 function local(t, { paused = true, configured = [] } = {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'workspace-grants-')))
@@ -152,16 +153,16 @@ test('service heartbeat automatically publishes only configured and persisted gr
 })
 
 const keys = generateKeyPairSync('ed25519') // Disposable fixture keys.
-function transport(t, { managedAccess = false, unsupported = false } = {}) {
+function transport(t, { managedAccess = false, unsupported = false, ledger: backingLedger } = {}) {
   const now = Date.now(), calls = [], store = new RecoveryStore(':memory:'), outbound = new RecoveryStore(':memory:')
   const peer = { keyId: 'fixture', nodeId: 'worker', audience: 'planner', publicKey: keys.publicKey, operations: ['heartbeat'], workspaces: ['authorized'], capabilities: [] }
-  const ledger = { nodeStatuses: () => [{ nodeId: 'worker', state: 'online' }], recordNodeHeartbeat: (commandId, value) => { calls.push(['heartbeat', commandId, value]); return { commandId, value } }, ...(!unsupported && { recordExecutorWorkspaces: (commandId, value) => { calls.push(['workspaces', commandId, value]); return { commandId, value } } }) }
+  const ledger = backingLedger ?? { nodeStatuses: () => [{ nodeId: 'worker', state: 'online' }], recordNodeHeartbeat: (commandId, value) => { calls.push(['heartbeat', commandId, value]); return { commandId, value } }, ...(!unsupported && { recordExecutorWorkspaces: (commandId, value) => { calls.push(['workspaces', commandId, value]); return { commandId, value } } }) }
   const verifier = managedAccess ? { authMode: 'ed25519', verify: (envelope, clock, network) => ({ ...new IdentityVerifier({ audience: 'planner', peers: [peer] }).verify(envelope, clock, network), managedAccess: true }) } : new IdentityVerifier({ audience: 'planner', peers: [peer] })
   const gateway = new RemoteGateway({ role: 'planner', nodeId: 'planner', ledger, store, now: () => now, verifier })
   const client = new RemoteClient({ endpoint: 'https://fixture.invalid/commands', nodeId: 'worker', audience: 'planner', keyId: 'fixture', privateKey: keys.privateKey, store: outbound, now: () => now, fetch: async (_, options) => new Response(JSON.stringify(await gateway.handle(options.body))) })
   t.after(async () => { await client.dispose(); await gateway.dispose(); store.close(); outbound.close() })
   let sequence = 1000
-  const raw = workspaces => { sequence++; return JSON.stringify(signEnvelope({ version: 1, keyId: 'fixture', nodeId: 'worker', audience: 'planner', commandId: `raw-${sequence}`, nonce: `nonce-${sequence}`, sequence, issuedAt: now, expiresAt: now + 60000, operation: 'heartbeat', payload: { sampledAt: now, runtimeReady: true, activeExecutions: 0, workspaces } }, keys.privateKey)) }
+  const raw = (workspaces, sampledAt = now) => { sequence++; return JSON.stringify(signEnvelope({ version: 1, keyId: 'fixture', nodeId: 'worker', audience: 'planner', commandId: `raw-${sequence}`, nonce: `nonce-${sequence}`, sequence, issuedAt: now, expiresAt: now + 60000, operation: 'heartbeat', payload: { sampledAt, runtimeReady: true, activeExecutions: 0, workspaces } }, keys.privateKey)) }
   return { now, calls, gateway, remote: new RemoteLedgerClient(client, 'worker'), raw }
 }
 const metadata = { workspaceId: 'authorized', nodeId: 'worker', label: 'Explicit directory', path: '/controlled/project', state: 'ready' }
@@ -178,12 +179,68 @@ test('signed heartbeat carries only explicit grants through the real client and 
   assert.equal(f.calls.length, 5); assert.equal(f.calls[4][0], 'heartbeat')
 })
 
+test('Windows absolute path spellings cross the signed heartbeat without changing the advertised path', async t => {
+  const f = transport(t)
+  for (const [index, path] of [
+    'C:/Users/PMP_PC_AU/.dsh/workspaces/production',
+    'D:/AI/deepseek-harness/dsh-orchestration',
+    'C:/', 'C:\\', 'C:/project/', 'C:\\project\\', 'C:\\Users\\PMP_PC_AU\\.dsh\\workspaces\\production',
+    '\\\\server\\share\\', '\\\\server\\share\\project',
+    '/controlled/project', '/controlled/back\\slash',
+  ].entries()) {
+    const item = { ...metadata, path }
+    await f.remote.recordNodeHeartbeat(`path-${index}`, { nodeId: 'worker', sampledAt: f.now, runtimeReady: true, activeExecutions: 0, workspaces: [item] })
+    assert.deepEqual(f.calls.at(-2)[2].workspaces, [item])
+  }
+})
+
+test('registry metadata reaches the central ledger with its original path and workspace identity', async t => {
+  const ledger = TaskLedger.open(':memory:', { role: 'planner', nodeId: 'planner' })
+  ledger.registerNode('register', { nodeId: 'worker', roles: ['executor'], models: [], capabilities: [], workspaceIds: [], enabled: true, maxConcurrent: 1, lastSeenAt: new Date().toISOString() })
+  const f = transport(t, { managedAccess: true, ledger })
+  t.after(() => ledger.close())
+  const path = 'C:/Example/nonexistent-windows-registry-directory'
+  const registry = { list: () => [{ id: 'windows-registry', title: 'Windows repository', path }] }
+  const snapshot = executorWorkspaceSnapshot('worker', undefined, [], registry, true)
+  assert.equal(snapshot[0].path, path)
+  assert.equal(snapshot[0].state, 'unavailable')
+  await f.remote.recordNodeHeartbeat('registry', { nodeId: 'worker', sampledAt: f.now, runtimeReady: true, activeExecutions: 0, workspaces: snapshot })
+  assert.deepEqual(ledger.executorWorkspaceCatalog('worker').workspaces, snapshot)
+  assert.equal(ledger.getWorkspace(snapshot[0].workspaceId).path, path)
+  assert.deepEqual(ledger.getNode('worker').workspaceIds, [])
+  const ready = snapshot.map(item => ({ ...item, state: 'ready' }))
+  await f.remote.recordNodeHeartbeat('ready', { nodeId: 'worker', sampledAt: f.now + 1, runtimeReady: true, activeExecutions: 0, workspaces: ready })
+  assert.deepEqual(ledger.getNode('worker').workspaceIds, [snapshot[0].workspaceId])
+  assert.deepEqual(ledger.executorWorkspaceCatalog('worker').workspaces, ready)
+  const rebound = ready.map(item => ({ ...item, path: 'C:/Example/other' }))
+  assert.throws(() => ledger.recordExecutorWorkspaces('rebind-direct', { nodeId: 'worker', sampledAt: f.now + 2, workspaces: rebound }), { code: 'CONFLICT' })
+  assert.equal((await f.gateway.handle(f.raw(rebound, f.now + 2))).state, 'uncertain')
+  assert.deepEqual(ledger.executorWorkspaceCatalog('worker').workspaces, ready)
+})
+
+test('Windows registry forward slashes remain physically authorized and keep the same ID', { skip: process.platform !== 'win32' }, async t => {
+  const f = local(t, { paused: false })
+  f.entries[0].path = f.first.replaceAll('\\', '/')
+  const g = trustedRegistry(f)
+  const before = (await f.service.workspaceGrantCatalog()).items[0]
+  assert.equal(before.state, 'ready')
+  assert.equal(physicalWorkspace(f.entries[0].path), f.entries[0].path)
+  assert.equal(await g.authorize(before.workspaceId), f.first)
+  const granted = await f.service.setLocalWorkspaceGrant({ registryId: 'registry-one', enabled: true, expectedRevision: 0 })
+  assert.equal(granted.items[0].workspaceId, before.workspaceId)
+  assert.equal(granted.items[0].path, f.entries[0].path)
+})
+
+test('a foreign Windows path cannot be used as a local physical grant', { skip: process.platform === 'win32' }, () => {
+  assert.throws(() => physicalWorkspace('C:/Example/project'), { code: 'WORKSPACE_GRANT_PATH_INVALID' })
+})
+
 test('gateway rejects foreign node, duplicate IDs, path escape spelling, unknown fields and oversized snapshots before mutation', async t => {
   const f = transport(t)
   for (const [values, code] of [
     [[{ ...metadata, nodeId: 'victim' }], 'WORKSPACE_NODE_MISMATCH'],
     [[metadata, metadata], 'DUPLICATE_EXECUTOR_WORKSPACE'],
-    [[{ ...metadata, path: '/controlled/../private' }], 'INVALID_EXECUTOR_WORKSPACES'],
+    ...['/controlled/../private', 'relative/project', 'C:project', 'C:/project/../private', 'C:/project/./child', 'C:/project//child', 'C:/project\\child', 'C:/project\u0000child', '//server/share/project', 'C:\\project\\..\\private'].map(path => [[{ ...metadata, path }], 'INVALID_EXECUTOR_WORKSPACES']),
     [[{ ...metadata, allowedRoot: '/' }], 'INVALID_EXECUTOR_WORKSPACES'],
     [Array.from({ length: 65 }, (_, index) => ({ ...metadata, workspaceId: `workspace-${index}` })), 'INVALID_EXECUTOR_WORKSPACES'],
   ]) await assert.rejects(f.gateway.handle(f.raw(values)), { code })
