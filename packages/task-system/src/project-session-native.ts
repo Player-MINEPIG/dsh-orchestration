@@ -21,6 +21,7 @@ import type {
   SessionProjectionBaseline,
   SessionFollowFrame,
   SessionPromptRequest,
+  SessionPageRequest,
 } from "@deepseek-ai/dsh-api-session-controller";
 import type {
   WorkspaceFollowFrame,
@@ -38,6 +39,7 @@ import type {} from "@deepseek-ai/dsh-commands";
 
 const key = z.string().min(1).max(200);
 const uploadMaxBytes = 8 * 1024 * 1024;
+const logicalFrameMaxBytes = 8 * 1024 * 1024;
 const imageMetadata = z.strictObject({
   mediaType: z.enum(["image/png", "image/jpeg", "image/webp", "image/gif"]),
   sha256: z
@@ -94,6 +96,12 @@ const windowSchema = z.strictObject({
 });
 const followRequest = z.strictObject({
   assistantStream: z.literal(true).optional(),
+  maxMessages: z.number().int().positive().max(500).optional(),
+  turnWindow: windowSchema.optional(),
+});
+const pageRequest = z.strictObject({
+  throughSeq: sequence,
+  beforeSeq: sequence.optional(),
   maxMessages: z.number().int().positive().max(500).optional(),
   turnWindow: windowSchema.optional(),
 });
@@ -184,26 +192,32 @@ export const ProjectNativeOperation = z.discriminatedUnion("kind", [
         "workspace",
         "session-control",
         "session-follow",
+        "session-page",
         "user-question-wait",
       ]),
       cursor: z.string().min(1).max(100).optional(),
-      request: z.union([followRequest, questionWaitRequest]).optional(),
+      request: z
+        .union([followRequest, questionWaitRequest, pageRequest])
+        .optional(),
     })
     .refine(
       (value) =>
         value.request === undefined ||
         (value.stream === "session-follow"
           ? followRequest.safeParse(value.request).success
-          : value.stream === "user-question-wait" &&
-            questionWaitRequest.safeParse(value.request).success),
+          : value.stream === "session-page"
+            ? pageRequest.safeParse(value.request).success
+            : value.stream === "user-question-wait" &&
+              questionWaitRequest.safeParse(value.request).success),
       "The native stream request must match its stream",
     )
     .refine(
       (value) =>
-        value.stream !== "user-question-wait" ||
+        (value.stream !== "user-question-wait" &&
+          value.stream !== "session-page") ||
         value.cursor !== undefined ||
         value.request !== undefined,
-      "A new question wait requires its callId",
+      "A new history page or question wait requires its request",
     ),
   z.strictObject({
     kind: z.literal("stream-close"),
@@ -213,6 +227,7 @@ export const ProjectNativeOperation = z.discriminatedUnion("kind", [
       "workspace",
       "session-control",
       "session-follow",
+      "session-page",
       "user-question-wait",
     ]),
     cursor: z.string().min(1).max(100),
@@ -277,6 +292,13 @@ type PollResult = {
   frames: ProjectNativeJson[];
   cursor: string;
   closed?: boolean;
+  framePart?: {
+    id: string;
+    offset: number;
+    totalBytes: number;
+    data: string;
+    eof: boolean;
+  };
 };
 type InteractionResolution =
   | { kind: "next" }
@@ -299,6 +321,7 @@ interface StreamState {
   pending?: Promise<IteratorResult<unknown>>;
   polling?: Promise<PollResult>;
   expiry?: ReturnType<typeof setTimeout>;
+  frame?: { id: string; bytes: Buffer; offset: number };
 }
 type ScopedServices = <K extends string & keyof Context>(
   name: K,
@@ -1064,6 +1087,11 @@ export class ProjectNativeOwner {
       frames: [],
       cursor: `${state.id}:${state.next + 1}`,
     };
+    if (state.frame) {
+      this.framePart(state, result);
+      state.next++;
+      return result;
+    }
     state.pending ??= state.iterator.next();
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeout = Symbol("poll-timeout");
@@ -1080,7 +1108,14 @@ export class ProjectNativeOwner {
         else {
           const frame = json(next.value);
           result.frames.push(frame);
-          this.checkSize(result, "FRAME_TOO_LARGE");
+          if (Buffer.byteLength(JSON.stringify(result)) > this.maxBytes) {
+            const bytes = Buffer.from(JSON.stringify(frame));
+            if (bytes.byteLength > logicalFrameMaxBytes)
+              error("FRAME_TOO_LARGE", "Native logical frame exceeds 8 MiB");
+            state.frame = { id: randomUUID(), bytes, offset: 0 };
+            result.frames.length = 0;
+            this.framePart(state, result);
+          }
         }
       }
       state.next++;
@@ -1091,6 +1126,23 @@ export class ProjectNativeOwner {
     } finally {
       if (timer !== undefined) clearTimeout(timer);
     }
+  }
+  private framePart(state: StreamState, result: PollResult): void {
+    const frame = state.frame;
+    if (!frame) error("STREAM_RESET", "Native frame is no longer available");
+    const offset = frame.offset;
+    const bytes = Math.min(24576, Math.floor(((this.maxBytes - 512) * 3) / 4));
+    const end = Math.min(offset + bytes, frame.bytes.byteLength);
+    result.framePart = {
+      id: frame.id,
+      offset,
+      totalBytes: frame.bytes.byteLength,
+      data: frame.bytes.subarray(offset, end).toString("base64"),
+      eof: end === frame.bytes.byteLength,
+    };
+    this.checkSize(result, "FRAME_TOO_LARGE");
+    if (result.framePart.eof) state.frame = undefined;
+    else frame.offset = end;
   }
   private stateFor(
     binding: ProjectSessionNativeBinding,
@@ -1120,6 +1172,7 @@ export class ProjectNativeOwner {
   private close(state: StreamState): void {
     state.abort.abort();
     this.streams.delete(state.id);
+    state.frame = undefined;
     if (state.expiry !== undefined) clearTimeout(state.expiry);
     const events = this.events.get(state.id);
     if (events) {
@@ -1143,6 +1196,19 @@ export class ProjectNativeOwner {
   ): Promise<AsyncIterable<unknown>> {
     const ctx = this.options.ctx;
     switch (operation.stream) {
+      case "session-page": {
+        const request = pageRequest.parse(operation.request);
+        const nativeRequest = {
+          ...request,
+          address: {
+            kind: "session",
+            sessionId: SessionId(binding.sessionId),
+          } satisfies SessionPageRequest["address"],
+        };
+        return (async function* () {
+          yield await ctx.sessionController.page(nativeRequest, signal);
+        })();
+      }
       case "session-follow":
         return this.follow(
           ctx.sessionController.follow(

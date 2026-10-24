@@ -648,7 +648,7 @@ test("whole request and native frame budgets fail explicitly before invalid data
       h.binding.sessionId,
     );
     agent.session.append("project/native-budget-fixture", {
-      text: "界".repeat(500),
+      text: "界".repeat(3 * 1024 * 1024),
     });
     await assert.rejects(
       small.invoke(
@@ -660,6 +660,174 @@ test("whole request and native frame budgets fail explicitly before invalid data
     );
   } finally {
     small.dispose();
+    await h.dispose();
+  }
+});
+
+test("single large real tool records travel losslessly through bound finite polls and history pages", async () => {
+  const h = await createOwner();
+  const owner = new ProjectNativeOwner({
+    ctx: h.ctx,
+    authorizeBinding: async () => {},
+    withAgent: h.withAgent,
+    pollWaitMs: 5,
+  });
+  const call = (operation, binding = h.binding) =>
+    owner.invoke(binding, operation, randomUUID());
+  let pieces = 0;
+  const oneFrame = async (stream, request) => {
+    let cursor,
+      id,
+      totalBytes,
+      length = 0;
+    const chunks = [];
+    for (let polls = 0; polls < 100; polls++) {
+      const operation = {
+        kind: "stream-poll",
+        stream,
+        ...(cursor ? { cursor } : { request }),
+      };
+      const batch = await call(operation);
+      assert.ok(Buffer.byteLength(JSON.stringify(batch)) < 48 * 1024);
+      if (batch.framePart) {
+        const part = batch.framePart;
+        const bytes = Buffer.from(part.data, "base64");
+        assert.equal(bytes.toString("base64"), part.data);
+        assert.equal(part.offset, length);
+        assert.ok(bytes.byteLength > 0 && bytes.byteLength <= 24576);
+        assert.ok(part.totalBytes <= 8 * 1024 * 1024);
+        assert.deepEqual(batch.frames, []);
+        if (id === undefined) {
+          id = part.id;
+          totalBytes = part.totalBytes;
+        }
+        assert.equal(part.id, id);
+        assert.equal(part.totalBytes, totalBytes);
+        if (cursor)
+          assert.deepEqual(
+            await call(operation),
+            batch,
+            "A lost chunk acknowledgement replays the same frame ID, offset and cursor",
+          );
+        await assert.rejects(
+          call(
+            { kind: "stream-poll", stream, cursor: batch.cursor },
+            { ...h.binding, generation: 77 },
+          ),
+          (error) => error.code === "STREAM_RESET",
+        );
+        await assert.rejects(
+          call({
+            kind: "stream-poll",
+            stream:
+              stream === "session-follow" ? "session-page" : "session-follow",
+            cursor: batch.cursor,
+          }),
+          (error) => error.code === "STREAM_RESET",
+        );
+        chunks.push(bytes);
+        length += bytes.byteLength;
+        pieces++;
+        assert.equal(part.eof, length === totalBytes);
+        cursor = batch.cursor;
+        if (part.eof) {
+          const frame = JSON.parse(
+            new TextDecoder("utf-8", { fatal: true }).decode(
+              Buffer.concat(chunks),
+            ),
+          );
+          await call({ kind: "stream-close", stream, cursor });
+          return frame;
+        }
+      } else if (batch.frames.length) {
+        assert.equal(chunks.length, 0);
+        assert.equal(batch.frames.length, 1);
+        await call({ kind: "stream-close", stream, cursor: batch.cursor });
+        return batch.frames[0];
+      } else {
+        assert.ok(!batch.closed);
+        cursor = batch.cursor;
+      }
+    }
+    assert.fail("Missing complete native frame");
+  };
+  try {
+    const { agent } = await h.ctx.sessionController.resolveAgent(
+      h.binding.sessionId,
+    );
+    const output = "真实工具输出🌏".repeat(12000);
+    agent.ctx.tools.register(
+      defineTool({
+        name: "native_large_output",
+        description: "Produce a real large tool record.",
+        parameters: {},
+        output: {
+          schema: { type: "string" },
+          render: (_args, value) => [{ type: "text", text: value }],
+        },
+        execute: async () => output,
+      }),
+    );
+    h.model.script = [
+      { name: "native_large_output", args: {} },
+      "The large tool completed.",
+      "Conversation continues.",
+    ];
+    await call({
+      kind: "session-prompt",
+      requestId: "large-tool",
+      mode: "queue",
+      content: [{ type: "text", text: "Read the large tool output." }],
+    });
+    await agent.whenIdle();
+    const throughSeq = (await invoke(h, { kind: "session-projections" }))
+      .asOfSeq;
+    const original = await h.ctx.sessionController.page(
+      {
+        address: { kind: "session", sessionId: h.binding.sessionId },
+        throughSeq,
+        maxMessages: 500,
+      },
+      new AbortController().signal,
+    );
+    assert.ok(
+      original.records.some(
+        (record) => Buffer.byteLength(JSON.stringify(record)) > 48 * 1024,
+      ),
+    );
+    const snapshot = await oneFrame("session-follow", {
+      assistantStream: true,
+      maxMessages: 1,
+    });
+    assert.equal(snapshot.type, "snapshot");
+    let records = snapshot.records,
+      hasMore = snapshot.hasMore;
+    while (hasMore) {
+      const page = await oneFrame("session-page", {
+        throughSeq: snapshot.cursor,
+        beforeSeq: records[0].event.seq,
+        maxMessages: 1,
+      });
+      assert.ok(page.records.length > 0);
+      records = [...page.records, ...records];
+      hasMore = page.hasMore;
+    }
+    assert.deepEqual(
+      records,
+      original.records,
+      "All original SDK bytes, records and sequence order survive bounded transport",
+    );
+    assert.ok(pieces > 2);
+    await call({
+      kind: "session-prompt",
+      requestId: "after-large-tool",
+      mode: "queue",
+      content: [{ type: "text", text: "Continue this native conversation." }],
+    });
+    await agent.whenIdle();
+    assert.equal(h.model.requests.length, 3);
+  } finally {
+    owner.dispose();
     await h.dispose();
   }
 });
