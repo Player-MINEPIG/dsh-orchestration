@@ -484,7 +484,8 @@ for (const clockOffset of [-12000, 120000]) {
 }
 
 test("a rejected final page records failure durably and a new request can recover", (t) => {
-  const f = fixture(t), request = f.request();
+  const f = fixture(t),
+    request = f.request();
   const input = {
     nodeId: "worker",
     requestId: request.requestId,
@@ -494,18 +495,29 @@ test("a rejected final page records failure durably and a new request can recove
   };
   f.catalog.complete("reject-0", input);
   const rejected = f.catalog.complete("reject-1", {
-    ...input, page: { index: 1, total: 2 },
+    ...input,
+    page: { index: 1, total: 2 },
   });
   assert.equal(rejected.catalog.state, "unavailable");
   assert.equal(rejected.catalog.reason, "CATALOG_FAILED");
   assert.equal(rejected.catalog.request, undefined);
-  assert.equal(rejected.catalog.diagnostic.code, "EXECUTION_CATALOG_DUPLICATE_MODEL");
+  assert.equal(
+    rejected.catalog.diagnostic.code,
+    "EXECUTION_CATALOG_DUPLICATE_MODEL",
+  );
   assert.equal(rejected.catalog.diagnostic.requestId, request.requestId);
   assert.equal(rejected.catalog.diagnostic.receivedPages, 1);
-  assert.deepEqual(f.catalog.complete("reject-1", {
-    ...input, page: { index: 1, total: 2 },
-  }), rejected);
-  assert.deepEqual(f.catalog.view("worker").catalog.diagnostic, rejected.catalog.diagnostic);
+  assert.deepEqual(
+    f.catalog.complete("reject-1", {
+      ...input,
+      page: { index: 1, total: 2 },
+    }),
+    rejected,
+  );
+  assert.deepEqual(
+    f.catalog.view("worker").catalog.diagnostic,
+    rejected.catalog.diagnostic,
+  );
   const next = f.request("recover");
   assert.equal(next.generation, request.generation + 1);
   assert.equal(f.catalog.view("worker").catalog.reason, "CATALOG_FAILED");
@@ -515,31 +527,48 @@ test("a rejected final page records failure durably and a new request can recove
 });
 
 test("executor resumes authority-listed pages without comparing clocks", async () => {
-  const { ExecutorModelControl } = await import("../dist/remote/model-control.js");
+  const { ExecutorModelControl } = await import(
+    "../dist/remote/model-control.js"
+  );
   const { RecoveryStore } = await import("../dist/remote/store.js");
   const store = new RecoveryStore(":memory:");
   const request = {
     requestId: "36d43d3e-5aa5-45b1-8761-9aaf5585f629",
-    nodeId: "worker", generation: 1, createdAt: 10000, expiresAt: 40000,
+    nodeId: "worker",
+    generation: 1,
+    createdAt: 10000,
+    expiresAt: 40000,
   };
-  let collections = 0, fail = true;
+  let collections = 0,
+    fail = true;
   const sent = [];
   const options = {
-    nodeId: "worker", store,
+    nodeId: "worker",
+    store,
     client: { executorIdentity: async () => {}, dispose: async () => {} },
     remote: {
       executionModelRequests: async () => [request],
       completeExecutionModels: async (id, input) => {
         sent.push({ id, input: structuredClone(input) });
-        if (input.page.index === 1 && fail) throw new Error("lost acknowledgement");
+        if (input.page.index === 1 && fail)
+          throw new Error("lost acknowledgement");
         return { value: { accepted: true } };
       },
     },
-    inventory: { collect: async () => {
-      collections++;
-      return { state: "success", observedAt: Date.now(), complete: true,
-        models: Array.from({ length: 40 }, (_, i) => ({ ...model, model: `clock-${i}` })) };
-    } },
+    inventory: {
+      collect: async () => {
+        collections++;
+        return {
+          state: "success",
+          observedAt: Date.now(),
+          complete: true,
+          models: Array.from({ length: 40 }, (_, i) => ({
+            ...model,
+            model: `clock-${i}`,
+          })),
+        };
+      },
+    },
   };
   const first = new ExecutorModelControl(options);
   await first.pollNow();
@@ -550,6 +579,205 @@ test("executor resumes authority-listed pages without comparing clocks", async (
   await second.dispose();
   store.close();
   assert.equal(collections, 1);
-  assert.deepEqual(sent.map(item => item.input.page.index), [0, 1, 1]);
+  assert.deepEqual(
+    sent.map((item) => item.input.page.index),
+    [0, 1, 1],
+  );
   assert.deepEqual(sent[1], sent[2]);
+});
+
+for (const [name, change, code] of [
+  [
+    "first-page duplicate",
+    (input) => {
+      input.result.models.push(model);
+    },
+    "EXECUTION_CATALOG_DUPLICATE_MODEL",
+  ],
+  [
+    "invalid page index",
+    (input) => {
+      input.page.index = 2;
+    },
+    "EXECUTION_CATALOG_PAGE_INVALID",
+  ],
+]) {
+  test(`${name} is rejected before storing any page`, (t) => {
+    const f = fixture(t),
+      request = f.request();
+    const input = {
+      nodeId: "worker",
+      requestId: request.requestId,
+      generation: request.generation,
+      page: { index: 0, total: 2 },
+      result: f.success(),
+    };
+    change(input);
+    const view = f.catalog.complete(name, input);
+    assert.equal(view.catalog.diagnostic.code, code);
+    assert.equal(view.catalog.diagnostic.receivedPages, 0);
+    assert.equal(view.catalog.request, undefined);
+    assert.deepEqual(f.catalog.pending("worker"), []);
+  });
+}
+
+test("page metadata cannot splice different samples into a single request", (t) => {
+  const f = fixture(t),
+    request = f.request();
+  const input = {
+    nodeId: "worker",
+    requestId: request.requestId,
+    generation: request.generation,
+    page: { index: 0, total: 2 },
+    result: f.success(),
+  };
+  f.catalog.complete("sample-0", input);
+  const view = f.catalog.complete("sample-1", {
+    ...input,
+    page: { index: 1, total: 2 },
+    result: {
+      ...f.success([{ ...model, model: "different" }]),
+      observedAt: 20000,
+    },
+  });
+  assert.equal(view.catalog.diagnostic.code, "EXECUTION_CATALOG_PAGE_CONFLICT");
+  assert.equal(view.catalog.diagnostic.receivedPages, 1);
+  assert.equal(view.catalog.snapshot, undefined);
+});
+
+test("aggregate page limit is enforced before storing an oversized intermediate page", (t) => {
+  const f = fixture(t),
+    request = f.request();
+  const input = {
+    nodeId: "worker",
+    requestId: request.requestId,
+    generation: request.generation,
+    page: { index: 0, total: 3 },
+    result: f.success(
+      Array.from({ length: 2048 }, (_, index) => ({
+        ...model,
+        model: `limit-${index}`,
+      })),
+    ),
+  };
+  f.catalog.complete("limit-0", input);
+  const view = f.catalog.complete("limit-1", {
+    ...input,
+    page: { index: 1, total: 3 },
+    result: f.success(),
+  });
+  assert.equal(view.catalog.diagnostic.code, "EXECUTION_CATALOG_LIMIT");
+  assert.equal(view.catalog.diagnostic.receivedPages, 1);
+  assert.equal(view.catalog.snapshot, undefined);
+});
+
+test("expired authority request preserves page diagnostics across database reopen and rejects late completion", (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "catalog-timeout-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const file = join(dir, "catalog.sqlite");
+  let now = 10000;
+  let db = new DatabaseSync(file),
+    catalog = new ExecutionModels(db, { now: () => now });
+  const request = catalog.request("timeout-request", {
+    nodeId: "worker",
+    ttlMs: 10000,
+  }).catalog.request;
+  const input = {
+    nodeId: "worker",
+    requestId: request.requestId,
+    generation: request.generation,
+    page: { index: 0, total: 2 },
+    result: {
+      state: "success",
+      observedAt: 0,
+      complete: true,
+      models: [model],
+    },
+  };
+  catalog.complete("timeout-0", input);
+  db.close();
+  now = 20000;
+  db = new DatabaseSync(file);
+  t.after(() => db.close());
+  catalog = new ExecutionModels(db, { now: () => now });
+  const timeout = catalog.view("worker");
+  assert.equal(timeout.catalog.state, "unavailable");
+  assert.equal(timeout.catalog.reason, "TIMEOUT");
+  assert.equal(timeout.catalog.diagnostic.receivedPages, 1);
+  assert.equal(timeout.catalog.diagnostic.totalPages, 2);
+  assert.equal(timeout.catalog.diagnostic.at, 20000);
+  const late = catalog.complete("timeout-1", {
+    ...input,
+    page: { index: 1, total: 2 },
+    result: { ...input.result, models: [{ ...model, model: "late" }] },
+  });
+  assert.equal(
+    late.catalog.diagnostic.code,
+    "EXECUTION_CATALOG_REQUEST_EXPIRED",
+  );
+  assert.equal(late.catalog.snapshot, undefined);
+  assert.deepEqual(
+    catalog.view("worker").catalog.diagnostic,
+    late.catalog.diagnostic,
+  );
+  assert.equal(
+    catalog.request("timeout-retry", { nodeId: "worker" }).catalog.request
+      .generation,
+    2,
+  );
+});
+
+test("a durable rejection is not resent by a restarted control until the authority issues another request", async () => {
+  const { ExecutorModelControl } = await import(
+    "../dist/remote/model-control.js"
+  );
+  const { RecoveryStore } = await import("../dist/remote/store.js");
+  const store = new RecoveryStore(":memory:");
+  const request = {
+    requestId: "36d43d3e-5aa5-45b1-8761-9aaf5585f629",
+    nodeId: "worker",
+    generation: 1,
+    createdAt: Date.now(),
+    expiresAt: Date.now() + 30000,
+  };
+  let sent = 0,
+    collections = 0;
+  const options = {
+    nodeId: "worker",
+    store,
+    client: { executorIdentity: async () => {}, dispose: async () => {} },
+    remote: {
+      executionModelRequests: async () => [request],
+      completeExecutionModels: async () => {
+        sent++;
+        return {
+          value: {
+            accepted: false,
+            catalogError: { code: "EXECUTION_CATALOG_DUPLICATE_MODEL" },
+          },
+        };
+      },
+    },
+    inventory: {
+      collect: async () => {
+        collections++;
+        return {
+          state: "success",
+          observedAt: Date.now(),
+          complete: true,
+          models: [model],
+        };
+      },
+    },
+  };
+  const first = new ExecutorModelControl(options);
+  await first.pollNow();
+  await first.dispose();
+  assert.equal(store.catalogDelivery("worker").error.kind, "rejected");
+  const second = new ExecutorModelControl(options);
+  await second.pollNow();
+  await second.dispose();
+  store.close();
+  assert.equal(sent, 1);
+  assert.equal(collections, 1);
 });

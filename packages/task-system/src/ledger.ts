@@ -4419,6 +4419,13 @@ export class TaskLedger {
       const confirmed=!!positive && positive.expiresAt>this.clock() && positive.models.some(choice=>sameExecutionModel(choice,run.route!));
       if(!confirmed && (view.catalog.state!=="fresh" || !view.catalog.snapshot?.complete)) {
         if(!this.options.readOnly)this.executionModels.request(`run:${run.runId}:${view.catalog.snapshot?.revision ?? "none"}:${Math.floor(this.clock()/30000)}`,{nodeId:run.route.nodeId});
+        if(view.catalog.reason) {
+          const reason=view.catalog.reason;
+          const code=reason==="TIMEOUT"?"EXECUTION_CATALOG_TIMEOUT":reason==="UNAVAILABLE"?"EXECUTION_CATALOG_UNAVAILABLE":`EXECUTION_${reason}`;
+          const diagnostic=view.catalog.diagnostic;
+          const detail=diagnostic?` Last refresh ${diagnostic.code}; accepted ${diagnostic.receivedPages}${diagnostic.totalPages===undefined?"":`/${diagnostic.totalPages}`} pages.`:"";
+          return this.setDispatchIssue(run,{kind:diagnostic?.kind==="rejected"||reason==="CATALOG_UNSUPPORTED"?"needs_action":"waiting",code,message:`Executor model catalog refresh failed (${reason}).${detail} Refresh the catalog after restoring the executor configuration. This queued Run will resume without creating another task.`,action:"refresh_catalog"});
+        }
         return this.setDispatchIssue(run,{kind:"waiting",code:"EXECUTION_CATALOG_PENDING",message:"Waiting for a fresh executor model catalog. The last known configuration has been preserved.",action:"refresh_catalog"});
       }
       const available=(route:ExecutionRoute)=>!!positive && positive.expiresAt>this.clock() && positive.models.some(choice=>sameExecutionModel(choice,route));
@@ -4434,7 +4441,7 @@ export class TaskLedger {
       if(!available(run.route))return this.setDispatchIssue(run,{kind:"needs_action",code:run.executionModel.origin==="explicit"?"EXPLICIT_EXECUTION_MODEL_UNAVAILABLE":"EXECUTION_DEFAULT_AND_FALLBACK_UNAVAILABLE",message:run.executionModel.origin==="explicit"?"The explicitly requested execution model or effort is unavailable. Select a supported model explicitly; it was not replaced.":"The executor default and deepseek-official/deepseek-flash high are unavailable. Update the node default or restore the model on the executor.",action:"choose_execution_model"});
     }
     if(run.dispatchIssue?.code==="EXECUTION_ROOT_REQUIRED" && run.route.nodeId!==this.nodeId && !run.route.workspaceId && this.executionModels.view(run.route.nodeId).catalog.positiveSnapshot?.temporaryWorkspaceReady!==true)return run;
-    if(run.dispatchIssue && !["TEMPORARY_CONTEXT_REQUIRED","EXECUTOR_REQUIRED","EXECUTION_CATALOG_PENDING","EXPLICIT_EXECUTION_MODEL_UNAVAILABLE","EXECUTION_DEFAULT_AND_FALLBACK_UNAVAILABLE","EXECUTION_ROOT_REQUIRED","PROJECT_NODE_NOT_ALLOWED","PROJECT_WORKSPACE_CHANGED","WORKSPACE_POLICY"].includes(run.dispatchIssue.code))return run;
+    if(run.dispatchIssue && !["TEMPORARY_CONTEXT_REQUIRED","EXECUTOR_REQUIRED","EXECUTION_CATALOG_PENDING","EXECUTION_CATALOG_TIMEOUT","EXECUTION_CATALOG_UNAVAILABLE","EXECUTION_CATALOG_UNSUPPORTED","EXECUTION_CATALOG_FAILED","EXPLICIT_EXECUTION_MODEL_UNAVAILABLE","EXECUTION_DEFAULT_AND_FALLBACK_UNAVAILABLE","EXECUTION_ROOT_REQUIRED","PROJECT_NODE_NOT_ALLOWED","PROJECT_WORKSPACE_CHANGED","WORKSPACE_POLICY"].includes(run.dispatchIssue.code))return run;
     return this.setDispatchIssue(run,undefined);
   }
   private assertTaskActionVersion(taskId: string, expected?: string) {

@@ -1,6 +1,7 @@
 import { ExecutionDisposition } from "../executor-alerts.js";
 import {
   ExecutionCatalogRequest,
+  ExecutionCatalogCompletion,
   ExecutionModelViewPage,
   type AdmissionReport,
   type ExecutionModelsView,
@@ -628,15 +629,16 @@ export class RemoteLedgerClient implements LedgerPort {
     commandId: string,
     input: CompleteExecutionModels,
     options?: { signal?: AbortSignal },
-  ): Promise<Receipt<{ accepted: true }>> {
+  ): Promise<Receipt<ExecutionCatalogCompletion>> {
     insist(input.nodeId === this.nodeId, "WRONG_CLIENT_NODE", 403);
     const { nodeId: _nodeId, ...payload } = input;
-    return await this.command(
+    const receipt = await this.command<Receipt<unknown>>(
       "completeExecutionModels",
       commandId,
       JSON.parse(JSON.stringify(payload)),
-      options,
+      { ...options, diagnostic: true },
     );
+    return { ...receipt, value: ExecutionCatalogCompletion.parse(receipt.value) };
   }
   async projectCollaborate(
     nodeId: string,

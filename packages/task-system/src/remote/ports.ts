@@ -1,5 +1,6 @@
 import type {
   CompleteExecutionModels,
+  ExecutionCatalogCompletion,
   ExecutionCatalogRequest,
   ExecutionModelsView,
 } from "../execution-models.js";
@@ -371,7 +372,7 @@ export interface LedgerPort {
   completeExecutionModels?(
     commandId: string,
     input: CompleteExecutionModels,
-  ): MaybePromise<Receipt<ExecutionModelsView | { accepted: true }>>;
+  ): MaybePromise<Receipt<ExecutionModelsView | ExecutionCatalogCompletion>>;
   getWorkspace?(
     workspaceId: string,
   ): MaybePromise<{ workspaceId: string; nodeId: string }>;

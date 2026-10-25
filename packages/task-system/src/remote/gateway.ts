@@ -1,6 +1,8 @@
 import {
   AdmissionReport,
   CompleteExecutionModels,
+  ExecutionModelsError,
+  executionCatalogCompletion,
 } from "../execution-models.js";
 import { ProgramCatalog, ProgramRoute } from "../workflow-programs.js";
 import { validateCollaborationInput } from "../project-collaboration/authority.js";
@@ -889,7 +891,7 @@ export class RemoteGateway {
           result = {
             commandId: saved.commandId,
             acceptedAt: saved.acceptedAt,
-            value: { accepted: true },
+            value: executionCatalogCompletion(saved.value),
           };
           break;
         }
@@ -1336,6 +1338,15 @@ export class RemoteGateway {
       );
       return receipt;
     } catch (error) {
+      if (envelope.operation === "completeExecutionModels" && error instanceof ExecutionModelsError) {
+        const result = {
+          commandId,
+          acceptedAt: new Date().toISOString(),
+          value: { accepted: false, catalogError: { code: error.code } },
+        };
+        store.complete(peer.nodeId, envelope.commandId, result, this.options.maxResponseBytes);
+        return { commandId: envelope.commandId, state: "done", result };
+      }
       if (
         envelope.operation === "executionModelView" &&
         error instanceof ProtocolError
@@ -1397,7 +1408,7 @@ export class RemoteGateway {
             nodeId,
             receipt.commandId,
             operation === "completeExecutionModels"
-              ? { ...durable, value: { accepted: true } }
+              ? { ...durable, value: executionCatalogCompletion(durable.value) }
               : durable,
             this.options.maxResponseBytes,
           )

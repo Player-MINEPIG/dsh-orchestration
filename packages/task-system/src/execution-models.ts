@@ -64,17 +64,38 @@ export const CompleteExecutionModels = z
   .strict();
 export type CompleteExecutionModels = z.infer<typeof CompleteExecutionModels>;
 
+export const ExecutionCatalogCompletion = z.discriminatedUnion("accepted", [
+  z.object({ accepted: z.literal(true) }),
+  z.object({
+    accepted: z.literal(false),
+    catalogError: z.object({
+      code: z.string().regex(/^[A-Z][A-Z0-9_]{0,99}$/),
+    }),
+  }),
+]);
+export type ExecutionCatalogCompletion = z.infer<
+  typeof ExecutionCatalogCompletion
+>;
+
 export const ExecutionCatalogDelivery = z.object({
   key: z.string(),
   expiresAt: z.number(),
   pages: z.array(CompleteExecutionModels).min(1).max(64),
   next: z.number().int().min(0).max(64),
+  error: z
+    .object({
+      kind: z.enum(["rejected", "uncertain"]),
+      code: z.string().max(100),
+      at: z.number().int().nonnegative(),
+    })
+    .optional(),
 });
 export type ExecutionCatalogDelivery = z.infer<typeof ExecutionCatalogDelivery>;
 
 const Snapshot = z.object({
   revision: z.string(),
   observedAt: z.number(),
+  receivedAt: z.number().optional(),
   expiresAt: z.number(),
   complete: z.boolean(),
   temporaryWorkspaceReady: z.boolean().optional(),
@@ -85,6 +106,21 @@ const Policy = z.object({
   choice: ExecutionModelChoice.optional(),
 });
 export type NodeExecutionModelPolicy = z.infer<typeof Policy>;
+const CatalogDiagnostic = z.object({
+  requestId: z.string().uuid(),
+  generation: z.number().int().positive(),
+  code: z.string().max(100),
+  at: z.number().int().nonnegative(),
+  kind: z.enum(["rejected", "failed", "timeout"]),
+  receivedPages: z.number().int().min(0).max(64),
+  totalPages: z.number().int().min(1).max(64).optional(),
+  action: z.literal("refresh_catalog"),
+});
+const CatalogProgress = z.object({
+  startedAt: z.number().int().nonnegative(),
+  receivedPages: z.number().int().min(0).max(64),
+  totalPages: z.number().int().min(1).max(64).optional(),
+});
 export interface ExecutionModelsView {
   nodeId: string;
   catalog: {
@@ -92,6 +128,8 @@ export interface ExecutionModelsView {
     snapshot?: z.infer<typeof Snapshot>;
     positiveSnapshot?: z.infer<typeof Snapshot>;
     request?: ExecutionCatalogRequest;
+    diagnostic?: z.infer<typeof CatalogDiagnostic>;
+    progress?: z.infer<typeof CatalogProgress>;
     reason?:
       | "TIMEOUT"
       | "UNAVAILABLE"
@@ -108,6 +146,8 @@ export const ExecutionModelViewPage = z.object({
       snapshot: Snapshot.optional(),
       positiveSnapshot: Snapshot.optional(),
       request: ExecutionCatalogRequest.optional(),
+      diagnostic: CatalogDiagnostic.optional(),
+      progress: CatalogProgress.optional(),
       reason: z
         .enum([
           "TIMEOUT",
@@ -130,6 +170,18 @@ export const ExecutionModelViewPage = z.object({
     positiveSnapshot: z.number().int().min(0).max(2048),
   }),
 });
+export function executionCatalogCompletion(
+  value: unknown,
+): ExecutionCatalogCompletion {
+  const parsed = ExecutionCatalogCompletion.or(
+    ExecutionModelViewPage.shape.view,
+  ).parse(value);
+  if ("accepted" in parsed) return parsed;
+  const diagnostic = parsed.catalog.diagnostic;
+  return !parsed.catalog.request && diagnostic?.kind === "rejected"
+    ? { accepted: false, catalogError: { code: diagnostic.code } }
+    : { accepted: true };
+}
 export const AdmissionCode = z.enum([
   "READY",
   "MODEL_UNAVAILABLE",
@@ -157,6 +209,7 @@ const Stored = z.object({
     .enum(["TIMEOUT", "UNAVAILABLE", "CATALOG_UNSUPPORTED", "CATALOG_FAILED"])
     .optional(),
   policy: Policy,
+  diagnostic: CatalogDiagnostic.optional(),
   pages: z
     .object({
       requestId: z.string(),
@@ -168,6 +221,25 @@ const Stored = z.object({
     .optional(),
 });
 type Stored = z.infer<typeof Stored>;
+
+function failureDiagnostic(
+  state: Stored,
+  request: ExecutionCatalogRequest,
+  code: string,
+  kind: z.infer<typeof CatalogDiagnostic>["kind"],
+  at: number,
+): z.infer<typeof CatalogDiagnostic> {
+  return {
+    requestId: request.requestId,
+    generation: request.generation,
+    code,
+    kind,
+    at,
+    receivedPages: state.pages?.items.length ?? 0,
+    ...(state.pages ? { totalPages: state.pages.total } : {}),
+    action: "refresh_catalog",
+  };
+}
 
 export class ExecutionModelsError extends Error {
   constructor(readonly code: string) {
@@ -270,6 +342,16 @@ export class ExecutionModels {
         ? state.request
         : undefined;
     const snapshot = state.snapshot;
+    const diagnostic =
+      state.request && !request
+        ? failureDiagnostic(
+            state,
+            state.request,
+            "TIMEOUT",
+            "timeout",
+            state.request.expiresAt,
+          )
+        : state.diagnostic;
     return {
       nodeId,
       catalog: {
@@ -289,10 +371,20 @@ export class ExecutionModels {
           ? { positiveSnapshot: state.positiveSnapshot }
           : {}),
         ...(request ? { request } : {}),
-        ...(state.failure
-          ? { reason: state.failure }
-          : state.request && !request
-            ? { reason: "TIMEOUT" as const }
+        ...(diagnostic ? { diagnostic } : {}),
+        ...(request
+          ? {
+              progress: {
+                startedAt: request.createdAt,
+                receivedPages: state.pages?.items.length ?? 0,
+                ...(state.pages ? { totalPages: state.pages.total } : {}),
+              },
+            }
+          : {}),
+        ...(state.request && !request
+          ? { reason: "TIMEOUT" as const }
+          : state.failure
+            ? { reason: state.failure }
             : {}),
       },
       policy: state.policy,
@@ -313,6 +405,16 @@ export class ExecutionModels {
       const state = this.read(parsed.nodeId),
         now = this.now();
       if (!state.request || state.request.expiresAt <= now) {
+        if (state.request) {
+          state.failure = "TIMEOUT";
+          state.diagnostic = failureDiagnostic(
+            state,
+            state.request,
+            "TIMEOUT",
+            "timeout",
+            state.request.expiresAt,
+          );
+        }
         state.generation++;
         state.request = {
           requestId: randomUUID(),
@@ -346,30 +448,72 @@ export class ExecutionModels {
           request.generation === parsed.generation,
         "EXECUTION_CATALOG_REQUEST_MISMATCH",
       );
-      requireFact(request.expiresAt > now, "EXECUTION_CATALOG_REQUEST_EXPIRED");
+      const reject = (code: string): ExecutionModelsView => {
+        state.failure = "CATALOG_FAILED";
+        state.diagnostic = failureDiagnostic(
+          state,
+          request,
+          code,
+          "rejected",
+          now,
+        );
+        delete state.request;
+        delete state.pages;
+        this.write(parsed.nodeId, state);
+        return this.view(parsed.nodeId);
+      };
+      if (request.expiresAt <= now)
+        return reject("EXECUTION_CATALOG_REQUEST_EXPIRED");
       let result = parsed.result;
       if (parsed.page) {
-        requireFact(
-          result.state === "success" && parsed.page.index < parsed.page.total,
-          "EXECUTION_CATALOG_PAGE_INVALID",
-        );
+        if (
+          result.state !== "success" ||
+          parsed.page.index >= parsed.page.total
+        )
+          return reject("EXECUTION_CATALOG_PAGE_INVALID");
         const pages = state.pages ?? {
           requestId: request.requestId,
           total: parsed.page.total,
           items: [],
         };
-        requireFact(
-          pages.requestId === request.requestId &&
-            pages.total === parsed.page.total,
-          "EXECUTION_CATALOG_PAGE_CONFLICT",
-        );
+        if (
+          pages.requestId !== request.requestId ||
+          pages.total !== parsed.page.total
+        )
+          return reject("EXECUTION_CATALOG_PAGE_CONFLICT");
         const prior = pages.items.find(
           (item) => item.index === parsed.page!.index,
         );
-        requireFact(
-          !prior || JSON.stringify(prior.result) === JSON.stringify(result),
-          "EXECUTION_CATALOG_PAGE_CONFLICT",
+        if (prior && JSON.stringify(prior.result) !== JSON.stringify(result))
+          return reject("EXECUTION_CATALOG_PAGE_CONFLICT");
+        const first = pages.items[0]?.result;
+        if (
+          first &&
+          (first.state !== "success" ||
+            first.observedAt !== result.observedAt ||
+            first.complete !== result.complete ||
+            first.temporaryWorkspaceReady !== result.temporaryWorkspaceReady)
+        )
+          return reject("EXECUTION_CATALOG_PAGE_CONFLICT");
+        const models = [
+          ...pages.items
+            .filter((item) => item.index !== parsed.page!.index)
+            .flatMap((item) =>
+              item.result.state === "success" ? item.result.models : [],
+            ),
+          ...result.models,
+        ];
+        if (models.length > 2048) return reject("EXECUTION_CATALOG_LIMIT");
+        const keys = models.map((model) =>
+          JSON.stringify([
+            model.provider,
+            model.model,
+            model.reasoningEffort ?? null,
+            model.backend ?? null,
+          ]),
         );
+        if (new Set(keys).size !== keys.length)
+          return reject("EXECUTION_CATALOG_DUPLICATE_MODEL");
         if (!prior) pages.items.push({ index: parsed.page.index, result });
         if (pages.items.length < pages.total) {
           state.pages = pages;
@@ -379,10 +523,8 @@ export class ExecutionModels {
         const ordered = pages.items
           .sort((a, b) => a.index - b.index)
           .map((item) => item.result);
-        requireFact(
-          ordered.every((item) => item.state === "success"),
-          "EXECUTION_CATALOG_PAGE_INVALID",
-        );
+        if (!ordered.every((item) => item.state === "success"))
+          return reject("EXECUTION_CATALOG_PAGE_INVALID");
         const successes = ordered.filter((item) => item.state === "success");
         result = {
           state: "success",
@@ -393,15 +535,10 @@ export class ExecutionModels {
             : {}),
           models: successes.flatMap((item) => item.models),
         };
-        requireFact(result.models.length <= 2048, "EXECUTION_CATALOG_LIMIT");
+      } else if (state.pages && result.state === "success") {
+        return reject("EXECUTION_CATALOG_PAGE_CONFLICT");
       }
-      delete state.pages;
       if (result.state === "success") {
-        requireFact(
-          result.observedAt >= request.createdAt - 5000 &&
-            result.observedAt <= now + 5000,
-          "EXECUTION_CATALOG_SAMPLE_INVALID",
-        );
         const keys = result.models.map((model) =>
           JSON.stringify([
             model.provider,
@@ -410,13 +547,12 @@ export class ExecutionModels {
             model.backend ?? null,
           ]),
         );
-        requireFact(
-          new Set(keys).size === keys.length,
-          "EXECUTION_CATALOG_DUPLICATE_MODEL",
-        );
+        if (new Set(keys).size !== keys.length)
+          return reject("EXECUTION_CATALOG_DUPLICATE_MODEL");
         state.positiveSnapshot = {
           revision: request.requestId,
           observedAt: result.observedAt,
+          receivedAt: now,
           expiresAt: now + 60000,
           complete: result.complete,
           ...(result.temporaryWorkspaceReady !== undefined
@@ -426,9 +562,30 @@ export class ExecutionModels {
         };
         if (result.complete || !state.snapshot)
           state.snapshot = state.positiveSnapshot;
-        if (result.complete) delete state.failure;
-        else state.failure = "CATALOG_FAILED";
-      } else state.failure = result.code;
+        if (result.complete) {
+          delete state.failure;
+          delete state.diagnostic;
+        } else {
+          state.failure = "CATALOG_FAILED";
+          state.diagnostic = failureDiagnostic(
+            state,
+            request,
+            "CATALOG_FAILED",
+            "failed",
+            now,
+          );
+        }
+      } else {
+        state.failure = result.code;
+        state.diagnostic = failureDiagnostic(
+          state,
+          request,
+          result.code,
+          "failed",
+          now,
+        );
+      }
+      delete state.pages;
       delete state.request;
       this.write(parsed.nodeId, state);
       return this.view(parsed.nodeId);
