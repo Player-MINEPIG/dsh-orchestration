@@ -294,7 +294,7 @@ test('native local heartbeat reports capability readiness without provider probe
     assert.equal(h.adapter.requests.length, 0);
     await h.ctx.loader.resolve('agentLoop').fiber.dispose(); await h.ctx.loader.await();
     h.ctx.taskSystem.tick();
-    assert.equal((await tool(h.ctx, 'task_nodes', {})).value[0].state, 'unavailable');
+    assert.equal((await tool(h.ctx, 'task_nodes', {})).value.nodes[0].state, 'unavailable');
     const alerts = (await tool(h.ctx, 'task_alerts', {})).value;
     assert.equal(alerts.length, 1); assert.equal(alerts[0].status, 'open');
     assert.ok(h.ledger.deliveries().some(delivery => delivery.destination === 'offline-alert-destination' && delivery.state === 'pending'));
@@ -865,7 +865,8 @@ test('explicit delegation tools create only descendants, inherit policy, and exp
     assert.equal(childRun.isError, false, JSON.stringify(childRun));
     const child = childRun.value.value.task;
     assert.equal(child.parentTaskId, task.taskId);
-    assert.deepEqual(child.policy.allowedTools, task.policy.allowedTools);
+    assert.equal(child.policy,undefined);
+    assert.deepEqual(h.ledger.getTask(child.taskId).policy.allowedTools, task.policy.allowedTools);
     const waiting = await tool(h.ctx, 'task_wait', { taskId: task.taskId, quietMs: 0, timeoutMs: 0 }, agent);
     assert.equal(waiting.value.settled, false);
     assert.deepEqual(waiting.value.pendingRunIds, [childRun.value.value.run.runId]);

@@ -1,3 +1,5 @@
+import { taskRead, type TaskReadOptions } from "./task-reads.js";
+import { nodeRead, type NodeReadOptions } from "./node-reads.js";
 import { ExecutorAlertStore } from "./executor-alerts.js";
 import { ProjectExecutionSettingsStore } from "./project-execution-settings.js";
 import { z } from "zod";
@@ -2436,6 +2438,39 @@ export class TaskLedger {
     );
     return this.getRun(run.runId);
   }
+  dispatchExistingTask(commandId: string, input: Omit<RunInput,"executionModel"> & {nodeId?:string;executionModel?:ExecutionModelChoice;retry?:boolean;expectedActionVersion?:string}, excludedNodeId?:string) {
+    this.planner();
+    const rejected=this.get<{digest:string;code:string;message:string}>("taskDispatchRejection",commandId);
+    if(rejected) {
+      if(rejected.digest!==hash(input))fail("CONFLICT","Dispatch commandId reused with different arguments");
+      throw new TaskError(rejected.code,rejected.message);
+    }
+    try {return this.command(commandId, "dispatchExistingTask", input, () => {
+      const task=this.getTask(input.taskId),runs=this.list<Run>("run",task.taskId).filter(run=>!(run.historyOnly||run.observationOnly));
+      if (task.kind==="observed" || task.state==="archived" || this.hasWorkflowBinding(task.taskId)) fail("FORBIDDEN","Task does not support direct dispatch");
+      if(runs.some(run=>["queued","running","uncertain"].includes(run.state))) fail("CONFLICT","Task has pending execution; inspect or repair the existing Run before dispatching");
+      if(runs.length && !input.retry) fail("RETRY_REQUIRED","Task has executed before; use retry=true and its current expectedActionVersion for a new Run");
+      if(input.retry) {
+        text(input.expectedActionVersion ?? fail("INVALID","Explicit retry requires expectedActionVersion"),"expectedActionVersion",200);
+        this.assertTaskActionVersion(task.taskId,input.expectedActionVersion);
+      }
+      if(["cancelled","completed","failed"].includes(task.state)) {
+        if(!input.retry)fail("RETRY_REQUIRED","Closed Task requires explicit retry=true and expectedActionVersion");
+        task.state="ready";task.updatedAt=this.now();delete task.manualCompletion;this.saveTask(task);
+      }
+      if(input.route && (input.nodeId || input.executionModel))fail("INVALID","route cannot be combined with nodeId or executionModel");
+      const candidates=this.decisionCatalog().nodes.filter(node=>node.enabled && node.nodeId!==excludedNodeId && node.roles.some(role=>role==="executor"||role==="both"));
+      const nodeId=input.route?.nodeId ?? input.nodeId ?? (candidates.length===1?candidates[0]?.nodeId:undefined) ?? fail("EXECUTOR_REQUIRED","Choose nodeId from task_nodes");
+      const selected=this.selectExecutionModel(nodeId,input.route?ExecutionModelChoice.strip().parse(input.route):input.executionModel);
+      const {retry:_retry,expectedActionVersion:_version,nodeId:_node,executionModel:_model,...runInput}=input;
+      const run=this.newRun({...runInput,route:input.route ?? {nodeId,...selected.choice,requiredCapabilities:[]},executionModel:selected.executionModel});
+      if(input.retry)this.event("task.explicit_retry",{previousRunId:runs.at(-1)?.runId ?? null},task.taskId,run.runId);
+      return run;
+    });} catch(error) {
+      if(error instanceof TaskError && !this.commandReceipt(commandId) && !["UNAVAILABLE","REMOTE_OUTCOME_UNCERTAIN"].includes(error.code))this.put("taskDispatchRejection",commandId,{digest:hash(input),code:error.code,message:error.message});
+      throw error;
+    }
+  }
   createRun(commandId: string, input: RunInput) {
     this.planner();
     return this.command(commandId, "createRun", input, () =>
@@ -3057,8 +3092,9 @@ export class TaskLedger {
       return { task, run };
     });
   }
-  scopedHistory(input: LeaseRef & { taskId?: string }) {
-    return this.history(this.scoped(input, input.taskId).task.taskId);
+  scopedHistory(input: LeaseRef & { taskId?: string;read?:TaskReadOptions }) {
+    const history=this.history(this.scoped(input,input.taskId).task.taskId);
+    return taskRead({...history,tasks:[history.task]},input.read,id=>this.taskActionState(id).version,true);
   }
   scopedAllSettled(input: LeaseRef & { taskId?: string; quietMs?: number }) {
     const { task } = this.scoped(input, input.taskId);
@@ -3066,6 +3102,7 @@ export class TaskLedger {
       task.taskId,
       input.quietMs ?? task.policy?.settlementQuietMs ?? 1000,
       task.taskId === this.getRun(input.runId).taskId ? input.runId : undefined,
+      task.taskId !== this.getRun(input.runId).taskId,
     );
   }
   private note(taskId: string, body: string, actor: string) {
@@ -4313,6 +4350,10 @@ export class TaskLedger {
       choice={provider:"deepseek-official",model:"deepseek-flash",reasoningEffort:"high"};origin="fallback";
     }
     return {choice,proven,executionModel:{origin,policyRevision:String(view.policy.revision),...(view.catalog.snapshot?{catalogRevision:view.catalog.snapshot.revision}:{}),...(origin==="fallback"?{original:primary}:{})} satisfies NonNullable<Run["executionModel"]>};
+  }
+  readExecutionModels(nodeId:string,read:NodeReadOptions={},refresh=false) {
+    const node=this.getNode(nodeId),view=this.executionModelView(nodeId,refresh),status=this.nodeStatuses().find(value=>value.nodeId===nodeId);
+    return nodeRead([{...status,nodeId,roles:node.roles,state:status?.state,capabilities:node.capabilities,workspaceIds:node.workspaceIds,maxConcurrent:node.maxConcurrent,executionModels:view}],read);
   }
   executionModelView(nodeId:string,refresh=false) {
     this.getNode(nodeId);
@@ -5841,7 +5882,11 @@ export class TaskLedger {
         unstarted.length === 0 &&
         this.clock() - latest >= quietMs,
       pendingRunIds: pending.map((r) => r.runId),
-      needsAction: pending.filter(r=>r.dispatchIssue?.kind === "needs_action").map(r=>({runId:r.runId,taskId:r.taskId,issue:r.dispatchIssue})),
+      pending: [...pending.map(run=>{
+        const retrying=this.resultRetryInfo(run.runId).eligible;
+        return {taskId:run.taskId,runId:run.runId,phase:retrying?"result_recovery":run.state,cancellationRequested:!!run.cancellationRequested,reason:run.dispatchIssue?.message ?? (retrying?"Result validation failed; automatic result recovery is pending":run.state==="uncertain"?"Execution effects are unresolved":run.cancellationRequested?"Waiting for executor stop confirmation":run.state==="queued"?"Waiting for executor admission or capacity":"Execution is active"),code:run.dispatchIssue?.code,lastProgressAt:run.updatedAt,needsAction:run.state==="uncertain" || run.dispatchIssue?.kind==="needs_action",recoveryActions:run.state==="uncertain"?["request_execution_status","verify_stopped"]:retrying?["task_wait","task_cancel"]:run.dispatchIssue?.kind==="needs_action"?["task_repair_dispatch","task_cancel"]:["task_wait","task_cancel"]};
+      }),...unstarted.map(task=>({taskId:task.taskId,phase:"unstarted",reason:"Task has no execution request",lastProgressAt:task.updatedAt,needsAction:true,recoveryActions:["task_dispatch","task_cancel"]}))],
+      needsAction: pending.filter(r=>r.state==="uncertain" || r.dispatchIssue?.kind === "needs_action").map(r=>({runId:r.runId,taskId:r.taskId,issue:r.dispatchIssue ?? {kind:"needs_action" as const,code:"UNRESOLVED_EFFECTS",message:"Verify executor stop and reconcile prior execution effects before retrying",action:"review_assignment" as const}})),
       pendingTaskIds: unstarted.map((t) => t.taskId),
       taskIds: [...ids],
       quietUntil: new Date(latest + quietMs).toISOString(),

@@ -1,4 +1,4 @@
-import type { ExecutionRoute } from "../contracts.js";
+import type { ExecutionRoute, Json } from "../contracts.js";
 import type { ExecutionModelChoice } from "../execution-models.js";
 export interface ProjectSessionInput {
   action: "session" | "activate" | "status" | "nodes" | "dispatch" | "update" | "submit";
@@ -14,6 +14,11 @@ export interface ProjectSessionInput {
   nodeId?: string;
   executionModel?: ExecutionModelChoice;
   description?: string;
+  taskId?: string;
+  retry?: boolean;
+  expectedActionVersion?: string;
+  configuration?: Json;
+  read?: import("../task-reads.js").TaskReadOptions | import("../node-reads.js").NodeReadOptions;
 }
 export interface CollaborationSummary {
   projectId: string;

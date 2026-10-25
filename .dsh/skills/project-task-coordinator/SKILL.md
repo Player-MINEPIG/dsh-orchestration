@@ -26,17 +26,19 @@ description: 在 DSH 普通会话中统筹指定已有项目的任务：核对�
 
 ## 3. 核对执行节点与授权目录，再派发
 
-- 调用 `task_nodes {}`，将用户指定的 MBP 等名称唯一解析成返回的准确 `nodeId`，检查可用状态。明确指定的节点不可因暂不可用而自动改成系统选择；名称歧义、禁用、离线或没有授权时保留目标并说明阻碍。
+- 调用 `task_nodes {}` 读取摘要。需要模型路线时用 `task_nodes {details:true,nodeId}` 并按返回 cursor 分页，将用户指定的 MBP 等名称唯一解析成返回的准确 `nodeId`，检查可用状态。明确指定的节点不可因暂不可用而自动改成系统选择；名称歧义、禁用、离线或没有授权时保留目标并说明阻碍。
 - 用户指定执行端仓库路径时，核对节点给出的 `workspaceIds`；必要时用 `task_workspace {action:"get",workspaceId}` 读取对应登记。目录文本不构成文件权限，不能臆造 workspace ID，也不能把 AWS 项目 cwd 发送为 MBP 目录。
 - 有匹配登记时使用核实的工作区；没有匹配登记不自动构成派发禁令。保留指定路径在 description，要求执行者在实际 sandbox/授权范围内先核验目录，无法访问或不匹配时回报 blocked。不要臆造目录权限或由 planner 擅自 provision 工作区。
 - 使用唯一正式派发工具 `task_dispatch`。传入稳定 `commandId`、具体子任务 title、完整 description，以及已核实的指定 `nodeId`；工作区和 route 仅使用当前 schema 支持且已验证的值。description 必须保留用户指定的仓库路径，要求执行者先核实目录再做原工作。用户未指定模型时不填 `executionModel`，沿用节点默认；未指定节点时才允许系统选合适执行端。
 - `task_plan` 仅提出方案，不派发；其 provider/model 是决策模型，不能拿来充当工作负载模型。不要使用旧的 `task_plan apply`、`task_run`、`task_delegate` 或 `project_dispatch` 入口。
 - 调度绑定成功后，`task_dispatch` 自动创建父任务下的子 Task/Run。记录返回的子 `taskId`、`runId` 和 route；通过 `task_history {taskId}` 核验子 `parentTaskId`、Run 的 `parentRunId`、`projectContext` 项目 ID 与目标节点符合委托。不符时停止后续派发并报告实际状态。
 
+派发前自行分配写入文件范围和依赖，安排共享 Git index、分支、GUI 应用的操作顺序。独立工作可以并行，不要求逐任务提交资源声明。用户明确指定模型时，每次在 `executionModel` 保留该要求，并核对 requested 和 resolved 回执。
+
 ## 4. 等待回报并闭环
 
 - queued、派发成功、ACK、心跳正常或会话 idle 都不代表子任务完成。说明已派发的实际 ID 和仍在等待的部分，不宣称工作已做完。
-- 回报异步返回本原会话。使用 `task_wait {taskId:父taskId,timeoutMs:0}` 查看当前父任务的子任务状态，使用 `task_history {taskId}` 读取子任务的终态和正式报告；需要等待时按当前工具支持的 timeout 有界等待，不用重复派发催结果。
+- 回报异步返回本原会话。使用 `task_wait {taskId:父taskId,timeoutMs:0}` 查看当前父任务的子任务状态，使用 `task_history {taskId}` 读取子任务摘要，再用 `task_history {taskId,details:true,reportId}` 读取正式报告正文；Run、报告和事件用 section 及 limit/cursor 分页；需要等待时按当前工具支持的 timeout 有界等待，不用重复派发催结果。
 - 核验报告实际完成了原目标、指定节点/仓库与验收标准。缺证据、失败、blocked、unknown 或 `uncertain` 必须如实说明；不能把路由诊断报告当作原业务成果。
 - 业务保存与父任务结算分别核验。DMC 分析角色的 `dmc_submit_result`、`dmc_revise_analysis` 和任务系统 `task_submit_result` 都标记结束本轮模型采样，不能依赖提交后模型再规划下一步。先备齐两份提交内容；当前支持 PTC 的宿主可在同一个 `run_code` program 中先 await 业务保存、核对成功，再 await 父任务结算，结束标记不会中止已运行的 program。若当前模式无法在同一 program 执行，须使用宿主允许的后续 turn，并明确尚未提交的状态，不能承诺会自动续轮。外部任务未回报时，DMC 要求先保存当前阶段分析并结束本轮；回报后先读当前版本再修订。遵循当前业务角色合同，不改 DMC 配置、不绕过所有权/版本检查、不重放过期提交。
 - 全部子任务结算并审阅证据后，用 `task_submit_result {outcome,summary,reportTitle,reportBody}` 提交父任务最终报告。reportBody 写明子 Task/Run、结果依据、未完成项和必要的产物引用；需要结构化结果的工作流再按其合同提供 `reportData`。只发聊天总结不算父任务结算。
@@ -44,3 +46,10 @@ description: 在 DSH 普通会话中统筹指定已有项目的任务：核对�
 ## 完成检查
 
 最终回复包含项目 ID、父 Task/Run、子 Task/Run、实际执行节点与目录核验依据、各子任务正式结果，以及父任务最终提交状态。若任一步受阻，明确卡在哪个调用和真实返回，不改变目标、不另建临时任务掩盖失败。
+
+## 5. 取消、恢复和阶段交付
+
+- 已有未启动 Task 因配置被拒绝时，在修复后用新 commandId 与原 taskId 调用 task_dispatch，不新建同名 Task。已排队且未领取的 Run 用 task_repair_dispatch 和最新 expectedActionVersion 修复，保留原 Run。旧 commandId 只重放原回执。
+- 需要重新执行真实终态 Task 时，使用原 taskId、新 commandId、retry:true 和最新 expectedActionVersion，保留全部旧 Run。active 与 uncertain 必须先查明和结束，不能重跑。
+- 用户授权取消或延期可选任务后，用 task_cancel 处置原 Task，在 reason 和提交摘要中记录未完成项与后续安排。未领取任务可立即取消。active 的 cancellationRequested 仍须等真实停止确认，uncertain 不等于失败或停止。
+- project_progress 与 project_finish 使用 commandId。先处理 finish 返回的阻塞 Task、Run 和 Attempt，再提交阶段成果供复核。执行完成、中央提交成功与用户验收通过分别核验。默认读取摘要，只在需要证据时读取详情。

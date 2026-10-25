@@ -1,3 +1,5 @@
+import type { TaskReadOptions } from "../task-reads.js";
+import type { NodeReadOptions,nodeRead } from "../node-reads.js";
 import { ExecutionDisposition } from "../executor-alerts.js";
 import {
   ExecutionCatalogRequest,
@@ -539,7 +541,16 @@ export class RemoteLedgerClient implements LedgerPort {
       "REMOTE_OUTCOME_UNCERTAIN",
       503,
     );
+    if(operation==="taskHistory" && isRecord(response.result) && isRecord(response.result.readError)) {
+      const issue=response.result.readError;
+      insist(typeof issue.code==="string" && typeof issue.message==="string","INVALID_RECEIPT");
+      const error=new ProtocolError(issue.code,413);error.message=issue.message;throw error;
+    }
     return response.result as unknown as T;
+  }
+  readExecutionModels(nodeId:string,read:NodeReadOptions={},refresh=false):Promise<ReturnType<typeof nodeRead>> {
+    insist(nodeId===this.nodeId,"WRONG_CLIENT_NODE",403);
+    return this.command("executionModelView",`catalog-summary:${randomUUID()}`,{nodeId,refresh,read:JSON.parse(JSON.stringify(read))});
   }
   async executionModelView(
     nodeId: string,
@@ -962,7 +973,7 @@ export class RemoteLedgerClient implements LedgerPort {
     commandId: string,
     input: LeaseRef & DelegationInput,
     options?: { signal?: AbortSignal },
-  ): Promise<Receipt<{ task: Task; run: Run }>> {
+  ): Promise<Receipt<{ task: import("../contracts.js").Task; run: import("../contracts.js").Run }>> {
     return this.command(
       "delegate",
       commandId,
@@ -983,7 +994,7 @@ export class RemoteLedgerClient implements LedgerPort {
     );
   }
   scopedHistory(
-    input: LeaseRef & { taskId?: string },
+    input: LeaseRef & { taskId?: string;read?:TaskReadOptions },
     options?: { signal?: AbortSignal },
   ): Promise<TaskHistory> {
     return this.command(
@@ -991,6 +1002,7 @@ export class RemoteLedgerClient implements LedgerPort {
       `read-${randomUUID()}`,
       {
         ...this.scoped(input),
+        ...(input.read?{read:JSON.parse(JSON.stringify(input.read))}:{}),
         ...(input.taskId !== undefined ? { targetTaskId: input.taskId } : {}),
       },
       options,

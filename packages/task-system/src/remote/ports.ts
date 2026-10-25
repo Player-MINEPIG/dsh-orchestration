@@ -1,3 +1,5 @@
+import type {TaskReadOptions,taskRead} from "../task-reads.js";
+import type {NodeReadOptions,nodeRead} from "../node-reads.js";
 import type {
   CompleteExecutionModels,
   ExecutionCatalogCompletion,
@@ -5,7 +7,7 @@ import type {
   ExecutionModelsView,
 } from "../execution-models.js";
 import type { Json, Role, PreDispatchFailure } from "./protocol.js";
-import type { Claim as CoreClaim, Run as CoreRun } from "../contracts.js";
+import type { Claim as CoreClaim, Run as CoreRun, Task as CoreTask } from "../contracts.js";
 
 export interface SessionMessage {
   deliveryAttempts?: number;
@@ -227,14 +229,10 @@ export interface DelegationInput {
   policy?: TaskPolicy;
   configuration?: Json;
 }
-export interface TaskHistory {
-  task: Task;
-  runs: Run[];
-  reports: unknown[];
-  artifacts: unknown[];
-  events: unknown[];
-}
+export type TaskHistory=ReturnType<typeof taskRead>;
 export interface SettlementView {
+  pending?:ReturnType<import("../ledger.js").TaskLedger["allSettled"]>["pending"];
+  needsAction?:ReturnType<import("../ledger.js").TaskLedger["allSettled"]>["needsAction"];
   settled: boolean;
   pendingRunIds: string[];
   pendingTaskIds: string[];
@@ -330,13 +328,13 @@ export interface ApprovalRequest extends ApprovalOffer, LeaseRef {
   reason?: string;
 }
 export interface ExecutionCollaboration {
-  nodes?(): Promise<ExecutionModelsView[]>;
+  nodes?(read?:NodeReadOptions): Promise<ReturnType<typeof nodeRead>>;
   availableOperations?: readonly string[];
   delegate(
     commandId: string,
     input: DelegationInput,
-  ): Promise<Receipt<{ task: Task; run: Run }>>;
-  history(targetTaskId?: string): Promise<TaskHistory>;
+  ): Promise<Receipt<{ task: CoreTask; run: CoreRun }>>;
+  history(targetTaskId?: string,read?:TaskReadOptions): Promise<TaskHistory>;
   wait(targetTaskId?: string, quietMs?: number): Promise<SettlementView>;
   note(commandId: string, input: TaskNoteInput): Promise<Receipt<unknown>>;
   report(commandId: string, input: TaskReportInput): Promise<Receipt<unknown>>;
@@ -363,6 +361,7 @@ export type ClaimRecovery =
 type MaybePromise<T> = T | Promise<T>;
 /** An adapter must preserve the ledger's transaction, idempotency, lease and fencing guarantees. */
 export interface LedgerPort {
+  readExecutionModels?(nodeId:string,read?:NodeReadOptions,refresh?:boolean):MaybePromise<ReturnType<typeof nodeRead>>;
   executionModelView?(
     nodeId: string,
     refresh?: boolean,
@@ -481,9 +480,9 @@ export interface LedgerPort {
     commandId: string,
     input: LeaseRef & DelegationInput,
     options?: { signal?: AbortSignal },
-  ): MaybePromise<Receipt<{ task: Task; run: Run }>>;
+  ): MaybePromise<Receipt<{ task: CoreTask; run: CoreRun }>>;
   scopedHistory?(
-    input: LeaseRef & { taskId?: string },
+    input: LeaseRef & { taskId?: string;read?:TaskReadOptions },
     options?: { signal?: AbortSignal },
   ): MaybePromise<TaskHistory>;
   scopedAllSettled?(

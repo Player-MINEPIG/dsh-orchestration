@@ -122,3 +122,25 @@ test('only the original parent can accept a returned result with evidence; accep
     assert.equal(store.rows('other').length,0);
   } finally {store.db.close();rmSync(root,{recursive:true,force:true});}
 });
+
+test('explicit executionModel reaches local Codex profile and receipt without mutating defaults',async()=>{
+ const service=Object.create(LocalCodexService.prototype),store=service.store=new LocalCodexStore(':memory:');
+ service.active=new Map();service.config={maxConcurrent:2,model:'configured-model',reasoningEffort:'high',cliPath:process.execPath};
+ const pending=[],profiles=[];
+ service.execute=async task=>profiles.push(localCodexProfile(task));
+ service.ctx={get:()=>undefined,jobs:{start:spec=>{pending.push(spec.run().done);return 'model-job';}}};
+ const agent={id:'model-parent',session:{header:{cwd:resolve('.')}},ctx:{get:()=>({resolve:()=>({mode:'workspace-write'})})}};
+ const input={requestId:'explicit-model',title:'Explicit task',prompt:'Work',executionModel:{provider:'openai',model:'gpt-6.1-sol',reasoningEffort:'xhigh',backend:'codex'}};
+ try {
+  const receipt=service.delegate(agent,input,new AbortController().signal);
+  assert.deepEqual(receipt.requested,input.executionModel);assert.equal(receipt.resolved.model,'gpt-6.1-sol');
+  assert.equal(service.config.model,'configured-model');assert.equal(service.config.reasoningEffort,'high');
+  assert.throws(()=>service.delegate(agent,{...input,executionModel:{...input.executionModel,model:'another-model'}},new AbortController().signal),/different/);
+  assert.throws(()=>service.delegate(agent,{...input,requestId:'bad-provider',executionModel:{...input.executionModel,provider:'other'}},new AbortController().signal),/provider=openai/);
+  await Promise.all(pending);assert.match(profiles[0],/model = "gpt-6.1-sol"/);assert.match(profiles[0],/model_reasoning_effort = "xhigh"/);
+  service.config.model='changed-default';assert.throws(()=>service.delegate(agent,{...input,executionModel:undefined},new AbortController().signal),/different/);
+  const defaultInput={...input,requestId:'default-choice',executionModel:undefined};
+  service.delegate(agent,defaultInput,new AbortController().signal);
+  assert.throws(()=>service.delegate(agent,{...defaultInput,executionModel:input.executionModel},new AbortController().signal),/different/);
+ }finally{await Promise.all(pending);store.db.close();}
+});

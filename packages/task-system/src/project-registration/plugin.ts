@@ -1,3 +1,4 @@
+import { TaskReadOptions } from "../task-reads.js";
 import type { Context } from "@deepseek-ai/cordis";
 import z from "@deepseek-ai/schemastery";
 import { defineTool } from "@deepseek-ai/dsh-tools";
@@ -42,27 +43,27 @@ export function apply(ctx: Context, config: Config) {
   > = async (agent, input, callId) => {
     const binding = agent ? collaboration.binding(agent) : undefined;
     if (binding?.state !== "active") return { handled: false };
-    if (!input.title || !input.description)
+    if (!input.taskId && (!input.title || !input.description))
       throw new TaskError(
         "INVALID",
         "Project dispatch requires title and complete description",
       );
     if (
-      input.taskId ||
       input.requestId ||
-      input.workspaceId ||
-      input.configuration !== undefined
+      input.workspaceId
     )
       throw new TaskError(
         "INVALID",
-        "Project dispatch uses its bound project and commandId; omit taskId/requestId/workspaceId/configuration",
+        "Project dispatch uses its bound project and commandId; omit requestId/workspaceId",
       );
     const value = await collaboration.invoke(
       agent,
       "dispatch",
       {
-        title: input.title,
-        description: input.description,
+        ...(input.taskId?{taskId:input.taskId}:{title:input.title,description:input.description}),
+        ...(input.retry?{retry:input.retry}:{}),
+        ...(input.expectedActionVersion?{expectedActionVersion:input.expectedActionVersion}:{}),
+        ...(input.configuration!==undefined?{configuration:JSON.parse(JSON.stringify(input.configuration))}:{}),
         ...(input.route ? { route: input.route } : {}),
         ...(input.nodeId ? { nodeId: input.nodeId } : {}),
         ...(input.executionModel ? { executionModel: input.executionModel } : {}),
@@ -72,10 +73,10 @@ export function apply(ctx: Context, config: Config) {
     );
     return { handled: true, value: JSON.parse(JSON.stringify(value)) };
   };
-  const nodes:NonNullable<typeof ctx.taskSystem.sessionProjectNodes>=async(agent,callId)=>{
+  const nodes:NonNullable<typeof ctx.taskSystem.sessionProjectNodes>=async(agent,callId,read)=>{
     const binding=agent ? collaboration.binding(agent) : undefined;
     if(binding?.state!=="active")return {handled:false};
-    return {handled:true,value:JSON.parse(JSON.stringify(await collaboration.invoke(agent,"nodes",{},callId)))};
+    return {handled:true,value:JSON.parse(JSON.stringify(await collaboration.invoke(agent,"nodes",{read},callId)))};
   };
   ctx.taskSystem.sessionProjectNodes=nodes;
   ctx.taskSystem.sessionProjectDispatch = dispatch;
@@ -98,11 +99,12 @@ export function apply(ctx: Context, config: Config) {
   };
   for (const [toolName, action, description] of [
     ["project_status", "status", "Read the bound central project's actual tasks, runs and review state."],
-    ["project_progress", "update", "Sync factual progress and evidence to the bound central project; each update has a stable requestId."],
+    ["project_progress", "update", "Sync factual progress and evidence to the bound central project; each update has a stable commandId."],
     ["project_finish", "submit", "Submit completion evidence for central/user review; this does not approve the project."],
   ] as const) {
-    const parameters: Record<string, any> = action === "status" ? {} : {
-      requestId: { type: "string", required: true, description: "Stable operation ID; reuse with identical arguments on retries, including a new tool call." },
+    const parameters: Record<string, any> = action === "status" ? {details:{type:"boolean"},taskId:{type:"string"},state:{type:"string"},limit:{type:"integer"},cursor:{type:"string"}} : {
+      commandId: {type:"string",description:"Stable operation ID; identical retries reuse it."},
+      requestId: { type: "string", description: "Legacy alias for commandId; reuse with identical arguments on retries, including a new tool call." },
     };
     if (action === "update" || action === "submit") parameters.summary = { type: "string", required: true };
     ctx.tools.register(defineTool({
@@ -111,9 +113,11 @@ export function apply(ctx: Context, config: Config) {
       parameters,
       output,
       execute: async (args, exec) => {
-        const input: { summary?: string } = {};
+        const input: { summary?: string;read?:import("../task-reads.js").TaskReadOptions } = {};
+        if(args.commandId && args.requestId)throw new TaskError("INVALID","Provide commandId only; requestId is a legacy alias");
+        if(action==="status") input.read=TaskReadOptions.parse({...(args.details!==undefined?{details:args.details}:{}),...(args.taskId?{taskId:args.taskId}:{}),...(args.state?{state:args.state}:{}),...(args.limit!==undefined?{limit:args.limit}:{}),...(args.cursor?{cursor:args.cursor}:{})});
         if (action === "update" || action === "submit") input.summary = args.summary as string;
-        return JSON.parse(JSON.stringify(await collaboration.invoke(exec.agent, action, input, String(exec.callId), args.requestId as string | undefined)));
+        return JSON.parse(JSON.stringify(await collaboration.invoke(exec.agent, action, input, String(exec.callId), (args.commandId ?? args.requestId) as string | undefined)));
       },
     }));
   }

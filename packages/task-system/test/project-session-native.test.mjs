@@ -109,7 +109,7 @@ test("official /project activates skill for this session only; real tools sync/s
     assert.equal(status.collaboration.binding.state,"active");
     const other=await h.ctx.agents.create({sessionId:SessionId("unrelated-session"),meta:{cwd:h.dir},agentOptions:{provider:"command-test",model:"unused"}});
     assert.equal(await section(other.agent),"");
-    for(const [name,args] of [["task_nodes",{}],["project_status",{}],["project_progress",{requestId:"stage-1",summary:"Prepared evidence and tests"}],["project_finish",{requestId:"finish-1",summary:"Completed evidence ready for user review"}]]) {
+    for(const [name,args] of [["task_nodes",{}],["project_status",{}],["project_progress",{commandId:"stage-1",summary:"Prepared evidence and tests"}],["project_finish",{commandId:"finish-1",summary:"Completed evidence ready for user review"}]]) {
       const result=await invokeTool(name,args,name); assert.equal(result.isError,false,JSON.stringify(result));
     }
     const nativeStatus=await invokeTool("project_status",{},"after-finish");
@@ -125,7 +125,7 @@ test("official /project activates skill for this session only; real tools sync/s
     assert.equal(h.ctx.taskSystem.ledger.snapshot().tasks.length,1);
     assert.equal((await h.invoke("/project leave")).kind,"success");
     assert.equal(await section(h.handle.agent),"");
-    assert.equal((await invokeTool("project_progress",{requestId:"stage-2",summary:"forbidden"},"after-leave")).isError,true);
+    assert.equal((await invokeTool("project_progress",{commandId:"stage-2",summary:"forbidden"},"after-leave")).isError,true);
     assert.equal(h.model.requests.length,0);
   } finally {await h.close();}
 });

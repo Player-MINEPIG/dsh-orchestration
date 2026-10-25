@@ -1,3 +1,5 @@
+import { TaskReadOptions } from "../task-reads.js";
+import { NodeReadOptions } from "../node-reads.js";
 import {
   AdmissionReport,
   CompleteExecutionModels,
@@ -303,7 +305,8 @@ export function validatePayload(envelope: CommandEnvelope): void {
       fields(p, []);
       break;
     case "executionModelView":
-      fields(p, [], ["nodeId", "refresh", "offset", "limit"]);
+      fields(p, [], ["nodeId", "refresh", "offset", "limit", "read"]);
+      if(p.read!==undefined)insist(NodeReadOptions.safeParse(p.read).success,"INVALID_READ_OPTIONS");
       insist(
         p.nodeId === undefined || p.nodeId === envelope.nodeId,
         "EXECUTION_CATALOG_NODE_DENIED",
@@ -592,7 +595,8 @@ export function validatePayload(envelope: CommandEnvelope): void {
       delegation(p);
       break;
     case "taskHistory":
-      fields(p, ownedFields, ["targetTaskId"]);
+      fields(p, ownedFields, ["targetTaskId","read"]);
+      if(p.read!==undefined)insist(TaskReadOptions.safeParse(p.read).success,"INVALID_READ_OPTIONS");
       lease(p, envelope.nodeId);
       if (p.targetTaskId !== undefined) id(p, "targetTaskId");
       break;
@@ -795,6 +799,13 @@ export class RemoteGateway {
       let result: unknown;
       switch (envelope.operation) {
         case "executionModelView": {
+          if(p.read!==undefined) {
+            insist(ledger.readExecutionModels,"EXECUTION_CATALOG_UNSUPPORTED",503);
+            const read=NodeReadOptions.parse(p.read);
+            insist(!read.nodeId || read.nodeId===peer.nodeId,"EXECUTION_CATALOG_NODE_DENIED",403);
+            result=await ledger.readExecutionModels(peer.nodeId,read,p.refresh===true);
+            break;
+          }
           insist(
             ledger.executionModelView,
             "EXECUTION_CATALOG_UNSUPPORTED",
@@ -1204,6 +1215,7 @@ export class RemoteGateway {
           insist(ledger.scopedHistory, "COLLABORATION_UNSUPPORTED", 503);
           result = await ledger.scopedHistory({
             ...lease(p, peer.nodeId),
+            ...(p.read!==undefined?{read:TaskReadOptions.parse(p.read)}:{}),
             ...(p.targetTaskId !== undefined
               ? { taskId: String(p.targetTaskId) }
               : {}),
@@ -1346,6 +1358,11 @@ export class RemoteGateway {
       );
       return receipt;
     } catch (error) {
+      if(envelope.operation==="taskHistory" && error instanceof ProtocolError && ["READ_TOO_LARGE","RESPONSE_LIMIT"].includes(error.code)) {
+        const result={readError:{code:error.code,message:error.message}};
+        store.complete(peer.nodeId,envelope.commandId,result,this.options.maxResponseBytes);
+        return {commandId:envelope.commandId,state:"done",result};
+      }
       if (envelope.operation === "completeExecutionModels" && error instanceof ExecutionModelsError) {
         const result = {
           commandId,

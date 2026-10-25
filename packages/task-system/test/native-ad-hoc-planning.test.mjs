@@ -24,14 +24,14 @@ test('a native user message exposes orchestration tools and applies an executor/
   try {
     for(const [nodeId,model,reasoningEfforts] of [['fast-worker','small',['off']],['quality-worker','large',['high']]]) registerExecutor(h.ledger, `register-${nodeId}`,{nodeId,roles:['executor'],models:[{provider:'worker-provider',model,reasoningEfforts}],capabilities:['text'],workspaceIds:[],enabled:true,lastSeenAt:new Date().toISOString()})
     stopCatalogs=respondToCatalogRequests(h.ledger,['fast-worker','quality-worker'])
-    const discovery=await h.ctx.tools.execute({name:'task_nodes',callId:'discover',arguments:{},signal:new AbortController().signal})
-    assert.deepEqual(discovery.value.find(row=>row.nodeId==='fast-worker').models,[{provider:'worker-provider',model:'small',reasoningEfforts:['off']}])
-    assert.deepEqual(discovery.value.find(row=>row.nodeId==='quality-worker').capabilities,['text'])
+    const discovery=await h.ctx.tools.execute({name:'task_nodes',callId:'discover',arguments:{details:true},signal:new AbortController().signal})
+    assert.ok(discovery.value.routes.some(row=>row.nodeId==='fast-worker'&&row.model==='small'&&row.reasoningEffort==='off'))
+    assert.deepEqual(discovery.value.nodes.find(row=>row.nodeId==='quality-worker').capabilities,['text'])
     for(const [nodeId,model,effort] of [['fast-worker','small','off'],['quality-worker','large','high']]) {
-      const view=discovery.value.find(row=>row.nodeId===nodeId).executionModels
-      assert.ok(view.catalog.positiveSnapshot.complete,'execution choices come from a completed discovery catalog')
+      const view=discovery.value.nodes.find(row=>row.nodeId===nodeId)
+      assert.equal(view.catalog.state,'fresh','execution choices come from a completed discovery catalog')
       assert.deepEqual(view.policy.choice,{provider:'worker-provider',model,reasoningEffort:effort},'each executor owns its workload model default')
-      assert.ok(view.catalog.positiveSnapshot.models.some(row=>row.model===model&&row.reasoningEffort===effort))
+      assert.ok(discovery.value.routes.some(row=>row.nodeId===nodeId&&row.model===model&&row.reasoningEffort===effort))
     }
     for(const [index,text,nodeId,model,effort] of [[1,'帮我计算并提交一份简短报告','fast-worker','small','off'],[2,'帮我完成复杂的推理并提交分析报告','quality-worker','large','high']]) {
       const requestId=`message-${index}`

@@ -40,9 +40,9 @@ test('narrow commands reject malformed intent definitively and project history e
   const created=(await f.command('draft',{kind:'create',title:'Project task'})).result.value;
   f.ledger.createRun('private-config',{taskId:created.taskId,configuration:{input:{secret:'PRIVATE_EXECUTION_CONFIG'}}});
   f.ledger.createTask('other',{title:'UNRELATED_PRIVATE_TASK'});
-  const query=(await f.command('query',{kind:'query'})).result,history=(await f.command('history',{kind:'history',taskId:created.taskId})).result;
+  const query=(await f.command('query',{kind:'query'})).result,history=(await f.command('history',{kind:'history',taskId:created.taskId,read:{details:true,section:'events'}})).result;
   assert.equal(query.tasks.length,1);assert.equal(history.task.taskId,created.taskId);assert.ok(history.events.length);
-  assert.doesNotMatch(JSON.stringify({query,history}),/PRIVATE_EXECUTION_CONFIG|UNRELATED_PRIVATE_TASK|dispatchOrigin|projectContext/);
+  assert.doesNotMatch(JSON.stringify({query,history}),/PRIVATE_EXECUTION_CONFIG|UNRELATED_PRIVATE_TASK|dispatchOrigin/);
 });
 
 test('ordinary return polling filters before the bounded queue, while plain messages retain their own queue',async t=>{

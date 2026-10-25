@@ -281,10 +281,10 @@ test(
               .map((block) => block.text)
               .join("\n"),
           );
-          assert.equal(publicNodes.length, 1);
-          assert.equal(publicNodes[0].nodeId, "worker");
+          assert.equal(publicNodes.nodes.length, 1);
+          assert.equal(publicNodes.nodes[0].nodeId, "worker");
           assert.deepEqual(
-            publicNodes[0].executionModels.policy.choice,
+            publicNodes.nodes[0].policy.choice,
             choice,
             "public task_nodes reads scheduler policy",
           );

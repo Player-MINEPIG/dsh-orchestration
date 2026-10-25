@@ -16,7 +16,7 @@
 
 绑定保存于本机任务数据库，项目与业务任务保存在中央原数据库。恢复同一会话、原节点和原目录时，官方 systemPrompt.section 接口再次加载 skill，不需要重新激活。`leave` 暂停注入；再次 `/project` 恢复原项目。`attach` 用于同一节点、同一工作目录下已登记的协作项目，不接受任意中央项目或历史补录项目。
 
-协作工具为 `project_status`、`project_nodes`、`task_dispatch`、`project_progress`、`project_finish`。插件注入身份，模型不能指定任意 projectId；任务派发使用稳定 commandId，其他写入使用稳定 requestId，重试保留同一请求内容。`project_finish` 只提交待复核，不能代替人工验收。未激活的会话不注入 skill，受管执行任务继续使用既有 task 协作工具。
+协作工具为 `project_status`、`task_nodes`、`task_dispatch`、`project_progress`、`project_finish`。插件注入身份，模型不能指定任意 projectId；写入统一使用稳定 commandId，旧 requestId 仅在项目进度/提交工具边界兼容，重试保留同一请求内容。状态默认返回摘要，报告正文通过 task_history details=true 按需读取。`project_finish` 只提交待复核，不能代替人工验收。未激活的会话不注入 skill，受管执行任务继续使用既有 task 协作工具。
 
 远端协作复用任务执行端已有 coordinator 配置及认证通道，中央必须为该节点显式授权 `projectCollaborate`。同一节点的多个进程需使用同一远端 recovery store，保持发送序号一致。中央不可用或暂停时不回落为本地第二个调度中心。执行路线由认证心跳公布，CLI 路径、凭据和宿主配置不进入模型查询结果。
 
