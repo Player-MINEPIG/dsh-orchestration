@@ -1,3 +1,4 @@
+import { sessionContinuation, CheckinRefs } from "./ports.js";
 import { TaskReadOptions } from "../task-reads.js";
 import { NodeReadOptions } from "../node-reads.js";
 import {
@@ -459,15 +460,17 @@ export function validatePayload(envelope: CommandEnvelope): void {
       break;
     }
     case "sessionMessages":
-      fields(p, [], ["kind", "excludeMessageIds", "afterMessageId"]);
-      insist(p.kind === undefined || p.kind === "completion" || p.kind === "message", "INVALID_MESSAGE_KIND");
+      fields(p, [], ["kind", "messageId", "excludeMessageIds", "afterMessageId"]);
+      insist(p.kind === undefined || p.kind === "completion" || p.kind === "continuation" || p.kind === "message", "INVALID_MESSAGE_KIND");
       if (p.excludeMessageIds !== undefined) {
         insist(Array.isArray(p.excludeMessageIds) && p.excludeMessageIds.length <= 256 && p.excludeMessageIds.every(identifier), "INVALID_MESSAGE_EXCLUSIONS");
       }
       if (p.afterMessageId !== undefined) id(p, "afterMessageId");
+      if (p.messageId !== undefined) id(p, "messageId");
       break;
     case "sessionMessageReply":
-      fields(p, ["messageId", "state", "reply"]);
+      fields(p, ["messageId", "state", "reply"], ["checkInTasks"]);
+      if(p.checkInTasks!==undefined)insist(CheckinRefs.safeParse(p.checkInTasks).success,"INVALID_CHECKIN_RECEIPT");
       id(p, "messageId");
       insist(
         ["completed", "failed", "uncertain"].includes(String(p.state)),
@@ -934,13 +937,14 @@ export class RemoteGateway {
           );
           let bytes = 0;
           result = (await ledger.pendingSessionMessages(peer.nodeId, {
-            ...(p.kind === "completion" || p.kind === "message" ? {kind:p.kind} : {}),
+            ...(p.kind === "completion" || p.kind === "continuation" || p.kind === "message" ? {kind:p.kind} : {}),
             ...(Array.isArray(p.excludeMessageIds) ? {excludeMessageIds:p.excludeMessageIds.filter(identifier)} : {}),
             ...(typeof p.afterMessageId === "string" ? {afterMessageId:p.afterMessageId} : {}),
+            ...(typeof p.messageId === "string" ? {messageId:p.messageId} : {}),
           })).filter(
             (m) => {
               if (
-                !(m.completion?.origin.kind === "session" && m.completion.origin.nodeId === peer.nodeId && m.nodeId === peer.nodeId || peer.managedAccess || peer.workspaces.includes(m.workspaceId))
+                !(sessionContinuation(m)?.origin.kind === "session" && sessionContinuation(m)!.origin.nodeId === peer.nodeId && m.nodeId === peer.nodeId || peer.managedAccess || peer.workspaces.includes(m.workspaceId))
               )
                 return false;
               const size = Buffer.byteLength(JSON.stringify(m));
@@ -963,6 +967,7 @@ export class RemoteGateway {
             messageId: String(p.messageId),
             state: p.state as "completed" | "failed" | "uncertain",
             reply: String(p.reply),
+            ...(p.checkInTasks ? {checkInTasks:CheckinRefs.parse(p.checkInTasks)} : {}),
           });
           break;
         case "executorIdentity":
@@ -1460,7 +1465,7 @@ export class RemoteGateway {
       );
       insist(
         m.nodeId === peer.nodeId &&
-          (m.completion?.origin.kind === "session" && m.completion.origin.nodeId === peer.nodeId || peer.managedAccess || peer.workspaces.includes(m.workspaceId)),
+          (sessionContinuation(m)?.origin.kind === "session" && sessionContinuation(m)!.origin.nodeId === peer.nodeId || peer.managedAccess || peer.workspaces.includes(m.workspaceId)),
         "SESSION_MESSAGE_DENIED",
         403,
       );

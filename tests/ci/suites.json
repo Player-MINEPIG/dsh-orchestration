@@ -66,7 +66,8 @@
     "packages/task-system/test/session-titles.test.mjs",
     "packages/task-system/test/session-duty-authority.test.mjs",
     "packages/task-system/test/project-sessions.test.mjs",
-    "packages/task-system/test/project-session-carrier.test.mjs"
+    "packages/task-system/test/project-session-carrier.test.mjs",
+    "packages/task-system/test/task-checkins.test.mjs"
   ],
   "native": [
     "packages/task-system/test/project-native-client.test.mjs",
@@ -104,7 +105,8 @@
     "packages/task-system/test/project-session-owner.test.mjs",
     "packages/task-system/test/project-session-native-owner.test.mjs",
     "packages/task-system/test/project-session-service.test.mjs",
-    "packages/task-system/test/project-session-remote.test.mjs"
+    "packages/task-system/test/project-session-remote.test.mjs",
+    "tests/dsh/task-checkins-native.test.mjs"
   ],
   "ui": [
     "packages/task-system/test/executor-alerts.test.mjs",
@@ -119,7 +121,8 @@
     "packages/task-system/test/workflow-editor.test.mjs",
     "tests/settings/project-command-feedback.test.mjs",
     "tests/settings/session-task-panel.test.mjs",
-    "tests/settings/workflow-editor-host.test.mjs"
+    "tests/settings/workflow-editor-host.test.mjs",
+    "packages/task-system/test/project-page-checkins.test.mjs"
   ],
   "official": [
     "packages/task-system/test/official-activation.test.mjs",

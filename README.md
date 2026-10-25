@@ -71,6 +71,7 @@ Cancelling a run does not cancel other runs of the same task. Cancellation resou
 - [Requirement correspondence](docs/PARITY.md)
 - [Architecture comparison and validation limits](docs/architecture/README.md)
 - [DSH runtime integration and verification](docs/dsh-integration.md)
+- [Responsible-session task check-ins and transitions](docs/task-checkins.md)
 - [Open-source and awesome-list preparation](docs/AWESOME-CHECKLIST.md)
 
 The deliverable is private. Public repository visibility, npm publishing and awesome-list submission are separate actions. Real-browser visual checks, live integrations, remote GitHub CI and OS deployment are reported separately from local code tests; a passing local suite does not imply those checks passed.

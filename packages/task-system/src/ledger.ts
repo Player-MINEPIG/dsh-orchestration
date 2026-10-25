@@ -1,3 +1,5 @@
+import { CheckinRefs } from "./remote/ports.js";
+import { TaskCheckins } from "./task-checkins.js";
 import { taskRead, type TaskReadOptions } from "./task-reads.js";
 import { nodeRead, type NodeReadOptions } from "./node-reads.js";
 import { ExecutorAlertStore } from "./executor-alerts.js";
@@ -187,6 +189,7 @@ const TERMINAL = new Set<Run["state"]>([
   "blocked",
 ]);
 export interface LedgerOptions {
+  checkinIntervalMs?: number;
   delegationDefaultDisplay?: "task" | "step";
   role?: Role;
   nodeId?: string;
@@ -390,6 +393,8 @@ export class TaskLedger {
       return run;
     });
   }
+  taskCheckin(input: import("./task-checkins.js").CheckinCommand) { return this.checkins.command(input, this.dispatchOrigins.getStore()); }
+  readonly checkins: TaskCheckins;
   readonly projectExecutionSettings: ProjectExecutionSettingsStore;
   readonly executorAlerts: ExecutorAlertStore;
   private readonly db: DatabaseSync;
@@ -495,6 +500,7 @@ export class TaskLedger {
       // Keep commands' three-column layout compatible with the prior release.
       this.db.exec("CREATE TABLE IF NOT EXISTS transient_command_expiry(id TEXT PRIMARY KEY,expires INTEGER NOT NULL); CREATE INDEX IF NOT EXISTS command_expiry ON transient_command_expiry(expires)");
     }
+    this.checkins = new TaskCheckins(this, options.checkinIntervalMs);
     this.receiptExpirySupported = !!this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='transient_command_expiry'").get();
     if (!options.readOnly)
       this.db
@@ -829,11 +835,12 @@ export class TaskLedger {
   }
   recordTaskReturnFailure(messageId: string, code: string) {
     const message=this.getSessionMessage(messageId);
-    if(!message.completion || message.state!=="queued")return;
-    message.deliveryAttempts=(message.deliveryAttempts ?? 0)+1;
+    if((!message.completion && !message.checkIn) || message.state!=="queued")return;
+    if(message.checkIn) this.checkins.failure(message, code === "CHECKIN_BUSY");
+    if (code !== "CHECKIN_BUSY") message.deliveryAttempts=(message.deliveryAttempts ?? 0)+1;
     message.lastDeliveryError=code.slice(0,200);
     message.lastAttemptAt=this.now();
-    message.nextAttemptAt=new Date(this.clock()+Math.min(60000,1000*2**Math.min(message.deliveryAttempts,6))).toISOString();
+    message.nextAttemptAt=new Date(this.clock()+(message.checkIn ? 60_000 : Math.min(60000,1000*2**Math.min(message.deliveryAttempts ?? 0,6)))).toISOString();
     this.put("sessionMessage",messageId,message,message.taskId,message.state);
   }
   retryTaskReturn(commandId: string, messageId: string) {
@@ -1778,6 +1785,7 @@ export class TaskLedger {
       task.dispatchOrigin = structuredClone(origin);
     }
     this.saveTask(task);
+    this.checkins.capture(task);
     this.event("task.created", { kind }, key);
     this.lifecycleDelivery(task);
     return this.getTask(task.taskId);
@@ -3528,8 +3536,8 @@ export class TaskLedger {
       start = index + 1;
     }
     return messages.slice(start)
-      .filter((m) => !excluded.has(m.messageId) && (!options?.kind || (options.kind === "completion" ? Boolean(m.completion) : !m.completion)) && m.nodeId === nodeId && m.state === "queued" && (!m.nextAttemptAt || m.nextAttemptAt<=this.now()))
-      .slice(0, 4);
+      .filter((m) => (!options?.messageId || m.messageId === options.messageId) && (!m.checkIn || this.checkins.disposition(m) === "ready") && !excluded.has(m.messageId) && (!options?.kind || (options.kind === "completion" ? Boolean(m.completion) : options.kind === "continuation" ? Boolean(m.completion || m.checkIn) : !m.completion && !m.checkIn)) && m.nodeId === nodeId && m.state === "queued" && (!m.nextAttemptAt || m.nextAttemptAt<=this.now()))
+      .slice(0, 4).map(message => message.checkIn ? this.checkins.prepare(message) : message);
   }
   completeSessionMessage(
     commandId: string,
@@ -3545,7 +3553,7 @@ export class TaskLedger {
       if (!["completed", "failed", "uncertain"].includes(input.state))
         fail("INVALID", "Invalid message result");
       text(input.reply, "session reply", 12000);
-      if(message.completion && input.state==="failed" && message.state==="queued") {
+      if((message.completion || message.checkIn) && input.state==="failed" && message.state==="queued") {
         this.recordTaskReturnFailure(message.messageId,input.reply);
         return this.getSessionMessage(message.messageId);
       }
@@ -3553,6 +3561,13 @@ export class TaskLedger {
         if (message.state !== input.state || message.reply !== input.reply)
           fail("CONFLICT", "Message already answered");
         return message;
+      }
+      if (message.checkIn && input.state === "completed") {
+        const refs=CheckinRefs.safeParse(input.checkInTasks);
+        if(!refs.success)throw new TaskError("INVALID","Check-in acknowledgement requires its admitted task references");
+        const keys=refs.data.map(ref=>canonical(ref));
+        if(new Set(keys).size!==keys.length || refs.data.some(ref=>!message.checkIn!.tasks.some(original=>original.taskId===ref.taskId && original.revision===ref.revision)))fail("FORBIDDEN","Acknowledged check-in tasks are outside this event");
+        this.checkins.acknowledge(message,refs.data);
       }
       Object.assign(message, {
         state: input.state,
@@ -5814,7 +5829,7 @@ export class TaskLedger {
   }
   history(taskId: string) {
     return {
-      task: this.getTask(taskId),
+      task: {...this.getTask(taskId), checkin:this.checkins.view(taskId)},
       resultReturns: this.sessionMessages(taskId).filter(message=>message.completion),
       runs: this.list<Run>("run", taskId),
       reports: this.list<Report>("report", taskId),
@@ -5959,7 +5974,7 @@ export class TaskLedger {
     const ids = new Set(tasks.map((task) => task.taskId));
     return {
       ...snapshot,
-      tasks:tasks.map(task=>({...task,actionVersion:this.taskActionState(task.taskId).version})),
+      tasks:tasks.map(task=>({...task,checkin:this.checkins.view(task.taskId),actionVersion:this.taskActionState(task.taskId).version})),
       runs: snapshot.runs.filter((run) => ids.has(run.taskId)),
       reports: snapshot.reports.filter((report) => ids.has(report.taskId)),
       artifacts: snapshot.artifacts.filter((artifact) =>

@@ -1,3 +1,4 @@
+import { sessionContinuation, continuationReply } from "./ports.js";
 import { authorizedWorkspace } from "./policy.js";
 import { realpath } from "node:fs/promises";
 import { relative, isAbsolute, sep } from "node:path";
@@ -32,16 +33,16 @@ export class SessionMessages {
     });
     if(!canAdmit())return;
     for (const message of messages) {
-      if (message.completion && this.options.deliverTaskReturns === false) continue;
+      if (sessionContinuation(message) && this.options.deliverTaskReturns === false) continue;
       if (
-        !message.completion &&
+        !sessionContinuation(message) &&
         this.workloadCount >= concurrency &&
         !this.options.store.sessionMessageState(message.messageId)
       )
         continue;
       if (
         this.active.has(message.messageId) ||
-        (!message.completion && [...this.active.values()].some((a) => !a.completion && a.session === message.sessionId))
+        (!sessionContinuation(message) && [...this.active.values()].some((a) => !a.completion && a.session === message.sessionId))
       )
         continue;
       const abort = new AbortController();
@@ -50,7 +51,7 @@ export class SessionMessages {
         .finally(() => this.active.delete(message.messageId));
       this.active.set(message.messageId, {
         session: message.sessionId,
-        completion: Boolean(message.completion),
+        completion: Boolean(sessionContinuation(message)),
         abort,
         done,
       });
@@ -58,13 +59,13 @@ export class SessionMessages {
   }
   private async deliver(message: SessionMessage, signal: AbortSignal) {
     const { store, ledger, provider, policy } = this.options;
-    if (message.completion) {
+    if (sessionContinuation(message)) {
       if (!provider.sendTaskReturn) return;
       try {
         const reply = await provider.sendTaskReturn(message,signal);
-        await ledger.completeSessionMessage!(`task-return-ack:${message.messageId}`,{messageId:message.messageId,nodeId:policy.nodeId,state:"completed",reply});
-      } catch {
-        await ledger.completeSessionMessage!(`task-return-failure:${message.messageId}:${Date.now()}`,{messageId:message.messageId,nodeId:policy.nodeId,state:"failed",reply:"RETURN_UNAVAILABLE: original composition or session storage unavailable; retained for retry"});
+        await ledger.completeSessionMessage!(`task-return-ack:${message.messageId}`,{messageId:message.messageId,nodeId:policy.nodeId,state:"completed",...continuationReply(reply)});
+      } catch (error) {
+        await ledger.completeSessionMessage!(`task-return-failure:${message.messageId}:${Date.now()}`,{messageId:message.messageId,nodeId:policy.nodeId,state:"failed",reply:error instanceof Error && "code" in error && error.code === "CHECKIN_BUSY" ? "CHECKIN_BUSY" : "RETURN_UNAVAILABLE: original composition or session storage unavailable; retained for retry"});
       }
       return;
     }

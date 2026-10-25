@@ -1,10 +1,12 @@
+import { sessionContinuation } from "./remote/ports.js";
+import { TaskError } from "./ledger.js";
 import type { Context } from "@deepseek-ai/cordis";
 import type { Agent, AgentHandle } from "@deepseek-ai/dsh-agent";
 import { foldRequestHeader, SessionId } from "@deepseek-ai/dsh-session";
 import { createUserMessage, ReasoningEffortId } from "@deepseek-ai/dsh-llm";
 import type { SessionEvent } from "@deepseek-ai/dsh-session";
 import type { DispatchOrigin, Json } from "./contracts.js";
-import type { SessionMessage } from "./remote/ports.js";
+import type { SessionMessage, SessionContinuationReceipt, CheckinRef } from "./remote/ports.js";
 import { z } from "zod";
 
 const retiredDmcContinuation = z.object({
@@ -21,7 +23,7 @@ export function containsTaskReturn(events: readonly unknown[], eventId: string):
     if (!value || typeof value !== "object") return false;
     if ("source" in value) {
       const source = value.source;
-      if (source && typeof source === "object" && "kind" in source && source.kind === "dsh-task-result" && "eventId" in source && source.eventId === eventId) return true;
+      if (source && typeof source === "object" && "kind" in source && (source.kind === "dsh-task-result" || source.kind === "dsh-task-checkin") && "eventId" in source && source.eventId === eventId) return true;
     }
     if ("type" in value && "data" in value) {
       if (value.type === "user/message") return matches(value.data);
@@ -37,7 +39,7 @@ export function taskReturnCompleted(events:readonly SessionEvent[],eventId:strin
   let resultTurn:number | undefined;
   for(const event of events) {
     if(event.type==="turn/start")currentTurn=event.data.turn;
-    if(event.type==="user/message" && event.data.source.kind==="dsh-task-result" && event.data.source.eventId===eventId)resultTurn=currentTurn;
+    if(event.type==="user/message" && (event.data.source.kind==="dsh-task-result" || event.data.source.kind==="dsh-task-checkin") && event.data.source.eventId===eventId)resultTurn=currentTurn;
     if(event.type==="turn/end" && resultTurn!==undefined && event.data.turn===resultTurn && event.data.reason.kind==="completed")return true;
   }
   return false;
@@ -73,22 +75,31 @@ export class TaskReturnDelivery {
   }
   private readonly lifetime=new AbortController();
   private readonly sessions = new Map<string, ReturnSession>();
-  private readonly deliveries = new Map<string, Promise<string>>();
+  private readonly deliveries = new Map<string, Promise<SessionContinuationReceipt>>();
   private readonly handles = new Set<AgentHandle>();
-  constructor(private ctx: Context) {}
+  constructor(private ctx: Context, private readonly refreshCheckIn?: (message:SessionMessage)=>Promise<SessionMessage | "obsolete" | undefined>) {}
   bindContext(ctx:Context){this.ctx=ctx;}
-  deliver(message: SessionMessage, signal?: AbortSignal): Promise<string> {
-    const origin = message.completion?.origin;
+  deliver(message: SessionMessage, signal?: AbortSignal): Promise<SessionContinuationReceipt> {
+    const origin = sessionContinuation(message)?.origin;
     if (!origin || origin.kind !== "session" || origin.sessionId !== message.sessionId || origin.nodeId !== message.nodeId) return Promise.reject(new Error("Invalid task return binding"));
-    const key = JSON.stringify([message.sessionId, message.completion!.eventId]);
+    if (message.checkIn && origin.parentLease) return Promise.reject(new TaskError("FORBIDDEN", "A check-in cannot revive a protected execution session"));
+    const key = JSON.stringify([message.sessionId, sessionContinuation(message)!.eventId]);
     const existing = this.deliveries.get(key);
     if (existing) return existing;
     const state = this.sessions.get(message.sessionId) ?? {admission: Promise.resolve(), deliveries: 0};
+    if (message.checkIn && state.deliveries) return Promise.reject(new TaskError("CHECKIN_BUSY", "A session continuation is already being processed"));
     this.sessions.set(message.sessionId, state);
     state.deliveries++;
     const admitted = state.admission.catch(() => {}).then(() => this.admit(message, origin, state, signal));
     state.admission = admitted.then(() => {}, () => {});
-    const delivery = admitted.then(receipt => receipt.completion).finally(() => {
+    const delivery = admitted.then(async receipt => {
+      const reply=await receipt.completion;
+      if (!message.checkIn) return reply;
+      const events=await this.read(origin.sessionId);
+      let checkInTasks: CheckinRef[]=[];
+      for(const event of events) if(event.type==="user/message" && event.data.source.kind==="dsh-task-checkin" && event.data.source.eventId===message.checkIn.eventId) checkInTasks=event.data.source.checkInTasks ?? [];
+      return {reply,checkInTasks};
+    }).finally(() => {
       this.deliveries.delete(key);
       state.deliveries--;
       this.releaseSession(message.sessionId, state);
@@ -122,13 +133,32 @@ export class TaskReturnDelivery {
   private async admit(message: SessionMessage, origin: Extract<DispatchOrigin, {kind:"session"}>, state: ReturnSession, signal?: AbortSignal): Promise<{completion: Promise<string>}> {
     const abort = signal ? AbortSignal.any([signal, this.lifetime.signal]) : this.lifetime.signal;
     abort.throwIfAborted();
-    const eventId = message.completion!.eventId;
+    const eventId = sessionContinuation(message)!.eventId;
+    let liveMask: (()=>void) | undefined;
+    let liveAllowedTools: Set<string> | undefined;
+    const refresh = async () => {
+      if (!message.checkIn || !this.refreshCheckIn) return true;
+      const current = await this.refreshCheckIn(message);
+      if (current === "obsolete") return false;
+      if (!current) throw new TaskError("CHECKIN_BUSY", "Task check-in is deferred by current task facts");
+      message = current; return true;
+    };
     const previousHandle = state.handle;
     try {
+      if (!await refresh()) return {completion:Promise.resolve("Check-in no longer relevant")};
       const events=await this.read(origin.sessionId);
       if (taskReturnCompleted(events,eventId)) return {completion: Promise.resolve("Task result processed in the original session")};
       let agent = this.ctx.agents.get(SessionId(origin.sessionId));
       let originalTools: string[] | undefined;
+      if (message.checkIn && agent) {
+        const otherInput = [...agent.inbox.nextTurn,...agent.inbox.nextStep].some(input=>!("eventId" in input.source) || input.source.eventId!==eventId);
+        if (agent.status !== "idle" || otherInput) throw new TaskError("CHECKIN_BUSY", "Responsible session is active; check-in deferred");
+        const composition=origin.composition;
+        if (composition && (agent.options.provider!==composition.provider || agent.options.model!==composition.model)) throw new TaskError("CHECKIN_COMPOSITION_UNAVAILABLE", "Responsible session model differs from its captured check-in binding");
+        originalTools=composition?.tools;
+        if (!originalTools) throw new TaskError("CHECKIN_COMPOSITION_UNAVAILABLE", "Original check-in capability mask unavailable");
+        liveAllowedTools=new Set(originalTools);
+      }
       if (!agent) {
         const header=foldRequestHeader(events);
         const composition = origin.composition ?? (header?.config.provider && header.config.model ? {provider:header.config.provider,model:header.config.model,...(header.config.reasoningEffort?{reasoningEffort:String(header.config.reasoningEffort)}:{}),tools:header.tools?.map(tool=>tool.name)} : undefined);
@@ -175,23 +205,31 @@ export class TaskReturnDelivery {
       if (origin.cwd && agent.session.header.cwd !== origin.cwd) throw new Error("Original session workspace changed");
       await this.ctx.sessions.flush(agent.session);
       const current = await this.read(origin.sessionId);
-      if (taskReturnCompleted(current, eventId)) return {completion: Promise.resolve("Task result processed in the original session")};
+      if (taskReturnCompleted(current, eventId)) {liveMask?.();return {completion: Promise.resolve("Task result processed in the original session")};}
       abort.throwIfAborted();
-      const pending = [...agent.inbox.nextTurn, ...agent.inbox.nextStep].find(input => input.source.kind === "dsh-task-result" && input.source.eventId === eventId);
+      if (!await refresh()) {liveMask?.();return {completion:Promise.resolve("Check-in no longer relevant")};}
+      if (message.checkIn) {
+        const otherInput=[...agent.inbox.nextTurn,...agent.inbox.nextStep].some(input=>!("eventId" in input.source) || input.source.eventId!==eventId);
+        if (agent.status!=="idle" || otherInput) throw new TaskError("CHECKIN_BUSY", "Responsible session became active before admission");
+        const allowed=liveAllowedTools;
+        if(allowed)liveMask=agent.ctx.tools.guard(exec=>allowed.has(exec.name) ? undefined : "Tool is outside the original session capability mask");
+      }
+      const pending = [...agent.inbox.nextTurn, ...agent.inbox.nextStep].find(input => (input.source.kind === "dsh-task-result" || input.source.kind === "dsh-task-checkin") && input.source.eventId === eventId);
       if (pending) {
         agent.inbox.remove(pending.id);
         agent.steer(pending);
       } else {
-        const consumed = current.some(event => event.type === "user/message" && event.data.source.kind === "dsh-task-result" && event.data.source.eventId === eventId);
-        agent.steer(createUserMessage({source:{kind:"dsh-task-result",eventId,taskId:message.taskId},content:[{type:"text",text:consumed ? `继续处理已在原会话持久化的任务结果事件 ${eventId}。上轮在完成前中断；核对已完成的工具结果与中央账本，继续未完成的汇总，避免重复提交或重跑任务。` : message.text}]}));
+        const consumed = current.some(event => event.type === "user/message" && (event.data.source.kind === "dsh-task-result" || event.data.source.kind === "dsh-task-checkin") && event.data.source.eventId === eventId);
+        agent.steer(createUserMessage({source:message.checkIn ? {kind:"dsh-task-checkin",eventId,taskId:message.taskId,checkInTasks:message.checkIn.tasks} : {kind:"dsh-task-result",eventId,taskId:message.taskId},content:[{type:"text",text:consumed ? `继续处理已在原会话持久化的任务结果事件 ${eventId}。上轮在完成前中断；核对已完成的工具结果与中央账本，继续未完成的汇总，避免重复提交或重跑任务。` : message.text}]}));
       }
       const completion = this.waitForCompletion(agent, eventId, abort);
       // Keep a rejection observed while the durable receipt is still flushing.
       void completion.catch(() => {});
       await this.ctx.sessions.flush(agent.session);
       abort.throwIfAborted();
-      return {completion};
+      return {completion:liveMask ? completion.finally(liveMask) : completion};
     } catch (error) {
+      liveMask?.();
       const handle = state.handle;
       if (handle && handle !== previousHandle) {
         await handle.dispose();

@@ -1,3 +1,6 @@
+import { continuationReply } from "./remote/ports.js";
+import type { RemoteExecutionService } from "./remote/index.js";
+import { CheckinCommand } from "./task-checkins.js";
 import { nodeRead } from "./node-reads.js";
 import { TaskReadOptions, taskRead, runSummary, delegationSummary } from "./task-reads.js";
 import type {} from "@deepseek-ai/cordis-plugin-loader";
@@ -111,6 +114,7 @@ export interface Config {
   executionEnabled?: boolean;
   keepAlive?: boolean;
   maintenanceIntervalMs?: number;
+  checkinIntervalMs?: number;
   leaseTtlMs?: number;
   executionAgentPreset?: string;
   executionTools?: string[] | null;
@@ -186,6 +190,7 @@ const PlainConfig: z<Config> = z.object({
   executionEnabled: z.boolean().required(false),
   keepAlive: z.boolean().default(true),
   maintenanceIntervalMs: z.number().min(100).step(1).default(1000),
+  checkinIntervalMs: z.number().min(1000).max(86400000).step(1).default(300000),
   leaseTtlMs: z.number().min(1000).step(1).default(60000),
   executionAgentPreset: z.string().default("ptc"),
   executionTools: z.union([z.const(null), z.array(z.string())]).default(null),
@@ -327,6 +332,7 @@ declare module "@deepseek-ai/cordis" {
 declare module "@deepseek-ai/dsh-llm" {
   interface MessageSourceMap {
     "dsh-task-result": { kind: "dsh-task-result"; eventId: string; taskId: string };
+    "dsh-task-checkin": { kind: "dsh-task-checkin"; eventId: string; taskId: string; checkInTasks?: import("./remote/ports.js").CheckinRef[] };
     "dsh-direct-message": {
       kind: "dsh-direct-message";
       messageId: string;
@@ -352,6 +358,7 @@ const PLANNING_TOOLS = [
   "project_start", "project_list", "project_bind_session", "task_bind_dispatcher", "task_submit_result", "task_retry_return",
   ...READ_TOOLS,
   "task_create",
+  "task_checkin",
   "task_dispatch",
   "task_repair_dispatch",
   "task_report",
@@ -2168,7 +2175,17 @@ export class TaskSystemService extends Service {
     readonly results: NativeResultJournal,
   ) {
     super(ctx, "taskSystem");
-    this.taskReturns = new TaskReturnDelivery(ctx);
+    this.taskReturns = new TaskReturnDelivery(ctx, async message => {
+      if (config.centralMode === "remote") {
+        const remote = this.ctx.get("remoteExecution") as RemoteExecutionService | undefined;
+        const messages = await remote?.coordinatorLedger?.pendingSessionMessages(config.nodeId,{kind:"continuation",messageId:message.messageId});
+        return messages?.find(current=>current.messageId===message.messageId);
+      }
+      const current=ledger.getSessionMessage(message.messageId);
+      if(current.state!=="queued")return "obsolete";
+      const disposition=ledger.checkins.disposition(current);
+      return disposition==="obsolete" ? "obsolete" : disposition==="defer" ? undefined : ledger.checkins.prepare(current);
+    });
     this.sessionCollaboration = new SessionCollaboration(ledger, config.nodeId, (nodeId, commandId, input) => collaborationAuthority(config.centralMode, ledger, this.ctx.get("remoteExecution"))(nodeId, commandId, input), agent => Boolean(this.native?.scopeFor(agent)));
     this.sessionPortal = new ProjectSessionService(this, ctx);
     this.executionDirectories = new ExecutionDirectories(ledger.managementDatabase());
@@ -2463,14 +2480,15 @@ export class TaskSystemService extends Service {
     if (!this.accepting) return;
     this.recoverResults();
     if (!this.configurationPaused && this.config.centralMode === "host") {
-      const messages = this.ledger.pendingSessionMessages(this.config.nodeId, {kind:"completion", excludeMessageIds:[...this.returnJobs.keys()]});
+      this.ledger.checkins.tick();
+      const messages = this.ledger.pendingSessionMessages(this.config.nodeId, {kind:"continuation", excludeMessageIds:[...this.returnJobs.keys()]});
       for (const message of messages) {
         if (this.returnJobs.has(message.messageId)) continue;
         const job = this.taskReturns.deliver(message).then(reply => {
-          this.ledger.completeSessionMessage(`task-return-ack:${message.messageId}`, {messageId:message.messageId,nodeId:this.config.nodeId,state:"completed",reply});
+          this.ledger.completeSessionMessage(`task-return-ack:${message.messageId}`, {messageId:message.messageId,nodeId:this.config.nodeId,state:"completed",...continuationReply(reply)});
         }).catch(error => {
-          this.ledger.recordTaskReturnFailure(message.messageId, error instanceof Error ? error.message : "RETURN_UNAVAILABLE");
-          this.ctx.logger.warn("Task result return %s retained for retry: %s", message.messageId, error);
+          this.ledger.recordTaskReturnFailure(message.messageId, error instanceof TaskError && error.code === "CHECKIN_BUSY" ? "CHECKIN_BUSY" : error instanceof Error ? error.message : "RETURN_UNAVAILABLE");
+          if (!(error instanceof TaskError && error.code === "CHECKIN_BUSY")) this.ctx.logger.warn("Task result return %s retained for retry: %s", message.messageId, error);
         }).finally(() => { this.returnJobs.delete(message.messageId); });
         this.returnJobs.set(message.messageId, job);
       }
@@ -2628,6 +2646,7 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
   mkdirSync(dirname(databasePath), { recursive: true });
   const ledger = TaskLedger.open(databasePath, {
     role: config.role,
+    checkinIntervalMs: config.checkinIntervalMs,
     nodeId: config.nodeId,
     requireConfirmation: config.requireConfirmation,
     reportDestinations: config.reportDestinations,
@@ -3539,6 +3558,23 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
         },
       }),
     );
+  ctx.tools.register(
+    defineTool({
+      name: "task_checkin",
+      description: "Read or update this responsible session's task progress without changing execution outcomes. action=update requires observation, summary, plan (scheduled with optional nextCheckAt, or paused with reason). action=request asks the same recorded session to check; no new execution or permission. action=status reads the check-in. Use stable commandId for writes. Final completion still requires task_submit_result.",
+      parameters: {
+        action: {type:"string",enum:["status","request","update"],required:true}, taskId:{type:"string",required:true},
+        commandId:{type:"string"}, observation:{type:"string",enum:["working","waiting_children","waiting_external","blocked"]},
+        summary:{type:"string"}, plan:{type:"object",properties:{kind:{type:"string",enum:["scheduled","paused"],required:true},nextCheckAt:{type:"string"},reason:{type:"string"}},additionalProperties:false},
+      },
+      output,
+      execute: async (args, exec) => service.withDispatchOrigin(exec.agent, async () => {
+        const input=CheckinCommand.parse(args);
+        if (config.centralMode === "remote") return json(await service.sessionCollaboration.command(exec.agent,{kind:"checkin",input},input.action==="status" ? String(exec.callId) : input.commandId));
+        return json(ledger.taskCheckin(input));
+      }),
+    }),
+  );
   ctx.tools.register(
     defineTool({
       name: "task_note",

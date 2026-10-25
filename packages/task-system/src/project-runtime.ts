@@ -1626,11 +1626,16 @@ export class ProjectRuntime {
       | "confirm-stopped"
       | "status"
       | "retry"
-      | "repair";
+      | "repair"
+      | "check";
   }) {
     this.authorize();
     const view = this.ledger.taskActionState(input.taskId),
       task = this.ledger.getTask(input.taskId);
+    if (input.action === "check") {
+      if (view.version !== input.expectedVersion) throw new TaskError("CONFLICT", "Task changed; refresh before checking");
+      return this.ledger.checkins.request(input.commandId,input.taskId);
+    }
     if (input.action === "retry") return this.retryTask(input);
     if (input.action === "repair") {
       if(!input.runId)throw new TaskError("INVALID","Repair requires the current Run ID");
@@ -1985,7 +1990,7 @@ export class ProjectRuntime {
                           ? "running"
                           : run?.state === "cancelled"
                             ? "cancelled"
-                            : "queued";
+                            : !run && t.state === "ready" ? "draft" : "queued";
       return {
         id: t.taskId,
         showInCoordinator:presentation.get(t.taskId)==="primary"||presentation.get(t.taskId)!=="execution"&&!t.parentTaskId&&!(run?.configuration&&typeof run.configuration==="object"&&!Array.isArray(run.configuration)&&run.configuration.workflow),
@@ -1998,6 +2003,7 @@ export class ProjectRuntime {
         title: t.title,
         description: t.description,
         status,
+        checkin:this.ledger.checkins.view(t.taskId),
         actionVersion: attention.version,
         dispatchIssue: run?.dispatchIssue ?? null,
         canRepair: attention.canRepair,
@@ -2046,7 +2052,6 @@ export class ProjectRuntime {
         supplementaryReports,
         materialsStatus,
         materialsLabel: manual ? materialsLabel : null,
-        materialRequestState: materialRequest?.state ?? null,
         reportHistory,
         reportSource: supplementaryReports.some(
           (r) => r.reportId === report?.reportId,
