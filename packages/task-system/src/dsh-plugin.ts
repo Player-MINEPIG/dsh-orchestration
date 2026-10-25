@@ -2468,7 +2468,7 @@ export class TaskSystemService extends Service {
     if (!this.accepting) return;
     this.recoverResults();
     if (!this.configurationPaused && this.config.centralMode === "host") {
-      const messages = this.ledger.pendingSessionMessages(this.config.nodeId, {kind:"completion"});
+      const messages = this.ledger.pendingSessionMessages(this.config.nodeId, {kind:"completion", excludeMessageIds:[...this.returnJobs.keys()]});
       for (const message of messages) {
         if (this.returnJobs.has(message.messageId)) continue;
         const job = this.taskReturns.deliver(message).then(reply => {

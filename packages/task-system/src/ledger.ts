@@ -11,6 +11,7 @@ import type {
   TaskSessionContext,
   TaskSessionChoice,
   SelectedTaskSession,
+  SessionMessageQuery,
 } from "./remote/ports.js";
 import {
   canonical as wireCanonical,
@@ -3478,11 +3479,19 @@ export class TaskLedger {
       return message;
     });
   }
-  pendingSessionMessages(nodeId: string, options?: {kind?: "completion" | "message"}) {
-    return this.list<import("./remote/ports.js").SessionMessage>(
+  pendingSessionMessages(nodeId: string, options?: SessionMessageQuery) {
+    const messages = this.list<import("./remote/ports.js").SessionMessage>(
       "sessionMessage",
-    )
-      .filter((m) => (!options?.kind || (options.kind === "completion" ? Boolean(m.completion) : !m.completion)) && m.nodeId === nodeId && m.state === "queued" && (!m.nextAttemptAt || m.nextAttemptAt<=this.now()))
+    );
+    const excluded = new Set(options?.excludeMessageIds);
+    let start = 0;
+    if (options?.afterMessageId) {
+      const index = messages.findIndex(m => m.messageId === options.afterMessageId && m.nodeId === nodeId);
+      if (index < 0) fail("FORBIDDEN", "Message cursor does not belong to this node");
+      start = index + 1;
+    }
+    return messages.slice(start)
+      .filter((m) => !excluded.has(m.messageId) && (!options?.kind || (options.kind === "completion" ? Boolean(m.completion) : !m.completion)) && m.nodeId === nodeId && m.state === "queued" && (!m.nextAttemptAt || m.nextAttemptAt<=this.now()))
       .slice(0, 4);
   }
   completeSessionMessage(

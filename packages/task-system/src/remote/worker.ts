@@ -62,7 +62,7 @@ export class ExecutorWorker {
   private executing = 0;
   private concurrencyBudget?: number;
   get activeExecutions(): number {
-    return this.executing + this.messages.activeCount;
+    return this.executing + this.messages.workloadCount;
   }
   private runs = new Map<
     string,
@@ -269,7 +269,7 @@ export class ExecutorWorker {
       })
       .slice(
         0,
-        Math.max(0, concurrency - this.runs.size - this.messages.activeCount),
+        Math.max(0, concurrency - this.runs.size - this.messages.workloadCount),
       );
     const executions = candidates.map((run) =>
       this.execute(
@@ -627,7 +627,7 @@ export class ExecutorWorker {
             if (
               target === policy.nodeId &&
               this.concurrencyBudget !== undefined &&
-              this.runs.size + this.messages.activeCount >=
+              this.runs.size + this.messages.workloadCount >=
                 this.concurrencyBudget
             )
               throw new Error(

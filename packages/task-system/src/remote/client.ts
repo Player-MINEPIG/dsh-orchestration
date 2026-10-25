@@ -31,6 +31,8 @@ import type {
   ExecutorIdentity,
   TaskSessionContext,
   TaskSessionChoice,
+  SessionMessage,
+  SessionMessageQuery,
   SelectedTaskSession,
   ApprovalOffer,
   ApprovalRequest,
@@ -476,11 +478,23 @@ export class RemoteClient {
 
 /** Complete bounded protocol adapter; all caller node IDs must match this authenticated identity. */
 export class RemoteLedgerClient implements LedgerPort {
-  pendingSessionMessages(
+  async pendingSessionMessages(
     _nodeId: string,
-    options?: {kind?: "completion" | "message"},
-  ): Promise<import("./ports.js").SessionMessage[]> {
-    return this.command("sessionMessages", `messages-${randomUUID()}`, options?.kind ? {kind:options.kind} : {});
+    options?: SessionMessageQuery,
+  ): Promise<SessionMessage[]> {
+    const excluded = new Set(options?.excludeMessageIds);
+    const excludeMessageIds = [...excluded].slice(0, 256);
+    let afterMessageId = options?.afterMessageId;
+    for (;;) {
+      const messages = await this.command<SessionMessage[]>("sessionMessages", `messages-${randomUUID()}`, {
+        ...(options?.kind ? {kind: options.kind} : {}),
+        ...(excludeMessageIds.length ? {excludeMessageIds} : {}),
+        ...(afterMessageId ? {afterMessageId} : {}),
+      });
+      const available = messages.filter(message => !excluded.has(message.messageId));
+      if (available.length || !messages.length) return available;
+      afterMessageId = messages[messages.length - 1]!.messageId;
+    }
   }
   completeSessionMessage(
     commandId: string,

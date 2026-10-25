@@ -30,6 +30,11 @@ export interface SessionMessageResult {
   state: "completed" | "failed" | "uncertain";
   reply: string;
 }
+export interface SessionMessageQuery {
+  kind?: "completion" | "message";
+  excludeMessageIds?: string[];
+  afterMessageId?: string;
+}
 export interface ExecutorIdentity {
   schedulerId: string;
   executorId: string;
@@ -389,7 +394,7 @@ export interface LedgerPort {
     commandId: string,
     input: import("../project-collaboration/types.js").ProjectCollaborationInput,
   ): MaybePromise<Json>;
-  pendingSessionMessages?(nodeId: string, options?: {kind?: "completion" | "message"}): MaybePromise<SessionMessage[]>;
+  pendingSessionMessages?(nodeId: string, options?: SessionMessageQuery): MaybePromise<SessionMessage[]>;
   getSessionMessage?(messageId: string): MaybePromise<SessionMessage>;
   completeSessionMessage?(
     commandId: string,

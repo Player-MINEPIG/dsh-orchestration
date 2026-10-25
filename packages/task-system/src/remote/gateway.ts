@@ -456,8 +456,12 @@ export function validatePayload(envelope: CommandEnvelope): void {
       break;
     }
     case "sessionMessages":
-      fields(p, [], ["kind"]);
+      fields(p, [], ["kind", "excludeMessageIds", "afterMessageId"]);
       insist(p.kind === undefined || p.kind === "completion" || p.kind === "message", "INVALID_MESSAGE_KIND");
+      if (p.excludeMessageIds !== undefined) {
+        insist(Array.isArray(p.excludeMessageIds) && p.excludeMessageIds.length <= 256 && p.excludeMessageIds.every(identifier), "INVALID_MESSAGE_EXCLUSIONS");
+      }
+      if (p.afterMessageId !== undefined) id(p, "afterMessageId");
       break;
     case "sessionMessageReply":
       fields(p, ["messageId", "state", "reply"]);
@@ -918,7 +922,11 @@ export class RemoteGateway {
             503,
           );
           let bytes = 0;
-          result = (await ledger.pendingSessionMessages(peer.nodeId, p.kind === "completion" || p.kind === "message" ? {kind:p.kind} : undefined)).filter(
+          result = (await ledger.pendingSessionMessages(peer.nodeId, {
+            ...(p.kind === "completion" || p.kind === "message" ? {kind:p.kind} : {}),
+            ...(Array.isArray(p.excludeMessageIds) ? {excludeMessageIds:p.excludeMessageIds.filter(identifier)} : {}),
+            ...(typeof p.afterMessageId === "string" ? {afterMessageId:p.afterMessageId} : {}),
+          })).filter(
             (m) => {
               if (
                 !(m.completion?.origin.kind === "session" && m.completion.origin.nodeId === peer.nodeId && m.nodeId === peer.nodeId || peer.managedAccess || peer.workspaces.includes(m.workspaceId))

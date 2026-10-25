@@ -22,7 +22,7 @@ export class TaskReturnInbox {
   private async receive() {
     if (!this.ledger.pendingSessionMessages || !this.ledger.completeSessionMessage) return;
     await this.prepare?.();
-    const messages = await this.ledger.pendingSessionMessages(this.nodeId, {kind:"completion"});
+    const messages = await this.ledger.pendingSessionMessages(this.nodeId, {kind:"completion", excludeMessageIds:[...this.deliveries.keys()]});
     for (const message of messages) {
       if (this.stopped || this.paused) break;
       if (!message.completion || message.completion.origin.kind !== "session" || message.completion.origin.nodeId !== this.nodeId || message.nodeId !== this.nodeId) continue;
