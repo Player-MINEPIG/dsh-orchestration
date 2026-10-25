@@ -28,13 +28,14 @@ export class SessionMessages {
     for (const message of messages) {
       if (message.completion && this.options.deliverTaskReturns === false) continue;
       if (
+        !message.completion &&
         this.active.size >= concurrency &&
         !this.options.store.sessionMessageState(message.messageId)
       )
         continue;
       if (
         this.active.has(message.messageId) ||
-        [...this.active.values()].some((a) => a.session === message.sessionId)
+        (!message.completion && [...this.active.values()].some((a) => a.session === message.sessionId))
       )
         continue;
       const abort = new AbortController();

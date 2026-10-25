@@ -1310,3 +1310,24 @@ test('reviewed completed native tools continue the same session across two resta
     assert.equal(h.ledger.getAttempt(thirdClaim.attempt.attemptId).fence, 3);
   } finally { await h.dispose(); }
 });
+
+
+test('native Tasks in one registered cwd execute concurrently while each Run retains one owner', {timeout:10000}, async()=>{
+ let release;const gate=new Promise(resolve=>release=resolve);
+ const work=async()=>{await gate;return {name:'task_submit_result',args:{outcome:'success',summary:'Independent shared-cwd work verified'}};};
+ const h=await harness({script:[work,work]});
+ let jobs=[];
+ try{
+  h.ledger.registerWorkspace('shared-workspace',{workspaceId:'shared',nodeId:'local',path:h.dir,state:'ready'});
+  const first=seed(h,'-parallel',{workspaceId:'shared'});h.ledger.setNodeCapacity('two-slots','local',2);
+  const task=h.ledger.createTask('parallel-second',{title:'Second independent task',workspaceId:'shared'}).value;
+  const run=h.ledger.createRun('parallel-second-run',{taskId:task.taskId,route:{nodeId:'local',provider:'test-offline',model:'script',workspaceId:'shared',requiredCapabilities:[]}}).value;
+  const second=h.ledger.claim('parallel-second-claim',{runId:run.runId,nodeId:'local',ttlMs:10000}).value;
+  jobs=[first.claim,second].map(claim=>h.ctx.taskSystem.native.execute(claim));
+  await until(()=>h.adapter.requests.length===2);
+  assert.equal(h.ctx.taskSystem.native.activeCount,2);
+  assert.equal(h.ledger.snapshot().attempts.length,2);
+  release();await Promise.all(jobs);
+  for(const claim of [first.claim,second])assert.equal(h.ledger.getRun(claim.run.runId).state,'succeeded');
+ }finally{release();await Promise.allSettled(jobs);await h.dispose();}
+});

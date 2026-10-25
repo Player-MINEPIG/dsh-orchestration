@@ -1,4 +1,3 @@
-import { acquireWorkspaceExecution } from "../workspace-execution-lock.js";
 import { randomUUID } from "node:crypto";
 import { SessionMessages } from "./session-messages.js";
 import { chooseExecutionSession } from "../execution-session.js";
@@ -74,27 +73,6 @@ export class ExecutorWorker {
   lastPollFailed = false;
   queueObservedAt: string | null = null;
   private observedQueue: import("./ports.js").Run[] = [];
-  private projectRuns = new Map<
-    string,
-    { key: string; parentRunId?: string }
-  >();
-  private projectKey(run: import("./ports.js").Run): string | undefined {
-    const context = run.projectContext;
-    return context
-      ? digest([context.schedulerId, context.project?.projectId ?? null])
-      : undefined;
-  }
-  private canEnterProject(
-    run: import("./ports.js").Run,
-    held = this.projectRuns,
-  ): boolean {
-    const key = this.projectKey(run);
-    if (!key || ![...held.values()].some((value) => value.key === key))
-      return true;
-    // Only a currently owned parent may reenter this project's lock. Each child
-    // gets a distinct workspace/session; unrelated root work remains serialized.
-    return !!run.parentRunId && held.get(run.parentRunId)?.key === key;
-  }
   isExecuting(runId:string) {return this.runs.has(runId);}
   queueSnapshot() {
     return this.observedQueue.map((run) => ({ ...run }));
@@ -143,7 +121,6 @@ export class ExecutorWorker {
     const abort = new AbortController();
     const done = this.executeOwned(runId, commandId, abort).finally(() => {
       this.runs.delete(runId);
-      this.projectRuns.delete(runId);
     });
     this.runs.set(runId, { abort, done });
     return done;
@@ -263,7 +240,6 @@ export class ExecutorWorker {
         }
       }
     }
-    const plannedProjects = new Map(this.projectRuns);
     const candidates = pending
       .filter((run) => {
         const route = run.route;
@@ -290,13 +266,6 @@ export class ExecutorWorker {
               !!this.options.projectRoot?.())) &&
           !this.runs.has(run.runId)
         );
-      })
-      .filter((run) => {
-        if (!this.canEnterProject(run, plannedProjects)) return false;
-        const key = this.projectKey(run);
-        if (key)
-          plannedProjects.set(run.runId, { key, parentRunId: run.parentRunId });
-        return true;
       })
       .slice(
         0,
@@ -396,13 +365,6 @@ export class ExecutorWorker {
     const { ledger, provider, store, policy } = this.options;
     await this.options.prepare?.();
     const pending = await ledger.getRun?.(runId);
-    if (pending?.projectContext) {
-      insist(this.canEnterProject(pending), "PROJECT_WORKSPACE_BUSY", 409);
-      this.projectRuns.set(runId, {
-        key: this.projectKey(pending)!,
-        parentRunId: pending.parentRunId,
-      });
-    }
     const claim = (
       await ledger.claim(commandId, {
         runId,
@@ -674,10 +636,6 @@ export class ExecutorWorker {
             return delegate(id, input);
           },
         };
-        const releaseWorkspace = await acquireWorkspaceExecution(
-          workspacePath,
-          abort.signal,
-        );
         this.executing++;
         let result: ExecutionResult;
         try {
@@ -690,7 +648,6 @@ export class ExecutorWorker {
             collaboration: boundedCollaboration,
           });
         } finally {
-          releaseWorkspace();
           this.executing--;
         }
         validateResult(result, this.options.maxResultBytes!);
@@ -738,7 +695,6 @@ export class ExecutorWorker {
       if (timer) clearTimeout(timer);
       if (expiryTimer) clearTimeout(expiryTimer);
       abort.abort();
-      this.projectRuns.delete(runId);
       if (renewal) await renewal;
       if (renewalError && record.state === "retry_pending") {
         record.state = "uncertain";

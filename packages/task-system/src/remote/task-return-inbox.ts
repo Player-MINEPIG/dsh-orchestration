@@ -5,7 +5,7 @@ import type { LedgerPort, SessionMessage } from "./ports.js";
 export class TaskReturnInbox {
   private stopped = false;
   private paused = false;
-  private deliveries = 0;
+  private readonly deliveries = new Map<string, Promise<void>>();
   private pending?: Promise<void>;
   private timer?: ReturnType<typeof setInterval>;
   private abort = new AbortController();
@@ -16,7 +16,8 @@ export class TaskReturnInbox {
   }
   poll(): Promise<void> {
     if (this.stopped || this.paused) return Promise.resolve();
-    return this.pending ??= this.receive().finally(() => { this.pending = undefined; });
+    const discovery = this.pending ??= this.receive().finally(() => { this.pending = undefined; });
+    return discovery.then(async () => { await Promise.allSettled([...this.deliveries.values()]); });
   }
   private async receive() {
     if (!this.ledger.pendingSessionMessages || !this.ledger.completeSessionMessage) return;
@@ -25,18 +26,22 @@ export class TaskReturnInbox {
     for (const message of messages) {
       if (this.stopped || this.paused) break;
       if (!message.completion || message.completion.origin.kind !== "session" || message.completion.origin.nodeId !== this.nodeId || message.nodeId !== this.nodeId) continue;
-      this.deliveries++;
-      try {
-        const reply = await this.deliver(message, this.abort.signal);
-        await this.ledger.completeSessionMessage(`task-return-ack:${message.messageId}`, {messageId:message.messageId,nodeId:this.nodeId,state:"completed",reply});
-      } catch {
-        if (this.stopped || this.paused) break;
-        await Promise.resolve(this.ledger.completeSessionMessage(`task-return-failure:${message.messageId}:${Date.now()}`, {messageId:message.messageId,nodeId:this.nodeId,state:"failed",reply:"RETURN_UNAVAILABLE: original session unavailable; retained for retry"})).catch(() => {});
-      } finally { this.deliveries--; }
+      if (this.deliveries.has(message.messageId)) continue;
+      const job = this.receiveMessage(message).finally(() => { this.deliveries.delete(message.messageId); });
+      this.deliveries.set(message.messageId, job);
+    }
+  }
+  private async receiveMessage(message: SessionMessage) {
+    try {
+      const reply = await this.deliver(message, this.abort.signal);
+      await this.ledger.completeSessionMessage!(`task-return-ack:${message.messageId}`, {messageId:message.messageId,nodeId:this.nodeId,state:"completed",reply});
+    } catch {
+      if (this.stopped || this.paused) return;
+      await Promise.resolve(this.ledger.completeSessionMessage!(`task-return-failure:${message.messageId}:${Date.now()}`, {messageId:message.messageId,nodeId:this.nodeId,state:"failed",reply:"RETURN_UNAVAILABLE: original session unavailable; retained for retry"})).catch(() => {});
     }
   }
   async beginConfigurationEdit() {
-    if (this.paused || this.stopped || this.deliveries) throw new ProtocolError("CONFIGURATION_BUSY",409);
+    if (this.paused || this.stopped || this.deliveries.size) throw new ProtocolError("CONFIGURATION_BUSY",409);
     this.paused = true;
     await this.pending?.catch(() => {});
     return () => { this.paused = false; };
@@ -46,5 +51,6 @@ export class TaskReturnInbox {
     if (this.timer) clearInterval(this.timer);
     this.abort.abort(new Error("Service stopping"));
     await this.pending?.catch(() => {});
+    await Promise.allSettled([...this.deliveries.values()]);
   }
 }

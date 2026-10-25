@@ -66,3 +66,12 @@ test('remote result return retries the same event after an interrupted acknowled
  const pump=new SessionMessages({ledger:{pendingSessionMessages:async()=>[message],completeSessionMessage:async(_id,input)=>{acks++;if(acks===1)throw Error('ack interrupted');assert.equal(input.messageId,'event');}},store:{},policy:{nodeId:'worker'},provider:{sendSessionMessage(){},sendTaskReturn:async()=>{deliveries++;return 'persisted';}}});
  await pump.poll(1);await new Promise(resolve=>setImmediate(resolve));await pump.poll(1);await new Promise(resolve=>setImmediate(resolve));await pump.dispose();assert.ok(deliveries>=1);assert.ok(acks>=2);
 });
+
+
+test('remote completion admission bypasses same-session and workload capacity gates',async()=>{
+ let release;const gate=new Promise(resolve=>release=resolve),seen=[],acks=[];
+ const messages=[1,2].map(n=>({messageId:'parallel-'+n,sessionId:'parent',nodeId:'worker',completion:{eventId:'parallel-'+n},state:'queued'}));
+ const pump=new SessionMessages({ledger:{pendingSessionMessages:async()=>messages,completeSessionMessage:async(_id,input)=>acks.push(input)},store:{sessionMessageState:()=>undefined},policy:{nodeId:'worker'},provider:{sendSessionMessage(){},sendTaskReturn:async message=>{seen.push(message.messageId);await gate;return 'processed';}}});
+ try{await pump.poll(1);await new Promise(resolve=>setImmediate(resolve));assert.deepEqual(seen,['parallel-1','parallel-2']);assert.equal(acks.length,0);}finally{release();await pump.dispose();}
+ assert.equal(acks.length,2);
+});

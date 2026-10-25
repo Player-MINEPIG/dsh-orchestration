@@ -7,7 +7,6 @@ import { ProjectSessionService } from "./project-session-service.js";
 import { TaskReturnDelivery } from "./task-returns.js";
 import { ExecutionModelChoice } from "./execution-models.js";
 import { resolveDeviceNodeId } from "./device-identity.js";
-import { acquireWorkspaceExecution } from "./workspace-execution-lock.js";
 import { ExecutionModelInventory } from "./executor-models.js";
 import { workflowInputPage, workflowPromptConfiguration } from "./workflow-input.js";
 import { ProgramRegistry } from "./workflow-programs.js";
@@ -1647,7 +1646,6 @@ export class NativeExecutionProvider {
     let workspace: ReturnType<TaskLedger["getWorkspace"]> | undefined;
     let workspacePath:string|undefined;
     let executionRoot=this.owner.executionDirectories.settings().root;
-    let releaseWorkspace:(()=>void)|undefined;
     let composition: Awaited<ReturnType<NativeExecutionProvider["executionComposition"]>>;
     const setup = async (agentCtx: Context, agent: Agent) => {
       if (!resume) this.initializeSessionTitle(agent, claim);
@@ -1829,7 +1827,6 @@ export class NativeExecutionProvider {
           if(!workspacePath)throw new Error("SESSION_WORKSPACE_MAPPING_REQUIRED: original session has no execution directory");
         }
       }
-      if(workspacePath)releaseWorkspace=await acquireWorkspaceExecution(workspacePath,owned.creation.signal);
       if (route.backend) {
         if (!workspacePath)
           throw new Error("official backend requires an assigned workspace");
@@ -1978,7 +1975,7 @@ export class NativeExecutionProvider {
       throw error;
     } finally {
       if (renewal) clearInterval(renewal);
-      try {await this.release(owned);}finally {releaseWorkspace?.();}
+      await this.release(owned);
       // Cancellation acknowledgment releases task resources only after the
       // native handle has stopped and its scoped tools have unwound.
       if (this.owner.ledger.getRun(ref.runId).cancellationRequested) {
@@ -2134,7 +2131,10 @@ export class TaskSystemService extends Service {
     } : {kind:"system",nodeId:this.config.nodeId};
     return this.ledger.withDispatchOrigin(origin,operation);
   }
-  private returnJob?: Promise<void>;
+  private readonly returnJobs = new Map<string, Promise<void>>();
+  private get returnJob(): Promise<void> | undefined {
+    return this.returnJobs.size ? Promise.allSettled([...this.returnJobs.values()]).then(() => {}) : undefined;
+  }
   readonly executionDirectories: ExecutionDirectories;
   readonly programs: ProgramRegistry;
   readonly workflows: WorkflowRuntime;
@@ -2467,20 +2467,18 @@ export class TaskSystemService extends Service {
   tick(): void {
     if (!this.accepting) return;
     this.recoverResults();
-    if(!this.configurationPaused && this.config.centralMode === "host" && !this.returnJob) {
-      const messages=this.ledger.pendingSessionMessages(this.config.nodeId,{kind:"completion"});
-      const job=(async()=>{
-        for(const message of messages) {
-          try {
-            const reply=await this.taskReturns.deliver(message);
-            this.ledger.completeSessionMessage(`task-return-ack:${message.messageId}`,{messageId:message.messageId,nodeId:this.config.nodeId,state:"completed",reply});
-          } catch(error) {
-            this.ledger.recordTaskReturnFailure(message.messageId,error instanceof Error ? error.message : "RETURN_UNAVAILABLE");
-            this.ctx.logger.warn("Task result return %s retained for retry: %s",message.messageId,error);
-          }
-        }
-      })().finally(()=>{if(this.returnJob===job)this.returnJob=undefined;});
-      this.returnJob=job;
+    if (!this.configurationPaused && this.config.centralMode === "host") {
+      const messages = this.ledger.pendingSessionMessages(this.config.nodeId, {kind:"completion"});
+      for (const message of messages) {
+        if (this.returnJobs.has(message.messageId)) continue;
+        const job = this.taskReturns.deliver(message).then(reply => {
+          this.ledger.completeSessionMessage(`task-return-ack:${message.messageId}`, {messageId:message.messageId,nodeId:this.config.nodeId,state:"completed",reply});
+        }).catch(error => {
+          this.ledger.recordTaskReturnFailure(message.messageId, error instanceof Error ? error.message : "RETURN_UNAVAILABLE");
+          this.ctx.logger.warn("Task result return %s retained for retry: %s", message.messageId, error);
+        }).finally(() => { this.returnJobs.delete(message.messageId); });
+        this.returnJobs.set(message.messageId, job);
+      }
     }
     this.localHeartbeat();
     if(!this.configurationPaused && !this.localCatalogJob && this.ledger.executionModels.pending(this.config.nodeId).length) {

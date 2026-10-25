@@ -75,3 +75,18 @@ test('host managed projects retain their explicitly selected local workspace ass
  assert.equal(selected.projectId,'managed');
  await assert.rejects(f.authority.projectCollaborate('central','wrong',{action:'activate',sessionId:'wrong',cwd:'/central/unrelated',projectId:'managed'}),{code:'FORBIDDEN'});
 });
+
+
+test('completion inbox admits a later poll while the first result is still processing',async()=>{
+ let release;const gate=new Promise(resolve=>release=resolve),seen=[],acks=[];
+ const message=n=>({messageId:'r'+n,taskId:'child'+n,nodeId:'device',sessionId:'origin',completion:{origin:{kind:'session',nodeId:'device'}}});
+ const messages=[message(1)];
+ const inbox=new TaskReturnInbox({pendingSessionMessages:()=>messages,completeSessionMessage:(_id,input)=>acks.push(input)},'device',async message=>{seen.push(message.messageId);await gate;return 'Processed';});
+ const first=inbox.poll();
+ try{
+  for(let i=0;i<100&&seen.length!==1;i++)await new Promise(resolve=>setTimeout(resolve,5));
+  messages.push(message(2));const second=inbox.poll();
+  try {for(let i=0;i<100&&seen.length!==2;i++)await new Promise(resolve=>setTimeout(resolve,5));assert.deepEqual(seen,['r1','r2']);assert.equal(acks.length,0);}finally{release();await second;}
+ }finally{release();await first;await inbox.dispose();}
+ assert.equal(acks.length,2);
+});
