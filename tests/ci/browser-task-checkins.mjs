@@ -32,11 +32,11 @@ export async function testTaskCheckins(browser,{output}={}){
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));await page.goto(`http://127.0.0.1:${server.address().port}/`);const frame=page.frameLocator('iframe');
   await frame.locator(`[data-action="task"][data-id="${task.taskId}"]`).first().click();const dialog=frame.getByRole('dialog');
   await dialog.getByRole('heading',{name:'负责会话进度',exact:true}).waitFor();await dialog.getByRole('button',{name:'检查进度',exact:true}).click();
-  await dialog.getByText('已排队，等待会话处理',{exact:true}).waitFor();assert.equal(await dialog.getByRole('button',{name:'检查进度',exact:true}).isDisabled(),true);assert.equal(calls.filter(call=>call.method==='actOnProjectTask').length,1);
+  await dialog.getByText('已排队，等待会话处理',{exact:true}).waitFor();assert.equal(await dialog.locator('[data-action="task-check"]').isDisabled(),true);assert.equal(calls.filter(call=>call.method==='actOnProjectTask').length,1);
   assert.equal(h.ledger.getTask(task.taskId).state,'ready');assert.equal(h.ledger.snapshot().runs.length,0);assert.ok(h.ledger.checkins.view(task.taskId).nextCheckAt);
   if(output)await page.screenshot({path:join(output,'task-checkin-queued.png'),fullPage:true});
   const updated=await h.ctx.tools.execute({name:'task_checkin',arguments:{action:'update',commandId:'pause-for-human',taskId:task.taskId,observation:'blocked',summary:'Waiting for a human decision',plan:{kind:'paused',reason:'需要用户决定'}},callId:ToolCallId('browser-pause'),agent:handle.agent,signal:new AbortController().signal});assert.equal(updated.isError,false);h.ledger.checkins.tick();
-  await dialog.getByText('自动检查已暂停',{exact:true}).waitFor();await dialog.getByText('本次为单次检查，自动检查继续暂停。',{exact:true}).waitFor();await dialog.getByRole('button',{name:'检查进度',exact:true}).click();await dialog.getByText('已排队，等待会话处理',{exact:true}).waitFor();
+  await dialog.getByText('自动检查已暂停',{exact:true}).waitFor();await dialog.getByText(/本次为单次检查，自动检查继续暂停/).waitFor();await dialog.getByRole('button',{name:'检查进度',exact:true}).click();await dialog.getByText('已排队，等待会话处理',{exact:true}).waitFor();
   const message=h.ledger.pendingSessionMessages('local',{kind:'continuation'})[0];assert.equal(message.checkIn.automatic,false);const receipt=await h.ctx.taskSystem.taskReturns.deliver(message);h.ledger.completeSessionMessage('browser-ack',{nodeId:'local',messageId:message.messageId,state:'completed',...receipt});
   await dialog.getByText('自动检查已暂停',{exact:true}).waitFor();assert.equal(h.ledger.checkins.view(task.taskId).phase,'paused');assert.equal(h.ledger.snapshot().runs.length,0);assert.deepEqual(errors,[]);
   if(output)await page.screenshot({path:join(output,'task-checkin-paused-after-manual.png'),fullPage:true});
