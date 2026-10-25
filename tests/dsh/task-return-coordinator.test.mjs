@@ -189,3 +189,51 @@ test('concurrent cold returns share a resumed handle until both result events co
   const events=await read(h,String(id));for(const n of [1,2])assert.equal(events.filter(event=>event.type==='user/message'&&event.data.source.kind==='dsh-task-result'&&event.data.source.eventId==='cold-'+n).length,1);
  }finally{release();await Promise.allSettled(jobs);await h.dispose();}
 });
+
+test('dispatcher root wait excludes only its bound coordinator while children and other session Runs remain visible',async()=>{
+ const h=await createNativeHarness();
+ try{
+  await h.ctx.plugin(await import('../../packages/task-system/dist/project-registration/plugin.js'),{namespaces:['fixture/local']});
+  const l=h.ledger;
+  l.registerNode('wait-node',{nodeId:'local',roles:['both'],enabled:true,capabilities:[],models:[{provider:'test-offline',model:'script',reasoningEfforts:[]}],workspaceIds:[],maxConcurrent:3});
+  h.ctx.taskSystem.executionDirectories.save({root:h.dir,expectedRevision:0});
+  catalog(l,'local');
+  const session=async id=>(await h.ctx.agents.create({sessionId:SessionId(id),meta:{cwd:h.dir},agentOptions:{provider:'test-offline',model:'script'}})).agent;
+  const agent=await session('dispatcher-wait-owner');
+  const project=await call(h,agent,'project_start',{title:'Coordinator wait fixture'});
+  const parent=(await call(h,agent,'task_create',{commandId:'wait-parent',title:'Coordinate child work',policy:{settlementQuietMs:0}})).value;
+  await call(h,agent,'task_bind_dispatcher',{commandId:'wait-bind',taskId:parent.taskId});
+  const binding=l.dispatcherForSession('local',String(agent.id));assert.ok(binding);
+  assert.equal(h.ctx.taskSystem.native.scopeFor(agent),undefined,'dispatcher is an ordinary session rather than a native owner');
+  const wait=(caller,taskId)=>call(h,caller,'task_wait',{taskId,quietMs:0,timeoutMs:0});
+  assert.equal((await wait(agent,parent.taskId)).settled,true,'an empty dispatcher root does not wait for its own final result');
+  await call(h,agent,'task_dispatch',{commandId:'wait-child',title:'Child work',description:'Finish the isolated fixture',nodeId:'local',executionModel:{provider:'test-offline',model:'script'}});
+  const child=l.snapshot().tasks.find(task=>task.parentTaskId===parent.taskId),run=l.history(child.taskId).runs[0];
+  assert.equal(run.parentRunId,binding.runId);
+  for(const taskId of [parent.taskId,child.taskId]){
+   const state=await wait(agent,taskId);assert.equal(state.settled,false);assert.deepEqual(state.pendingRunIds,[run.runId]);
+  }
+  const claim=l.claim('wait-child-claim',{runId:run.runId,nodeId:'local',ttlMs:10000}).value;
+  const ref={runId:run.runId,attemptId:claim.attempt.attemptId,nodeId:'local',fence:claim.attempt.fence,executionId:'wait-child-owner'};
+  l.markRunning('wait-child-start',ref);
+  for(const taskId of [parent.taskId,child.taskId]){
+   const state=await wait(agent,taskId);assert.equal(state.settled,false);assert.deepEqual(state.pendingRunIds,[run.runId]);
+  }
+  l.submit('wait-child-finish',{...ref,outcome:'success',summary:'Child fixture completed'});
+  assert.equal((await wait(agent,parent.taskId)).settled,true);
+  assert.equal((await wait(agent,child.taskId)).settled,true);
+  assert.equal(l.getRun(binding.runId).state,'running','waiting does not settle the coordinator');
+  const other=await session('dispatcher-wait-other');
+  await call(h,other,'project_bind_session',{projectId:project.binding.projectId});
+  const otherTask=(await call(h,other,'task_create',{commandId:'wait-other-parent',title:'Another coordinator',policy:{settlementQuietMs:0}})).value;
+  await call(h,other,'task_bind_dispatcher',{commandId:'wait-other-bind',taskId:otherTask.taskId});
+  const otherBinding=l.dispatcherForSession('local',String(other.id));assert.ok(otherBinding);
+  const foreignWait=await wait(agent,otherTask.taskId);
+  assert.equal(foreignWait.settled,false);assert.deepEqual(foreignWait.pendingRunIds,[otherBinding.runId],'caller cannot exclude another session coordinator');
+  const observer=await session('dispatcher-wait-no-binding');
+  await call(h,observer,'project_bind_session',{projectId:project.binding.projectId});
+  assert.equal(l.dispatcherForSession('local',String(observer.id)),undefined);
+  const unboundWait=await wait(observer,parent.taskId);
+  assert.equal(unboundWait.settled,false);assert.deepEqual(unboundWait.pendingRunIds,[binding.runId],'an unbound session cannot exclude an arbitrary running Run');
+ }finally{await h.dispose();}
+});

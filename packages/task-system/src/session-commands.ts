@@ -90,7 +90,13 @@ export class SessionDispatcherAuthority {
         const receipt=this.ledger.repairDispatch(commandId,request);
         return json({...receipt,value:runSummary(receipt.value)});
       }
-      case "wait": return json(this.ledger.allSettled(command.taskId, command.quietMs, undefined, true));
+      case "wait": {
+        const dispatcher = this.ledger.dispatcherForSession(nodeId, input.sessionId);
+        const rootRunId = dispatcher?.projectId === projectId && dispatcher.cwd === input.cwd && dispatcher.taskId === command.taskId
+          ? dispatcher.runId
+          : undefined;
+        return json(this.ledger.allSettled(command.taskId, command.quietMs, rootRunId, !rootRunId));
+      }
       case "result": {
         const active = this.ledger.dispatcherForSession(nodeId, input.sessionId);
         if (!active || active.projectId !== projectId || active.cwd !== input.cwd) throw new TaskError("FORBIDDEN", "Session has no active dispatcher in this project");
