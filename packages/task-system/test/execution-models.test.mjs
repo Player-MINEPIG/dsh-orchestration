@@ -449,3 +449,107 @@ test("a hung provider does not hide fresh healthy tuples or reopen its outstandi
   assert.equal(hungCalls, 1);
   assert.equal(healthyCalls, 2);
 });
+
+for (const clockOffset of [-12000, 120000]) {
+  test(`two-page catalog uses authority freshness with executor clock offset ${clockOffset}`, (t) => {
+    const f = fixture(t);
+    f.setNow(20000);
+    const request = f.request();
+    const result = {
+      ...f.success(),
+      observedAt: request.createdAt + clockOffset,
+    };
+    f.catalog.complete("skew-0", {
+      nodeId: "worker",
+      requestId: request.requestId,
+      generation: request.generation,
+      page: { index: 0, total: 2 },
+      result,
+    });
+    f.setNow(22000);
+    const view = f.catalog.complete("skew-1", {
+      nodeId: "worker",
+      requestId: request.requestId,
+      generation: request.generation,
+      page: { index: 1, total: 2 },
+      result: { ...result, models: [{ ...model, model: "four" }] },
+    });
+    assert.equal(view.catalog.state, "fresh");
+    assert.equal(view.catalog.snapshot.receivedAt, 22000);
+    assert.equal(view.catalog.snapshot.observedAt, result.observedAt);
+    assert.equal(view.catalog.snapshot.models.length, 2);
+    f.setNow(82000);
+    assert.equal(f.catalog.view("worker").catalog.state, "stale");
+  });
+}
+
+test("a rejected final page records failure durably and a new request can recover", (t) => {
+  const f = fixture(t), request = f.request();
+  const input = {
+    nodeId: "worker",
+    requestId: request.requestId,
+    generation: request.generation,
+    page: { index: 0, total: 2 },
+    result: f.success(),
+  };
+  f.catalog.complete("reject-0", input);
+  const rejected = f.catalog.complete("reject-1", {
+    ...input, page: { index: 1, total: 2 },
+  });
+  assert.equal(rejected.catalog.state, "unavailable");
+  assert.equal(rejected.catalog.reason, "CATALOG_FAILED");
+  assert.equal(rejected.catalog.request, undefined);
+  assert.equal(rejected.catalog.diagnostic.code, "EXECUTION_CATALOG_DUPLICATE_MODEL");
+  assert.equal(rejected.catalog.diagnostic.requestId, request.requestId);
+  assert.equal(rejected.catalog.diagnostic.receivedPages, 1);
+  assert.deepEqual(f.catalog.complete("reject-1", {
+    ...input, page: { index: 1, total: 2 },
+  }), rejected);
+  assert.deepEqual(f.catalog.view("worker").catalog.diagnostic, rejected.catalog.diagnostic);
+  const next = f.request("recover");
+  assert.equal(next.generation, request.generation + 1);
+  assert.equal(f.catalog.view("worker").catalog.reason, "CATALOG_FAILED");
+  const recovered = f.complete(next, f.success(), "recovered");
+  assert.equal(recovered.catalog.state, "fresh");
+  assert.equal(recovered.catalog.diagnostic, undefined);
+});
+
+test("executor resumes authority-listed pages without comparing clocks", async () => {
+  const { ExecutorModelControl } = await import("../dist/remote/model-control.js");
+  const { RecoveryStore } = await import("../dist/remote/store.js");
+  const store = new RecoveryStore(":memory:");
+  const request = {
+    requestId: "36d43d3e-5aa5-45b1-8761-9aaf5585f629",
+    nodeId: "worker", generation: 1, createdAt: 10000, expiresAt: 40000,
+  };
+  let collections = 0, fail = true;
+  const sent = [];
+  const options = {
+    nodeId: "worker", store,
+    client: { executorIdentity: async () => {}, dispose: async () => {} },
+    remote: {
+      executionModelRequests: async () => [request],
+      completeExecutionModels: async (id, input) => {
+        sent.push({ id, input: structuredClone(input) });
+        if (input.page.index === 1 && fail) throw new Error("lost acknowledgement");
+        return { value: { accepted: true } };
+      },
+    },
+    inventory: { collect: async () => {
+      collections++;
+      return { state: "success", observedAt: Date.now(), complete: true,
+        models: Array.from({ length: 40 }, (_, i) => ({ ...model, model: `clock-${i}` })) };
+    } },
+  };
+  const first = new ExecutorModelControl(options);
+  await first.pollNow();
+  await first.dispose();
+  fail = false;
+  const second = new ExecutorModelControl(options);
+  await second.pollNow();
+  await second.dispose();
+  store.close();
+  assert.equal(collections, 1);
+  assert.deepEqual(sent.map(item => item.input.page.index), [0, 1, 1]);
+  assert.deepEqual(sent[1], sent[2]);
+});
