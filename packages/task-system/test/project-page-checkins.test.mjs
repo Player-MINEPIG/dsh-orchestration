@@ -64,3 +64,11 @@ test('a paused plan offers a single manual check without promising automatic res
  await p.answer({value:{}});await p.answer({value:snapshot([{...task,checkin:{...checkin,phase:'paused',nextCheckAt:null}}])});await pending;
  assert.match(p.overlay(),/自动检查已暂停/);
 });
+
+
+test('the first manual check of an untracked task explains subsequent automatic follow-up',async()=>{
+ const p=page();await p.answer({value:snapshot([{...task,checkin:{...checkin,phase:'untracked',nextCheckAt:null}}])});await p.action('task',task.id);
+ assert.match(p.overlay(),/首次检查会启用后续自动跟进/);assert.doesNotMatch(p.overlay(),/本次为单次检查/);
+ const pending=p.action('task-check',task.id);assert.equal(p.requests[0].input.action,'check');
+ await p.answer({value:{}});await p.answer({value:snapshot([{...task,checkin:{...checkin,phase:'queued',pendingMessageId:'first-check'}}])});await pending;
+});
