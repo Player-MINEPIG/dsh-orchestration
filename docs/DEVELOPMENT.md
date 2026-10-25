@@ -1,11 +1,11 @@
-# Develop on dev; release an exact commit
+# Develop on dev, deploy to devices, and release an exact commit
 
-Keep the primary checkout on `dev` and fast-forward it only to verified `origin/dev`. Develop in isolated worktrees from `dev`. Feature PRs enter `dev`; accepted releases fast-forward `main` to the exact tested dev commit and create an annotated version tag. The repository default branch remains `main`. No workflow deploys to devices or changes their runtime configuration.
+Keep the primary checkout on `dev` and fast-forward it only to verified `origin/dev`. Develop in isolated worktrees from `dev`. Feature PRs enter `dev`; accepted releases fast-forward `main` to the exact tested dev commit and create an annotated version tag. The repository default branch remains `main`. GitHub workflows do not deploy to devices or change their runtime configuration. Agent-operated device deployment follows the ordinary deployment procedure below.
 
 ## Start a feature
 
 1. Fetch and prune remote refs. Inspect the checkout and relevant worktrees. Preserve existing WIP before switching branches.
-2. Compare `origin/dev`, `origin/main`, and the deployed source commit. Record deployed versions and checksums. Recover and commit any deployed source that is missing from Git before developing.
+2. Compare `origin/dev`, `origin/main`, and the deployed source commit. Record deployed versions and checksums. For documentation-only work, use the latest verified deployment record and honor any exclusion of production access. Recover and commit any deployed source that is missing from Git before developing.
 3. Read the current requirements and [CI commands](CI.md). Create a new `codex/` branch and independent worktree from the latest verified `origin/dev`.
 4. Implement and verify using GPT-6.1-Sol with High reasoning, as required by [AGENTS.md](../AGENTS.md). Record results and limits.
 5. Open a PR to `dev`, review its diff and wait for all required checks. Feature PRs may use squash or merge; rebase merging is disabled.
@@ -13,6 +13,28 @@ Keep the primary checkout on `dev` and fast-forward it only to verified `origin/
 `dev` requires an up-to-date PR, resolved conversations, `PR flow`, and the Linux Core, Native DSH, UI (UTC), and Installed packages checks. Approval count is zero for a single maintainer. `main` instead requires the `Full CI` and `Release approved` commit statuses from GitHub Actions (app 15368). Administrators are included; both branches prohibit force pushes and deletion. Do not open a release PR to `main` or disable these gates to publish.
 
 The server enforces the required statuses and ref protections; the trusted controller enforces the exact fast-forward and tag transaction. Classic branch protection does not restrict updates to this script. An owner could still select a different merge method for an already approved head in GitHub's UI. Do not do that: a passing status is not permission to create a different main commit.
+
+## Deploy to devices
+
+Treat requests such as “deploy from GitHub” or “update the machines” as ordinary deployment. A formal release requires an explicit release request. Ordinary deployment keeps package versions, `main`, and tags unchanged unless the user separately requests version preparation or release.
+
+Once an update has passed its applicable gates and entered `dev`, automatically attempt ordinary deployment to `aws-vps`, `MBP`, and `PC_AU`, or the targets the user specifies. This standing authorization does not require another deployment question. An explicit exclusion such as “这次不用部署” takes priority for that update and excludes production preflight as well as installation.
+
+Reuse the exact GitHub package the user selected or an existing verified artifact for the intended source. Record its source SHA, package version, and SHA-256 checksum. If a suitable artifact is missing, obtain one with only the build and verification needed for that package. Do not create a version preparation PR or require full release verification merely to deploy. If the available workflow runs broader checks to produce the artifact, report that tooling limit without adding release steps. Keep the selected bytes fixed across devices. Do not build a deployment package from uncommitted local source.
+
+Proceed independently on each node. Idle nodes can deploy in parallel while busy or unavailable nodes are reported as skipped or deferred. Do not wait indefinitely or create a scheduled retry without a user request. When the nodes are online, the package is ready, and no activity blocks installation, aim to finish the normal deployment path within five minutes. Report any concrete delay rather than promising an unconditional deadline.
+
+1. **Check activity once.** Reuse available authenticated status and deployment entry points. Inspect running sessions and jobs on that node, plus its fresh execution leases. Historical `uncertain` records, stale leases, and idle approval inboxes alone do not establish active work. Preserve the existing configuration and recovery data, and identify the previous package or rollback location. If real work is running, skip or defer that node. Never interrupt, cancel, or force-restart work to finish a deployment.
+2. **Install through the official plugin manager.** Use its supported bundle installation and HMR path with the selected package. If a restart is required, proceed only at an established safe idle point. Keep runtime model choices, credentials, other plugins, and business task state unchanged. If the installed package matches the selected source SHA and package checksum, report the node as current instead of reinstalling it. Version equality alone is insufficient.
+3. **Confirm the result briefly.** Check the installed version and package identity, the affected plugin entries' active state, and connection heartbeat where applicable. Record each node's result, any existing warning or unresolved failure, and its rollback location. Then stop.
+
+The existing `session/list`, `session/projections`, plugin inventory, and ledger APIs are status sources. The repository does not currently provide a unified deployment preflight command. Reuse a known compatible entry point when available. If one is missing, report the limit and keep any necessary inspection bounded rather than building a new deployment framework during the update.
+
+Expand validation only when the change or a specific anomaly requires it. Ordinary deployment does not require another temporary cross-platform feature acceptance suite, paid model calls, or record-by-record business database comparisons. Preserve existing recovery data rather than changing old task states to make a check pass.
+
+Keeping a source tarball in a persistent directory helps future repair, reinstallation, and rollback. An installed plugin executes its `node_modules` files and continues running if the source tarball is deleted. Archive persistence is not a deployment completion gate. Do not repeat installation solely to relocate the original tarball.
+
+The remaining sections apply only to a user-requested formal release.
 
 ## Prepare versions once per release
 

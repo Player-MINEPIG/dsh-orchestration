@@ -8,6 +8,10 @@
 
 主 checkout 默认保持在 `dev`，仅以快进方式同步到已核实的 `origin/dev`。开发前阅读 [开发与发布流程](docs/DEVELOPMENT.md)，fetch 并核对 `origin/dev`、`origin/main` 和已部署版本。保全 WIP 后，从最新已核实的 `origin/dev` 创建新的 `codex/` 分支和独立工作树。
 
-功能通过 PR 进入 `dev`，日常门禁只跑 Linux；普通功能 PR 不逐次涨版本。正式发布准备时用 npm 原生命令更新相关包版本及锁文件，并先合入候选。发布前在 `dev` 对固定候选 SHA 手动运行完整 Linux/macOS CI，使用其保留的同一 tarball 完成真机验收，并取得用户明确确认。通过受信 `main` 的发布工作流校验记录后，将 `main` 快进到该候选并原子创建版本 tag；不得用 PR 合并、重打包或伪造验收替代。`dev` 可继续推进，但被测候选和包 checksum 不得变化，且候选必须仍包含当前 `main`。验收只填写简短摘要、详细记录和用户确认；完整记录先保存到 Actions artifact，tag 仅保留摘要及 CI 链接。详见流程中的输入、版本准备、权限失败处理与门禁要求。
+功能通过 PR 进入 `dev`，日常门禁只跑 Linux；普通功能和普通部署不自动涨版本。“从 GitHub 部署”或“更新机器”默认属于普通部署，不能推定为准备正式发布。
 
-交付后核对完整 CI、验收记录和最终 refs，再仅快进主 checkout 到已核实的 `origin/dev`，报告分支、HEAD、tag、验收证据和 WIP 位置。纯开发交付不得声称已发布；没有真实验收与用户确认时保留在 `dev`。
+更新通过适用门禁并合入 `dev` 后，默认自动尝试部署到 `aws-vps`、`MBP`、`PC_AU`，或用户指定的目标，无须再问是否部署。用户明确“本次不部署”时，本次也不做生产预检。按 [普通部署流程](docs/DEVELOPMENT.md#deploy-to-devices) 复用已验证的确切 GitHub 包，先检查各节点真实活动，空闲节点独立推进，忙碌节点跳过或延后并报告。不得中断、取消或强制重启真实工作，不无限等待或自行创建定时重试。
+
+只有用户明确要求正式发布时，才执行版本准备 PR、完整 Linux/macOS 发布验证、真机发布验收与确认，以及 `main` 和版本 tag 的提升。使用 npm 原生命令更新相关包版本及锁文件。固定候选和同一 tarball 完成验收后，取得用户对该候选及 tag 的明确确认，再由受信 `main` 发布工作流校验记录并原子快进和创建 tag。不得用 PR 合并、重打包或伪造验收替代。完整要求见 [正式发布流程](docs/DEVELOPMENT.md#prepare-versions-once-per-release)。
+
+交付时核对本次适用的检查和最终 refs，仅快进主 checkout 到已核实的 `origin/dev`，报告分支、HEAD、WIP 位置及实际部署结果。普通部署和纯开发交付均不得声称已正式发布。
