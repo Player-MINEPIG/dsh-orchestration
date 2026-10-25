@@ -4,6 +4,7 @@ import { generateKeyPairSync } from "node:crypto";
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { TaskLedger } from "../../dist/ledger.js";
 import { ExecutionModelInventory } from "../../dist/executor-models.js";
 import { ExecutorModelControl } from "../../dist/remote/model-control.js";
@@ -13,6 +14,7 @@ import {
   RemoteGateway,
   RecoveryStore,
   IdentityVerifier,
+  signEnvelope,
 } from "../../dist/remote/api.js";
 
 async function until(predicate) {
@@ -216,8 +218,8 @@ function catalogHarness(
     role: "planner",
     nodeId: "planner",
   });
-  const outbox = new RecoveryStore(":memory:"),
-    inbox = new RecoveryStore(":memory:");
+  const outbox = new RecoveryStore(":memory:"), inboxPath = join(dir,"inbox.sqlite");
+  let inbox = new RecoveryStore(inboxPath);
   const keys = generateKeyPairSync("ed25519");
   ledger.registerWorkspace("ws", {
     workspaceId: "ws",
@@ -249,7 +251,7 @@ function catalogHarness(
     },
     executionModel: { origin: "explicit", policyRevision: "fixture" },
   }).value;
-  const gateway = new RemoteGateway({
+  const gatewayOptions = {
     role: "planner",
     nodeId: "planner",
     ledger,
@@ -267,6 +269,7 @@ function catalogHarness(
             "executionModelRequests",
             "executionModelView",
             "completeExecutionModels",
+            "receipt",
             "heartbeat",
             "claim",
           ],
@@ -275,7 +278,8 @@ function catalogHarness(
         },
       ],
     }),
-  });
+  };
+  let gateway = new RemoteGateway({...gatewayOptions,store:inbox});
   const arrivals = [];
   const client = new RemoteClient({
     endpoint: "https://fixture.invalid/commands",
@@ -318,7 +322,17 @@ function catalogHarness(
     ledger.close();
     rmSync(dir, { recursive: true, force: true });
   });
-  return { ledger, run, task, remote, control, outbox, arrivals };
+  return { ledger, run, task, remote, control, outbox, get inbox(){return inbox;}, get gateway(){return gateway;}, client, arrivals, keys,
+    async restartGateway(legacySchema = false) {
+      await gateway.dispose();inbox.close();
+      if(legacySchema) {
+        const db = new DatabaseSync(inboxPath);
+        try {db.exec("ALTER TABLE commands DROP COLUMN operation");} finally {db.close();}
+      }
+      inbox = new RecoveryStore(inboxPath);
+      gateway = new RemoteGateway({...gatewayOptions,store:inbox});
+    },
+  };
 }
 
 const catalogResult = (count = 40) => ({
@@ -568,3 +582,62 @@ for (const [failure, issueCode, kind] of [
     assert.equal(h.ledger.snapshot().runs.length, 1);
   });
 }
+
+
+for (const rejected of [false, true]) test(`generic receipt preserves ${rejected ? "rejected" : "accepted"} catalog completion before exact replay`, async t => {
+  const h = catalogHarness(t, async () => catalogResult());
+  const request = h.ledger.executionModels.pending("worker")[0];
+  const result = catalogResult(1);
+  if (rejected) result.models.push(result.models[0]);
+  const input = {nodeId:"worker",requestId:request.requestId,generation:request.generation,result};
+  const commandId = rejected ? "committed-negative" : "committed-positive";
+  const complete = h.ledger.completeExecutionModels.bind(h.ledger);
+  let applications = 0;
+  h.ledger.completeExecutionModels = (...args) => {
+    applications++;
+    complete(...args);
+    throw new Error("Lost adapter acknowledgement after authoritative commit");
+  };
+  await assert.rejects(h.remote.completeExecutionModels(commandId,input), {code:"REMOTE_OUTCOME_UNCERTAIN"});
+  await h.restartGateway();
+  const queried = await h.client.send("receipt", "query-"+commandId, {commandId});
+  const expected = rejected ? {accepted:false,catalogError:{code:"EXECUTION_CATALOG_DUPLICATE_MODEL"}} : {accepted:true};
+  assert.equal(queried.state,"done");
+  assert.equal(queried.result.state,"done");
+  assert.deepEqual(queried.result.result.value,expected,"generic receipt uses the original catalog wire contract");
+  assert.deepEqual(h.inbox.receipt("worker",commandId).result.value,expected,"only the normalized result becomes durable done");
+  const replay = await h.remote.completeExecutionModels(commandId,input);
+  assert.deepEqual(replay.value,expected);
+  assert.deepEqual(await h.remote.completeExecutionModels(commandId,input),replay);
+  assert.equal(applications,1,"queries and exact retries do not reapply the ledger transaction");
+});
+
+
+test("legacy uncertain catalog receipt waits for authenticated exact replay after schema upgrade and restart", async t => {
+  const h = catalogHarness(t,async()=>catalogResult());
+  const request = h.ledger.executionModels.pending("worker")[0],result=catalogResult(1);
+  result.models.push(result.models[0]);
+  const input={nodeId:"worker",requestId:request.requestId,generation:request.generation,result};
+  const complete=h.ledger.completeExecutionModels.bind(h.ledger);let applications=0;
+  h.ledger.completeExecutionModels=(...args)=>{applications++;complete(...args);throw Error("Ledger committed before old gateway lost ACK");};
+  await assert.rejects(h.remote.completeExecutionModels("legacy-completion",input),{code:"REMOTE_OUTCOME_UNCERTAIN"});
+  await h.restartGateway(true);
+  assert.equal(h.inbox.commandOperation("worker","legacy-completion"),undefined);
+  const queried=await h.client.send("receipt","legacy-query",{commandId:"legacy-completion"});
+  assert.equal(queried.result.state,"uncertain","unknown original operation cannot produce a guessed done value");
+  assert.equal(h.inbox.receipt("worker","legacy-completion").state,"uncertain");
+  const {signature,...original}=h.arrivals.find(e=>e.operation==="completeExecutionModels");
+  const now=Date.now(),sequence=h.arrivals.at(-1).sequence+1;
+  const changed=signEnvelope({...original,nonce:"legacy-conflicting-nonce",sequence,issuedAt:now,expiresAt:now+60000,payload:{...original.payload,generation:input.generation+1}},h.keys.privateKey);
+  await assert.rejects(h.gateway.handle(JSON.stringify(changed)),{code:"COMMAND_CONFLICT"});
+  assert.equal(h.inbox.commandOperation("worker","legacy-completion"),undefined,"a valid signature with conflicting fingerprint cannot fill provenance");
+  await h.restartGateway();
+  assert.equal(h.inbox.receipt("worker","legacy-completion").state,"uncertain");
+  const expected={accepted:false,catalogError:{code:"EXECUTION_CATALOG_DUPLICATE_MODEL"}};
+  assert.deepEqual((await h.remote.completeExecutionModels("legacy-completion",input)).value,expected);
+  assert.equal(h.inbox.commandOperation("worker","legacy-completion"),"completeExecutionModels");
+  await h.restartGateway();
+  const final=await h.client.send("receipt","legacy-query-after-replay",{commandId:"legacy-completion"});
+  assert.deepEqual(final.result.result.value,expected);
+  assert.equal(applications,1);
+});

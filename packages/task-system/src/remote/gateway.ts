@@ -764,7 +764,7 @@ export class RemoteGateway {
     );
     const old = store.admit(envelope, now);
     if (old && envelope.operation === "claim" && ledger.recoverClaim && old.state !== "done") {
-      const recovered = await this.reconcile(peer.nodeId, old, envelope.operation);
+      const recovered = await this.reconcile(peer.nodeId, old);
       if (recovered.state === "done") return recovered;
       // Exact committed receipt may be read after expiry, but a new transaction
       // still requires current node/workspace authorization.
@@ -777,7 +777,7 @@ export class RemoteGateway {
         envelope.operation === "projectCollaborate" && old.state === "uncertain"
       )
     )
-      return await this.reconcile(peer.nodeId, old, envelope.operation);
+      return await this.reconcile(peer.nodeId, old);
     const commandId = `remote-${digest([peer.nodeId, envelope.commandId])}`;
     const p = envelope.payload;
     try {
@@ -1403,11 +1403,12 @@ export class RemoteGateway {
   private async reconcile(
     nodeId: string,
     receipt: CommandReceipt,
-    operation?: import("./protocol.js").Operation,
   ): Promise<CommandReceipt> {
     if (receipt.state === "done" || !this.options.ledger.commandReceipt)
       return receipt;
     try {
+      const operation = this.options.store.commandOperation(nodeId, receipt.commandId);
+      if (!operation) return receipt;
       const durable = await this.options.ledger.commandReceipt(
         `remote-${digest([nodeId, receipt.commandId])}`,
       );
