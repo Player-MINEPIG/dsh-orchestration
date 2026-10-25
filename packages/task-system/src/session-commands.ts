@@ -1,3 +1,4 @@
+import { CheckinCommand } from "./task-checkins.js";
 import { z } from "zod";
 import { ExecutionModelChoice } from "./execution-models.js";
 import { TaskReadOptions, taskRead, runSummary } from "./task-reads.js";
@@ -10,6 +11,7 @@ const Policy = z.object({allowedNodeIds:z.array(z.string()).optional(),allowedWo
 const text = z.string().min(1).max(200);
 export const SessionCommand = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("projects") }).strict(),
+  z.object({ kind: z.literal("checkin"), input: CheckinCommand }).strict(),
   z.object({ kind: z.literal("create"), title: z.string().min(1).max(1000), description: z.string().max(20000).optional(), goal: z.string().max(5000).optional(), requiresConfirmation: z.boolean().optional(), policy: Policy.optional() }).strict(),
   z.object({ kind: z.literal("bind"), taskId: text }).strict(),
   z.object({ kind: z.literal("query"), read:TaskReadOptions.optional() }).strict(),
@@ -39,6 +41,7 @@ export class SessionDispatcherAuthority {
   }
   execute(nodeId: string, commandId: string, input: ProjectSessionInput): Json {
     const command = SessionCommand.parse(input.command);
+    if (command.kind === "checkin") return json(this.ledger.taskCheckin(command.input.action === "status" ? command.input : {...command.input, commandId}));
     if (command.kind === "result" && this.ledger.commandReceipt(commandId)) {
       const {kind: _kind, ...result} = command;
       return json(this.ledger.submitDispatcherResult(commandId, {nodeId,sessionId:input.sessionId,...result}));

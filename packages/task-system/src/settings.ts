@@ -480,7 +480,7 @@ const projectInputs = {
         "reject",
         "confirm-stopped",
         "status",
-        "retry", "repair",
+        "retry", "repair", "check",
       ]),
     })
     .strict(),

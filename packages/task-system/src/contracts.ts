@@ -61,6 +61,7 @@ export type DispatchOrigin = { kind: "system"; nodeId: string } | {
   parentLease?: LeaseRef;
 };
 export interface Task {
+  checkin?: import("./task-checkins.js").CheckinView;
   dispatchOrigin?: DispatchOrigin;
   taskId: string;
   title: string;

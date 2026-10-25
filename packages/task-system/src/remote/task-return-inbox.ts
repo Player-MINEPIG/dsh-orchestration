@@ -1,5 +1,6 @@
+import { sessionContinuation, continuationReply } from "./ports.js";
 import { ProtocolError } from "./protocol.js";
-import type { LedgerPort, SessionMessage } from "./ports.js";
+import type { LedgerPort, SessionMessage, SessionContinuationReceipt } from "./ports.js";
 
 /** Ordinary session results do not require a workload provider, claim or execution slot. */
 export class TaskReturnInbox {
@@ -9,7 +10,7 @@ export class TaskReturnInbox {
   private pending?: Promise<void>;
   private timer?: ReturnType<typeof setInterval>;
   private abort = new AbortController();
-  constructor(private ledger: LedgerPort, private nodeId: string, private deliver: (message: SessionMessage, signal: AbortSignal) => Promise<string>, private prepare?: () => Promise<unknown>) {}
+  constructor(private ledger: LedgerPort, private nodeId: string, private deliver: (message: SessionMessage, signal: AbortSignal) => Promise<SessionContinuationReceipt>, private prepare?: () => Promise<unknown>) {}
   start(intervalMs: number) {
     this.timer = setInterval(() => { void this.poll().catch(() => {}); }, intervalMs);
     void this.poll().catch(() => {});
@@ -22,10 +23,11 @@ export class TaskReturnInbox {
   private async receive() {
     if (!this.ledger.pendingSessionMessages || !this.ledger.completeSessionMessage) return;
     await this.prepare?.();
-    const messages = await this.ledger.pendingSessionMessages(this.nodeId, {kind:"completion", excludeMessageIds:[...this.deliveries.keys()]});
+    const messages = await this.ledger.pendingSessionMessages(this.nodeId, {kind:"continuation", excludeMessageIds:[...this.deliveries.keys()]});
     for (const message of messages) {
       if (this.stopped || this.paused) break;
-      if (!message.completion || message.completion.origin.kind !== "session" || message.completion.origin.nodeId !== this.nodeId || message.nodeId !== this.nodeId) continue;
+      const continuation=sessionContinuation(message);
+      if (!continuation || continuation.origin.kind !== "session" || continuation.origin.nodeId !== this.nodeId || message.nodeId !== this.nodeId) continue;
       if (this.deliveries.has(message.messageId)) continue;
       const job = this.receiveMessage(message).finally(() => { this.deliveries.delete(message.messageId); });
       this.deliveries.set(message.messageId, job);
@@ -34,10 +36,10 @@ export class TaskReturnInbox {
   private async receiveMessage(message: SessionMessage) {
     try {
       const reply = await this.deliver(message, this.abort.signal);
-      await this.ledger.completeSessionMessage!(`task-return-ack:${message.messageId}`, {messageId:message.messageId,nodeId:this.nodeId,state:"completed",reply});
-    } catch {
+      await this.ledger.completeSessionMessage!(`task-return-ack:${message.messageId}`, {messageId:message.messageId,nodeId:this.nodeId,state:"completed",...continuationReply(reply)});
+    } catch (error) {
       if (this.stopped || this.paused) return;
-      await Promise.resolve(this.ledger.completeSessionMessage!(`task-return-failure:${message.messageId}:${Date.now()}`, {messageId:message.messageId,nodeId:this.nodeId,state:"failed",reply:"RETURN_UNAVAILABLE: original session unavailable; retained for retry"})).catch(() => {});
+      await Promise.resolve(this.ledger.completeSessionMessage!(`task-return-failure:${message.messageId}:${Date.now()}`, {messageId:message.messageId,nodeId:this.nodeId,state:"failed",reply:error instanceof Error && "code" in error && error.code === "CHECKIN_BUSY" ? "CHECKIN_BUSY" : "RETURN_UNAVAILABLE: original session unavailable; retained for retry"})).catch(() => {});
     }
   }
   async beginConfigurationEdit() {

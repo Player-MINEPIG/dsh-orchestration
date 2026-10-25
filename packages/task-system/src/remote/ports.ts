@@ -1,3 +1,4 @@
+import { z } from "zod";
 import type {TaskReadOptions,taskRead} from "../task-reads.js";
 import type {NodeReadOptions,nodeRead} from "../node-reads.js";
 import type {
@@ -9,11 +10,17 @@ import type {
 import type { Json, Role, PreDispatchFailure } from "./protocol.js";
 import type { Claim as CoreClaim, Run as CoreRun, Task as CoreTask } from "../contracts.js";
 
+export const CheckinRefs = z.array(z.object({taskId:z.string().min(1).max(200),revision:z.number().int().nonnegative()}).strict()).max(8);
+export type CheckinRef = z.infer<typeof CheckinRefs>[number];
+export type SessionContinuationReceipt = string | {reply:string;checkInTasks:CheckinRef[]};
+export function continuationReply(receipt:SessionContinuationReceipt) { return typeof receipt === "string" ? {reply:receipt} : receipt; }
+
 export interface SessionMessage {
   deliveryAttempts?: number;
   lastDeliveryError?: string;
   lastAttemptAt?: string;
   nextAttemptAt?: string;
+  checkIn?: { eventId: string; origin: Extract<import("../contracts.js").DispatchOrigin, {kind:"session"}>; tasks: CheckinRef[]; automatic:boolean };
   completion?: {eventId: string; origin: import("../contracts.js").DispatchOrigin; runId: string};
   /** Ledger-owned link to an operator-opened materials request. */
   supplementFor?: string;
@@ -29,11 +36,13 @@ export interface SessionMessage {
   reply?: string;
 }
 export interface SessionMessageResult {
+  checkInTasks?: CheckinRef[];
   state: "completed" | "failed" | "uncertain";
   reply: string;
 }
 export interface SessionMessageQuery {
-  kind?: "completion" | "message";
+  kind?: "completion" | "continuation" | "message";
+  messageId?: string;
   excludeMessageIds?: string[];
   afterMessageId?: string;
 }
@@ -521,7 +530,7 @@ export type ExecutionResult = Pick<
 > & { retryWitness?: SafeRetryWitness; retryAllowed?: boolean };
 /** Host-owned implementation. Must enforce declared capabilities and await abort quiescence. */
 export interface ExecutionProvider {
-  sendTaskReturn?(message: SessionMessage, signal?:AbortSignal): Promise<string>;
+  sendTaskReturn?(message: SessionMessage, signal?:AbortSignal): Promise<SessionContinuationReceipt>;
   sendSessionMessage?(
     message: SessionMessage,
     record: import("./store.js").DispatchRecord,
@@ -546,4 +555,8 @@ export interface WorkerPolicy {
   nodeId: string;
   capabilities: readonly string[];
   workspaces: readonly WorkspaceBinding[];
+}
+
+export function sessionContinuation(message: SessionMessage) {
+  return message.completion ?? message.checkIn;
 }

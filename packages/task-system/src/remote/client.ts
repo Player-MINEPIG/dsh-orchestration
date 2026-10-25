@@ -490,6 +490,7 @@ export class RemoteLedgerClient implements LedgerPort {
     for (;;) {
       const messages = await this.command<SessionMessage[]>("sessionMessages", `messages-${randomUUID()}`, {
         ...(options?.kind ? {kind: options.kind} : {}),
+        ...(options?.messageId ? {messageId: options.messageId} : {}),
         ...(excludeMessageIds.length ? {excludeMessageIds} : {}),
         ...(afterMessageId ? {afterMessageId} : {}),
       });
@@ -509,6 +510,7 @@ export class RemoteLedgerClient implements LedgerPort {
       messageId: input.messageId,
       state: input.state,
       reply: input.reply,
+      ...(input.checkInTasks ? {checkInTasks:input.checkInTasks} : {}),
     });
   }
   private client: RemoteClient;

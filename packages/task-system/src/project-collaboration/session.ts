@@ -147,7 +147,7 @@ export class SessionCollaboration {
   }
   async command(agent: Agent | undefined, command: SessionCommand, requestId: string) {
     const identity = this.identity(agent), binding = this.binding(agent);
-    if (command.kind !== "projects" && (binding?.state !== "active" || !binding.projectId)) throw new TaskError("FORBIDDEN", "Bind the current session to a central project first");
+    if (command.kind !== "projects" && command.kind !== "checkin" && (binding?.state !== "active" || !binding.projectId)) throw new TaskError("FORBIDDEN", "Bind the current session to a central project first");
     if (!requestId?.trim() || requestId.length > 200) throw new TaskError("INVALID", "A stable command ID is required");
     const selected = agent!.session.requestHeader()?.config;
     const provider = selected?.provider ?? agent!.options.provider, model = selected?.model ?? agent!.options.model;
