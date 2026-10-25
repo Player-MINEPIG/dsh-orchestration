@@ -1,3 +1,5 @@
+import { TaskReadOptions } from "../task-reads.js";
+import { NodeReadOptions } from "../node-reads.js";
 import { digest, insist } from "./protocol.js";
 import type { ExecutionCollaboration, LedgerPort, LeaseRef } from "./ports.js";
 
@@ -25,10 +27,10 @@ export function bindCollaboration(
     ...(availableOperations
       ? { availableOperations: Object.freeze([...availableOperations]) }
       : {}),
-    async nodes() {
+    async nodes(read) {
       live();
-      insist(ledger.executionModelView, "EXECUTION_CATALOG_UNSUPPORTED", 503);
-      return [await ledger.executionModelView(ref.nodeId, true)];
+      insist(ledger.readExecutionModels, "EXECUTION_CATALOG_UNSUPPORTED", 503);
+      return await ledger.readExecutionModels(ref.nodeId,NodeReadOptions.parse(read ?? {}),true);
     },
     async offerApproval(id, input) {
       live();
@@ -87,11 +89,11 @@ export function bindCollaboration(
         { signal },
       );
     },
-    async history(targetTaskId = taskId) {
+    async history(targetTaskId = taskId,read) {
       live();
       insist(ledger.scopedHistory, "COLLABORATION_UNSUPPORTED", 503);
       return await ledger.scopedHistory(
-        { ...ref, taskId: targetTaskId },
+        { ...ref, taskId: targetTaskId,read:TaskReadOptions.parse(read ?? {}) },
         { signal },
       );
     },

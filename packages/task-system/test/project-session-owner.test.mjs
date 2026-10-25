@@ -14,9 +14,9 @@ test('ordinary preparation holds both native input and actual task return until 
  const prepared=await h.owner.handle(prepare());assert.equal(prepared.kind,'prepared');const agent=h.ctx.agents.get(prepared.binding.sessionId);assert.equal(agent.status,'idle');
  prompt(agent,'native-A');prompt(agent,'native-B');prompt(agent,'steering','next-step');
  const delivery=new TaskReturnDelivery(h.ctx);const returning=delivery.deliver({nodeId:'owner',sessionId:agent.id,taskId:'fixture-task',text:'Frozen result',completion:{eventId:'return-1',origin:{kind:'session',nodeId:'owner',sessionId:agent.id,cwd:dir}}});
- await waitFor(()=>agent.inbox.nextTurn.length===3);await h.ctx.sessions.flush(agent.session);assert.equal(h.model.requests.length,0);await assert.rejects(h.owner.admit(prepared.binding,'write'),/not been activated/);
+ await waitFor(()=>agent.inbox.nextTurn.length===2&&agent.inbox.nextStep.length===2);await h.ctx.sessions.flush(agent.session);assert.equal(h.model.requests.length,0);await assert.rejects(h.owner.admit(prepared.binding,'write'),/not been activated/);
  const decision=commit(dir,prepared.binding);h.setDecision(decision);const active=await h.owner.handle({kind:'activate',operationId:'move-1',binding:prepared.binding,decision});assert.equal(active.kind,'active');await returning;await agent.whenIdle();await h.ctx.sessions.flush(agent.session);
- assert.equal(h.activations,1);assert.equal(h.model.requests.length,3);assert.deepEqual(agent.session.snapshotEvents().filter(e=>e.type==='user/message'&&['user','dsh-task-result'].includes(e.data.source.kind)).map(e=>e.data.source.rpcId??e.data.source.eventId),['steering','native-A','native-B','return-1']);
+ assert.equal(h.activations,1);assert.equal(h.model.requests.length,2);assert.deepEqual(agent.session.snapshotEvents().filter(e=>e.type==='user/message'&&['user','dsh-task-result'].includes(e.data.source.kind)).map(e=>e.data.source.rpcId??e.data.source.eventId),['steering','return-1','native-A','native-B']);
  assert.equal((await h.owner.handle(prepare())).evidenceId,prepared.evidenceId);await assert.rejects(h.owner.handle({...prepare(),workspaceRevision:'changed'}),/changed/);await delivery.dispose();
  }finally{await h.close();rmSync(dir,{recursive:true,force:true});}
 });

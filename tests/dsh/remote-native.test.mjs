@@ -210,8 +210,12 @@ test('two real native executor hosts delegate through the signed coordinator, en
     ledger.queueTaskNote('root-context-note', { taskId: parent.taskId, body: 'Coordinator-provided context for the next run.', actor: 'offline-operator' });
     const run = ledger.createRun('recursive-root-run', { taskId: parent.taskId, route: route(0) }).value;
     const foreign = ledger.createTask('foreign-recursive-task', { title: 'Confidential unrelated coordinator task' }).value;
+    for(let i=0;i<3;i++)ledger.appendReport('owned-read-'+i,{taskId:parent.taskId,title:'Owned report '+i,body:'OWNED_READ_BODY_'+i,kind:'progress'});
     a.adapter.script.push(
-      { name: 'task_dispatch', args: { commandId: 'delegate-child', title: 'Scoped child on beta', route: route(1) } },
+      {name:'task_query',args:{}},
+      options=>{const summary=toolValue(options);assert.equal(summary.tasks[0].taskId,parent.taskId);assert.equal(summary.reports[0].title,'Owned report 2');assert.doesNotMatch(JSON.stringify(summary),/OWNED_READ_BODY/);return {name:'task_history',args:{taskId:parent.taskId,details:true,section:'reports',limit:2}};},
+      options=>{const page=toolValue(options);assert.deepEqual(page.reports.map(report=>report.body),['Coordinator-provided context for the next run.','OWNED_READ_BODY_0']);assert.equal(page.page.nextCursor,'2');return {name:'task_history',args:{taskId:parent.taskId,details:true,section:'reports',limit:2,cursor:page.page.nextCursor}};},
+      options=>{const page=toolValue(options);assert.deepEqual(page.reports.map(report=>report.body),['OWNED_READ_BODY_1','OWNED_READ_BODY_2']);assert.equal(page.page.nextCursor,null);return {name:'task_dispatch',args:{commandId:'delegate-child',title:'Scoped child on beta',route:route(1)}};},
       options => { child = toolValue(options).value; assert.equal(child.task.parentTaskId, parent.taskId); return { name: 'task_note', args: { commandId: 'future-child-note', taskId: child.task.taskId, body: 'Only a future child run may consume this note.' } }; },
       { name: 'task_history', args: { taskId: foreign.taskId } },
       options => { assert.equal(options.messages.findLast(message => message.role === 'tool').isError, true); assert.ok(!JSON.stringify(options.messages).includes(foreign.title)); return { name: 'task_report', args: { commandId: 'parent-progress', taskId: parent.taskId, title: 'Delegated', body: 'Waiting for a scoped child.' } }; },

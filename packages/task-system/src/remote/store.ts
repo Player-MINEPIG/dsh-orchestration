@@ -13,6 +13,7 @@ import {
   byteLimit,
   canonical,
   DEFAULT_MAX_RESPONSE_BYTES,
+  EXECUTOR_OPERATIONS,
   digest,
   insist,
   ProtocolError,
@@ -36,6 +37,7 @@ const localWorkspaceGrant = z
     enabled: z.boolean(),
   })
   .strict();
+const commandOperation = z.enum(EXECUTOR_OPERATIONS);
 const localWorkspaceGrantState = z
   .object({
     revision: z.number().int().nonnegative(),
@@ -104,6 +106,8 @@ export class RecoveryStore {
     // Existing receipts have unknown provenance and remain durable. Only new,
     // explicitly classified observations receive an expiry.
     this.transaction(() => {
+      if (!this.db.prepare("PRAGMA table_info(commands)").all().some(row => row.name === "operation"))
+        this.db.exec("ALTER TABLE commands ADD COLUMN operation TEXT");
       for (const table of ["commands", "outbound"]) {
         if (
           !this.db
@@ -396,7 +400,9 @@ export class RecoveryStore {
           "INSERT INTO peer_sequences(node,sequence) VALUES(?,?) ON CONFLICT(node) DO UPDATE SET sequence=excluded.sequence",
         )
         .run(node, sequence);
-      if (existing)
+      if (existing) {
+        this.db.prepare("UPDATE commands SET operation=? WHERE node=? AND id=? AND operation IS NULL")
+          .run(envelope.operation, node, id);
         return {
           commandId: id,
           state: existing.state as CommandReceipt["state"],
@@ -404,15 +410,17 @@ export class RecoveryStore {
             ? { result: JSON.parse(String(existing.result)) as Json }
             : {}),
         };
+      }
       this.db
         .prepare(
-          "INSERT INTO commands(node,id,digest,state,expires) VALUES(?,?,?,?,?)",
+          "INSERT INTO commands(node,id,digest,state,operation,expires) VALUES(?,?,?,?,?,?)",
         )
         .run(
           node,
           id,
           hash,
           "pending",
+          envelope.operation,
           isTransientReceipt(envelope.operation, envelope.payload)
             ? now + TRANSIENT_RECEIPT_TTL_MS
             : null,
@@ -522,6 +530,10 @@ export class RecoveryStore {
             : {}),
         }
       : undefined;
+  }
+  commandOperation(node: string, commandId: string) {
+    const row = this.db.prepare("SELECT operation FROM commands WHERE node=? AND id=?").get(node, commandId);
+    return row?.operation == null ? undefined : commandOperation.parse(row.operation);
   }
   createDispatch(record: DispatchRecord): boolean {
     return (

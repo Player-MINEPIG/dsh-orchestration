@@ -1,3 +1,4 @@
+import { ExecutionModelChoice } from "./execution-models.js";
 import { Context, Service } from "@deepseek-ai/cordis";
 import z from "@deepseek-ai/schemastery";
 import { defineTool } from "@deepseek-ai/dsh-tools";
@@ -44,6 +45,7 @@ export interface LocalCodexTask {
   status: "queued" | "running" | "review" | "done" | "error" | "cancelled" | "unknown";
   createdAt: string; updatedAt: string; returnedAt?: string; jobId?: string; report?: string; threadId?: string;
   cliPath: string; exitCode?: number | null;
+  requestedModel?:ExecutionModelChoice;
   acceptance?: { sessionId: string; evidence: string; acceptedAt: string };
 }
 export function findDesktopCodex(configured?: string) {
@@ -150,7 +152,7 @@ export class LocalCodexService extends Service {
       this.store.db.close();
     });
   }
-  delegate(agent: Agent, input: { requestId: string; title: string; prompt: string; reasoningEffort?: string }, signal: AbortSignal) {
+  delegate(agent: Agent, input: { requestId: string; title: string; prompt: string; executionModel?:ExecutionModelChoice; reasoningEffort?: string }, signal: AbortSignal) {
     signal.throwIfAborted();
     if (!input.requestId.trim() || input.requestId.length > 200 || !input.title.trim() || input.title.length > 240 || !input.prompt.trim() || input.prompt.length > 100000) throw new Error("Provide a commandId, title and bounded full task description");
     if (this.closing) throw new Error("Local Codex service is stopping");
@@ -160,15 +162,19 @@ export class LocalCodexService extends Service {
     const policy = agent.ctx.get("sandboxPolicy")?.resolve({ session: agent.session });
     if (!policy) throw new Error("Parent sandbox policy is unavailable; Codex was not started");
     localCodexPermission(policy.mode);
+    const requested=input.executionModel?ExecutionModelChoice.parse(input.executionModel):undefined;
+    if(requested && (requested.provider!=="openai" || (requested.backend!==undefined && requested.backend!=="codex") || (requested.kind!==undefined && requested.kind!=="official-codex") || requested.resume))throw new Error("Local Codex requires provider=openai and backend=codex without resume");
+    if(requested && input.reasoningEffort!==undefined)throw new Error("Use executionModel only; reasoningEffort is a legacy alias");
+    if(requested && !/^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,199}$/.test(requested.model))throw new Error("Invalid Codex model");
     const prior = this.store.list(String(agent.id)).find(task => task.requestId === input.requestId);
     if (prior) {
-      if (prior.title !== input.title || prior.description !== input.prompt || prior.cwd !== cwd || (input.reasoningEffort !== undefined && prior.reasoningEffort !== input.reasoningEffort)) throw new Error("requestId already used with different instructions or reasoningEffort");
+      if ((JSON.stringify(requested ?? null)!==JSON.stringify(prior.requestedModel ?? null)) || prior.title !== input.title || prior.description !== input.prompt || prior.cwd !== cwd || (input.reasoningEffort !== undefined && prior.reasoningEffort !== input.reasoningEffort)) throw new Error("requestId already used with different instructions or reasoningEffort");
       return this.receipt(prior);
     }
     if (this.active.size >= this.config.maxConcurrent) throw new Error("Local Codex capacity reached; wait for an existing job before retrying");
     const task: LocalCodexTask = {
       id: `local-codex-${randomUUID()}`, sessionId: String(agent.id), requestId: input.requestId,
-      title: input.title, description: input.prompt, cwd, model: this.config.model, reasoningEffort: localCodexReasoningEffort(input.reasoningEffort, this.config.reasoningEffort),
+      title: input.title, description: input.prompt, cwd, model: requested?.model ?? this.config.model, reasoningEffort: localCodexReasoningEffort(requested?.reasoningEffort ?? input.reasoningEffort, this.config.reasoningEffort),...(requested?{requestedModel:requested}:{}),
       parentMode: policy.mode, cliPath: findDesktopCodex(this.config.cliPath), status: "queued",
       createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
     };
@@ -186,7 +192,7 @@ export class LocalCodexService extends Service {
     } catch (error) { task.status = "error"; task.report = String(error); this.store.save(task); throw error; }
   }
   private receipt(task: LocalCodexTask) {
-    return { taskId: task.id, jobId: task.jobId, status: task.status, model: task.model, reasoningEffort: task.reasoningEffort,
+    return { taskId: task.id, requested:task.requestedModel ?? null,resolved:{provider:"openai",model:task.model,reasoningEffort:task.reasoningEffort,backend:"codex"}, jobId: task.jobId, status: task.status, model: task.model, reasoningEffort: task.reasoningEffort,
       parentMode: task.parentMode, permission: localCodexPermission(task.parentMode),
       localOnly: true, message: "已记录到当前会话任务面板。用 codex_status 查看持久结果，用 job_output 等待回传；核查文件或测试后，用 task_accept 提交验收依据并标记已完成。不要重复派发。" };
   }

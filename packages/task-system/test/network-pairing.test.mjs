@@ -30,9 +30,13 @@ test('real HTTP source pairing validates before bind, persists identity, accepts
   assert.deepEqual(ledger.getNode('new-device').models,[],'legacy heartbeat metadata cannot grant or replace executor models');
   assert.deepEqual(ledger.getNode('new-device').capabilities,['activity.reports.v1'],'authenticated heartbeat cannot replace operator capabilities with self-reported grants');
   const request=ledger.executionModels.request('requested-catalog',{nodeId:'new-device'}).catalog.request;
-  const result={state:'success',observedAt:Date.now(),complete:true,models:[{provider:'p',model:'m'}]};
+  const result={state:'success',observedAt:Date.now()-12000,complete:true,models:[{provider:'p',model:'m'}]};
   const remote=new RemoteLedgerClient(client,'new-device');
-  await assert.rejects(remote.completeExecutionModels('foreign-request',{nodeId:'new-device',requestId:'11111111-1111-4111-8111-111111111111',generation:request.generation,result}),/REMOTE_OUTCOME_UNCERTAIN/);
+  const foreign={nodeId:'new-device',requestId:'11111111-1111-4111-8111-111111111111',generation:request.generation,result};
+  const rejected=await remote.completeExecutionModels('foreign-request',foreign);
+  assert.deepEqual(rejected.value,{accepted:false,catalogError:{code:'EXECUTION_CATALOG_REQUEST_MISMATCH'}});
+  assert.deepEqual(await remote.completeExecutionModels('foreign-request',foreign),rejected);
+  assert.deepEqual(ledger.executionModels.pending('new-device'),[request]);
   assert.deepEqual(ledger.getNode('new-device').models,[]);
   await remote.completeExecutionModels('requested-models',{nodeId:'new-device',requestId:request.requestId,generation:request.generation,result});
 

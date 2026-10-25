@@ -1,3 +1,5 @@
+import { NodeReadOptions,nodeRead } from "../node-reads.js";
+import { TaskReadOptions, taskRead, runSummary } from "../task-reads.js";
 import { CentralTaskControl, type CentralTaskControl as TaskControl } from "../central-control.js";
 import { SessionCommand, SessionDispatcherAuthority } from "../session-commands.js";
 import { createHash } from "node:crypto";
@@ -24,14 +26,16 @@ export function validateCollaborationInput(value: unknown): asserts value is Pro
     if (Object.keys(p).some(key=>!["action","control"].includes(key)) || !CentralTaskControl.safeParse(p.control).success) fail("INVALID", "Invalid central task control");
     return;
   }
-  const keys = ["action", "sessionId", "cwd", "projectId", "title", "goal", "summary", "route", "description", "nodeId", "executionModel", "composition", "command"];
+  const keys = ["action", "sessionId", "cwd", "projectId", "title", "goal", "summary", "route", "description", "nodeId", "executionModel", "composition", "command", "taskId", "retry", "expectedActionVersion", "configuration", "read"];
   if (Object.keys(p).some(k => !keys.includes(k)) || canonical(p).length > 64_000) fail("INVALID", "Unknown or oversized collaboration input");
   if (!["session", "activate", "status", "nodes", "dispatch", "update", "submit"].includes(String(p.action))) fail("INVALID", "Unknown collaboration action");
-  for (const key of keys.filter(k => k !== "route" && k !== "executionModel" && k !== "composition" && k !== "command")) {
+  for (const key of keys.filter(k => k !== "route" && k !== "executionModel" && k !== "composition" && k !== "command" && k !== "retry" && k !== "configuration" && k !== "read")) {
     const v = p[key];
     if (v !== undefined && (typeof v !== "string" || v.length > (key === "description" || key === "summary" ? 20_000 : 4096) || v.includes("\0"))) fail("INVALID", `Invalid ${key}`);
   }
   if (typeof p.sessionId !== "string" || !p.sessionId.trim() || p.sessionId.length > 200 || typeof p.cwd !== "string" || !isAbsolute(p.cwd)) fail("INVALID", "A session and absolute working directory are required");
+  if(p.retry!==undefined && typeof p.retry!=="boolean")fail("INVALID","Invalid retry");
+  if(p.read!==undefined && !(p.action==="nodes"?NodeReadOptions:TaskReadOptions).safeParse(p.read).success)fail("INVALID","Invalid read options");
   if (p.action === "session" && !SessionCommand.safeParse(p.command).success) fail("INVALID", "Invalid session command");
   else if (p.action !== "session" && p.command !== undefined) fail("INVALID", "Command requires session action");
   if(p.composition!==undefined) {
@@ -84,7 +88,11 @@ export class ProjectCollaborationAuthority {
     }
     const run = this.queue.then(() => {
       validateCollaborationInput(input);
-      return (input.action === "dispatch" || input.action === "session") ? this.ledger.withDispatchOrigin({kind:"session",nodeId,sessionId:input.sessionId,cwd:input.cwd,...(input.composition?{composition:input.composition}:{})},()=>this.execute(nodeId,commandId,input)) : this.execute(nodeId,commandId,input);
+      const execution=(input.action === "dispatch" || input.action === "session") ? this.ledger.withDispatchOrigin({kind:"session",nodeId,sessionId:input.sessionId,cwd:input.cwd,...(input.composition?{composition:input.composition}:{})},()=>this.execute(nodeId,commandId,input)) : this.execute(nodeId,commandId,input);
+      return execution.catch(error=>{
+        if(error instanceof TaskError && !["UNAVAILABLE","REMOTE_OUTCOME_UNCERTAIN","COLLABORATION_PENDING"].includes(error.code))this.db.prepare("UPDATE collaboration_commands SET result=? WHERE command_id=? AND result IS NULL").run(canonical({rejected:{code:error.code,message:error.message}}),`collaboration:${hash([nodeId,commandId])}`);
+        throw error;
+      });
     });
     this.queue = run.catch(() => {});
     return run;
@@ -99,7 +107,11 @@ export class ProjectCollaborationAuthority {
     const digest = hash(input);
     const old = this.db.prepare("SELECT digest,result FROM collaboration_commands WHERE command_id=?").get(key);
     if (old && old.digest !== digest) fail("CONFLICT", "Command ID reused with different collaboration input");
-    if (old?.result) return JSON.parse(String(old.result));
+    if (old?.result) {
+      const saved=JSON.parse(String(old.result));
+      if(saved.rejected)throw new TaskError(saved.rejected.code,saved.rejected.message);
+      return saved;
+    }
     this.db.prepare("INSERT OR IGNORE INTO collaboration_commands VALUES(?,?,NULL)").run(key, digest);
     if (input.action === "control") {
       const task = this.ledger.getTask(input.control.taskId), origin = task.dispatchOrigin;
@@ -157,43 +169,56 @@ export class ProjectCollaborationAuthority {
         const node=this.ledger.getNode(status.nodeId);
         let view=this.ledger.executionModels.view(node.nodeId);
         if(view.catalog.state!=="fresh")view=this.ledger.executionModels.request(`project-nodes:${hash([key,node.nodeId])}`,{nodeId:node.nodeId});
-        return {nodeId:node.nodeId,capabilities:node.capabilities,catalog:view.catalog,policy:view.policy,models:view.catalog.snapshot?.models ?? [],workspaceIds:node.workspaceIds,maxConcurrent:node.maxConcurrent,state:status.state};
+        return {...status,nodeId:node.nodeId,roles:node.roles,capabilities:node.capabilities,catalog:view.catalog,policy:view.policy,models:view.catalog.snapshot?.models ?? [],workspaceIds:node.workspaceIds,maxConcurrent:node.maxConcurrent,state:status.state};
       });
-      result = json({ confirmed: true, routes: this.publicRoutes(), nodes });
+      result = json(nodeRead({routes:this.publicRoutes(),nodes},input.read));
     } else {
       const b = binding!;
       if (input.action === "dispatch") {
-        if (!input.title?.trim()) fail("INVALID", "Dispatch requires a task title");
+        const existing=input.taskId?this.ledger.getTask(input.taskId):undefined;
+        if(existing && !this.scope(b).tasks.some(task=>task.taskId===existing.taskId))fail("FORBIDDEN","Task is outside the current project");
+        if(existing && (input.title || input.description))fail("INVALID","Existing task dispatch uses its stored intent; omit title/description");
+        if (!existing && !input.title?.trim()) fail("INVALID", "Dispatch requires a task title");
+        const title=existing?.title ?? input.title!,description=existing?.description ?? input.description ?? title;
         const planner = typeof this.options.planner === "function" ? this.options.planner() : this.options.planner;
         const candidates=this.ledger.decisionCatalog().nodes.filter(node=>node.enabled&&node.roles.some(role=>role==="executor"||role==="both"));
-        const nodeId=input.route?.nodeId ?? input.nodeId ?? (!planner && candidates.length===1?candidates[0]?.nodeId:undefined);
+        const nodeId=input.route?.nodeId ?? input.nodeId ?? ((!planner || existing) && candidates.length===1?candidates[0]?.nodeId:undefined);
         const selection=nodeId?this.ledger.selectExecutionModel(nodeId,input.route ?? input.executionModel):undefined;
         const route=input.route ?? (nodeId && selection?{nodeId,provider:selection.choice.provider,model:selection.choice.model,...(selection.choice.reasoningEffort?{reasoningEffort:selection.choice.reasoningEffort}:{}),...(selection.choice.backend?{backend:selection.choice.backend}:{}),requiredCapabilities:[]}:undefined);
-        if(!route && !planner)fail("EXECUTOR_REQUIRED","Choose an executor from task_nodes or configure central planning");
-        if(route)this.ledger.validateRoute(route,{admission:true,skipModel:true});
+        if(!route && (!planner || existing))fail("EXECUTOR_REQUIRED","Choose an executor from task_nodes or configure central planning");
+        if(route) {
+          this.ledger.projectExecutionPolicy(b.projectId,route.nodeId);
+          this.ledger.validateRoute(route,{admission:true,skipModel:true});
+        }
         if(route?.backend && !this.publicRoutes().some(candidate=>["nodeId","provider","model","reasoningEffort","backend"].every(key=>candidate[key as keyof ExecutionRoute]===route[key as keyof ExecutionRoute])))fail("BACKEND_UNAVAILABLE","Requested native backend is not advertised by an available execution host");
-        const task = this.ledger.createTask(`${key}:task`, { taskId: `collab-task-${hash(key)}`, title: input.title!, description: input.description || input.title!, ...(route?.backend ? { policy: { allowedBackends: [route.backend] } } : {}), ...(route?.workspaceId ? { workspaceId: route.workspaceId } : {}) }).value;
+        const task = existing ?? this.ledger.createTask(`${key}:task`, { taskId: `collab-task-${hash(key)}`, title, description, ...(route?.backend ? { policy: { allowedBackends: [route.backend] } } : {}), ...(route?.workspaceId ? { workspaceId: route.workspaceId } : {}) }).value;
         this.wb.manage(`${key}:link`, "link_backlog_task", { backlogId: b.backlogId, taskId: task.taskId });
-        let dispatched: unknown;
         const needsConfirmation = task.confirmation?.required && task.confirmation.state !== "approved";
-        if (planner && !input.nodeId) {
-          const decision = await planner.plan({ requestId: `${key}:plan`, title: input.title!, description: input.description || input.title!, projectId: b.projectId, taskId: task.taskId, ...(input.route ? { route: input.route } : {}),...(input.executionModel?{executionModel:input.executionModel}:{}) });
+        try {
+        if (planner && !input.nodeId && !existing) {
+          const decision = await planner.plan({ requestId: `${key}:plan`, title, description, projectId: b.projectId, taskId: task.taskId, ...(input.route ? { route: input.route } : {}),...(input.executionModel?{executionModel:input.executionModel}:{}) });
           if (decision.routingStatus !== "ready") {
             // Planning has not applied any execution. Preserve the audit record,
             // but do not leave an unstartable task blocking project submission.
             this.ledger.cancel(`${key}:unrouted`, { taskId: task.taskId, reason: "Central planner could not select an available execution route" });
             fail("ROUTE_REQUIRED", "Central planner could not select an available execution route; the unstarted task was cancelled");
           }
-          dispatched = planner.apply(`${key}:plan`, { deferExecution: Boolean(needsConfirmation) }).value;
-        } else dispatched = needsConfirmation ? { task, pendingConfirmation: true } : this.ledger.createRun(`${key}:run`, { taskId: task.taskId, route,...(selection?{executionModel:selection.executionModel}:{}) }).value;
+          planner.apply(`${key}:plan`, { deferExecution: Boolean(needsConfirmation) });
+        } else if(!needsConfirmation)this.ledger.dispatchExistingTask(`${key}:run`, { taskId: task.taskId,...(input.route?{route:input.route}:{nodeId:route?.nodeId,...(input.executionModel?{executionModel:input.executionModel}:{})}),...(input.configuration!==undefined?{configuration:input.configuration}:{}),...(input.retry?{retry:input.retry,expectedActionVersion:input.expectedActionVersion}:{}) }).value;
+        } catch(error) {
+          if(!existing && !this.ledger.history(task.taskId).runs.length)this.ledger.cancel(`${key}:rejected`,{taskId:task.taskId,reason:"Dispatch was rejected before execution; retain this Task for explicit retry or cancellation"});
+          if(error instanceof TaskError)throw new TaskError(error.code,`${error.message}. taskId=${task.taskId}; inspect task_history and reuse this Task with a new commandId after repair`);
+          throw error;
+        }
         b.state = "active";
         b.updatedAt = this.ledger.managementNow();
-        result = json({ confirmed: true, binding: b, projectId: b.projectId, taskId: task.taskId, pendingConfirmation: Boolean(needsConfirmation), dispatch: dispatched });
+        result = json({ confirmed: true, binding: b, projectId: b.projectId, taskId: task.taskId, pendingConfirmation: Boolean(needsConfirmation), dispatch: needsConfirmation?{taskId:task.taskId,state:task.state,pendingConfirmation:true}:runSummary(this.ledger.history(task.taskId).runs.at(-1) ?? fail("UNAVAILABLE","Accepted dispatch has no Run")) });
       } else {
         if (input.action === "submit" || input.action === "update") {
           if (input.action === "submit") {
             const scoped = this.scope(b);
-            if (scoped.runs.some(r => ["queued", "running", "uncertain"].includes(r.state)) || scoped.tasks.some(t => !scoped.runs.some(r => r.taskId === t.taskId) && !["completed", "failed", "cancelled", "archived"].includes(t.state)) || scoped.attempts.some(a => !["settled", "cancelled", "expired"].includes(a.state))) fail("PROJECT_NOT_QUIESCENT", "All dispatched work must be quiescent before submission");
+            const blockers=[...scoped.runs.filter(r=>["queued","running","uncertain"].includes(r.state)).map(r=>({taskId:r.taskId,runId:r.runId,state:r.state,reason:r.dispatchIssue?.message ?? "Execution has not stopped",recoveryActions:r.state==="uncertain"?["request_execution_status","verify_stopped"]:["task_wait","task_cancel"]})),...scoped.tasks.filter(t=>!scoped.runs.some(r=>r.taskId===t.taskId)&&!["completed","failed","cancelled","archived"].includes(t.state)).map(t=>({taskId:t.taskId,state:t.state,reason:"Unstarted task has not been dispatched or cancelled",recoveryActions:["task_dispatch","task_cancel"]})),...scoped.attempts.filter(a=>!["settled","cancelled","expired"].includes(a.state)).map(a=>({taskId:a.taskId,runId:a.runId,attemptId:a.attemptId,state:a.state,reason:"Executor stop is not confirmed",recoveryActions:["task_wait"]}))];
+            if(blockers.length)fail("PROJECT_NOT_QUIESCENT",JSON.stringify({message:"Resolve pending work before submission",blockers}));
           }
           b.summary = input.summary ?? b.summary;
           b.state = input.action === "submit" ? "pending_review" : "active";
@@ -203,7 +228,12 @@ export class ProjectCollaborationAuthority {
             this.db.prepare("UPDATE collaboration_bindings SET data=? WHERE binding_id=?").run(canonical({ ...sibling, summary: b.summary, state: b.state, updatedAt: b.updatedAt }), hash([nodeId, sibling.sessionId, sibling.cwd]));
           }
         }
-        result = json({ confirmed: true, binding: b, projectId: b.projectId, ...this.scope(b) });
+        if(input.action==="status") {
+          const scoped=this.scope(b),snapshot=this.ledger.snapshot(),ids=new Set(scoped.tasks.map(task=>task.taskId));
+          const read=TaskReadOptions.parse(input.read ?? {});
+          if(read.taskId && !ids.has(read.taskId))fail("FORBIDDEN","Task is outside the current project");
+          result=json({confirmed:true,binding:b,projectId:b.projectId,...taskRead({...snapshot,tasks:snapshot.tasks.filter(task=>ids.has(task.taskId))},read,id=>this.ledger.taskActionState(id).version)});
+        } else result = json({ confirmed: true, binding: b, projectId: b.projectId });
       }
     }
     // Commit reopening and the successful receipt together. An exact replay

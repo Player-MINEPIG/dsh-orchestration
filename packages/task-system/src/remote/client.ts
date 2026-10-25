@@ -1,6 +1,9 @@
+import type { TaskReadOptions } from "../task-reads.js";
+import type { NodeReadOptions,nodeRead } from "../node-reads.js";
 import { ExecutionDisposition } from "../executor-alerts.js";
 import {
   ExecutionCatalogRequest,
+  ExecutionCatalogCompletion,
   ExecutionModelViewPage,
   type AdmissionReport,
   type ExecutionModelsView,
@@ -30,6 +33,8 @@ import type {
   ExecutorIdentity,
   TaskSessionContext,
   TaskSessionChoice,
+  SessionMessage,
+  SessionMessageQuery,
   SelectedTaskSession,
   ApprovalOffer,
   ApprovalRequest,
@@ -475,11 +480,23 @@ export class RemoteClient {
 
 /** Complete bounded protocol adapter; all caller node IDs must match this authenticated identity. */
 export class RemoteLedgerClient implements LedgerPort {
-  pendingSessionMessages(
+  async pendingSessionMessages(
     _nodeId: string,
-    options?: {kind?: "completion" | "message"},
-  ): Promise<import("./ports.js").SessionMessage[]> {
-    return this.command("sessionMessages", `messages-${randomUUID()}`, options?.kind ? {kind:options.kind} : {});
+    options?: SessionMessageQuery,
+  ): Promise<SessionMessage[]> {
+    const excluded = new Set(options?.excludeMessageIds);
+    const excludeMessageIds = [...excluded].slice(0, 256);
+    let afterMessageId = options?.afterMessageId;
+    for (;;) {
+      const messages = await this.command<SessionMessage[]>("sessionMessages", `messages-${randomUUID()}`, {
+        ...(options?.kind ? {kind: options.kind} : {}),
+        ...(excludeMessageIds.length ? {excludeMessageIds} : {}),
+        ...(afterMessageId ? {afterMessageId} : {}),
+      });
+      const available = messages.filter(message => !excluded.has(message.messageId));
+      if (available.length || !messages.length) return available;
+      afterMessageId = messages[messages.length - 1]!.messageId;
+    }
   }
   completeSessionMessage(
     commandId: string,
@@ -524,7 +541,16 @@ export class RemoteLedgerClient implements LedgerPort {
       "REMOTE_OUTCOME_UNCERTAIN",
       503,
     );
+    if(operation==="taskHistory" && isRecord(response.result) && isRecord(response.result.readError)) {
+      const issue=response.result.readError;
+      insist(typeof issue.code==="string" && typeof issue.message==="string","INVALID_RECEIPT");
+      const error=new ProtocolError(issue.code,413);error.message=issue.message;throw error;
+    }
     return response.result as unknown as T;
+  }
+  readExecutionModels(nodeId:string,read:NodeReadOptions={},refresh=false):Promise<ReturnType<typeof nodeRead>> {
+    insist(nodeId===this.nodeId,"WRONG_CLIENT_NODE",403);
+    return this.command("executionModelView",`catalog-summary:${randomUUID()}`,{nodeId,refresh,read:JSON.parse(JSON.stringify(read))});
   }
   async executionModelView(
     nodeId: string,
@@ -628,15 +654,16 @@ export class RemoteLedgerClient implements LedgerPort {
     commandId: string,
     input: CompleteExecutionModels,
     options?: { signal?: AbortSignal },
-  ): Promise<Receipt<{ accepted: true }>> {
+  ): Promise<Receipt<ExecutionCatalogCompletion>> {
     insist(input.nodeId === this.nodeId, "WRONG_CLIENT_NODE", 403);
     const { nodeId: _nodeId, ...payload } = input;
-    return await this.command(
+    const receipt = await this.command<Receipt<unknown>>(
       "completeExecutionModels",
       commandId,
       JSON.parse(JSON.stringify(payload)),
-      options,
+      { ...options, diagnostic: true },
     );
+    return { ...receipt, value: ExecutionCatalogCompletion.parse(receipt.value) };
   }
   async projectCollaborate(
     nodeId: string,
@@ -946,7 +973,7 @@ export class RemoteLedgerClient implements LedgerPort {
     commandId: string,
     input: LeaseRef & DelegationInput,
     options?: { signal?: AbortSignal },
-  ): Promise<Receipt<{ task: Task; run: Run }>> {
+  ): Promise<Receipt<{ task: import("../contracts.js").Task; run: import("../contracts.js").Run }>> {
     return this.command(
       "delegate",
       commandId,
@@ -967,7 +994,7 @@ export class RemoteLedgerClient implements LedgerPort {
     );
   }
   scopedHistory(
-    input: LeaseRef & { taskId?: string },
+    input: LeaseRef & { taskId?: string;read?:TaskReadOptions },
     options?: { signal?: AbortSignal },
   ): Promise<TaskHistory> {
     return this.command(
@@ -975,6 +1002,7 @@ export class RemoteLedgerClient implements LedgerPort {
       `read-${randomUUID()}`,
       {
         ...this.scoped(input),
+        ...(input.read?{read:JSON.parse(JSON.stringify(input.read))}:{}),
         ...(input.taskId !== undefined ? { targetTaskId: input.taskId } : {}),
       },
       options,

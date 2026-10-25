@@ -120,3 +120,20 @@ test('nonexecuting central host consumes returns ahead of old messages and exclu
   const release=service.beginConfigurationEdit();save(completion('second'));service.tick();assert.equal(deliveries,1);release();
   service.tick();await service.returnJob;assert.equal(deliveries,2);assert.equal(h.ledger.pendingSessionMessages('local',{kind:'message'}).length,4);
 });
+
+
+test('native host admits another session return while the first session is still processing', {timeout:10000}, async()=>{
+ const h=await createNativeHarness({config:{centralMode:'host',executionEnabled:false}});
+ let release;const gate=new Promise(resolve=>release=resolve),seen=[];
+ try{
+  const service=h.ctx.taskSystem,db=h.ledger.managementDatabase(),task=h.ledger.createTask('return-task',{title:'Completed child'}).value;
+  const save=id=>{const message={messageId:id,taskId:task.taskId,nodeId:'local',sessionId:id,workspaceId:'origin-session',state:'queued',completion:{eventId:id,origin:{kind:'session',nodeId:'local',sessionId:id}},text:'Result'};db.prepare("INSERT INTO entities(kind,id,parent,state,data) VALUES('sessionMessage',?,?,?,?)").run(id,task.taskId,'queued',JSON.stringify(message));};
+  service.taskReturns.deliver=async message=>{seen.push(message.messageId);if(message.messageId==='first')await gate;return 'Processed';};
+  save('first');service.tick();
+  for(let i=0;i<100&&!seen.length;i++)await new Promise(resolve=>setTimeout(resolve,5));
+  save('second');service.tick();
+  for(let i=0;i<100&&h.ledger.getSessionMessage('second').state!=='completed';i++)await new Promise(resolve=>setTimeout(resolve,5));
+  assert.deepEqual(seen,['first','second']);assert.equal(h.ledger.getSessionMessage('first').state,'queued');assert.equal(h.ledger.getSessionMessage('second').state,'completed');
+  assert.throws(()=>service.beginConfigurationEdit(),{code:'CONFIGURATION_BUSY'});
+ }finally{release();await h.dispose();}
+});

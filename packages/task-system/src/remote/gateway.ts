@@ -1,6 +1,10 @@
+import { TaskReadOptions } from "../task-reads.js";
+import { NodeReadOptions } from "../node-reads.js";
 import {
   AdmissionReport,
   CompleteExecutionModels,
+  ExecutionModelsError,
+  executionCatalogCompletion,
 } from "../execution-models.js";
 import { ProgramCatalog, ProgramRoute } from "../workflow-programs.js";
 import { validateCollaborationInput } from "../project-collaboration/authority.js";
@@ -301,7 +305,8 @@ export function validatePayload(envelope: CommandEnvelope): void {
       fields(p, []);
       break;
     case "executionModelView":
-      fields(p, [], ["nodeId", "refresh", "offset", "limit"]);
+      fields(p, [], ["nodeId", "refresh", "offset", "limit", "read"]);
+      if(p.read!==undefined)insist(NodeReadOptions.safeParse(p.read).success,"INVALID_READ_OPTIONS");
       insist(
         p.nodeId === undefined || p.nodeId === envelope.nodeId,
         "EXECUTION_CATALOG_NODE_DENIED",
@@ -454,8 +459,12 @@ export function validatePayload(envelope: CommandEnvelope): void {
       break;
     }
     case "sessionMessages":
-      fields(p, [], ["kind"]);
+      fields(p, [], ["kind", "excludeMessageIds", "afterMessageId"]);
       insist(p.kind === undefined || p.kind === "completion" || p.kind === "message", "INVALID_MESSAGE_KIND");
+      if (p.excludeMessageIds !== undefined) {
+        insist(Array.isArray(p.excludeMessageIds) && p.excludeMessageIds.length <= 256 && p.excludeMessageIds.every(identifier), "INVALID_MESSAGE_EXCLUSIONS");
+      }
+      if (p.afterMessageId !== undefined) id(p, "afterMessageId");
       break;
     case "sessionMessageReply":
       fields(p, ["messageId", "state", "reply"]);
@@ -586,7 +595,8 @@ export function validatePayload(envelope: CommandEnvelope): void {
       delegation(p);
       break;
     case "taskHistory":
-      fields(p, ownedFields, ["targetTaskId"]);
+      fields(p, ownedFields, ["targetTaskId","read"]);
+      if(p.read!==undefined)insist(TaskReadOptions.safeParse(p.read).success,"INVALID_READ_OPTIONS");
       lease(p, envelope.nodeId);
       if (p.targetTaskId !== undefined) id(p, "targetTaskId");
       break;
@@ -758,7 +768,7 @@ export class RemoteGateway {
     );
     const old = store.admit(envelope, now);
     if (old && envelope.operation === "claim" && ledger.recoverClaim && old.state !== "done") {
-      const recovered = await this.reconcile(peer.nodeId, old, envelope.operation);
+      const recovered = await this.reconcile(peer.nodeId, old);
       if (recovered.state === "done") return recovered;
       // Exact committed receipt may be read after expiry, but a new transaction
       // still requires current node/workspace authorization.
@@ -771,7 +781,7 @@ export class RemoteGateway {
         envelope.operation === "projectCollaborate" && old.state === "uncertain"
       )
     )
-      return await this.reconcile(peer.nodeId, old, envelope.operation);
+      return await this.reconcile(peer.nodeId, old);
     const commandId = `remote-${digest([peer.nodeId, envelope.commandId])}`;
     const p = envelope.payload;
     try {
@@ -789,6 +799,13 @@ export class RemoteGateway {
       let result: unknown;
       switch (envelope.operation) {
         case "executionModelView": {
+          if(p.read!==undefined) {
+            insist(ledger.readExecutionModels,"EXECUTION_CATALOG_UNSUPPORTED",503);
+            const read=NodeReadOptions.parse(p.read);
+            insist(!read.nodeId || read.nodeId===peer.nodeId,"EXECUTION_CATALOG_NODE_DENIED",403);
+            result=await ledger.readExecutionModels(peer.nodeId,read,p.refresh===true);
+            break;
+          }
           insist(
             ledger.executionModelView,
             "EXECUTION_CATALOG_UNSUPPORTED",
@@ -889,7 +906,7 @@ export class RemoteGateway {
           result = {
             commandId: saved.commandId,
             acceptedAt: saved.acceptedAt,
-            value: { accepted: true },
+            value: executionCatalogCompletion(saved.value),
           };
           break;
         }
@@ -916,7 +933,11 @@ export class RemoteGateway {
             503,
           );
           let bytes = 0;
-          result = (await ledger.pendingSessionMessages(peer.nodeId, p.kind === "completion" || p.kind === "message" ? {kind:p.kind} : undefined)).filter(
+          result = (await ledger.pendingSessionMessages(peer.nodeId, {
+            ...(p.kind === "completion" || p.kind === "message" ? {kind:p.kind} : {}),
+            ...(Array.isArray(p.excludeMessageIds) ? {excludeMessageIds:p.excludeMessageIds.filter(identifier)} : {}),
+            ...(typeof p.afterMessageId === "string" ? {afterMessageId:p.afterMessageId} : {}),
+          })).filter(
             (m) => {
               if (
                 !(m.completion?.origin.kind === "session" && m.completion.origin.nodeId === peer.nodeId && m.nodeId === peer.nodeId || peer.managedAccess || peer.workspaces.includes(m.workspaceId))
@@ -1194,6 +1215,7 @@ export class RemoteGateway {
           insist(ledger.scopedHistory, "COLLABORATION_UNSUPPORTED", 503);
           result = await ledger.scopedHistory({
             ...lease(p, peer.nodeId),
+            ...(p.read!==undefined?{read:TaskReadOptions.parse(p.read)}:{}),
             ...(p.targetTaskId !== undefined
               ? { taskId: String(p.targetTaskId) }
               : {}),
@@ -1336,6 +1358,20 @@ export class RemoteGateway {
       );
       return receipt;
     } catch (error) {
+      if(envelope.operation==="taskHistory" && error instanceof ProtocolError && ["READ_TOO_LARGE","RESPONSE_LIMIT"].includes(error.code)) {
+        const result={readError:{code:error.code,message:error.message}};
+        store.complete(peer.nodeId,envelope.commandId,result,this.options.maxResponseBytes);
+        return {commandId:envelope.commandId,state:"done",result};
+      }
+      if (envelope.operation === "completeExecutionModels" && error instanceof ExecutionModelsError) {
+        const result = {
+          commandId,
+          acceptedAt: new Date().toISOString(),
+          value: { accepted: false, catalogError: { code: error.code } },
+        };
+        store.complete(peer.nodeId, envelope.commandId, result, this.options.maxResponseBytes);
+        return { commandId: envelope.commandId, state: "done", result };
+      }
       if (
         envelope.operation === "executionModelView" &&
         error instanceof ProtocolError
@@ -1384,11 +1420,12 @@ export class RemoteGateway {
   private async reconcile(
     nodeId: string,
     receipt: CommandReceipt,
-    operation?: import("./protocol.js").Operation,
   ): Promise<CommandReceipt> {
     if (receipt.state === "done" || !this.options.ledger.commandReceipt)
       return receipt;
     try {
+      const operation = this.options.store.commandOperation(nodeId, receipt.commandId);
+      if (!operation) return receipt;
       const durable = await this.options.ledger.commandReceipt(
         `remote-${digest([nodeId, receipt.commandId])}`,
       );
@@ -1397,7 +1434,7 @@ export class RemoteGateway {
             nodeId,
             receipt.commandId,
             operation === "completeExecutionModels"
-              ? { ...durable, value: { accepted: true } }
+              ? { ...durable, value: executionCatalogCompletion(durable.value) }
               : durable,
             this.options.maxResponseBytes,
           )

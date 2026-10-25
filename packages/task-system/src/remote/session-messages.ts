@@ -7,12 +7,15 @@ import type { SessionMessage, SessionMessageResult } from "./ports.js";
 export class SessionMessages {
   private active = new Map<
     string,
-    { session: string; abort: AbortController; done: Promise<void> }
+    { session: string; completion: boolean; abort: AbortController; done: Promise<void> }
   >();
   private stopped = false;
   constructor(private options: WorkerOptions) {}
   get activeCount() {
     return this.active.size;
+  }
+  get workloadCount() {
+    return [...this.active.values()].filter(message => !message.completion).length;
   }
   async poll(concurrency: number, canAdmit: () => boolean = () => true) {
     const { ledger, provider, policy } = this.options;
@@ -23,18 +26,22 @@ export class SessionMessages {
       !provider.sendSessionMessage
     )
       return;
-    const messages = await ledger.pendingSessionMessages(policy.nodeId, this.options.deliverTaskReturns === false ? {kind:"message"} : undefined);
+    const messages = await ledger.pendingSessionMessages(policy.nodeId, {
+      kind: this.options.deliverTaskReturns === false ? "message" : undefined,
+      excludeMessageIds:[...this.active.keys()],
+    });
     if(!canAdmit())return;
     for (const message of messages) {
       if (message.completion && this.options.deliverTaskReturns === false) continue;
       if (
-        this.active.size >= concurrency &&
+        !message.completion &&
+        this.workloadCount >= concurrency &&
         !this.options.store.sessionMessageState(message.messageId)
       )
         continue;
       if (
         this.active.has(message.messageId) ||
-        [...this.active.values()].some((a) => a.session === message.sessionId)
+        (!message.completion && [...this.active.values()].some((a) => !a.completion && a.session === message.sessionId))
       )
         continue;
       const abort = new AbortController();
@@ -43,6 +50,7 @@ export class SessionMessages {
         .finally(() => this.active.delete(message.messageId));
       this.active.set(message.messageId, {
         session: message.sessionId,
+        completion: Boolean(message.completion),
         abort,
         done,
       });

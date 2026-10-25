@@ -44,7 +44,7 @@ test('central activation persists real workbench records, restores binding, scop
   assert.equal(status.tasks.some(x => x.taskId === unrelated.taskId), false);
   assert.equal(status.binding.sessionId, f.input.sessionId);
   assert.equal(f.ledger.snapshot().tasks.some(x => x.kind === 'observed'), false);
-  const nodes = await f.call('nodes', 'nodes'); assert.equal(nodes.nodes.length, 2);
+  const nodes = await f.call('nodes', 'nodes', {read:{details:true}}); assert.equal(nodes.nodes.length, 2);
   assert.equal(JSON.stringify(nodes).includes(f.dir), false);
 });
 test('concurrent stable dispatch creates one linked execution; submit waits for quiescence and never accepts results', async t => {
@@ -112,7 +112,7 @@ test('backend discovery uses fresh authenticated advertisements and strips priva
   const route = { ...f.route, backend: 'host-owned-profile', requiredCapabilities: ['official-codex'] };
   f.ledger.recordNodeHeartbeat('advertise', { nodeId: 'other', sampledAt: Date.now(), runtimeReady: true, activeExecutions: 0, providerStatus: { state: 'not-probed', providers: [], executionRoutes: [{ ...route, cliPath: '/private/binary' }, { ...route, nodeId: 'mbp' }, { ...route, model: 'ungranted' }] } });
   publishModels(f.ledger,'other',[{provider:route.provider,model:route.model,reasoningEffort:route.reasoningEffort,backend:route.backend}]);
-  const nodes = await f.call('nodes', 'nodes');
+  const nodes = await f.call('nodes', 'nodes', {read:{details:true}});
   assert.ok(nodes.routes.some(route=>route.nodeId==='other'&&route.backend==='host-owned-profile')); assert.equal(nodes.routes.find(route=>route.backend==='host-owned-profile').backend, 'host-owned-profile');
   assert.equal(JSON.stringify(nodes).includes('/private/binary'), false);
   const d = await f.call('dispatch', 'dispatch', { title: 'Private execution configuration', route });
@@ -121,7 +121,7 @@ test('backend discovery uses fresh authenticated advertisements and strips priva
   assert.ok(status.runs.some(r => r.runId === run.runId));
   assert.equal(JSON.stringify(status).includes('PRIVATE_MARKER'), false);
   f.ledger.recordNodeHeartbeat('offline', { nodeId: 'other', sampledAt: Date.now() + 1, runtimeReady: false, activeExecutions: 0 });
-  assert.ok((await f.call('nodes-offline', 'nodes')).routes.some(route=>route.nodeId==='other'),'fresh catalog remains available for offline queuing; admission still rechecks readiness');
+  assert.ok((await f.call('nodes-offline', 'nodes', {read:{details:true}})).routes.some(route=>route.nodeId==='other'),'fresh catalog remains available for offline queuing; admission still rechecks readiness');
 });
 
 test('actual HTTP malformed collaboration rejection remains INVALID; other remote requests retain uncertainty semantics', async t => {
@@ -197,7 +197,7 @@ test('advertised model routes support managed directories and explicit unavailab
   const advertised = { nodeId: 'other', provider: 'fixture', model: 'fixture', reasoningEffort: 'low', backend: 'fixture-host-profile', requiredCapabilities: ['official-codex'] };
   f.ledger.recordNodeHeartbeat('routes-heartbeat', { nodeId: 'other', sampledAt: Date.now(), runtimeReady: true, activeExecutions: 0, providerStatus: { state: 'not-probed', providers: [], executionRoutes: [advertised] } });
   publishModels(f.ledger,'other',[{provider:advertised.provider,model:advertised.model,reasoningEffort:advertised.reasoningEffort,backend:advertised.backend}]);
-  const nodes = await f.call('nodes', 'nodes');
+  const nodes = await f.call('nodes', 'nodes', {read:{details:true}});
   const available=nodes.routes.find(route=>route.nodeId==='other');
   assert.equal(available.workspaceId,undefined);assert.equal(available.backend,advertised.backend);
   assert.equal(JSON.stringify(nodes).includes('/private/path'), false);
@@ -214,4 +214,79 @@ test('advertised model routes support managed directories and explicit unavailab
   await worker.pollOnce(1);
   assert.equal(calls, 1);
   assert.equal(f.ledger.getRun(run.runId).state, 'succeeded');
+});
+
+test('project recovery reuses an unstarted Task, scopes cancel/repair, and explicit retry preserves prior Runs', async t => {
+  const f=fixture(t),activation=await f.call('recovery-activate','activate');
+  const session=(id,command)=>f.call(id,'session',{command});
+  const draft=(await session('recovery-draft',{kind:'create',title:'Original work',description:'Keep this intent'})).result.value;
+  f.ledger.projectExecutionSettings.save({projectId:activation.projectId,expectedRevision:0,allowedNodeIds:['mbp'],executionBindings:{}});
+  await assert.rejects(f.call('not-allowed','dispatch',{taskId:draft.taskId,nodeId:'other',executionModel:{provider:'fixture',model:'fixture',reasoningEffort:'low'}}),{code:'PROJECT_NODE_NOT_ALLOWED'});
+  assert.equal(f.ledger.snapshot().tasks.length,1);assert.equal(f.ledger.snapshot().runs.length,0);
+  f.ledger.projectExecutionSettings.save({projectId:activation.projectId,expectedRevision:1,allowedNodeIds:['other'],executionBindings:{}});
+  const dispatched=await f.call('recovery-dispatch','dispatch',{taskId:draft.taskId,route:f.route});
+  const run=dispatched.dispatch;
+  assert.equal(run.taskId,draft.taskId);assert.equal(f.ledger.snapshot().tasks.length,1);
+  assert.deepEqual(await f.call('recovery-dispatch','dispatch',{taskId:draft.taskId,route:f.route}),dispatched);
+  await assert.rejects(f.call('accidental-double','dispatch',{taskId:draft.taskId,route:f.route}),{code:'CONFLICT'});
+  await session('repair-original',{kind:'repair',taskId:draft.taskId,runId:run.runId,expectedActionVersion:f.ledger.taskActionState(draft.taskId).version});
+  assert.equal(f.ledger.snapshot().runs.length,1);
+  const stranger=f.ledger.createTask('stranger-task',{title:'Other project'}).value;
+  await assert.rejects(session('cancel-stranger',{kind:'cancel',taskId:stranger.taskId,reason:'No permission'}),{code:'FORBIDDEN'});
+  await assert.rejects(f.call('dispatch-stranger','dispatch',{taskId:stranger.taskId,route:f.route}),{code:'FORBIDDEN'});
+  const cancelled=await session('cancel-original',{kind:'cancel',taskId:draft.taskId,reason:'User deferred optional work'});
+  assert.equal(cancelled.result.runs[0].state,'cancelled');
+  await f.call('stage-finish','submit',{summary:'Stage delivered; optional work deferred'});
+  const retried=await f.call('retry-original','dispatch',{taskId:draft.taskId,route:f.route,retry:true,expectedActionVersion:f.ledger.taskActionState(draft.taskId).version});
+  assert.notEqual(retried.dispatch.runId,run.runId);assert.equal(f.ledger.getRun(run.runId).state,'cancelled');
+  assert.equal(f.ledger.snapshot().runs.length,2);
+  const claimed=f.ledger.claim('claim-retry',{runId:retried.dispatch.runId,nodeId:'other',ttlMs:60000}).value;
+  const ref={runId:claimed.run.runId,attemptId:claimed.attempt.attemptId,nodeId:'other',fence:claimed.attempt.fence,executionId:'retry-owner'};
+  f.ledger.markRunning('retry-running',ref);
+  await session('cancel-running',{kind:'cancel',taskId:draft.taskId,reason:'User requested stop'});
+  assert.equal(f.ledger.getRun(ref.runId).state,'running');
+  await assert.rejects(f.call('running-finish','submit'),error=>error.code==='PROJECT_NOT_QUIESCENT' && error.message.includes(ref.runId) && error.message.includes('task_wait'));
+  await assert.rejects(f.call('running-rerun','dispatch',{taskId:draft.taskId,route:f.route,retry:true,expectedActionVersion:f.ledger.taskActionState(draft.taskId).version}),{code:'CONFLICT'});
+  f.ledger.acknowledgeCancellation('confirmed-stop',ref);
+  await f.call('confirmed-finish','submit',{summary:'Cancellation confirmed'});
+});
+
+test('project write receipts stay compact and default reads hide bodies while detail pagination retains safe diagnosis',async t=>{
+ const f=fixture(t);await f.call('read-activate','activate');
+ const dispatched=await f.call('read-dispatch','dispatch',{title:'Read work',description:'LARGE_INTENT_'+('x'.repeat(10000)),route:f.route});
+ const taskId=dispatched.taskId;
+ for(let i=0;i<7;i++)f.ledger.appendReport('read-report-'+i,{taskId,title:'Report '+i,body:'REPORT_BODY_'+i,kind:'progress'});
+ const result=await f.call('small-progress','update',{summary:'Recorded progress'});
+ assert.equal(result.tasks,undefined);assert.equal(result.reports,undefined);
+ const query=(await f.call('read-query','session',{command:{kind:'query'}})).result;
+ assert.equal(query.reports.length,1);assert.equal(query.reports[0].title,'Report 6');
+ assert.doesNotMatch(JSON.stringify(query),/LARGE_INTENT|REPORT_BODY/);
+ const ids=[];let cursor;
+ do {
+  const page=(await f.call('history-'+(cursor??'0'),'session',{command:{kind:'history',taskId,read:{details:true,section:'reports',limit:2,...(cursor?{cursor}:{})}}})).result;
+  ids.push(...page.reports.map(report=>report.reportId));
+  assert.ok(page.reports.every(report=>report.body.startsWith('REPORT_BODY')));
+  cursor=page.page.nextCursor;
+ }while(cursor);
+ assert.equal(new Set(ids).size,7);
+ await assert.rejects(f.call('different-read-target','session',{command:{kind:'history',taskId,read:{taskId:'different'}}}),/target differs/);
+ const waiting=(await f.call('read-wait','session',{command:{kind:'wait',taskId,quietMs:0}})).result;
+ assert.ok(waiting.pending.some(value=>value.taskId===taskId && value.recoveryActions.includes('task_cancel')));
+});
+
+test('uncertain effects cannot be retried or hidden by task cancellation and drafts have actionable wait entries',async t=>{
+ const f=fixture(t);await f.call('uncertain-activate','activate');
+ const draft=(await f.call('unstarted-draft','session',{command:{kind:'create',title:'Unstarted work'}})).result.value;
+ const waiting=(await f.call('unstarted-wait','session',{command:{kind:'wait',taskId:draft.taskId,quietMs:0}})).result;
+ assert.equal(waiting.pending[0].phase,'unstarted');assert.deepEqual(waiting.pending[0].recoveryActions,['task_dispatch','task_cancel']);
+ await f.call('dispose-draft','session',{command:{kind:'cancel',taskId:draft.taskId,reason:'Optional draft deferred'}});
+ const dispatched=await f.call('uncertain-dispatch','dispatch',{title:'Uncertain effects',route:f.route}),run=dispatched.dispatch;
+ const claim=f.ledger.claim('uncertain-claim',{runId:run.runId,nodeId:'other',ttlMs:60000}).value;
+ const ref={runId:run.runId,attemptId:claim.attempt.attemptId,nodeId:'other',fence:claim.attempt.fence,executionId:'uncertain-owner'};
+ f.ledger.markRunning('uncertain-running',ref);f.ledger.submit('uncertain-outcome',{...ref,outcome:'unknown',summary:'Cannot confirm effects'});
+ await f.call('cancel-uncertain','session',{command:{kind:'cancel',taskId:run.taskId,reason:'User requested stop'}});
+ assert.equal(f.ledger.getRun(run.runId).state,'uncertain');
+ await assert.rejects(f.call('retry-uncertain','dispatch',{taskId:run.taskId,route:f.route,retry:true,expectedActionVersion:f.ledger.taskActionState(run.taskId).version}),{code:'CONFLICT'});
+ await assert.rejects(f.call('finish-uncertain','submit'),error=>error.code==='PROJECT_NOT_QUIESCENT' && error.message.includes('verify_stopped'));
+ const status=f.ledger.allSettled(run.taskId,0,undefined,true);assert.equal(status.pending[0].phase,'uncertain');assert.equal(status.pending[0].needsAction,true);
 });

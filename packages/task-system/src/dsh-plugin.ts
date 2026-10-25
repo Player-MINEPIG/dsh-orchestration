@@ -1,3 +1,5 @@
+import { nodeRead } from "./node-reads.js";
+import { TaskReadOptions, taskRead, runSummary, delegationSummary } from "./task-reads.js";
 import type {} from "@deepseek-ai/cordis-plugin-loader";
 import { SessionCollaboration, collaborationAuthority } from "./project-collaboration/session.js";
 import { deploymentPolicy, ledgerRole, type DeploymentPolicy } from "./deployment.js";
@@ -7,7 +9,6 @@ import { ProjectSessionService } from "./project-session-service.js";
 import { TaskReturnDelivery } from "./task-returns.js";
 import { ExecutionModelChoice } from "./execution-models.js";
 import { resolveDeviceNodeId } from "./device-identity.js";
-import { acquireWorkspaceExecution } from "./workspace-execution-lock.js";
 import { ExecutionModelInventory } from "./executor-models.js";
 import { workflowInputPage, workflowPromptConfiguration } from "./workflow-input.js";
 import { ProgramRegistry } from "./workflow-programs.js";
@@ -416,16 +417,9 @@ export interface ExternalExecutionRequest {
   signal: AbortSignal;
   collaboration?: NativeCollaboration;
 }
-export interface NativeDescendantStatus {
-  needsAction?: {runId:string;taskId:string;issue?: import("./contracts.js").DispatchIssue}[];
-  settled: boolean;
-  pendingRunIds: string[];
-  pendingTaskIds: string[];
-  taskIds: string[];
-  quietUntil: string;
-}
+export type NativeDescendantStatus = import("./remote/ports.js").SettlementView;
 export interface NativeCollaboration {
-  nodes?():Promise<import("./execution-models.js").ExecutionModelsView[]>;
+  nodes?(read?:import("./node-reads.js").NodeReadOptions):Promise<ReturnType<typeof nodeRead>>;
   availableOperations?: readonly string[];
   delegate(
     commandId: string,
@@ -437,8 +431,8 @@ export interface NativeCollaboration {
       policy?: TaskPolicy;
       configuration?: Json;
     },
-  ): Promise<unknown>;
-  history(targetTaskId?: string): Promise<unknown>;
+  ): Promise<import("./contracts.js").Receipt<{task:import("./contracts.js").Task;run:import("./contracts.js").Run}>>;
+  history(targetTaskId?: string,read?:TaskReadOptions): Promise<import("./remote/ports.js").TaskHistory>;
   wait(
     targetTaskId?: string,
     quietMs?: number,
@@ -1647,7 +1641,6 @@ export class NativeExecutionProvider {
     let workspace: ReturnType<TaskLedger["getWorkspace"]> | undefined;
     let workspacePath:string|undefined;
     let executionRoot=this.owner.executionDirectories.settings().root;
-    let releaseWorkspace:(()=>void)|undefined;
     let composition: Awaited<ReturnType<NativeExecutionProvider["executionComposition"]>>;
     const setup = async (agentCtx: Context, agent: Agent) => {
       if (!resume) this.initializeSessionTitle(agent, claim);
@@ -1829,7 +1822,6 @@ export class NativeExecutionProvider {
           if(!workspacePath)throw new Error("SESSION_WORKSPACE_MAPPING_REQUIRED: original session has no execution directory");
         }
       }
-      if(workspacePath)releaseWorkspace=await acquireWorkspaceExecution(workspacePath,owned.creation.signal);
       if (route.backend) {
         if (!workspacePath)
           throw new Error("official backend requires an assigned workspace");
@@ -1978,7 +1970,7 @@ export class NativeExecutionProvider {
       throw error;
     } finally {
       if (renewal) clearInterval(renewal);
-      try {await this.release(owned);}finally {releaseWorkspace?.();}
+      await this.release(owned);
       // Cancellation acknowledgment releases task resources only after the
       // native handle has stopped and its scoped tools have unwound.
       if (this.owner.ledger.getRun(ref.runId).cancellationRequested) {
@@ -2134,7 +2126,10 @@ export class TaskSystemService extends Service {
     } : {kind:"system",nodeId:this.config.nodeId};
     return this.ledger.withDispatchOrigin(origin,operation);
   }
-  private returnJob?: Promise<void>;
+  private readonly returnJobs = new Map<string, Promise<void>>();
+  private get returnJob(): Promise<void> | undefined {
+    return this.returnJobs.size ? Promise.allSettled([...this.returnJobs.values()]).then(() => {}) : undefined;
+  }
   readonly executionDirectories: ExecutionDirectories;
   readonly programs: ProgramRegistry;
   readonly workflows: WorkflowRuntime;
@@ -2142,10 +2137,10 @@ export class TaskSystemService extends Service {
   private programStore?: RecoveryStore;
 
   projects?: ProjectRuntime;
-  sessionProjectNodes?: (agent:Agent|undefined,callId:string)=>Promise<{handled:false}|{handled:true;value:Json}>;
+  sessionProjectNodes?: (agent:Agent|undefined,callId:string,read?:import("./node-reads.js").NodeReadOptions)=>Promise<{handled:false}|{handled:true;value:Json}>;
   sessionProjectDispatch?: (
     agent: Agent | undefined,
-    input: { commandId: string; title?: string; description?: string; route?: unknown; nodeId?: string; executionModel?: unknown; taskId?: string; requestId?: string; workspaceId?: string; configuration?: unknown },
+    input: { commandId: string; title?: string; description?: string; route?: unknown; nodeId?: string; executionModel?: unknown; retry?:boolean;expectedActionVersion?:string; taskId?: string; requestId?: string; workspaceId?: string; configuration?: unknown },
     callId: string,
   ) => Promise<{ handled: false } | { handled: true; value: Json }>;
   native?: NativeExecutionProvider;
@@ -2467,20 +2462,18 @@ export class TaskSystemService extends Service {
   tick(): void {
     if (!this.accepting) return;
     this.recoverResults();
-    if(!this.configurationPaused && this.config.centralMode === "host" && !this.returnJob) {
-      const messages=this.ledger.pendingSessionMessages(this.config.nodeId,{kind:"completion"});
-      const job=(async()=>{
-        for(const message of messages) {
-          try {
-            const reply=await this.taskReturns.deliver(message);
-            this.ledger.completeSessionMessage(`task-return-ack:${message.messageId}`,{messageId:message.messageId,nodeId:this.config.nodeId,state:"completed",reply});
-          } catch(error) {
-            this.ledger.recordTaskReturnFailure(message.messageId,error instanceof Error ? error.message : "RETURN_UNAVAILABLE");
-            this.ctx.logger.warn("Task result return %s retained for retry: %s",message.messageId,error);
-          }
-        }
-      })().finally(()=>{if(this.returnJob===job)this.returnJob=undefined;});
-      this.returnJob=job;
+    if (!this.configurationPaused && this.config.centralMode === "host") {
+      const messages = this.ledger.pendingSessionMessages(this.config.nodeId, {kind:"completion", excludeMessageIds:[...this.returnJobs.keys()]});
+      for (const message of messages) {
+        if (this.returnJobs.has(message.messageId)) continue;
+        const job = this.taskReturns.deliver(message).then(reply => {
+          this.ledger.completeSessionMessage(`task-return-ack:${message.messageId}`, {messageId:message.messageId,nodeId:this.config.nodeId,state:"completed",reply});
+        }).catch(error => {
+          this.ledger.recordTaskReturnFailure(message.messageId, error instanceof Error ? error.message : "RETURN_UNAVAILABLE");
+          this.ctx.logger.warn("Task result return %s retained for retry: %s", message.messageId, error);
+        }).finally(() => { this.returnJobs.delete(message.messageId); });
+        this.returnJobs.set(message.messageId, job);
+      }
     }
     this.localHeartbeat();
     if(!this.configurationPaused && !this.localCatalogJob && this.ledger.executionModels.pending(this.config.nodeId).length) {
@@ -2839,7 +2832,7 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
         interpolate: false,
         text: ({ agent }) =>
           agent && !service.native?.scopeFor(agent)
-            ? "You coordinate work across registered execution nodes. For an authorized user request that requires task execution, prefer dispatching to a suitable executor over doing the workload in this conversation. When available, use task_nodes to inspect executor capabilities and runtime health, then task_dispatch with a stable commandId, task title and complete instructions in description. The user need not specify an executor, provider, model, or reasoning effort: omit route to let the planning decision service choose an eligible executor; its configured node default supplies the workload model/effort. If the user explicitly requests an execution model, extract it into executionModel {provider,model,reasoningEffort?,backend?}; never use the decision-call fields or guess a model from unrelated context. task_plan provider/model/reasoningEffort configure the decision call itself, not the workload model; normally omit them. task_plan only proposes and never dispatches. To dispatch a reviewed proposal, call task_dispatch with commandId and requestId set to that proposal requestId. task_dispatch creates the assigned Run once. If routing is pending or the decision abstains, report the missing configuration or clarification instead of inventing a route or silently performing the workload locally. Follow host and channel tool permissions. Track the actual Run/report outcome with task_query, task_history or task_wait; an applied proposal or delivery ACK alone does not prove task success. For a user-requested project coordinator workflow, use project_list then project_bind_session in this project's current workspace, create a draft parent with task_create, and register this current session with task_bind_dispatcher. Subsequent task_dispatch calls automatically create children under that parent Task/Run. Results return asynchronously to this original session; inspect task_history and submit the parent final report with task_submit_result once child work is settled. Use the task-specific business submission tool when the workflow defines one. Public tool names from older templates have changed: task_plan only proposes, task_dispatch is the only formal dispatch tool, codex_delegate is local Codex, task_wait with timeoutMs=0 replaces task_children, and task_submit_result replaces task_settle. Brief conversation and planning explanations can be answered here."
+            ? "You coordinate work across registered execution nodes. For an authorized user request that requires task execution, prefer dispatching to a suitable executor over doing the workload in this conversation. When available, use task_nodes for a compact executor summary and details=true with nodeId/model filters to page model routes. Divide write scopes, dependencies and shared Git/GUI operations before parallel dispatch. Use task_cancel for authorized cancellation or deferral, task_repair_dispatch for an unclaimed Run, and task_dispatch with the same taskId and an explicit retry=true/current expectedActionVersion for a new execution after a confirmed terminal Run. Never rerun active or uncertain effects. Read reports/history details only when needed. Use project_progress/project_finish with commandId and distinguish execution completion, accepted submission and user approval. Use task_nodes to inspect executor capabilities and runtime health, then task_dispatch with a stable commandId, task title and complete instructions in description. The user need not specify an executor, provider, model, or reasoning effort: omit route to let the planning decision service choose an eligible executor; its configured node default supplies the workload model/effort. If the user explicitly requests an execution model, extract it into executionModel {provider,model,reasoningEffort?,backend?}; never use the decision-call fields or guess a model from unrelated context. task_plan provider/model/reasoningEffort configure the decision call itself, not the workload model; normally omit them. task_plan only proposes and never dispatches. To dispatch a reviewed proposal, call task_dispatch with commandId and requestId set to that proposal requestId. task_dispatch creates the assigned Run once. If routing is pending or the decision abstains, report the missing configuration or clarification instead of inventing a route or silently performing the workload locally. Follow host and channel tool permissions. Track the actual Run/report outcome with task_query, task_history or task_wait; an applied proposal or delivery ACK alone does not prove task success. For a user-requested project coordinator workflow, use project_list then project_bind_session in this project's current workspace, create a draft parent with task_create, and register this current session with task_bind_dispatcher. Subsequent task_dispatch calls automatically create children under that parent Task/Run. Results return asynchronously to this original session; inspect task_history and submit the parent final report with task_submit_result once child work is settled. Use the task-specific business submission tool when the workflow defines one. Public tool names from older templates have changed: task_plan only proposes, task_dispatch is the only formal dispatch tool, codex_delegate is local Codex, task_wait with timeoutMs=0 replaces task_children, and task_submit_result replaces task_settle. Brief conversation and planning explanations can be answered here."
             : "",
       });
     });
@@ -3088,22 +3081,25 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
     defineTool({
       name: "task_query",
       description:
-        "Read durable tasks and runs. Owned execution agents see only their assigned task.",
-      parameters: { includeDismissed: { type: "boolean" } },
+        "Read compact durable task summaries and the latest report metadata. Filter with taskId/state and page with limit/cursor. Owned agents remain inside their assigned tree.",
+      parameters: { includeDismissed: { type: "boolean" },taskId:{type:"string"},state:{type:"string"},details:{type:"boolean"},limit:{type:"integer"},cursor:{type:"string"} },
       output,
       execute: async (args, exec) => {
+        const read=TaskReadOptions.parse(Object.fromEntries(Object.entries(args).filter(([key,value])=>key!=="includeDismissed" && value!==undefined)));
         const bound = service.native?.scopeFor(exec.agent);
-        if (!bound && (config.centralMode === "remote" || (exec.agent && service.sessionCollaboration.binding(exec.agent)?.state === "active"))) return json(await service.sessionCollaboration.command(exec.agent, {kind:"query"}, String(exec.callId)));
+        if (!bound && (config.centralMode === "remote" || (exec.agent && service.sessionCollaboration.binding(exec.agent)?.state === "active"))) return json(await service.sessionCollaboration.command(exec.agent, {kind:"query",read}, String(exec.callId)));
         if (bound?.external) {
           if (!bound.collaboration)
             throw new Error("coordinator collaboration unavailable");
-          return json(await bound.collaboration.history());
+          const {task:_task,...summary}=await bound.collaboration.history(read.taskId,read);
+          return json(summary);
         }
-        return json(
-          bound
-            ? ledger.scopedHistory(bound.ref)
-            : ledger.querySnapshot({ includeDismissed: args.includeDismissed }),
-        );
+        if(bound) {
+          if(read.taskId && !taskWithin(ledger,read.taskId,bound.claim.task.taskId))throw new TaskError("FORBIDDEN","Task is outside the owned tree");
+          const {task:_task,...summary}=ledger.scopedHistory({...bound.ref,...(read.taskId?{taskId:read.taskId}:{}),read});
+          return json(summary);
+        }
+        return json(taskRead(ledger.querySnapshot({includeDismissed:args.includeDismissed}),read,id=>ledger.taskActionState(id).version));
       },
     }),
   );
@@ -3146,25 +3142,25 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
     defineTool({
       name: "task_nodes",
       description:
-        "Request current executor model catalogs and inspect node defaults, capabilities, sampled runtime health and catalog freshness before task_plan. Catalog requests are bounded and can return pending/stale/unavailable without erasing the last good models. Owned execution and executor profiles see only their own node; provider connectivity is unprobed.",
-      parameters: {},
+        "Read compact executor summaries; details=true adds one paged route list with optional nodeId/model filters and limit/cursor. Inspect node defaults, capabilities, sampled runtime health and catalog freshness before task_plan. Catalog requests are bounded and can return pending/stale/unavailable without erasing the last good models. Owned execution and executor profiles see only their own node; provider connectivity is unprobed.",
+      parameters: {nodeId:{type:"string"},model:{type:"string"},details:{type:"boolean"},limit:{type:"integer"},cursor:{type:"string"}},
       output,
-      execute: async (_args, exec) => {
+      execute: async (args, exec) => {
         const bound = service.native?.scopeFor(exec.agent);
         if(!bound) {
-          const project=await service.sessionProjectNodes?.(exec.agent,String(exec.callId));
+          const project=await service.sessionProjectNodes?.(exec.agent,String(exec.callId),args);
           if(project?.handled)return project.value;
-          if (exec.agent && service.sessionCollaboration.binding(exec.agent)?.state === "active") return json(await service.sessionCollaboration.invoke(exec.agent,"nodes",{},String(exec.callId)));
+          if (exec.agent && service.sessionCollaboration.binding(exec.agent)?.state === "active") return json(await service.sessionCollaboration.invoke(exec.agent,"nodes",{read:args},String(exec.callId)));
         }
         if(bound?.external) {
           if(!bound.collaboration?.nodes)throw new TaskError("CATALOG_UNSUPPORTED","Coordinator does not provide this executor catalog view");
-          return json((await bound.collaboration.nodes()).map(view=>({nodeId:view.nodeId,executionModels:view,models:view.catalog.positiveSnapshot?.models ?? view.catalog.snapshot?.models ?? [],runtimeHealth:"not-sampled-by-this-view"})));
+          return json(await bound.collaboration.nodes(args));
         }
         const nodeId =
           bound?.ref.nodeId ??
           (config.centralMode === "remote" ? config.nodeId : undefined);
         await Promise.all(ledger.decisionCatalog().nodes.filter(node=>node.enabled&&(!nodeId||node.nodeId===nodeId)).map(node=>ledger.refreshNodeModels(node.nodeId)));
-        return json(
+        return json(nodeRead(
           ledger
             .nodeStatuses()
             .filter((node) => !nodeId || node.nodeId === nodeId)
@@ -3181,8 +3177,8 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
                   ? { defaultWorkspaceId: node.defaultWorkspaceId }
                   : {}),
               };
-            }),
-        );
+            }),args,
+        ));
       },
     }),
   );
@@ -3205,24 +3201,23 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
     defineTool({
       name: "task_history",
       description:
-        "Read all runs, reports, artifacts and events for a stable task identity. Owned agents are restricted to their assigned task.",
-      parameters: { taskId: { type: "string", required: true } },
+        "Read a compact task summary by default. Use details=true with section=reports/events/runs/artifacts, optional reportId and limit/cursor for evidence. Pages may shrink to fit the read budget; follow page.nextCursor. Owned agents remain inside their assigned tree.",
+      parameters: {taskId:{type:"string",required:true},details:{type:"boolean"},section:{type:"string",enum:["reports","events","runs","artifacts"]},reportId:{type:"string"},limit:{type:"integer"},cursor:{type:"string"}},
       output,
       execute: async (args, exec) => {
+        const read=TaskReadOptions.parse(args);
         const bound = service.native?.scopeFor(exec.agent);
-        if (!bound && (config.centralMode === "remote" || (exec.agent && service.sessionCollaboration.binding(exec.agent)?.state === "active"))) return json(await service.sessionCollaboration.command(exec.agent, {kind:"history",taskId:args.taskId}, String(exec.callId)));
+        if (!bound && (config.centralMode === "remote" || (exec.agent && service.sessionCollaboration.binding(exec.agent)?.state === "active"))) return json(await service.sessionCollaboration.command(exec.agent, {kind:"history",taskId:args.taskId,read}, String(exec.callId)));
         if (bound?.external) {
           if (!bound.collaboration)
             throw new Error("coordinator collaboration unavailable");
-          return json(await bound.collaboration.history(args.taskId));
+          return json(await bound.collaboration.history(args.taskId,read));
         }
         if (bound && !taskWithin(ledger, args.taskId, bound.claim.task.taskId))
           throw new Error("owned agent cannot inspect outside its task tree");
-        return json(
-          bound
-            ? ledger.scopedHistory({ ...bound.ref, taskId: args.taskId })
-            : ledger.history(args.taskId),
-        );
+        if(bound)return json(ledger.scopedHistory({...bound.ref,taskId:args.taskId,read}));
+        const history=ledger.history(args.taskId);
+        return json(taskRead({...history,tasks:[history.task]},read,id=>ledger.taskActionState(id).version,true));
       },
     }),
   );
@@ -3304,8 +3299,7 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
         }),
       }),
     );
-  if (config.centralMode === "host")
-    ctx.tools.register(
+  ctx.tools.register(
       defineTool({
         name: "task_repair_dispatch",
         description:
@@ -3324,8 +3318,8 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
               "FORBIDDEN",
               "Owned execution cannot repair dispatch configuration",
             );
-          return json(
-            ledger.repairDispatch(args.commandId, {
+          if(config.centralMode==="remote" || (exec.agent && service.sessionCollaboration.binding(exec.agent)?.state==="active"))return json(await service.sessionCollaboration.command(exec.agent,{kind:"repair",taskId:args.taskId,runId:args.runId,expectedActionVersion:args.expectedActionVersion,...(args.executionModel?{executionModel:ExecutionModelChoice.parse(args.executionModel)}:{})},args.commandId));
+          const receipt=ledger.repairDispatch(args.commandId, {
               taskId: args.taskId,
               runId: args.runId,
               expectedActionVersion: args.expectedActionVersion,
@@ -3336,8 +3330,8 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
                     ),
                   }
                 : {}),
-            }),
-          );
+            });
+          return json({...receipt,value:runSummary(receipt.value)});
         },
       }),
     );
@@ -3360,6 +3354,8 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
           description:
             "Existing draft task to dispatch. Owned agents create children atomically and cannot select a taskId.",
         },
+        retry:{type:"boolean",description:"Explicitly create a new Run for an ended Task; requires current expectedActionVersion."},
+        expectedActionVersion:{type:"string"},
         nodeId: { type: "string" },
         executionModel: {
           type: "object",
@@ -3388,6 +3384,7 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
               throw new TaskError("INVALID", "Child dispatch requires title");
             if (
               args.taskId ||
+              args.retry ||
               args.requestId ||
               args.nodeId ||
               args.executionModel ||
@@ -3421,14 +3418,11 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
             if (bound.external) {
               if (!bound.collaboration)
                 throw new Error("coordinator collaboration unavailable");
-              return json(
-                await bound.collaboration.delegate(args.commandId, input),
-              );
+              return json(delegationSummary(await bound.collaboration.delegate(args.commandId,input)));
             }
-            return json(
-              ledger.delegateTask(args.commandId, { ...bound.ref, ...input }),
-            );
+            return json(delegationSummary(ledger.delegateTask(args.commandId,{...bound.ref,...input})));
           }
+          if((args.retry || args.expectedActionVersion) && !args.taskId)throw new TaskError("INVALID","Explicit retry requires an existing taskId");
           if (args.policy || args.display)
             throw new TaskError(
               "INVALID",
@@ -3439,8 +3433,8 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
           const project = !managedLocal ? await service.sessionProjectDispatch?.(exec.agent, args, String(exec.callId)) : undefined;
           if (project?.handled) return project.value;
           if (!managedLocal && exec.agent && service.sessionCollaboration.binding(exec.agent)?.state === "active") {
-            if (!args.title || args.taskId || args.requestId || args.workspaceId || args.configuration !== undefined) throw new TaskError("INVALID", "Project dispatch requires title/description and uses its central binding");
-            return json(await service.sessionCollaboration.invoke(exec.agent,"dispatch",{title:args.title,description:args.description ?? args.title,...(args.route?{route:args.route}:{}),...(args.nodeId?{nodeId:args.nodeId}:{}),...(args.executionModel?{executionModel:args.executionModel}:{})},String(exec.callId),args.commandId));
+            if ((!args.taskId && !args.title) || args.requestId || args.workspaceId) throw new TaskError("INVALID", "Project dispatch requires title/description and uses its central binding");
+            return json(await service.sessionCollaboration.invoke(exec.agent,"dispatch",{...(args.taskId?{taskId:args.taskId}:{title:args.title,description:args.description ?? args.title}),...(args.retry?{retry:args.retry,expectedActionVersion:args.expectedActionVersion}:{}),...(args.configuration!==undefined?{configuration:json(args.configuration)}:{}),...(args.route?{route:args.route}:{}),...(args.nodeId?{nodeId:args.nodeId}:{}),...(args.executionModel?{executionModel:args.executionModel}:{})},String(exec.callId),args.commandId));
           }
           if (!dispatchPlanned)
             throw new TaskError(
@@ -3466,45 +3460,15 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
                 "FORBIDDEN",
                 "Bound planning sessions dispatch their host-owned task through a proposal",
               );
-            const candidates = ledger
-              .decisionCatalog()
-              .nodes.filter(
-                (node) =>
-                  node.enabled &&
-                  node.roles.some(
-                    (role) => role === "executor" || role === "both",
-                  ) &&
-                  !(!config.executionEnabled && node.nodeId === config.nodeId),
-              );
-            const nodeId =
-              args.route?.nodeId ??
-              args.nodeId ??
-              (candidates.length === 1 ? candidates[0]?.nodeId : undefined);
-            if (typeof nodeId !== "string")
-              throw new TaskError(
-                "EXECUTOR_REQUIRED",
-                "Choose nodeId from task_nodes",
-              );
-            if (ledger.executionModels.view(nodeId).catalog.state !== "fresh")
-              await ledger.refreshNodeModels(nodeId);
-            const selected = ledger.selectExecutionModel(
-              nodeId,
-              args.route
-                ? ExecutionModelChoice.strip().parse(args.route)
-                : args.executionModel
-                  ? ExecutionModelChoice.parse(args.executionModel)
-                  : undefined,
-            );
-            return json(
-              ledger.createRun(args.commandId, {
-                taskId: args.taskId,
-                route: args.route
-                  ? (args.route as unknown as Claim["run"]["route"])
-                  : { nodeId, ...selected.choice, requiredCapabilities: [] },
-                executionModel: selected.executionModel,
-                configuration: args.configuration as Json | undefined,
-              }),
-            );
+            const receipt=ledger.dispatchExistingTask(args.commandId,{
+              taskId:args.taskId,
+              ...(args.route?{route:args.route as unknown as Claim["run"]["route"]}:{}),
+              ...(args.nodeId?{nodeId:args.nodeId}:{}),
+              ...(args.executionModel?{executionModel:ExecutionModelChoice.parse(args.executionModel)}:{}),
+              ...(args.configuration!==undefined?{configuration:json(args.configuration)}:{}),
+              ...(args.retry?{retry:args.retry,expectedActionVersion:args.expectedActionVersion}:{}),
+            },config.executionEnabled?undefined:config.nodeId);
+            return json({...receipt,value:runSummary(receipt.value)});
           }
           if (args.configuration !== undefined)
             throw new TaskError(
@@ -3538,12 +3502,13 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
       defineTool({
         name: "codex_delegate",
         description:
-          "Run local Desktop Codex in the ordinary caller's current workspace using a stable commandId and full description prompt. Uses the parent permissions and configured local model/effort; reasoningEffort optionally overrides effort. Collect with job_output/codex_status and verify before task_accept. Owned executions use task_dispatch.",
+          "Run local Desktop Codex in the ordinary caller's current workspace using a stable commandId and full description prompt. Uses the parent permissions; executionModel explicitly selects the workload model and effort, otherwise configured defaults apply. Collect with job_output/codex_status and verify before task_accept. Owned executions use task_dispatch.",
         parameters: {
           commandId: { type: "string", required: true },
           title: { type: "string", required: true },
           description: { type: "string", required: true },
-          reasoningEffort: { type: "string" },
+          executionModel:{type:"object",additionalProperties:true,description:"Local Codex choice {provider:openai,model,reasoningEffort?,backend?:codex}; omit to retain configured defaults."},
+          reasoningEffort: { type: "string",description:"Legacy effort alias; prefer executionModel." },
         },
         output,
         execute: async (args, exec) => {
@@ -3565,6 +3530,7 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
                 requestId: args.commandId,
                 title: args.title,
                 prompt: args.description,
+                ...(args.executionModel?{executionModel:ExecutionModelChoice.parse(args.executionModel)}:{}),
                 reasoningEffort: args.reasoningEffort,
               },
               exec.signal,
@@ -3804,8 +3770,7 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
         },
       }),
     );
-  if (config.centralMode === "host")
-    ctx.tools.register(
+  ctx.tools.register(
       defineTool({
         name: "task_cancel",
         description:
@@ -3815,16 +3780,24 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
           taskId: { type: "string", required: true },
           runId: { type: "string" },
           reason: { type: "string", required: true },
+          expectedActionVersion:{type:"string"},
         },
         output,
-        execute: async (args) => {
+        execute: async (args,exec) => {
+          if(service.native?.scopeFor(exec.agent))throw new TaskError("FORBIDDEN","Owned execution cannot cancel unrelated work");
+          if(config.centralMode==="remote" || (exec.agent && service.sessionCollaboration.binding(exec.agent)?.state==="active")) {
+            const receipt=await service.sessionCollaboration.command(exec.agent,{kind:"cancel",taskId:args.taskId,reason:args.reason,...(args.runId?{runId:args.runId}:{}),...(args.expectedActionVersion?{expectedActionVersion:args.expectedActionVersion}:{})},args.commandId);
+            if(config.centralMode==="host")await service.native?.cancelTask(args.taskId,args.runId);
+            return json(receipt);
+          }
           const receipt = ledger.cancel(args.commandId, {
             taskId: args.taskId,
             runId: args.runId,
             reason: args.reason,
+            expectedActionVersion:args.expectedActionVersion,
           });
           await service.native?.cancelTask(args.taskId, args.runId);
-          return json(receipt);
+          return json({commandId:receipt.commandId,acceptedAt:receipt.acceptedAt,taskId:receipt.value.taskId,state:receipt.value.state,runs:ledger.history(args.taskId).runs.map(run=>({runId:run.runId,state:run.state,cancellationRequested:!!run.cancellationRequested}))});
         },
       }),
     );

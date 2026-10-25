@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { ExecutionModelChoice } from "./execution-models.js";
+import { TaskReadOptions, taskRead, runSummary } from "./task-reads.js";
 import { TaskError, type TaskLedger } from "./ledger.js";
 import { Workbench } from "./workbench.js";
 import type { ProjectSessionInput } from "./project-collaboration/types.js";
@@ -10,8 +12,10 @@ export const SessionCommand = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("projects") }).strict(),
   z.object({ kind: z.literal("create"), title: z.string().min(1).max(1000), description: z.string().max(20000).optional(), goal: z.string().max(5000).optional(), requiresConfirmation: z.boolean().optional(), policy: Policy.optional() }).strict(),
   z.object({ kind: z.literal("bind"), taskId: text }).strict(),
-  z.object({ kind: z.literal("query") }).strict(),
-  z.object({ kind: z.literal("history"), taskId: text }).strict(),
+  z.object({ kind: z.literal("query"), read:TaskReadOptions.optional() }).strict(),
+  z.object({ kind: z.literal("history"), taskId: text, read:TaskReadOptions.optional() }).strict(),
+  z.object({kind:z.literal("cancel"),taskId:text,runId:text.optional(),reason:z.string().min(1).max(1000),expectedActionVersion:text.optional()}).strict(),
+  z.object({kind:z.literal("repair"),taskId:text,runId:text,expectedActionVersion:text,executionModel:ExecutionModelChoice.optional()}).strict(),
   z.object({ kind: z.literal("wait"), taskId: text, quietMs: z.number().int().min(0).max(30000) }).strict(),
   z.object({ kind: z.literal("result"), outcome: z.enum(["success", "partial", "failure", "blocked", "unknown"]), summary: z.string().min(1).max(5000), report: z.object({ title: z.string().min(1).max(1000), body: z.string().max(20000), data: z.json().optional(), artifactIds: z.array(text).max(32).optional() }).strict().optional() }).strict(),
   z.object({ kind: z.literal("retryReturn"), messageId: text }).strict(),
@@ -53,11 +57,6 @@ export class SessionDispatcherAuthority {
       for (const task of snapshot.tasks) if (task.parentTaskId && taskIds.has(task.parentTaskId) && !taskIds.has(task.taskId)) { taskIds.add(task.taskId); changed = true; }
     }
     if ("taskId" in command && !taskIds.has(command.taskId)) throw new TaskError("FORBIDDEN", "Task is outside the current project");
-    const projectHistory = (ids: Set<string>) => ({
-      tasks:snapshot.tasks.filter(task=>ids.has(task.taskId)).map(task=>({taskId:task.taskId,title:task.title,description:task.description,goal:task.goal,state:task.state,parentTaskId:task.parentTaskId,parentRunId:task.parentRunId,confirmation:task.confirmation,actionVersion:this.ledger.taskActionState(task.taskId).version})),
-      runs:snapshot.runs.filter(run=>ids.has(run.taskId)).map(run=>({runId:run.runId,taskId:run.taskId,parentRunId:run.parentRunId,state:run.state,reviewStatus:run.reviewStatus,resultSummary:run.resultSummary,createdAt:run.createdAt,updatedAt:run.updatedAt,route:run.route && {nodeId:run.route.nodeId,provider:run.route.provider,model:run.route.model,reasoningEffort:run.route.reasoningEffort,backend:run.route.backend}})),
-      reports:snapshot.reports.filter(report=>ids.has(report.taskId)).map(report=>({reportId:report.reportId,taskId:report.taskId,runId:report.runId,kind:report.kind,title:report.title,body:report.body,data:report.data,createdAt:report.createdAt})),
-    });
     switch (command.kind) {
       case "create": {
         const {kind: _kind, ...intent} = command;
@@ -72,16 +71,32 @@ export class SessionDispatcherAuthority {
         if (!backlog) throw new TaskError("FORBIDDEN", "Draft is outside the selected project");
         return json(this.ledger.bindDispatcher(commandId, {nodeId, sessionId: input.sessionId, cwd: input.cwd, projectId, taskId: command.taskId, backlogId: backlog.backlogId}));
       }
-      case "query": return json(projectHistory(taskIds));
-      case "history": {
-        const projected = projectHistory(new Set([command.taskId])), history = this.ledger.history(command.taskId);
-        return json({task:projected.tasks[0],runs:projected.runs,reports:projected.reports,
-          artifacts:history.artifacts.map(({uri:_uri,...metadata})=>metadata),
-          events:history.events.map(({detail:_detail,...metadata})=>metadata),
-          resultReturns:history.resultReturns.filter(message=>message.nodeId===nodeId && message.sessionId===input.sessionId).map(message=>({messageId:message.messageId,taskId:message.taskId,state:message.state,deliveryAttempts:message.deliveryAttempts,lastDeliveryError:message.lastDeliveryError,lastAttemptAt:message.lastAttemptAt,nextAttemptAt:message.nextAttemptAt,createdAt:message.createdAt,updatedAt:message.updatedAt})),
-        });
+      case "query": {
+        if(command.read?.taskId && !taskIds.has(command.read.taskId))throw new TaskError("FORBIDDEN","Task is outside the current project");
+        return json(taskRead({...snapshot,tasks:snapshot.tasks.filter(task=>taskIds.has(task.taskId))},command.read,id=>this.ledger.taskActionState(id).version));
       }
-      case "wait": return json(this.ledger.allSettled(command.taskId, command.quietMs, undefined, true));
+      case "history": {
+        if(command.read?.taskId && command.read.taskId!==command.taskId)throw new TaskError("INVALID","History target differs from the authorized Task");
+        const history=this.ledger.history(command.taskId);
+        return json(taskRead({...history,tasks:[history.task]},command.read,id=>this.ledger.taskActionState(id).version,true));
+      }
+      case "cancel": {
+        const {kind:_kind,...request}=command;
+        const receipt=this.ledger.cancel(commandId,request);
+        return json({commandId:receipt.commandId,acceptedAt:receipt.acceptedAt,taskId:receipt.value.taskId,state:receipt.value.state,runs:this.ledger.history(command.taskId).runs.map(run=>({runId:run.runId,state:run.state,cancellationRequested:!!run.cancellationRequested}))});
+      }
+      case "repair": {
+        const {kind:_kind,...request}=command;
+        const receipt=this.ledger.repairDispatch(commandId,request);
+        return json({...receipt,value:runSummary(receipt.value)});
+      }
+      case "wait": {
+        const dispatcher = this.ledger.dispatcherForSession(nodeId, input.sessionId);
+        const rootRunId = dispatcher?.projectId === projectId && dispatcher.cwd === input.cwd && dispatcher.taskId === command.taskId
+          ? dispatcher.runId
+          : undefined;
+        return json(this.ledger.allSettled(command.taskId, command.quietMs, rootRunId, !rootRunId));
+      }
       case "result": {
         const active = this.ledger.dispatcherForSession(nodeId, input.sessionId);
         if (!active || active.projectId !== projectId || active.cwd !== input.cwd) throw new TaskError("FORBIDDEN", "Session has no active dispatcher in this project");

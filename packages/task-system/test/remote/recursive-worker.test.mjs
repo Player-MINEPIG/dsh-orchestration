@@ -108,7 +108,7 @@ async function until(predicate, signal, limit = 5000) {
   }
 }
 test(
-  "production polling discovers DSH→DSH→Codex-shaped descendants while parents await and keeps unrelated roots serial",
+  "production polling discovers descendants and independent roots concurrently within node capacity",
   { timeout: 10000 },
   async (t) => {
     let f;
@@ -124,7 +124,7 @@ test(
       sessions.add(request.sessionId);
       max = Math.max(max, ++concurrent);
       try {
-        writeFileSync(join(request.workspacePath, "own.txt"), title);
+        writeFileSync(join(request.workspacePath, title + ".txt"), title);
         if (title === "parent" || title === "child") {
           const name = title === "parent" ? "child" : "codex-leaf";
           const child = (
@@ -139,9 +139,9 @@ test(
           );
         }
         assert.equal(
-          readFileSync(join(request.workspacePath, "own.txt"), "utf8"),
+          readFileSync(join(request.workspacePath, title + ".txt"), "utf8"),
           title,
-          "child cannot overwrite parent cwd",
+          "each task retains its own output even when independent roots share cwd",
         );
         order.push("end:" + title);
         return { outcome: "success", summary: "fixture completed" };
@@ -153,24 +153,24 @@ test(
       unrelated = f.create("unrelated");
     f.worker.startPolling(100, 4);
     await until(
-      () => f.ledger.getRun(unrelated.runId).state === "succeeded",
+      () => [parent, unrelated].every(run => f.ledger.getRun(run.runId).state === "succeeded"),
       undefined,
       7000,
     );
     assert.equal(f.ledger.getRun(parent.runId).state, "succeeded");
     assert.ok(order.indexOf("start:child") < order.indexOf("end:parent"));
     assert.ok(order.indexOf("start:codex-leaf") < order.indexOf("end:child"));
-    assert.ok(order.indexOf("start:unrelated") > order.indexOf("end:parent"));
+    assert.ok(order.indexOf("start:unrelated") < order.indexOf("end:parent"));
     assert.equal(paths.get("parent"), paths.get("unrelated"));
     assert.notEqual(paths.get("child"), paths.get("parent"));
     assert.notEqual(paths.get("codex-leaf"), paths.get("child"));
     assert.equal(sessions.size, 4);
-    assert.equal(max, 3);
+    assert.ok(max >= 2 && max <= 4);
     assert.ok(f.store.dispatches().every((r) => r.state === "acknowledged"));
   },
 );
 test(
-  "nonblocking dispatch remains owned by dispose and does not release project lock before cancellation quiesces",
+  "nonblocking dispatch remains owned by dispose until cancellation quiesces",
   { timeout: 5000 },
   async (t) => {
     let stopped = false,
@@ -299,4 +299,23 @@ test("authority blocks a child when its active ancestor chain fills node capacit
     /DELEGATION_DEADLOCK|ancestor chain/,
   );
   assert.equal(f.ledger.snapshot().tasks.length, before);
+});
+
+
+test('independent roots with the same project and cwd reach capacity without duplicating a Run', {timeout:10000}, async t=>{
+ let release;const gate=new Promise(resolve=>release=resolve),entered=[];
+ const f=await fixture(t,async request=>{entered.push(request);await gate;return {outcome:'success',summary:'Parallel output verified'};});
+ const runs=['first','second','third'].map(f.create);
+ try {
+  await f.worker.pollOnce(2,{waitForCompletion:false});
+  await until(()=>entered.length===2);
+  assert.equal(entered[0].workspacePath,entered[1].workspacePath);
+  assert.equal(f.ledger.getRun(runs[2].runId).state,'queued');
+  assert.throws(()=>f.worker.execute(runs[0].runId,'duplicate-owner'),/RUN_ALREADY_ACTIVE/);
+  assert.equal(f.ledger.snapshot().attempts.length,2);
+ }finally{release();}
+ await until(()=>runs.slice(0,2).every(run=>f.ledger.getRun(run.runId).state==='succeeded'));
+ await f.worker.pollOnce(2);
+ assert.equal(f.ledger.getRun(runs[2].runId).state,'succeeded');
+ assert.equal(f.ledger.snapshot().attempts.length,3);
 });

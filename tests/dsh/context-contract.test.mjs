@@ -121,10 +121,12 @@ test('native creation tools accept approved task intent and priority fields with
     assert.equal(task.acceptanceCriteria[0].description, 'Review the actual output');
     for (const obsolete of ['userImmediacy', 'importance', 'urgency', 'admissionRevision']) assert.equal(task[obsolete], undefined);
     const run = value(await call('task_dispatch', { commandId: 'tool-run', taskId: task.taskId, route:{nodeId:'local',provider:'test-offline',model:'script',requiredCapabilities:[]}, configuration: { templateRef: { templateId: template.templateId, version: 1 }, input: {} } }));
-    assert.equal(run.intentSnapshot.goal, task.goal);
-    assert.deepEqual(run.intentSnapshot.acceptanceCriteria, task.acceptanceCriteria);
-    assert.deepEqual(run.configuration.templateRef, { templateId: template.templateId, version: 1 });
-    assert.equal(run.configuration.template, undefined);
+    assert.equal(run.configuration,undefined);assert.equal(run.intentSnapshot,undefined);
+    const stored=h.ledger.getRun(run.runId);
+    assert.equal(stored.intentSnapshot.goal, task.goal);
+    assert.deepEqual(stored.intentSnapshot.acceptanceCriteria, task.acceptanceCriteria);
+    assert.deepEqual(stored.configuration.templateRef, { templateId: template.templateId, version: 1 });
+    assert.equal(stored.configuration.template, undefined);
     const curate = await call('task_curate', { commandId: 'tool-curate', taskId: task.taskId, state: 'dismissed', expectedRevision: 1, reason: 'Legacy entry point cannot create new admission facts' });
     assert.equal(curate.isError, true);
     assert.match(curate.error.message, /legacy|Admission curation/i);

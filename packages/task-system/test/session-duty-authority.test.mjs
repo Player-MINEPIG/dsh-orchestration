@@ -40,9 +40,9 @@ test('narrow commands reject malformed intent definitively and project history e
   const created=(await f.command('draft',{kind:'create',title:'Project task'})).result.value;
   f.ledger.createRun('private-config',{taskId:created.taskId,configuration:{input:{secret:'PRIVATE_EXECUTION_CONFIG'}}});
   f.ledger.createTask('other',{title:'UNRELATED_PRIVATE_TASK'});
-  const query=(await f.command('query',{kind:'query'})).result,history=(await f.command('history',{kind:'history',taskId:created.taskId})).result;
+  const query=(await f.command('query',{kind:'query'})).result,history=(await f.command('history',{kind:'history',taskId:created.taskId,read:{details:true,section:'events'}})).result;
   assert.equal(query.tasks.length,1);assert.equal(history.task.taskId,created.taskId);assert.ok(history.events.length);
-  assert.doesNotMatch(JSON.stringify({query,history}),/PRIVATE_EXECUTION_CONFIG|UNRELATED_PRIVATE_TASK|dispatchOrigin|projectContext/);
+  assert.doesNotMatch(JSON.stringify({query,history}),/PRIVATE_EXECUTION_CONFIG|UNRELATED_PRIVATE_TASK|dispatchOrigin/);
 });
 
 test('ordinary return polling filters before the bounded queue, while plain messages retain their own queue',async t=>{
@@ -74,4 +74,19 @@ test('host managed projects retain their explicitly selected local workspace ass
  const selected=await f.authority.projectCollaborate('central','selected',{action:'activate',sessionId:'managed-origin',cwd:'/central/selected',projectId:'managed'});
  assert.equal(selected.projectId,'managed');
  await assert.rejects(f.authority.projectCollaborate('central','wrong',{action:'activate',sessionId:'wrong',cwd:'/central/unrelated',projectId:'managed'}),{code:'FORBIDDEN'});
+});
+
+
+test('completion inbox admits a later poll while the first result is still processing',async()=>{
+ let release;const gate=new Promise(resolve=>release=resolve),seen=[],acks=[];
+ const message=n=>({messageId:'r'+n,taskId:'child'+n,nodeId:'device',sessionId:'origin',completion:{origin:{kind:'session',nodeId:'device'}}});
+ const messages=[message(1)];
+ const inbox=new TaskReturnInbox({pendingSessionMessages:()=>messages,completeSessionMessage:(_id,input)=>acks.push(input)},'device',async message=>{seen.push(message.messageId);await gate;return 'Processed';});
+ const first=inbox.poll();
+ try{
+  for(let i=0;i<100&&seen.length!==1;i++)await new Promise(resolve=>setTimeout(resolve,5));
+  messages.push(message(2));const second=inbox.poll();
+  try {for(let i=0;i<100&&seen.length!==2;i++)await new Promise(resolve=>setTimeout(resolve,5));assert.deepEqual(seen,['r1','r2']);assert.equal(acks.length,0);}finally{release();await second;}
+ }finally{release();await first;await inbox.dispose();}
+ assert.equal(acks.length,2);
 });

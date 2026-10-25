@@ -1,11 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync,mkdirSync,realpathSync,rmSync,symlinkSync} from 'node:fs';
-import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {createNativeHarness} from '../../../tests/dsh/native-harness.mjs';
 import {chooseExecutionSession} from '../dist/execution-session.js';
-import {acquireWorkspaceExecution} from '../dist/workspace-execution-lock.js';
 const settle={name:'task_submit_result',args:{outcome:'success',summary:'fixture completed'}};
 test('saved planning/execution roots support real native execution and JEV session choices with no default workspace',async()=>{
  const h=await createNativeHarness({config:{defaultWorkspaceId:undefined,sessionDecisionEnabled:true,projectAgentOptions:{provider:'test-offline',model:'script'}},script:[settle,settle,settle]});let asked=0;
@@ -27,10 +24,4 @@ test('managed decisions refresh stale candidates, fall back on provider failure,
  const changed=await chooseExecutionSession({...input,decisions:{ask:async()=>({provider:'fixture',model:'fixture',answers:{session:{type:'choice',choice:'reuse-0'}}})},refresh:()=>({...context,taskSessionId:undefined,sessions:[]})});assert.deepEqual(changed.session,{mode:'new'});
  const abort=new AbortController();await assert.rejects(chooseExecutionSession({...input,signal:abort.signal,decisions:{ask:async()=>{abort.abort(Error('cancelled'));throw abort.signal.reason}}}),/cancelled/);
  await assert.rejects(chooseExecutionSession({...input,claim:{...input.claim,task:{...input.claim.task,policy:{allowedWorkspaceIds:['explicit']}}}}),/DENIED/);
-});
-test('workspace execution locks share canonical cwd and remove cancelled waiters without blocking isolated children',async t=>{
- const root=realpathSync(mkdtempSync(join(tmpdir(),'cwd-lock-')));t.after(()=>rmSync(root,{recursive:true,force:true}));mkdirSync(join(root,'child'));symlinkSync(root,join(root,'alias'));
- const first=await acquireWorkspaceExecution(root,new AbortController().signal),abort=new AbortController();let entered=false;
- const waiting=acquireWorkspaceExecution(join(root,'alias'),abort.signal).then(release=>{entered=true;return release});
- await new Promise(resolve=>setImmediate(resolve));assert.equal(entered,false);const child=await acquireWorkspaceExecution(join(root,'child'),new AbortController().signal);child();abort.abort(Error('cancelled'));await assert.rejects(waiting,/cancelled/);first();const release=await acquireWorkspaceExecution(root,new AbortController().signal);release();
 });

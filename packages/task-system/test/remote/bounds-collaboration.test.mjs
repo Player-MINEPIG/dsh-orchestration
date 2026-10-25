@@ -77,6 +77,8 @@ test('actual TaskLedger signed scoped collaboration delegates, waits, reports, q
   assert.equal(f.ledger.getTask(child.task.taskId).parentTaskId,parent.taskId)
   assert.equal((await collaboration.history(child.task.taskId)).task.taskId,child.task.taskId)
   assert.equal((await collaboration.wait(undefined,0)).settled,false)
+  const childWait=await collaboration.wait(child.task.taskId,0);assert.equal(childWait.settled,false);assert.ok(childWait.pendingRunIds.includes(child.run.runId));
+  assert.equal(f.ledger.scopedAllSettled({...ref,taskId:child.task.taskId,quietMs:0}).settled,false)
   await collaboration.report('progress',{targetTaskId:child.task.taskId,title:'Progress',body:'Evidence',data:{progress:1}})
   await collaboration.note('note',{targetTaskId:child.task.taskId,body:'Use this in a later run'})
   await assert.rejects(collaboration.history(unrelated.taskId),/REMOTE_OUTCOME_UNCERTAIN/)
@@ -104,3 +106,30 @@ test('host response budget bounds claim atomically and cannot be expanded by a p
   await assert.rejects(f.gateway.handle(JSON.stringify(envelope({runId:run.runId,ttlMs:60000,maxClaimBytes:1024*1024},'claim'))),/PAYLOAD_FIELDS/)
   assert.equal(f.ledger.getRun(run.runId).state,'queued')
 })
+
+
+test('signed owned history projects before the default wire cap and pages every report without private configuration',async t=>{
+ const f=fixture(t),task=f.ledger.createTask('paged-parent',{title:'Paged parent',workspaceId:'workspace',policy:{settlementQuietMs:0}}).value;
+ const run=f.ledger.createRun('paged-run',{taskId:task.taskId,route:f.route,configuration:{input:{secret:'PRIVATE_CONFIG_SENTINEL'}}}).value;
+ const claim=(await f.remote.claim('paged-claim',{runId:run.runId,nodeId:'worker',ttlMs:60000})).value;
+ const ref={runId:run.runId,attemptId:claim.attempt.attemptId,nodeId:'worker',fence:claim.attempt.fence,executionId:'paged-owner'};
+ await f.remote.markRunning('paged-start',ref);
+ for(let i=0;i<8;i++)f.ledger.appendReport('paged-report-'+i,{taskId:task.taskId,title:'Paged report '+i,body:'BODY_SENTINEL_'+i+'x'.repeat(20000),kind:'progress'});
+ assert.ok(Buffer.byteLength(JSON.stringify(f.ledger.history(task.taskId)))>128*1024);
+ const collaboration=bindCollaboration(f.remote,ref,task.taskId,new AbortController().signal);
+ const summary=await collaboration.history(task.taskId);
+ assert.equal(summary.task.taskId,task.taskId);assert.equal(summary.reports.length,1);assert.equal(summary.reports[0].title,'Paged report 7');assert.doesNotMatch(JSON.stringify(summary),/BODY_SENTINEL|PRIVATE_CONFIG_SENTINEL/);
+ const defaultDetails=await collaboration.history(task.taskId,{details:true});assert.ok(defaultDetails.reports.length<8);assert.ok(defaultDetails.page.nextCursor);
+ const reportIds=[];let cursor;
+ do {
+  const page=await collaboration.history(task.taskId,{details:true,section:'reports',limit:2,...(cursor?{cursor}:{})});
+  assert.equal(page.reports.length,2);assert.ok(page.reports.every(report=>report.body.startsWith('BODY_SENTINEL')));assert.doesNotMatch(JSON.stringify(page),/PRIVATE_CONFIG_SENTINEL/);
+  reportIds.push(...page.reports.map(report=>report.reportId));cursor=page.page.nextCursor;
+ }while(cursor);
+ assert.equal(new Set(reportIds).size,8);
+ const largePage=await collaboration.history(task.taskId,{details:true,limit:100});assert.ok(largePage.reports.length<8);assert.ok(largePage.page.nextCursor);
+ f.ledger.appendReport('too-large-single',{taskId:task.taskId,title:'Large single',body:'z'.repeat(100000),kind:'progress'});
+ const huge=f.ledger.history(task.taskId).reports.at(-1);
+ await assert.rejects(collaboration.history(task.taskId,{details:true,reportId:huge.reportId}),error=>error.code==='READ_TOO_LARGE' && /metadata/.test(error.message));
+ const events=await collaboration.history(task.taskId,{details:true,section:'events',limit:100});assert.ok(events.events.length);assert.doesNotMatch(JSON.stringify(events),/PRIVATE_CONFIG_SENTINEL/);
+});
