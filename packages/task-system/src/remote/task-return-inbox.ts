@@ -1,5 +1,6 @@
 import { sessionContinuation, continuationReply } from "./ports.js";
 import { ProtocolError } from "./protocol.js";
+import { returnFailure } from "../task-return-failure.js";
 import type { LedgerPort, SessionMessage, SessionContinuationReceipt } from "./ports.js";
 
 /** Ordinary session results do not require a workload provider, claim or execution slot. */
@@ -39,7 +40,8 @@ export class TaskReturnInbox {
       await this.ledger.completeSessionMessage!(`task-return-ack:${message.messageId}`, {messageId:message.messageId,nodeId:this.nodeId,state:"completed",...continuationReply(reply)});
     } catch (error) {
       if (this.stopped || this.paused) return;
-      await Promise.resolve(this.ledger.completeSessionMessage!(`task-return-failure:${message.messageId}:${Date.now()}`, {messageId:message.messageId,nodeId:this.nodeId,state:"failed",reply:error instanceof Error && "code" in error && error.code === "CHECKIN_BUSY" ? "CHECKIN_BUSY" : "RETURN_UNAVAILABLE: original session unavailable; retained for retry"})).catch(() => {});
+      const failure = returnFailure(error);
+      await Promise.resolve(this.ledger.completeSessionMessage!(`task-return-failure:${message.messageId}:${Date.now()}`, {messageId:message.messageId,nodeId:this.nodeId,state:"failed",reply:failure.code,failure})).catch(() => {});
     }
   }
   async beginConfigurationEdit() {

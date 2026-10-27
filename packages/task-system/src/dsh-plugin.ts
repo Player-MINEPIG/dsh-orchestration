@@ -10,6 +10,7 @@ import { mountDispatcherTools } from "./dispatcher-tools.js";
 import { initializeTaskSessionTitle, taskSessionTitle } from "./session-titles.js";
 import { ProjectSessionService } from "./project-session-service.js";
 import { TaskReturnDelivery } from "./task-returns.js";
+import { returnFailure } from "./task-return-failure.js";
 import { ExecutionModelChoice } from "./execution-models.js";
 import { resolveDeviceNodeId } from "./device-identity.js";
 import { ExecutionModelInventory } from "./executor-models.js";
@@ -2487,7 +2488,7 @@ export class TaskSystemService extends Service {
         const job = this.taskReturns.deliver(message).then(reply => {
           this.ledger.completeSessionMessage(`task-return-ack:${message.messageId}`, {messageId:message.messageId,nodeId:this.config.nodeId,state:"completed",...continuationReply(reply)});
         }).catch(error => {
-          this.ledger.recordTaskReturnFailure(message.messageId, error instanceof TaskError && error.code === "CHECKIN_BUSY" ? "CHECKIN_BUSY" : error instanceof Error ? error.message : "RETURN_UNAVAILABLE");
+          this.ledger.recordTaskReturnFailure(message.messageId, error instanceof Error ? error.message : "RETURN_UNAVAILABLE",returnFailure(error));
           if (!(error instanceof TaskError && error.code === "CHECKIN_BUSY")) this.ctx.logger.warn("Task result return %s retained for retry: %s", message.messageId, error);
         }).finally(() => { this.returnJobs.delete(message.messageId); });
         this.returnJobs.set(message.messageId, job);

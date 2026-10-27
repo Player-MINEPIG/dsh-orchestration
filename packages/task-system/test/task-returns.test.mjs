@@ -5,17 +5,18 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {TaskLedger} from '../dist/ledger.js';
 import {containsTaskReturn} from '../dist/task-returns.js';
+import {TaskReturnError,providerReturnFailure,returnRetryAt} from '../dist/task-return-failure.js';
 import {SessionMessages} from '../dist/remote/session-messages.js';
 
 function fixture(t) {
  const dir=mkdtempSync(join(tmpdir(),'task-returns-')), file=join(dir,'ledger.sqlite');
- let l=TaskLedger.open(file,{role:'both',nodeId:'central'});
+ let now=Date.now();const open=()=>TaskLedger.open(file,{role:'both',nodeId:'central',now:()=>now});let l=open();
  l.registerNode('node',{nodeId:'worker',roles:['executor'],enabled:true,capabilities:[],models:[{provider:'offline',model:'script'}],workspaceIds:['ws'],maxConcurrent:4});
  const request=l.executionModels.request('catalog',{nodeId:'worker'}).catalog.request;
  l.completeExecutionModels('catalog-result',{nodeId:'worker',requestId:request.requestId,generation:request.generation,result:{state:'success',complete:true,observedAt:Date.now(),models:[{provider:'offline',model:'script'}]}});
  l.registerWorkspace('workspace',{workspaceId:'ws',nodeId:'worker',path:dir,state:'ready'});
  t.after(()=>{l.close();rmSync(dir,{recursive:true,force:true});});
- return {get l(){return l;},reopen(){l.close();l=TaskLedger.open(file,{role:'both',nodeId:'central'});}};
+ return {get l(){return l;},get now(){return now;},advance(ms=60000){now+=ms;},reopen(){l.close();l=open();}};
 }
 const route={nodeId:'worker',provider:'offline',model:'script',workspaceId:'ws',requiredCapabilities:[]};
 const origin=sessionId=>({kind:'session',nodeId:'central',sessionId,composition:{provider:'offline',model:'script',tools:[]}});
@@ -41,7 +42,7 @@ test('failed return is visible, retry only requeues the event and never creates 
  finish(f.l,run);const message=f.l.pendingSessionMessages('central')[0];
  f.l.completeSessionMessage('delivery-failed',{nodeId:'central',messageId:message.messageId,state:'failed',reply:'Original preset unavailable'});
  const failed=f.l.history(run.taskId).resultReturns[0];assert.equal(failed.deliveryAttempts,1);assert.equal(failed.lastDeliveryError,'Original preset unavailable');
- f.reopen();f.l.retryTaskReturn('requeue',message.messageId);assert.equal(f.l.pendingSessionMessages('central')[0].messageId,message.messageId);assert.equal(f.l.history(run.taskId).runs.length,1);assert.equal(f.l.getRun(run.runId).state,'succeeded');
+ f.reopen();f.advance();f.l.retryTaskReturn('requeue',message.messageId);assert.equal(f.l.pendingSessionMessages('central')[0].messageId,message.messageId);assert.equal(f.l.history(run.taskId).runs.length,1);assert.equal(f.l.getRun(run.runId).state,'succeeded');
 });
 
 test('owned child origin is derived from the exact lease and targets parent node/session',t=>{
@@ -74,4 +75,85 @@ test('remote completion admission bypasses same-session and workload capacity ga
  const pump=new SessionMessages({ledger:{pendingSessionMessages:async()=>messages,completeSessionMessage:async(_id,input)=>acks.push(input)},store:{sessionMessageState:()=>undefined},policy:{nodeId:'worker'},provider:{sendSessionMessage(){},sendTaskReturn:async message=>{seen.push(message.messageId);await gate;return 'processed';}}});
  try{await pump.poll(1);await new Promise(resolve=>setImmediate(resolve));assert.deepEqual(seen,['parallel-1','parallel-2']);assert.equal(acks.length,0);}finally{release();await pump.dispose();}
  assert.equal(acks.length,2);
+});
+
+
+test('three consecutive unavailable returns stop automatically, survive restart and retry only the original event',t=>{
+ const f=fixture(t),run=f.l.withDispatchOrigin(origin('no-reply'),()=>dispatch(f.l,'no-reply'));
+ finish(f.l,run);const message=f.l.pendingSessionMessages('central')[0];
+ for(let n=1;n<=3;n++){
+  f.l.completeSessionMessage('failure-'+n,{nodeId:'central',messageId:message.messageId,state:'failed',reply:'No reply'});
+  assert.equal(f.l.getSessionMessage(message.messageId).consecutiveDeliveryFailures,n);
+  assert.equal(f.l.pendingSessionMessages('central').length,0);
+  f.advance();
+  assert.equal(f.l.pendingSessionMessages('central').length,n<3?1:0);
+ }
+ f.reopen();assert.equal(f.l.history(run.taskId).resultReturns[0].state,'failed');
+ assert.match(f.l.getSessionMessage(message.messageId).reply,/连续三次/);
+ f.l.retryTaskReturn('manual-return',message.messageId);
+ assert.equal(f.l.pendingSessionMessages('central')[0].messageId,message.messageId);
+ assert.equal(f.l.getSessionMessage(message.messageId).consecutiveDeliveryFailures,0);
+ assert.equal(f.l.getSessionMessage(message.messageId).deliveryAttempts,3);
+ assert.equal(f.l.history(run.taskId).runs.length,1);
+ f.l.completeSessionMessage('success',{nodeId:'central',messageId:message.messageId,state:'completed',reply:'Processed original result'});
+ assert.equal(f.l.getSessionMessage(message.messageId).consecutiveDeliveryFailures,0);
+});
+
+test('quota cooling blocks sibling returns and check-ins across restart without consuming the no-reply budget',t=>{
+ const f=fixture(t),run=f.l.withDispatchOrigin(origin('limited'),()=>dispatch(f.l,'limited'));
+ const draft=f.l.withDispatchOrigin(origin('limited'),()=>f.l.createTask('draft',{title:'Continue later'}).value);
+ f.l.checkins.request('request-check',draft.taskId);
+ const check=f.l.pendingSessionMessages('central').find(m=>m.checkIn);
+ finish(f.l,run);const message=f.l.pendingSessionMessages('central').find(m=>m.completion);
+ const resetAt=new Date(f.now+3*3600000).toISOString();
+ for(let n=1;n<=4;n++)f.l.recordTaskReturnFailure(message.messageId,'RATE_LIMIT',{code:'RATE_LIMIT',resetAt});
+ assert.equal(f.l.getSessionMessage(message.messageId).deliveryAttempts,4);
+ assert.equal(f.l.getSessionMessage(message.messageId).consecutiveDeliveryFailures,0);
+ assert.equal(f.l.checkins.view(draft.taskId).deliveryFailures,0);
+ assert.equal(f.l.pendingSessionMessages('central').length,0);
+ f.reopen();f.advance(2*3600000);assert.equal(f.l.pendingSessionMessages('central').length,0);
+ f.l.retryTaskReturn('manual-cannot-bypass',message.messageId);assert.equal(f.l.pendingSessionMessages('central').length,0);
+ f.advance(3600000);assert.ok(f.l.pendingSessionMessages('central').some(m=>m.messageId===message.messageId));
+ f.l.completeSessionMessage('limited-ack',{nodeId:'central',messageId:message.messageId,state:'completed',reply:'Processed'});
+ assert.ok(f.l.pendingSessionMessages('central').some(m=>m.messageId===check.messageId));
+ f.l.recordTaskReturnFailure(check.messageId,'RATE_LIMIT',{code:'RATE_LIMIT',retryAfterMs:3600000});
+ assert.equal(f.l.checkins.view(draft.taskId).deliveryFailures,0);
+ assert.equal(f.l.pendingSessionMessages('central').length,0);
+ f.advance(3600000);assert.equal(f.l.pendingSessionMessages('central').length,1);
+});
+
+test('legacy queued returns exhaust their previous unavailable attempts without waking a model',t=>{
+ const f=fixture(t),run=f.l.withDispatchOrigin(origin('legacy'),()=>dispatch(f.l,'legacy'));finish(f.l,run);
+ const message=f.l.pendingSessionMessages('central')[0];message.deliveryAttempts=6;
+ f.l.managementDatabase().prepare("UPDATE entities SET data=? WHERE kind='sessionMessage' AND id=?").run(JSON.stringify(message),message.messageId);
+ f.reopen();assert.equal(f.l.pendingSessionMessages('central').length,0);assert.equal(f.l.getSessionMessage(message.messageId).state,'failed');
+});
+
+test('known reset and Retry-After facts delay retries; missing reset uses thirty minutes',()=>{
+ const now=Date.parse('2026-10-27T10:00:00Z');
+ assert.equal(providerReturnFailure({code:'SERVER',message:'quota speculation'},now),undefined);
+ const failure=providerReturnFailure({code:'RATE_LIMIT',message:"Claude Code: You've hit your session limit · resets 1:10pm (UTC)"},now);
+ assert.equal(failure.resetAt,'2026-10-27T13:10:00.000Z');assert.equal(returnRetryAt(failure,now),failure.resetAt);
+ assert.doesNotThrow(()=>providerReturnFailure({code:'RATE_LIMIT',providerRetryAfterMs:Number.MAX_VALUE},now));
+ assert.equal(returnRetryAt({code:'RATE_LIMIT'},now),'2026-10-27T10:30:00.000Z');
+ assert.equal(returnRetryAt({code:'RATE_LIMIT',retryAfterMs:7200000},now),'2026-10-27T12:00:00.000Z');
+});
+
+test('remote return failure retains structured quota timing instead of flattening it into unavailable',async()=>{
+ const failure={code:'RATE_LIMIT',resetAt:'2026-10-28T13:10:00.000Z'},acks=[];
+ const message={messageId:'quota-event',sessionId:'parent',nodeId:'worker',completion:{eventId:'quota-event'},state:'queued'};
+ const pump=new SessionMessages({ledger:{pendingSessionMessages:async()=>[message],completeSessionMessage:async(_id,input)=>acks.push(input)},store:{},policy:{nodeId:'worker'},provider:{sendSessionMessage(){},sendTaskReturn:async()=>{throw new TaskReturnError(failure);}}});
+ await pump.poll(1);await new Promise(resolve=>setImmediate(resolve));await pump.dispose();
+ assert.deepEqual(acks[0].failure,failure);assert.equal(acks[0].state,'failed');
+});
+
+
+test('account balance exhaustion without a recovery time is bounded and retains its cause',t=>{
+ const f=fixture(t),run=f.l.withDispatchOrigin(origin('balance'),()=>dispatch(f.l,'balance'));finish(f.l,run);
+ const message=f.l.pendingSessionMessages('central')[0];
+ for(let n=0;n<3;n++){f.l.recordTaskReturnFailure(message.messageId,'ACCOUNT_QUOTA',{code:'ACCOUNT_QUOTA'});f.advance();}
+ assert.equal(f.l.getSessionMessage(message.messageId).state,'failed');
+ assert.equal(f.l.getSessionMessage(message.messageId).deliveryFailure.code,'ACCOUNT_QUOTA');
+ assert.match(f.l.getSessionMessage(message.messageId).reply,/额度不足.*ACCOUNT_QUOTA/);
+ f.advance(86400000);assert.equal(f.l.pendingSessionMessages('central').length,0);
 });

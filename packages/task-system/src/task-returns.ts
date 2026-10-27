@@ -8,6 +8,7 @@ import type { SessionEvent } from "@deepseek-ai/dsh-session";
 import type { DispatchOrigin, Json } from "./contracts.js";
 import type { SessionMessage, SessionContinuationReceipt, CheckinRef } from "./remote/ports.js";
 import { z } from "zod";
+import { TaskReturnError, providerReturnFailure, rateLimited, returnRetryAt, type ReturnFailure } from "./task-return-failure.js";
 
 const retiredDmcContinuation = z.object({
   version: z.literal(1), sessionId: z.string().min(1), runId: z.string().min(1),
@@ -57,6 +58,19 @@ type ReturnSession = {
 };
 
 export class TaskReturnDelivery {
+  private readonly cooldowns = new Map<string, {until:string;failure:ReturnFailure}>();
+  private assertReady(sessionId:string,events:readonly SessionEvent[]) {
+    const terminal=events.findLast(event=>event.type==="turn/end");
+    if(terminal?.type==="turn/end" && terminal.data.reason.kind==="error") {
+      const failure=providerReturnFailure(terminal.data.reason.error,terminal.time);
+      if(failure && rateLimited(failure)) {
+        const until=returnRetryAt(failure,terminal.time);
+        if(until>(this.cooldowns.get(sessionId)?.until ?? ""))this.cooldowns.set(sessionId,{until,failure});
+      }
+    }
+    const cooldown=this.cooldowns.get(sessionId);
+    if(cooldown && cooldown.until>new Date().toISOString())throw new TaskReturnError({...cooldown.failure,resetAt:cooldown.until});
+  }
   private readonly adapters=new Map<string,OriginContinuationAdapter>();
   register(adapter:OriginContinuationAdapter) {
     if(this.adapters.has(adapter.id))throw new Error("Origin continuation adapter already registered");
@@ -148,6 +162,7 @@ export class TaskReturnDelivery {
       if (!await refresh()) return {completion:Promise.resolve("Check-in no longer relevant")};
       const events=await this.read(origin.sessionId);
       if (taskReturnCompleted(events,eventId)) return {completion: Promise.resolve("Task result processed in the original session")};
+      this.assertReady(origin.sessionId,events);
       let agent = this.ctx.agents.get(SessionId(origin.sessionId));
       let originalTools: string[] | undefined;
       if (message.checkIn && agent) {
@@ -206,6 +221,7 @@ export class TaskReturnDelivery {
       await this.ctx.sessions.flush(agent.session);
       const current = await this.read(origin.sessionId);
       if (taskReturnCompleted(current, eventId)) {liveMask?.();return {completion: Promise.resolve("Task result processed in the original session")};}
+      this.assertReady(origin.sessionId,current);
       abort.throwIfAborted();
       if (!await refresh()) {liveMask?.();return {completion:Promise.resolve("Check-in no longer relevant")};}
       if (message.checkIn) {
@@ -241,12 +257,18 @@ export class TaskReturnDelivery {
   }
   private waitForCompletion(agent: Agent, eventId: string, signal: AbortSignal): Promise<string> {
     return new Promise((resolve, reject) => {
+      let requestFailure: ReturnFailure | undefined;
+      const offFailure = this.ctx.on("agent/request-error", (payload, next) => {
+        if (payload.agent === agent) requestFailure = providerReturnFailure(payload.failure);
+        return next();
+      });
       let settled = false;
       let checking = Promise.resolve();
       const finish = (error?: unknown) => {
         if (settled) return;
         settled = true;
         off();
+        offFailure();
         signal.removeEventListener("abort", onAbort);
         if (error) reject(error);
         else resolve("Task result processed in the original session");
@@ -256,8 +278,16 @@ export class TaskReturnDelivery {
         checking = checking.then(async () => {
           if (settled) return;
           await this.ctx.sessions.flush(agent.session);
-          if (taskReturnCompleted(await this.read(String(agent.id)), eventId)) finish();
-          else if (idle) finish(new Error("Task result continuation interrupted; retained for retry"));
+          const events = await this.read(String(agent.id));
+          if (taskReturnCompleted(events, eventId)) finish();
+          else if (idle) {
+            const terminal = events.findLast(event=>event.type === "turn/end");
+            const failure = terminal?.type === "turn/end" && terminal.data.reason.kind === "error"
+              ? requestFailure ?? providerReturnFailure(terminal.data.reason.error) ?? {code:"RETURN_UNAVAILABLE" as const}
+              : {code:"ABORTED" as const};
+            if(rateLimited(failure))this.cooldowns.set(String(agent.id), {until:returnRetryAt(failure,Date.now()),failure});
+            finish(new TaskReturnError(failure));
+          }
         }).catch(finish);
       };
       const off = this.ctx.on("session/event", (session, event) => {

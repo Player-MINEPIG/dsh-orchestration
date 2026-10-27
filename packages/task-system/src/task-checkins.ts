@@ -72,6 +72,7 @@ export type CheckinCategory =
   | "approval"
   | "active_execution"
   | "result_pending"
+  | "return_unavailable"
   | "ready";
 export interface CheckinView {
   phase:
@@ -102,6 +103,7 @@ const reasons: Record<CheckinCategory, string> = {
   approval: "等待用户确认，不会通过检查授予执行权限",
   active_execution: "实际执行租约仍有效，检查暂缓",
   result_pending: "已有结果回信等待负责会话处理，检查暂缓",
+  return_unavailable: "原会话连续三次未能处理结果回信，已停止自动检查；请先重试回信",
   ready: "到期后请负责会话核对任务并更新进度",
 };
 
@@ -234,11 +236,11 @@ export class TaskCheckins {
       )
     )
       return "active_execution";
+    if(this.rows<SessionMessage>("sessionMessage").some(message=>message.taskId===task.taskId && message.completion && message.state==="failed"))return "return_unavailable";
     if (
       this.rows<SessionMessage>("sessionMessage").some(
         (message) =>
           message.state === "queued" &&
-          (message.deliveryAttempts ?? 0) < 3 &&
           message.completion?.origin.kind === "session" &&
           message.nodeId === owner.nodeId &&
           message.sessionId === owner.sessionId,
@@ -284,13 +286,14 @@ export class TaskCheckins {
       "not_admitted",
       "needs_owner",
       "protected_execution",
+      "return_unavailable",
     ].includes(category);
     const phase =
       category === "closed" || category === "not_admitted"
         ? "closed"
         : category === "needs_owner"
           ? "needs_owner"
-          : category === "protected_execution" || record?.attention
+          : category === "protected_execution" || category === "return_unavailable" || record?.attention
             ? "needs_action"
             : record?.pendingMessageId || record?.requested
               ? "queued"
@@ -618,6 +621,7 @@ export class TaskCheckins {
       const record = this.record(ref.taskId);
       if (!record || record.pendingMessageId !== message.messageId) continue;
       delete record.pendingMessageId;
+      record.deliveryFailures=0;
       if (
         asked.has(JSON.stringify(ref)) &&
         record.revision === ref.revision &&

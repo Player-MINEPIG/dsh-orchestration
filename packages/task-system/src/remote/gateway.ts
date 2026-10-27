@@ -1,4 +1,5 @@
 import { sessionContinuation, CheckinRefs } from "./ports.js";
+import { ReturnFailure } from "../task-return-failure.js";
 import { TaskReadOptions } from "../task-reads.js";
 import { NodeReadOptions } from "../node-reads.js";
 import {
@@ -469,7 +470,8 @@ export function validatePayload(envelope: CommandEnvelope): void {
       if (p.messageId !== undefined) id(p, "messageId");
       break;
     case "sessionMessageReply":
-      fields(p, ["messageId", "state", "reply"], ["checkInTasks"]);
+      fields(p, ["messageId", "state", "reply"], ["checkInTasks", "failure"]);
+      if(p.failure!==undefined)insist(ReturnFailure.safeParse(p.failure).success,"INVALID_RETURN_FAILURE");
       if(p.checkInTasks!==undefined)insist(CheckinRefs.safeParse(p.checkInTasks).success,"INVALID_CHECKIN_RECEIPT");
       id(p, "messageId");
       insist(
@@ -967,6 +969,7 @@ export class RemoteGateway {
             messageId: String(p.messageId),
             state: p.state as "completed" | "failed" | "uncertain",
             reply: String(p.reply),
+            ...(p.failure ? {failure:ReturnFailure.parse(p.failure)} : {}),
             ...(p.checkInTasks ? {checkInTasks:CheckinRefs.parse(p.checkInTasks)} : {}),
           });
           break;

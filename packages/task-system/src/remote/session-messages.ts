@@ -1,4 +1,5 @@
 import { sessionContinuation, continuationReply } from "./ports.js";
+import { returnFailure } from "../task-return-failure.js";
 import { authorizedWorkspace } from "./policy.js";
 import { realpath } from "node:fs/promises";
 import { relative, isAbsolute, sep } from "node:path";
@@ -65,7 +66,8 @@ export class SessionMessages {
         const reply = await provider.sendTaskReturn(message,signal);
         await ledger.completeSessionMessage!(`task-return-ack:${message.messageId}`,{messageId:message.messageId,nodeId:policy.nodeId,state:"completed",...continuationReply(reply)});
       } catch (error) {
-        await ledger.completeSessionMessage!(`task-return-failure:${message.messageId}:${Date.now()}`,{messageId:message.messageId,nodeId:policy.nodeId,state:"failed",reply:error instanceof Error && "code" in error && error.code === "CHECKIN_BUSY" ? "CHECKIN_BUSY" : "RETURN_UNAVAILABLE: original composition or session storage unavailable; retained for retry"});
+        const failure = returnFailure(error);
+        await ledger.completeSessionMessage!(`task-return-failure:${message.messageId}:${Date.now()}`,{messageId:message.messageId,nodeId:policy.nodeId,state:"failed",reply:failure.code,failure});
       }
       return;
     }

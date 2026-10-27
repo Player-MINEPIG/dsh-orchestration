@@ -1614,6 +1614,7 @@ export class ProjectRuntime {
     runId: string | null;
     confirmationRevision: number;
     retryPrompt?: string;
+    returnMessageId?: string;
     action:
       | "complete-materials"
       | "complete"
@@ -1627,11 +1628,19 @@ export class ProjectRuntime {
       | "status"
       | "retry"
       | "repair"
+      | "retry-return"
       | "check";
   }) {
     this.authorize();
     const view = this.ledger.taskActionState(input.taskId),
       task = this.ledger.getTask(input.taskId);
+    if(input.action==="retry-return") {
+      if(view.version!==input.expectedVersion)throw new TaskError("CONFLICT","Task changed; refresh before retrying its return");
+      if(!input.returnMessageId)throw new TaskError("INVALID","Return retry requires the original message ID");
+      const message=this.ledger.getSessionMessage(input.returnMessageId);
+      if(message.taskId!==task.taskId || !message.completion)throw new TaskError("FORBIDDEN","Return does not belong to this Task");
+      return this.ledger.retryTaskReturn(input.commandId,message.messageId);
+    }
     if (input.action === "check") {
       if (view.version !== input.expectedVersion) throw new TaskError("CONFLICT", "Task changed; refresh before checking");
       return this.ledger.checkins.request(input.commandId,input.taskId);
@@ -1927,6 +1936,7 @@ export class ProjectRuntime {
       );
 
       const attention = this.ledger.taskActionState(t.taskId);
+      const resultReturn=this.ledger.sessionMessages(t.taskId).findLast(m=>m.completion && m.state==="failed");
       const cancelled = t.state === "cancelled";
       const manual = t.state === "completed" ? t.manualCompletion : undefined;
       const materialRequest = manual?.requestMessageId
@@ -1955,7 +1965,9 @@ export class ProjectRuntime {
       }[materialsStatus ?? "closed"];
 
       const workflowRun=workflowSnapshot?.runs.find(flow=>flow.runId===run?.runId);
-      const status = manual
+      const status = resultReturn
+        ? "error"
+        : manual
         ? "done"
         : cancelled
           ? attention.uncertain
@@ -2003,7 +2015,7 @@ export class ProjectRuntime {
         title: t.title,
         description: t.description,
         status,
-        checkin:this.ledger.checkins.view(t.taskId),
+        checkin:{...this.ledger.checkins.view(t.taskId),returnDelivery:resultReturn ? {messageId:resultReturn.messageId,state:resultReturn.state,reason:resultReturn.reply ?? "原会话回信需处理",nextAttemptAt:resultReturn.nextAttemptAt ?? null} : null},
         actionVersion: attention.version,
         dispatchIssue: run?.dispatchIssue ?? null,
         canRepair: attention.canRepair,
@@ -2079,7 +2091,9 @@ export class ProjectRuntime {
         canRestore: attention.handled && run?.reviewStatus !== "accepted",
         canReconcile: attention.canReconcile,
         confirmationPending: attention.confirmationPending,
-        stateLabel: manual
+        stateLabel: resultReturn
+          ? "需处理 · 原会话未回信"
+          : manual
           ? manual.materials === "pending"
             ? `已完成 · ${materialsLabel}`
             : "已完成 · 人工确认"

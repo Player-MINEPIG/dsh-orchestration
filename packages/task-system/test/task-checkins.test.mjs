@@ -89,7 +89,7 @@ test('terminal batch failure releases stale revision membership without overwrit
  const nextCheckAt=new Date(f.now+20000).toISOString();f.update(a,{kind:'scheduled',nextCheckAt});
  for(let n=0;n<3;n++)f.l.recordTaskReturnFailure(message.messageId,'RETURN_UNAVAILABLE');
  assert.equal(f.l.getSessionMessage(message.messageId).state,'failed');assert.equal(f.l.checkins.view(a.taskId).pendingMessageId,null);assert.equal(f.l.checkins.view(a.taskId).nextCheckAt,nextCheckAt);assert.equal(f.l.checkins.view(a.taskId).deliveryFailures,0);assert.equal(f.l.checkins.view(b.taskId).phase,'needs_action');
- f.advance(20000);f.l.checkins.tick();assert.equal(f.messages().length,1);assert.equal(f.messages()[0].checkIn.tasks[0].taskId,a.taskId);
+ f.advance(20000);f.l.checkins.tick();assert.equal(f.messages().length,0,'session recovery interval applies to another task');f.advance(40000);assert.equal(f.messages().length,1);assert.equal(f.messages()[0].checkIn.tasks[0].taskId,a.taskId);
 });
 
 
@@ -107,4 +107,21 @@ test('ACK counts only the actual admitted members, even when omitted work become
  f.advance();f.l.checkins.tick();const original=f.messages()[0];f.l.claim('a-claim',{runId:run.runId,nodeId:'worker',ttlMs:10000});const projected=f.messages()[0];assert.deepEqual(projected.checkIn.tasks.map(ref=>ref.taskId),[b.taskId]);
  f.advance(11000);f.l.recoverExpired('recover');f.ack(projected);assert.equal(f.l.checkins.view(a.taskId).checksWithoutUpdate,0);assert.equal(f.l.checkins.view(b.taskId).checksWithoutUpdate,1);assert.equal(f.l.checkins.view(a.taskId).pendingMessageId,null);
  const fresh=f.l.checkins.request('fresh',a.taskId),message=f.messages()[0];assert.throws(()=>f.l.completeSessionMessage('forged',{messageId:message.messageId,nodeId:'central',state:'completed',reply:'bad',checkInTasks:[{taskId:'other',revision:0}]}),e=>e.code==='FORBIDDEN');assert.throws(()=>f.l.completeSessionMessage('duplicate',{messageId:message.messageId,nodeId:'central',state:'completed',reply:'bad',checkInTasks:[message.checkIn.tasks[0],message.checkIn.tasks[0]]}),e=>e.code==='FORBIDDEN');
+});
+
+
+test('exhausted uncertain result return stops task check-ins until that original event is manually retried',t=>{
+ const f=fixture(t),task=f.task('unanswered'),run=f.l.withDispatchOrigin(owner(),()=>f.l.createRun('run',{taskId:task.taskId,route:route(f)}).value);
+ const claim=f.l.claim('claim',{runId:run.runId,nodeId:'worker',ttlMs:10000}).value;
+ f.l.submit('unknown',{runId:run.runId,attemptId:claim.attempt.attemptId,nodeId:'worker',fence:claim.attempt.fence,outcome:'unknown',summary:'Execution ended without task_submit_result'});
+ const message=f.messages().find(m=>m.completion);
+ for(let n=0;n<3;n++)f.l.recordTaskReturnFailure(message.messageId,'RETURN_UNAVAILABLE');
+ assert.equal(f.l.getRun(run.runId).state,'uncertain');assert.equal(f.l.getTask(task.taskId).state,'waiting');
+ f.advance(600000);f.l.checkins.tick();
+ assert.equal(f.l.checkins.view(task.taskId).phase,'needs_action');assert.equal(f.l.checkins.view(task.taskId).canRequest,false);
+ assert.equal(f.messages().length,0,'a check-in must not restart the exhausted conversation');
+ f.l.retryTaskReturn('manual-return',message.messageId);assert.equal(f.messages()[0].messageId,message.messageId);
+ f.l.completeSessionMessage('return-processed',{messageId:message.messageId,nodeId:'central',state:'completed',reply:'Verified current uncertain execution'});
+ f.l.checkins.tick();assert.ok(f.messages().some(m=>m.checkIn),'manual recovery restores follow-up without rerunning uncertain effects');
+ assert.equal(f.l.history(task.taskId).runs.length,1);
 });

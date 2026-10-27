@@ -111,7 +111,8 @@ test('nonexecuting central host consumes returns ahead of old messages and exclu
   const service=h.ctx.taskSystem,db=h.ledger.managementDatabase();
   const save=message=>db.prepare("INSERT INTO entities(kind,id,parent,state,data) VALUES('sessionMessage',?,?,?,?)").run(message.messageId,message.taskId,'queued',JSON.stringify(message));
   for(let i=0;i<4;i++)save({messageId:`old-${i}`,taskId:'old',nodeId:'local',sessionId:'old',state:'queued'});
-  const completion=id=>({messageId:id,taskId:'child',nodeId:'local',sessionId:'origin',workspaceId:'origin-session',state:'queued',completion:{eventId:id,runId:'child-run',origin:{kind:'session',nodeId:'local',sessionId:'origin',cwd:h.dir}}});
+  const returned=h.ledger.createTask('return-fixture',{title:'Return fixture'}).value;
+  const completion=id=>({messageId:id,taskId:returned.taskId,nodeId:'local',sessionId:'origin',workspaceId:'origin-session',state:'queued',completion:{eventId:id,runId:'child-run',origin:{kind:'session',nodeId:'local',sessionId:'origin',cwd:h.dir}}});
   let deliveries=0,started,finish;const ready=new Promise(resolve=>started=resolve),gate=new Promise(resolve=>finish=resolve);
   service.taskReturns.deliver=async()=>{deliveries++;started();await gate;return 'Verified'};
   save(completion('first'));service.tick();await ready;
