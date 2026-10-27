@@ -626,3 +626,20 @@ test('HTML report presentation loads by exact version without growing snapshots 
   t.diagnostic(JSON.stringify({sample:'one 300KB HTML report, same UTF8 uncompressed JSON',previousSnapshotBytes:Buffer.byteLength(JSON.stringify(previousShape)),currentSnapshotBytes:bytes,onDemandBytes:Buffer.byteLength(JSON.stringify(full)),defaultContainsHtml:false}));
  }finally{await h.dispose();}
 });
+
+
+test('unanswered completion is visible as needs action even after task success, and operator retry preserves its execution',async()=>{
+ const h=await createNativeHarness({config:{role:'planner'}});
+ try{
+  registerExecutor(h.ledger,'node',worker);const runtime=h.ctx.taskSystem.projects;
+  const {task,run,lease}=h.ledger.withDispatchOrigin({kind:'session',nodeId:'local',sessionId:'return-owner',composition:{provider:'test-offline',model:'script',tools:[]}},()=>fixtureRun(h,'unanswered-result'));
+  h.ledger.submit('return-success',{...lease,outcome:'success',summary:'Execution finished'});
+  const message=h.ledger.history(task.taskId).resultReturns[0];
+  for(let n=0;n<3;n++)h.ledger.recordTaskReturnFailure(message.messageId,'RETURN_UNAVAILABLE');
+  const row=runtime.snapshot().tasks.find(t=>t.id===task.taskId);
+  assert.equal(row.status,'error');assert.match(row.stateLabel,/需处理/);assert.equal(row.checkin.returnDelivery.messageId,message.messageId);
+  const retry={...operator(runtime,task.taskId,'retry-return'),returnMessageId:message.messageId};
+  runtime.actOnTask(retry);runtime.actOnTask(retry);
+  assert.equal(h.ledger.getSessionMessage(message.messageId).state,'queued');assert.equal(h.ledger.getRun(run.runId).state,'succeeded');assert.equal(h.ledger.history(task.taskId).runs.length,1);
+ }finally{await h.dispose();}
+});

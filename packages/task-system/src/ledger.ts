@@ -1,5 +1,6 @@
 import { CheckinRefs } from "./remote/ports.js";
 import { TaskCheckins } from "./task-checkins.js";
+import { ReturnFailure, rateLimited, returnRetryAt } from "./task-return-failure.js";
 import { taskRead, type TaskReadOptions } from "./task-reads.js";
 import { nodeRead, type NodeReadOptions } from "./node-reads.js";
 import { ExecutorAlertStore } from "./executor-alerts.js";
@@ -833,14 +834,27 @@ export class TaskLedger {
       return pending ? [{taskId:run.taskId,runId:run.runId,state:run.state,...(messages.at(-1)?{deliveryState:messages.at(-1)!.state}:{})}] : [];
     });
   }
-  recordTaskReturnFailure(messageId: string, code: string) {
+  recordTaskReturnFailure(messageId: string, code: string, detail?: ReturnFailure) {
     const message=this.getSessionMessage(messageId);
     if((!message.completion && !message.checkIn) || message.state!=="queued")return;
-    if(message.checkIn) this.checkins.failure(message, code === "CHECKIN_BUSY");
-    if (code !== "CHECKIN_BUSY") message.deliveryAttempts=(message.deliveryAttempts ?? 0)+1;
+    const parsed=ReturnFailure.safeParse(detail ?? {code});
+    const failure=parsed.success ? parsed.data : {code:"RETURN_UNAVAILABLE" as const};
+    const busy=failure.code==="CHECKIN_BUSY", limited=rateLimited(failure,this.clock());
+    if(message.checkIn && !limited) this.checkins.failure(message,busy);
+    if(!busy) {
+      message.consecutiveDeliveryFailures ??= message.deliveryFailure ? 0 : message.deliveryAttempts ?? 0;
+      message.deliveryAttempts=(message.deliveryAttempts ?? 0)+1;
+      if(!limited && ++message.consecutiveDeliveryFailures>=3) message.state="failed";
+    }
+    message.deliveryFailure=failure;
     message.lastDeliveryError=code.slice(0,200);
     message.lastAttemptAt=this.now();
-    message.nextAttemptAt=new Date(this.clock()+(message.checkIn ? 60_000 : Math.min(60000,1000*2**Math.min(message.deliveryAttempts ?? 0,6)))).toISOString();
+    message.nextAttemptAt=returnRetryAt(failure,this.clock());
+    if(!busy) {
+      const id=hash([message.nodeId,message.sessionId]),prior=this.get<{until:string}>("sessionReturnCooldown",id);
+      this.put("sessionReturnCooldown",id,{until:prior && prior.until>message.nextAttemptAt ? prior.until : message.nextAttemptAt},null);
+    }
+    if(message.state==="failed")message.reply=["QUOTA","ACCOUNT_QUOTA"].includes(failure.code) ? `原会话额度不足（${failure.code}），连续三次未能处理回信；请修复额度后手动重试。` : "原会话连续三次未能处理回信，已停止自动问询；请修复会话后手动重试。";
     this.put("sessionMessage",messageId,message,message.taskId,message.state);
   }
   retryTaskReturn(commandId: string, messageId: string) {
@@ -849,7 +863,7 @@ export class TaskLedger {
       const message=this.getSessionMessage(messageId);
       if(!message.completion)fail("INVALID","Not a task result return");
       if(message.state==="completed")return message;
-      message.state="queued";delete message.reply;delete message.nextAttemptAt;message.updatedAt=this.now();
+      message.state="queued";message.consecutiveDeliveryFailures=0;delete message.reply;delete message.nextAttemptAt;message.updatedAt=this.now();
       this.put("sessionMessage",messageId,message,message.taskId,message.state);
       return message;
     });
@@ -3528,6 +3542,11 @@ export class TaskLedger {
     const messages = this.list<import("./remote/ports.js").SessionMessage>(
       "sessionMessage",
     );
+    for(const message of messages)if(message.completion && message.state==="queued" && (message.consecutiveDeliveryFailures ?? (!message.deliveryFailure ? message.deliveryAttempts ?? 0 : 0))>=3) {
+      message.state="failed";
+      message.reply="原会话连续三次未能处理回信，已停止自动问询；请修复会话后手动重试。";
+      if(!this.options.readOnly)this.put("sessionMessage",message.messageId,message,message.taskId,message.state);
+    }
     const excluded = new Set(options?.excludeMessageIds);
     let start = 0;
     if (options?.afterMessageId) {
@@ -3537,6 +3556,7 @@ export class TaskLedger {
     }
     return messages.slice(start)
       .filter((m) => (!options?.messageId || m.messageId === options.messageId) && (!m.checkIn || this.checkins.disposition(m) === "ready") && !excluded.has(m.messageId) && (!options?.kind || (options.kind === "completion" ? Boolean(m.completion) : options.kind === "continuation" ? Boolean(m.completion || m.checkIn) : !m.completion && !m.checkIn)) && m.nodeId === nodeId && m.state === "queued" && (!m.nextAttemptAt || m.nextAttemptAt<=this.now()))
+      .filter(m=>!(m.completion || m.checkIn) || (this.get<{until:string}>("sessionReturnCooldown",hash([m.nodeId,m.sessionId]))?.until ?? "")<=this.now())
       .slice(0, 4).map(message => message.checkIn ? this.checkins.prepare(message) : message);
   }
   completeSessionMessage(
@@ -3554,7 +3574,7 @@ export class TaskLedger {
         fail("INVALID", "Invalid message result");
       text(input.reply, "session reply", 12000);
       if((message.completion || message.checkIn) && input.state==="failed" && message.state==="queued") {
-        this.recordTaskReturnFailure(message.messageId,input.reply);
+        this.recordTaskReturnFailure(message.messageId,input.reply,input.failure);
         return this.getSessionMessage(message.messageId);
       }
       if (message.state !== "queued") {
@@ -3574,6 +3594,7 @@ export class TaskLedger {
         reply: input.reply,
         updatedAt: this.now(),
       });
+      if(input.state==="completed")message.consecutiveDeliveryFailures=0;
       this.put(
         "sessionMessage",
         message.messageId,

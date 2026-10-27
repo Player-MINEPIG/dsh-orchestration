@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {join} from 'node:path';
 import {mkdirSync} from 'node:fs';
 import {SessionId} from '@deepseek-ai/dsh-session';
-import {createUserMessage,ToolCallId} from '@deepseek-ai/dsh-llm';
+import {createUserMessage,ToolCallId,LlmError} from '@deepseek-ai/dsh-llm';
 import {createNativeHarness} from './native-harness.mjs';
 import {TaskReturnDelivery} from '../../packages/task-system/dist/task-returns.js';
 let seq=0;
@@ -236,4 +236,21 @@ test('dispatcher root wait excludes only its bound coordinator while children an
   const unboundWait=await wait(observer,parent.taskId);
   assert.equal(unboundWait.settled,false);assert.deepEqual(unboundWait.pendingRunIds,[binding.runId],'an unbound session cannot exclude an arbitrary running Run');
  }finally{await h.dispose();}
+});
+
+
+test('a known provider quota error cools the real session before another result can steer, including a new delivery instance',async()=>{
+ const h=await createNativeHarness({script:[()=>{throw new LlmError("Claude Code: You've hit your session limit · resets 1:10pm (UTC)",'RATE_LIMIT',{providerRetryAfterMs:7200000});}]});let restarted;
+ try{
+  const id=SessionId('quota-return-origin'),parent=await h.ctx.agents.create({sessionId:id,agentOptions:{provider:'test-offline',model:'script'}});
+  const origin={kind:'session',nodeId:'local',sessionId:String(id),composition:{provider:'test-offline',model:'script',tools:[]}};
+  const message=n=>({messageId:'quota-'+n,taskId:'child-'+n,nodeId:'local',sessionId:String(id),completion:{eventId:'quota-'+n,origin},text:'Result '+n});
+  await assert.rejects(h.ctx.taskSystem.taskReturns.deliver(message(1)),error=>error.failure?.code==='RATE_LIMIT'&&error.failure.retryAfterMs===7200000&&Boolean(error.failure.resetAt));
+  await assert.rejects(h.ctx.taskSystem.taskReturns.deliver(message(2)),error=>error.failure?.code==='RATE_LIMIT');
+  assert.equal(h.adapter.requests.length,1,'second event does not reset the model retry budget');
+  await h.ctx.sessions.flush(parent.agent.session);await parent.dispose();restarted=new TaskReturnDelivery(h.ctx);
+  await assert.rejects(restarted.deliver(message(3)),error=>error.failure?.code==='RATE_LIMIT');
+  assert.equal(h.adapter.requests.length,1,'persisted terminal quota blocks steering after delivery restart');
+  assert.equal((await read(h,String(id))).filter(event=>event.type==='user/message'&&event.data.source.kind==='dsh-task-result').length,1);
+ }finally{await restarted?.dispose();await h.dispose();}
 });

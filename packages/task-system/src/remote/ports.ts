@@ -17,6 +17,8 @@ export function continuationReply(receipt:SessionContinuationReceipt) { return t
 
 export interface SessionMessage {
   deliveryAttempts?: number;
+  consecutiveDeliveryFailures?: number;
+  deliveryFailure?: import("../task-return-failure.js").ReturnFailure;
   lastDeliveryError?: string;
   lastAttemptAt?: string;
   nextAttemptAt?: string;
@@ -36,6 +38,7 @@ export interface SessionMessage {
   reply?: string;
 }
 export interface SessionMessageResult {
+  failure?: import("../task-return-failure.js").ReturnFailure;
   checkInTasks?: CheckinRef[];
   state: "completed" | "failed" | "uncertain";
   reply: string;

@@ -697,3 +697,10 @@ test('cold central failure can switch to local activity and back without a devic
  const central=p.action('task-view','planner');assert.equal(p.requests.length,1);assert.equal(p.requests[0].input.view,'planner');
  await p.answer({value:{...snapshot,viewContext:{role:'planner'},viewCapabilities:{planner:true,executor:true}}});await central;
 });
+
+
+test('failed completion exposes its reason and a return-only retry control',()=>{
+ const p=page();
+ const html=vm.runInContext('resultReturnStatus({id:"returned-task",checkin:{returnDelivery:{state:"failed",reason:"原会话连续三次未回信"}}})',p.context);
+ assert.match(html,/原会话回信需处理/);assert.match(html,/连续三次/);assert.match(html,/data-action="task-return-retry"/);assert.match(html,/保留原事件/);
+});
