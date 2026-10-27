@@ -3562,10 +3562,10 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
   ctx.tools.register(
     defineTool({
       name: "task_checkin",
-      description: "Read or update this responsible session's task progress without changing execution outcomes. action=update requires observation, summary, plan (scheduled with optional nextCheckAt, or paused with reason). action=request asks the same recorded session to check; no new execution or permission. action=status reads the check-in. Use stable commandId for writes. Final completion still requires task_submit_result.",
+      description: "Read or update this responsible session's task progress without changing execution outcomes. action=update requires observation, summary, plan (scheduled with optional nextCheckAt, or paused with reason). action=request asks the same recorded session to check; no new execution or permission. action=status reads the check-in. Use stable commandId for writes. When handling work in conversation, read status.responsibilityVersion then use action=responsibility with expectedVersion, state=coordinator while you handle it, needs_user only for a specific user decision or blocker you cannot resolve (explain it in summary), or resolved with the verified handling result to close follow-up. New execution/report/review evidence invalidates that declaration. This never grants approval or result acceptance. Final completion still requires task_submit_result.",
       parameters: {
-        action: {type:"string",enum:["status","request","update"],required:true}, taskId:{type:"string",required:true},
-        commandId:{type:"string"}, observation:{type:"string",enum:["working","waiting_children","waiting_external","blocked"]},
+        action: {type:"string",enum:["status","request","update","responsibility"],required:true}, taskId:{type:"string",required:true},
+        commandId:{type:"string"}, expectedVersion:{type:"string"}, state:{type:"string",enum:["coordinator","needs_user","resolved"]}, observation:{type:"string",enum:["working","waiting_children","waiting_external","blocked"]},
         summary:{type:"string"}, plan:{type:"object",properties:{kind:{type:"string",enum:["scheduled","paused"],required:true},nextCheckAt:{type:"string"},reason:{type:"string"}},additionalProperties:false},
       },
       output,

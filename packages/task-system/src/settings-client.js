@@ -3431,6 +3431,19 @@ h(
           background: toast.status === "done" ? "#dcfce7" : toast.status === "error" ? "#fee2e2" : "var(--dsw-alias-bg-base,#fff)",
           color: toast.status === "done" ? "#166534" : toast.status === "error" ? "#991b1b" : "inherit" } }, toast.text));
     }
+    async function openTaskSession(input, invoke, openSession) {
+      const snapshot=await invoke("projectSnapshot",{view:input?.view==="executor"?"executor":"planner"});
+      const task=snapshot.tasks.find(task=>task.id===input?.taskId);
+      if(!task || task.observationOnly || snapshot.viewContext?.nodeId!==input.nodeId)throw Error("请在会话所属设备的 DSH 中打开，不能在当前设备打开其他节点的同名会话。");
+      const origin=task.checkin?.owner;
+      const source=origin?.kind==="session" && origin.nodeId===input.nodeId && origin.sessionId===input.sessionId;
+      const nativeRuns=snapshot.runs?.filter(r=>r.taskId===task.id && r.executionDriver==="dsh")??[];
+      const execution=snapshot.attempts?.some(a=>a.taskId===task.id && a.nodeId===input.nodeId && a.sessionId===input.sessionId && nativeRuns.some(r=>(r.id??r.runId)===a.runId)) ||
+        nativeRuns.some(r=>r.node===input.nodeId && r.sessionIds?.includes(input.sessionId));
+      if(!source && !execution)throw Error("此会话不在当前任务的来源或执行记录中，请刷新后重试。");
+      await openSession(input.sessionId);
+      return {opened:true};
+    }
     function ProjectPanel({ invoke, directoryApi, navigation, nativeClient }) {
       const frame = React.useRef(null),
         [html, setHtml] = React.useState(null),
@@ -3501,7 +3514,7 @@ h(
           if (
             event.source !== frame.current?.contentWindow ||
             event.data?.channel !== "dsh-project-runtime" ||
-            !projectMethods.includes(event.data.method) && !["projectDirectoryList", "projectDirectoryPick", "projectOpenSettings", "projectOpenModels"].includes(event.data.method) ||
+            !projectMethods.includes(event.data.method) && !["projectDirectoryList", "projectDirectoryPick", "projectOpenSettings", "projectOpenModels", "projectOpenTaskSession"].includes(event.data.method) ||
             ["projectPage", "workflowPage"].includes(event.data.method)
           )
             return;
@@ -3512,6 +3525,7 @@ h(
               : method === "projectDirectoryPick" ? await directoryApi.pick()
               : method === "projectOpenSettings" ? directoryApi.openSettings()
               : method === "projectOpenModels" ? directoryApi.openModels()
+              : method === "projectOpenTaskSession" ? await openTaskSession(input,invoke,directoryApi.openSession)
               : await invoke(method, input);
             source.postMessage(
               { channel: "dsh-project-runtime", id, value },
@@ -3544,7 +3558,7 @@ h(
               {
                 channel: "dsh-project-runtime",
                 id,
-                error: code === "WORKFLOW_UNBOUND" ? "执行前请选择执行方式（Agent 或程序）并绑定工作区："+(failure.details?.detail||"存在未绑定步骤") : code === "WORKFLOW_SCOPE" ? "任务权限未覆盖工作流所需范围，请由项目所有者核对授权："+(failure.details?.detail||"缺少设备、工作区或工具授权") : messages[code] || (/^projectDirectory/.test(method) && error?.message) || (/workflow/i.test(method) && error?.message) || "无法读取或操作项目服务，请检查连接后重试。",
+                error: code === "WORKFLOW_UNBOUND" ? "执行前请选择执行方式（Agent 或程序）并绑定工作区："+(failure.details?.detail||"存在未绑定步骤") : code === "WORKFLOW_SCOPE" ? "任务权限未覆盖工作流所需范围，请由项目所有者核对授权："+(failure.details?.detail||"缺少设备、工作区或工具授权") : messages[code] || (method === "projectOpenTaskSession" && error?.message) || (/^projectDirectory/.test(method) && error?.message) || (/workflow/i.test(method) && error?.message) || "无法读取或操作项目服务，请检查连接后重试。",
                 errorCode: code,
                 errorDetails: /^projectDirectory/.test(method) ? failure?.details : undefined,
               },
@@ -3779,6 +3793,7 @@ h(
       const projectNavigation = new ProjectNavigation();
       const projectNativeClient = createProjectNativeClient({ React, Context: ClientContext, modules: ctx.modules });
       const projectDirectoryApi = {
+        openSession: sessionId => {const service=ctx.get("uiWorkspace");if(!service)throw Error("DSH 会话导航服务尚未加载");return service.openSession(sessionId);},
         list: path => {const service=ctx.get("uiWorkspace");if(!service)throw Error("DSH 目录浏览服务尚未加载，请稍后重试");return service.listDirectory(path);},
         pick: () => {const service=ctx.get("uiWorkspace");if(!service)throw Error("DSH 目录选择服务尚未加载");return service.pickDirectory();},
         openSettings: () => {ctx.get("layout")?.selectPanel("dsh-task-settings");return true;},
@@ -3973,6 +3988,7 @@ h(
       en,
       zh,
       keys,
+      openTaskSession,
     };
   },
 });

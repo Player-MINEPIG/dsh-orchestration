@@ -419,7 +419,7 @@ test('report retry settings save once with task revision and remain read-only on
 
 test('needs-attention filter is visible and distinct from review',async()=>{
  const p=page();await p.answer({value:{...snapshot,tasks:[{id:'error',title:'Broken daily',project:'unassigned',status:'error'},{id:'review',title:'Review daily',project:'unassigned',status:'review'}]}});
- assert.match(p.content(),/data-id="error" data-status="error"[^>]*><span>需处理<\/span><b>1<\/b>/);
+ assert.match(p.content(),/data-id="error" data-status="error"[^>]*><span>执行异常<\/span><b>1<\/b>/);
  await p.action('filter','error');assert.match(p.content(),/Broken daily/);assert.doesNotMatch(p.content(),/Review daily/);
 });
 test('mobile hub retains the actual outer scroll container across heartbeat, errors and back navigation',async()=>{
@@ -446,7 +446,7 @@ test('accepted partial results have their own section and filter while retaining
  const p=page(),task={id:'accepted-daily',project:'unassigned',title:'Accepted daily',status:'accepted',stateLabel:'已验收',reviewStatus:'accepted',runState:'partial',runId:'accepted-run',reportId:'accepted-report',report:'Partial delivery; PC_AU source unavailable'};
  await p.answer({value:{...snapshot,tasks:[task],runs:[{id:'accepted-run',taskId:task.id,state:'partial',reviewStatus:'accepted'}],reports:[{id:'accepted-report',taskId:task.id,runId:'accepted-run',kind:'result',body:task.report}]}});
  assert.match(p.content(),/data-status="accepted"><span>已验收<\/span><span>1<\/span>/);
- assert.match(p.content(),/data-status="error"><span>需处理<\/span><span>0<\/span>/);
+ assert.match(p.content(),/data-status="error"><span>执行异常<\/span><span>0<\/span>/);
  await p.action('filter','accepted');assert.match(p.content(),/Accepted daily/);assert.doesNotMatch(p.content(),/data-status="error"><span>需处理/);
  await p.action('task',task.id);assert.match(p.overlay(),/部分交付 · 已验收/);assert.match(p.overlay(),/PC_AU source unavailable/);
  assert.doesNotMatch(p.overlay(),/>审核通过<|>审核不通过<|>标记已处理</);
@@ -703,4 +703,31 @@ test('failed completion exposes its reason and a return-only retry control',()=>
  const p=page();
  const html=vm.runInContext('resultReturnStatus({id:"returned-task",checkin:{returnDelivery:{state:"failed",reason:"原会话连续三次未回信"}}})',p.context);
  assert.match(html,/原会话回信需处理/);assert.match(html,/连续三次/);assert.match(html,/data-action="task-return-retry"/);assert.match(html,/保留原事件/);
+});
+
+test('responsibility filters distinguish explicit user blockers, coordinator handling and unreviewed failures',async()=>{
+ const p=page(),rows=[['human','needs_user','Restore the workspace grant'],['working','coordinator','Coordinator arranging revision'],['resolved','resolved','Verified follow-up task'],['unknown','unreviewed','No current declaration']].map(([id,state,summary])=>({id,title:'Task '+id,project:'unassigned',status:'error',checkin:{responsibility:{state,summary}}}));
+ await p.answer({value:{...snapshot,tasks:rows}});
+ assert.match(p.content(),/需要你/);assert.match(p.content(),/待调度核对/);
+ for(const [id,state]of [['human','needs_user'],['working','coordinator'],['resolved','resolved'],['unknown','unreviewed']]){
+  await p.action('filter',state);assert.match(p.content(),new RegExp('Task '+id));
+  for(const other of rows.filter(t=>t.id!==id))assert.doesNotMatch(p.content(),new RegExp('Task '+other.id));
+  await p.action('task',id);assert.match(p.overlay(),new RegExp(rows.find(t=>t.id===id).checkin.responsibility.summary));await p.action('close');
+ }
+});
+
+test('task details expose original owner and actual execution sessions with node-safe navigation',async()=>{
+ const p=page(),task={id:'trace',title:'Trace task',project:'unassigned',status:'error',checkin:{owner:{kind:'session',nodeId:'MBP',sessionId:'owner-session',cwd:'/work',model:'owner-model'}}};
+ await p.answer({value:{...snapshot,viewContext:{nodeId:'MBP'},tasks:[task],runs:[{id:'r',taskId:'trace',node:'PC_AU',state:'failed',executionDriver:'dsh',model:'worker-model',sessionIds:['worker-session']}],attempts:[{taskId:'trace',runId:'r',nodeId:'PC_AU',sessionId:'worker-session',state:'settled'}]}});await p.action('task','trace');
+ assert.match(p.overlay(),/原负责会话/);assert.match(p.overlay(),/owner-session/);assert.match(p.overlay(),/执行会话/);assert.match(p.overlay(),/worker-session/);assert.match(p.overlay(),/请在 PC_AU 的 DSH/);
+ assert.equal((p.overlay().match(/data-action="task-session-open"/g)||[]).length,1);
+ const open=p.action('task-session-open',JSON.stringify({taskId:'trace',nodeId:'MBP',sessionId:'owner-session'}));assert.equal(p.requests[0].method,'projectOpenTaskSession');await p.answer({value:{opened:true}});await open;
+});
+
+test('executor activity offers read-only navigation to proven native sessions in the local snapshot',async()=>{
+ const p=page(),task={id:'local-task',title:'Local T19',project:'unassigned',status:'error',runId:'local-run',source:'local-recovery',report:'TIMEOUT'};
+ await p.answer({value:{...snapshot,viewContext:{nodeId:'MBP',role:'executor',scope:'local'},viewCapabilities:{planner:true,executor:true},tasks:[task],runs:[{id:'local-run',taskId:task.id,node:'MBP',executionDriver:'dsh',sessionIds:['actual-session'],state:'failed',status:'error'}]}});
+ assert.match(p.content(),/本机执行会话/);assert.match(p.content(),/打开原生会话/);
+ const open=p.action('task-session-open',JSON.stringify({view:'executor',taskId:task.id,nodeId:'MBP',sessionId:'actual-session'}));
+ assert.equal(p.requests[0].method,'projectOpenTaskSession');assert.equal(p.requests[0].input.view,'executor');await p.answer({value:{opened:true}});await open;
 });
