@@ -14,6 +14,7 @@ export interface ProjectSessionInput {
   nodeId?: string;
   executionModel?: ExecutionModelChoice;
   description?: string;
+  expectedExecutionMs?: number;
   taskId?: string;
   retry?: boolean;
   expectedActionVersion?: string;

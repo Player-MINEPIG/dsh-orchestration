@@ -11,6 +11,14 @@ import { WorkflowStep } from "../dist/workflow-contracts.js";
 import { WorkflowRuntime } from "../dist/workflows.js";
 import { ExecutorWorker } from "../dist/remote/worker.js";
 import { RecoveryStore } from "../dist/remote/store.js";
+
+test('program workload start is recorded after input validation and before user code',async()=>{
+ const registry=new ProgramRegistry('worker'),order=[];
+ registry.register({programId:'bounded',version:'1',title:'Bounded program',inputSchema:{type:'object',required:['ok'],properties:{ok:{const:true}}},execute:()=>{order.push('execute');return {summary:'Done',data:{}};}});
+ const request={claim:{task:{taskId:'task'},attempt:{executionId:'execution'},run:{runId:'run',route:{nodeId:'worker',execution:{kind:'program',programId:'bounded',version:'1'}},configuration:{input:{}}}},signal:new AbortController().signal,workspacePath:'/fixture',executionStarted:async()=>{order.push('started');}};
+ assert.equal((await registry.execute(request)).outcome,'failure');assert.deepEqual(order,[]);
+ request.claim.run.configuration.input={ok:true};assert.equal((await registry.execute(request)).outcome,'success');assert.deepEqual(order,['started','execute']);
+});
 let counter = 0;
 const id = () => `test-${++counter}`;
 function fixture() {

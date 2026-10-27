@@ -16,6 +16,13 @@ const checkin={phase:'scheduled',category:'ready',reason:'等待负责会话核�
 const task={id:'draft-task',project:'unassigned',title:'未派发调查',description:'读取资料',status:'draft',nativeState:'ready',actionVersion:'v1',runId:null,confirmationRevision:1,checkin};
 const snapshot=tasks=>({projects:[],tasks,settings:{root:null,revision:0},nodes:[]});
 
+test('execution estimate is explicit and a failed deadline retries its exact event through the existing task action',async()=>{
+ const p=page();await p.answer({value:snapshot([task])});await p.action('task',task.id);assert.match(p.overlay(),/未设置预计执行上界/);
+ const row={...task,checkin:{...checkin,phase:'needs_action',execution:{phase:'needs_action',expectedExecutionMs:120000,startedAt:'2026-10-28T01:00:00Z',dueAt:'2026-10-28T01:02:00Z',messageId:'exact-deadline'},returnDelivery:{messageId:'exact-deadline',state:'failed',reason:'原会话连续三次未能处理问询'}}};
+ vm.runInContext(`state.tasks=${JSON.stringify([row])};renderOverlay()`,p.context);assert.match(p.overlay(),/预计执行上界/);assert.match(p.overlay(),/实际开始/);assert.match(p.overlay(),/到期问询需处理/);
+ const retry=p.action('task-return-retry',task.id);assert.equal(p.requests[0].input.returnMessageId,'exact-deadline');assert.equal(p.requests[0].input.action,'retry-return');await p.answer({value:{}});await p.answer({value:snapshot([row])});await retry;
+});
+
 test('unstarted drafts have their own board column and filter',async()=>{
  const p=page();await p.answer({value:snapshot([task,{...task,id:'queued-task',title:'已入队调查',status:'queued'}])});
  assert.match(p.content(),/aria-label="未派发"/);assert.match(p.content(),/data-id="draft"/);

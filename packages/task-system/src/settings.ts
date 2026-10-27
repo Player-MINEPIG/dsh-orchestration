@@ -1,4 +1,5 @@
 import { ProtocolError } from "./remote/protocol.js";
+import { ExpectedExecutionMs } from "./execution-expectation.js";
 import { CentralTaskControl } from "./central-control.js";
 import { deploymentPolicy } from "./deployment.js";
 import type { ProjectRuntime } from "./project-runtime.js";
@@ -366,8 +367,8 @@ const projectInputs = {
   readProjectReport:z.object({commandId:z.string().min(1).max(200),reportId:z.string().min(1).max(200),contentVersion:z.string().regex(/^[a-f0-9]{64}$/)}).strict(),
   configureWorkflowTask: ConfigureWorkflowTask,
   adoptWorkflow: AdoptWorkflow,
-  createProjectTask: z.object({commandId:z.string().min(1).max(200),projectId:z.string().min(1),title:z.string().trim().min(1).max(500),description:z.string().trim().min(1).max(20000),routeId:z.string().min(1),start:z.boolean()}).strict(),
-  runProjectTask: z.object({commandId:z.string().min(1).max(200),taskId:z.string().min(1)}).strict(),
+  createProjectTask: z.object({commandId:z.string().min(1).max(200),projectId:z.string().min(1),title:z.string().trim().min(1).max(500),description:z.string().trim().min(1).max(20000),routeId:z.string().min(1),start:z.boolean(),expectedExecutionMs:ExpectedExecutionMs.optional()}).strict(),
+  runProjectTask: z.object({commandId:z.string().min(1).max(200),taskId:z.string().min(1),expectedExecutionMs:ExpectedExecutionMs.optional()}).strict(),
   workflowSnapshot: null,
   workflowPage: null,
   saveWorkflow: SaveWorkflow,

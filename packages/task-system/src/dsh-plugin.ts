@@ -9,6 +9,7 @@ import { deploymentPolicy, ledgerRole, type DeploymentPolicy } from "./deploymen
 import { mountDispatcherTools } from "./dispatcher-tools.js";
 import { initializeTaskSessionTitle, taskSessionTitle } from "./session-titles.js";
 import { ProjectSessionService } from "./project-session-service.js";
+import { ExpectedExecutionMs } from "./execution-expectation.js";
 import { TaskReturnDelivery } from "./task-returns.js";
 import { returnFailure } from "./task-return-failure.js";
 import { ExecutionModelChoice } from "./execution-models.js";
@@ -401,6 +402,7 @@ export interface NativeClaim {
     | "historyOnly"
     | "observationOnly"
     | "executionStartedAt"
+    | "executionExpectation"
     | "retryPolicy"
     | "retry"
     | "workspaceConstraint"
@@ -418,6 +420,7 @@ export interface NativeClaim {
   > & { createdAt?: string };
 }
 export interface ExternalExecutionRequest {
+  executionStarted?: () => Promise<void>;
   claim: NativeClaim;
   sessionId: string;
   resumeSession?: boolean;
@@ -434,6 +437,7 @@ export interface NativeCollaboration {
     input: {
       title: string;
       display?: import("./delegation-presentation.js").DelegationDisplayInput;
+      expectedExecutionMs?: number;
       description?: string;
       route?: Claim["run"]["route"];
       policy?: TaskPolicy;
@@ -492,6 +496,7 @@ interface OwnedAttempt {
   collaboration?: NativeCollaboration;
   retryObservation?: NativeRetryObservation;
   terminalErrorCode?: string;
+  executionStarted?: () => Promise<void>;
 }
 
 // Only fixed public failure classes may cross into task/remote summaries.
@@ -769,6 +774,18 @@ export class NativeExecutionProvider {
             ? reason.error.code
             : "RUNTIME_ERROR"
           : undefined;
+    });
+  }
+  private observeExecutionStart(ctx:Context,agent:Agent,owned:OwnedAttempt) {
+    const executionStarted=owned.executionStarted;
+    if(!executionStarted)return;
+    let started=false;
+    ctx.on("agent/pre-step",async({messages},next)=>{
+      if(!started && agent.id===owned.agent?.id && messages.length>0 && messages.every(message=>message.source.kind==="dsh-task" && message.source.taskId===owned.claim.task.taskId && message.source.runId===owned.ref.runId && message.source.attemptId===owned.ref.attemptId)) {
+        await executionStarted();
+        started=true;
+      }
+      return next();
     });
   }
   private missingResultSummary(owned: OwnedAttempt, remote = false): string {
@@ -1123,6 +1140,7 @@ export class NativeExecutionProvider {
       creation: new AbortController(),
       done: Promise.resolve(),
       external: true,
+      executionStarted:request.executionStarted,
       collaboration: request.collaboration,
     };
     this.active.set(ref.attemptId, owned);
@@ -1197,6 +1215,7 @@ export class NativeExecutionProvider {
             owned.agent = agent;
             this.bySession.set(sessionId, owned);
             this.observeTerminal(agentCtx, agent, owned);
+      this.observeExecutionStart(agentCtx,agent,owned);
             if (!owned.borrowed && this.owner.config.safeRetry.maxRetries > 0)
               owned.retryObservation = new NativeRetryObservation(
                 agentCtx,
@@ -1394,6 +1413,7 @@ export class NativeExecutionProvider {
           "Perform this isolated task. Return final execution evidence; user/director acceptance remains pending.",
       }),
       onPublished: async (id) => {
+        await owned.executionStarted?.();
         const report = {
           title: "Official backend started",
           body: `Official subagent ${id}; no live progress or continuation supported`,
@@ -1657,6 +1677,7 @@ export class NativeExecutionProvider {
       owned.agent = agent;
       this.bySession.set(sessionId, owned);
       this.observeTerminal(agentCtx, agent, owned);
+      this.observeExecutionStart(agentCtx,agent,owned);
       if (this.owner.config.safeRetry.maxRetries > 0)
         owned.retryObservation = new NativeRetryObservation(agentCtx, agent, {
           resumableTools: this.resumableTools(claim),
@@ -1703,6 +1724,7 @@ export class NativeExecutionProvider {
         ? { reasoningEffort: ReasoningEffortId(route.reasoningEffort) }
         : {}),
     };
+    if(claim.run.executionExpectation)owned.executionStarted=async()=>{this.owner.ledger.markExecutionStarted(`execution-started:${ref.attemptId}:${ref.executionId}`,ref);};
     let renewal: ReturnType<typeof setInterval> | undefined;
     let durableResult = false;
     // Atomically win one invocation owner before binding a session or creating
@@ -2148,7 +2170,7 @@ export class TaskSystemService extends Service {
   sessionProjectNodes?: (agent:Agent|undefined,callId:string,read?:import("./node-reads.js").NodeReadOptions)=>Promise<{handled:false}|{handled:true;value:Json}>;
   sessionProjectDispatch?: (
     agent: Agent | undefined,
-    input: { commandId: string; title?: string; description?: string; route?: unknown; nodeId?: string; executionModel?: unknown; retry?:boolean;expectedActionVersion?:string; taskId?: string; requestId?: string; workspaceId?: string; configuration?: unknown },
+    input: { expectedExecutionMs?:number; commandId: string; title?: string; description?: string; route?: unknown; nodeId?: string; executionModel?: unknown; retry?:boolean;expectedActionVersion?:string; taskId?: string; requestId?: string; workspaceId?: string; configuration?: unknown },
     callId: string,
   ) => Promise<{ handled: false } | { handled: true; value: Json }>;
   native?: NativeExecutionProvider;
@@ -2179,13 +2201,12 @@ export class TaskSystemService extends Service {
     this.taskReturns = new TaskReturnDelivery(ctx, async message => {
       if (config.centralMode === "remote") {
         const remote = this.ctx.get("remoteExecution") as RemoteExecutionService | undefined;
-        const messages = await remote?.coordinatorLedger?.pendingSessionMessages(config.nodeId,{kind:"continuation",messageId:message.messageId});
-        return messages?.find(current=>current.messageId===message.messageId);
+        const messages = await remote?.coordinatorLedger?.pendingSessionMessages(config.nodeId,{kind:"continuation",messageId:message.messageId,forAdmission:true});
+        const current=messages?.find(current=>current.messageId===message.messageId);
+        return current?.admission==="obsolete"?"obsolete":current?.admission==="defer"?undefined:current;
       }
-      const current=ledger.getSessionMessage(message.messageId);
-      if(current.state!=="queued")return "obsolete";
-      const disposition=ledger.checkins.disposition(current);
-      return disposition==="obsolete" ? "obsolete" : disposition==="defer" ? undefined : ledger.checkins.prepare(current);
+      const current=ledger.pendingSessionMessages(config.nodeId,{kind:"continuation",messageId:message.messageId,forAdmission:true})[0];
+      return current?.admission==="obsolete"?"obsolete":current?.admission==="defer"?undefined:current;
     });
     this.sessionCollaboration = new SessionCollaboration(ledger, config.nodeId, (nodeId, commandId, input) => collaborationAuthority(config.centralMode, ledger, this.ctx.get("remoteExecution"))(nodeId, commandId, input), agent => Boolean(this.native?.scopeFor(agent)));
     this.sessionPortal = new ProjectSessionService(this, ctx);
@@ -2840,7 +2861,7 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
   }
 
   let dispatchPlanned: ((args: {
-    commandId: string; requestId?: string; title?: string; description?: string;
+    expectedExecutionMs?:number; commandId: string; requestId?: string; title?: string; description?: string;
     route?: Claim["run"]["route"]; nodeId?: string; executionModel?: ExecutionModelChoice; workspaceId?: string;
   }, exec: ToolRunContext) => Promise<Json>) | undefined;
   if (config.centralMode === "host") {
@@ -2964,7 +2985,7 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
           args.route ||
           args.nodeId ||
           args.executionModel ||
-          args.workspaceId)
+          args.workspaceId || args.expectedExecutionMs!==undefined)
       )
         throw new TaskError(
           "INVALID",
@@ -2986,6 +3007,7 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
               requestId,
               title: args.title,
               description: args.description ?? "",
+              ...(args.expectedExecutionMs!==undefined?{expectedExecutionMs:ExpectedExecutionMs.parse(args.expectedExecutionMs)}:{}),
               ...(projectId ? { projectId } : {}),
               ...(taskIdScope ? { taskId: taskIdScope } : {}),
               ...(args.route ? { route: args.route } : {}),
@@ -3021,6 +3043,7 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
         description:
           "Propose a task plan for review without creating a task or Run. No caller-specified execution model or route is required when planning decisions are configured. Scheduler decisions select executor/provider/model/effort, never workspace/session. Use task_dispatch with this requestId to authorize execution. With planning decisions disabled or unavailable, preserve an explicit route or leave routing pending.",
         parameters: {
+        expectedExecutionMs:{type:"integer",description:"Caller-estimated positive integer milliseconds, at most 30 days, from actual execution start until one progress check. Does not stop or retry execution. Omit only when no estimate is set."},
           requestId: { type: "string", required: true },
           title: { type: "string" },
           description: { type: "string" },
@@ -3073,6 +3096,7 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
                   ...(taskIdScope ? { taskId: taskIdScope } : {}),
                   title: args.title,
                   description: args.description ?? "",
+              ...(args.expectedExecutionMs!==undefined?{expectedExecutionMs:ExpectedExecutionMs.parse(args.expectedExecutionMs)}:{}),
                   ...(args.route
                     ? { route: args.route as unknown as Claim["run"]["route"] }
                     : {}),
@@ -3359,8 +3383,9 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
     defineTool({
       name: "task_dispatch",
       description:
-        "Dispatch one authorized task with a stable commandId. Ordinary callers create/apply a plan; requestId can identify a reviewed proposal, or taskId can dispatch an existing draft. Active /project sessions use their bound central project. Owned execution agents delegate a child through their authoritative ledger and fenced lease. Omit executionModel to use the chosen executor node default. Collect actual reports with task_query/history/wait; dispatch ACK is not completion.",
+        "Dispatch one authorized task with a stable commandId. Ordinary callers create/apply a plan; requestId can identify a reviewed proposal, or taskId can dispatch an existing draft. Active /project sessions use their bound central project. Owned execution agents delegate a child through their authoritative ledger and fenced lease. Omit executionModel to use the chosen executor node default. Set expectedExecutionMs to a reasonable task-specific upper bound for a one-time progress check after actual execution starts. Collect actual reports with task_query/history/wait; dispatch ACK is not completion.",
       parameters: {
+        expectedExecutionMs:{type:"integer",description:"Caller-estimated positive integer milliseconds, at most 30 days, from actual execution start until one progress check. Does not stop or retry execution. Omit only when no estimate is set."},
         commandId: { type: "string", required: true },
         requestId: {
           type: "string",
@@ -3393,6 +3418,7 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
       execute: async (args, exec) =>
         service.withDispatchOrigin(exec.agent, async () => {
           exec.signal.throwIfAborted();
+          if(args.expectedExecutionMs!==undefined)ExpectedExecutionMs.parse(args.expectedExecutionMs);
           const bound = service.native?.scopeFor(exec.agent);
           if (args.route && (args.nodeId || args.executionModel))
             throw new TaskError(
@@ -3416,6 +3442,7 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
               );
             const input = {
               title: args.title,
+              ...(args.expectedExecutionMs!==undefined?{expectedExecutionMs:args.expectedExecutionMs}:{}),
               ...(args.description !== undefined
                 ? { description: args.description }
                 : {}),
@@ -3454,7 +3481,7 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
           if (project?.handled) return project.value;
           if (!managedLocal && exec.agent && service.sessionCollaboration.binding(exec.agent)?.state === "active") {
             if ((!args.taskId && !args.title) || args.requestId || args.workspaceId) throw new TaskError("INVALID", "Project dispatch requires title/description and uses its central binding");
-            return json(await service.sessionCollaboration.invoke(exec.agent,"dispatch",{...(args.taskId?{taskId:args.taskId}:{title:args.title,description:args.description ?? args.title}),...(args.retry?{retry:args.retry,expectedActionVersion:args.expectedActionVersion}:{}),...(args.configuration!==undefined?{configuration:json(args.configuration)}:{}),...(args.route?{route:args.route}:{}),...(args.nodeId?{nodeId:args.nodeId}:{}),...(args.executionModel?{executionModel:args.executionModel}:{})},String(exec.callId),args.commandId));
+            return json(await service.sessionCollaboration.invoke(exec.agent,"dispatch",{...(args.expectedExecutionMs!==undefined?{expectedExecutionMs:args.expectedExecutionMs}:{}),...(args.taskId?{taskId:args.taskId}:{title:args.title,description:args.description ?? args.title}),...(args.retry?{retry:args.retry,expectedActionVersion:args.expectedActionVersion}:{}),...(args.configuration!==undefined?{configuration:json(args.configuration)}:{}),...(args.route?{route:args.route}:{}),...(args.nodeId?{nodeId:args.nodeId}:{}),...(args.executionModel?{executionModel:args.executionModel}:{})},String(exec.callId),args.commandId));
           }
           if (!dispatchPlanned)
             throw new TaskError(
@@ -3482,6 +3509,7 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
               );
             const receipt=ledger.dispatchExistingTask(args.commandId,{
               taskId:args.taskId,
+              ...(args.expectedExecutionMs!==undefined?{expectedExecutionMs:args.expectedExecutionMs}:{}),
               ...(args.route?{route:args.route as unknown as Claim["run"]["route"]}:{}),
               ...(args.nodeId?{nodeId:args.nodeId}:{}),
               ...(args.executionModel?{executionModel:ExecutionModelChoice.parse(args.executionModel)}:{}),
@@ -3511,6 +3539,7 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
                   }
                 : {}),
               workspaceId: args.workspaceId,
+              ...(args.expectedExecutionMs!==undefined?{expectedExecutionMs:args.expectedExecutionMs}:{}),
             },
             exec,
           );

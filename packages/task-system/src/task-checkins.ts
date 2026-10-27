@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { Task, Run, Attempt, DispatchOrigin, Event } from "./contracts.js";
 import type { SessionMessage, CheckinRef } from "./remote/ports.js";
 import { TaskError, type TaskLedger } from "./ledger.js";
+import {executionCheckId,executionDueAt,type ExecutionExpectationView} from "./execution-expectation.js";
 
 const identifier = z.string().min(1).max(200);
 const instant = z.iso.datetime({ offset: true });
@@ -93,8 +94,12 @@ export type CheckinCategory =
   | "active_execution"
   | "result_pending"
   | "return_unavailable"
+  | "waiting_children"
+  | "waiting_execution"
+  | "coordinating"
   | "ready";
 export interface CheckinView {
+  execution: ExecutionExpectationView;
   phase:
     | "untracked"
     | "scheduled"
@@ -130,8 +135,10 @@ const reasons: Record<CheckinCategory, string> = {
   waiting_user: "负责会话明确等待你的决定，暂停自动检查",
   active_execution: "实际执行租约仍有效，检查暂缓",
   result_pending: "已有结果回信等待负责会话处理，检查暂缓",
-  return_unavailable:
-    "原会话连续三次未能处理结果回信，已停止自动检查；请先重试回信",
+  return_unavailable: "原会话连续三次未能处理结果回信，已停止自动检查；请先重试回信",
+  waiting_children: "正在等待已派发的子任务，完成事件会返回；正常等待期间不重复检查",
+  waiting_execution: "任务尚未开始执行，预计执行上界尚未计时",
+  coordinating: "统筹任务等待结果事件，不使用周期问询；可手动检查",
   ready: "到期后请负责会话核对任务并更新进度",
 };
 
@@ -200,6 +207,51 @@ export class TaskCheckins {
       ? task.dispatchOrigin
       : undefined;
   }
+  private latestRun(taskId:string) {
+    return this.rows<Run>("run").findLast(run=>run.taskId===taskId && !run.historyOnly && !run.observationOnly);
+  }
+  private executionOpen(run:Run) {
+    const task=this.ledger.getTask(run.taskId);
+    return ["queued","running"].includes(run.state) && this.latestRun(run.taskId)?.runId===run.runId && !["cancelled","archived","completed"].includes(task.state) && !task.manualCompletion;
+  }
+  private executionDeferred(run:Run) {
+    let task:Task|undefined=this.ledger.getTask(run.taskId);
+    const seen=new Set<string>();
+    while(task && !seen.has(task.taskId)) {
+      seen.add(task.taskId);
+      const record=this.record(task.taskId),receipt=this.responsibilityState(task.taskId).receipt;
+      if(record?.plan.kind==="paused" || receipt?.state==="needs_user" || receipt?.state==="resolved" || this.approvalRequired(task.taskId))return true;
+      task=task.parentTaskId?this.ledger.getTask(task.parentTaskId):undefined;
+    }
+    return false;
+  }
+  private executionPrompt(run:Run) {
+    const expectation=run.executionExpectation;
+    if(expectation?.phase!=="started")throw new TaskError("CONFLICT","Execution progress has not started");
+    return `任务超过派发时设置的预计执行上界。请核对中央 task_query/task_history/task_wait 的当前进度、已有报告及正在等待的子任务，记录下一步或说明需要人工处理。此问询不授予取消、重跑、新建Run或扩大权限的授权；不要因超出预计时间就终止真实工作。同一Run的这次到期只提醒一次，完成事件仍照常返回。\n${JSON.stringify({taskId:run.taskId,runId:run.runId,expectedExecutionMs:expectation.expectedExecutionMs,startedAt:expectation.startedAt,dueAt:executionDueAt(expectation)})}`;
+  }
+  private enqueueExecutions() {
+    for(const run of this.rows<Run>("run")) {
+      const expectation=run.executionExpectation;
+      if(expectation?.phase!=="started" || executionDueAt(expectation)>this.now() || !this.executionOpen(run))continue;
+      const messageId=executionCheckId(run.runId);
+      if(this.read<SessionMessage>("sessionMessage",messageId))continue;
+      const origin=run.dispatchOrigin;
+      if(origin?.kind!=="session")continue;
+      const protectedOrigin=!!origin.parentLease;
+      const message:SessionMessage={messageId,taskId:run.taskId,nodeId:origin.nodeId,sessionId:origin.sessionId,workspaceId:"origin-session",checkIn:{kind:"execution-deadline",eventId:messageId,origin:structuredClone(origin),runId:run.runId,tasks:[],automatic:true},text:this.executionPrompt(run),state:protectedOrigin?"failed":"queued",createdAt:this.now(),updatedAt:this.now(),...(protectedOrigin?{reply:"原调度会话属于受管执行租约，不能通过超时问询恢复旧租约；请人工核实原执行。"}:{})};
+      this.write("sessionMessage",messageId,message,run.taskId,message.state);
+      this.audit("task.execution_check_queued",run.taskId,{runId:run.runId,messageId});
+    }
+  }
+  executionView(taskId:string):ExecutionExpectationView {
+    const run=this.latestRun(taskId),expectation=run?.executionExpectation;
+    if(!run || !expectation)return {phase:"not_set"};
+    if(expectation.phase==="pending_start")return expectation;
+    const dueAt=executionDueAt(expectation),message=this.read<SessionMessage>("sessionMessage",executionCheckId(run.runId));
+    const scopeUnavailable=run.dispatchOrigin?.kind!=="session";
+    return {phase:scopeUnavailable?"needs_action":message?.state==="failed"?"needs_action":message?.withdrawn?"withdrawn":message?.state==="completed"?"processed":message?.state==="queued"?"queued":!this.executionOpen(run)?"withdrawn":dueAt<=this.now()?"due":"running",expectedExecutionMs:expectation.expectedExecutionMs,startedAt:expectation.startedAt,dueAt,...(message?{messageId:message.messageId,...(message.reply?{reason:message.reply}:{})}:{}),...(scopeUnavailable?{reason:"未记录可安全接收问询的原调度会话，不能自动选择替代会话"}:{})};
+  }
   private responsibilityState(taskId: string) {
     const receipt = this.read<ResponsibilityReceipt>(
       "taskResponsibility",
@@ -219,8 +271,8 @@ export class TaskCheckins {
           ]),
           returns: this.ledger
             .sessionMessages(taskId)
-            .filter((m) => m.completion)
-            .map((m) => [m.messageId, m.deliveryAttempts ?? 0]),
+            .filter((m) => m.completion || (m.checkIn?.kind==="execution-deadline" && (m.state!=="queued" || (m.deliveryAttempts??0)>0)))
+            .map((m) => m.checkIn?.kind==="execution-deadline" ? [m.messageId,m.deliveryAttempts??0,m.state,!!m.withdrawn] : [m.messageId, m.deliveryAttempts ?? 0]),
           attention: this.record(taskId)?.attention ?? null,
         }),
       )
@@ -314,6 +366,7 @@ export class TaskCheckins {
     const owner = this.owner(task);
     if (!owner) return "needs_owner";
     if (owner.parentLease) return "protected_execution";
+    if(this.rows<SessionMessage>("sessionMessage").some(message=>message.taskId===task.taskId && (message.completion || message.checkIn?.kind==="execution-deadline") && message.state==="failed"))return "return_unavailable";
     if (
       task.confirmation?.state === "pending" ||
       latest?.reviewStatus === "pending_user"
@@ -323,7 +376,7 @@ export class TaskCheckins {
       return "closed";
     if (this.responsibilityState(task.taskId).receipt?.state === "needs_user")
       return "waiting_user";
-    const scope = new Set(own.map((run) => run.runId));
+    const scope = new Set(latest ? [latest.runId] : []);
     for (let changed = true; changed; ) {
       changed = false;
       for (const run of runs)
@@ -337,8 +390,13 @@ export class TaskCheckins {
         }
     }
     const now = Date.parse(this.now());
+    const children=runs.filter(run=>run.runId!==latest?.runId && scope.has(run.runId) && this.latestRun(run.taskId)?.runId===run.runId);
+    const childFault=children.some(run=>["uncertain","failed","blocked","partial"].includes(run.state) && run.reviewStatus!=="accepted");
+    if(!childFault && children.some(run=>["queued","running"].includes(run.state)))return "waiting_children";
+    if(!childFault && latest?.coordinatorSession)return "coordinating";
+    if(latest?.state==="queued" && latest.dispatchIssue?.kind!=="needs_action")return "waiting_execution";
     if (
-      this.rows<Attempt>("attempt").some(
+      !childFault && this.rows<Attempt>("attempt").some(
         (attempt) =>
           scope.has(attempt.runId) &&
           ["leased", "running"].includes(attempt.state) &&
@@ -352,15 +410,6 @@ export class TaskCheckins {
       )
     )
       return "active_execution";
-    if (
-      this.rows<SessionMessage>("sessionMessage").some(
-        (message) =>
-          message.taskId === task.taskId &&
-          message.completion &&
-          message.state === "failed",
-      )
-    )
-      return "return_unavailable";
     if (
       this.rows<SessionMessage>("sessionMessage").some(
         (message) =>
@@ -441,6 +490,7 @@ export class TaskCheckins {
             ? record.plan.reason
             : reasons[category];
     return {
+      execution:this.executionView(taskId),
       phase,
       category,
       reason,
@@ -615,9 +665,7 @@ export class TaskCheckins {
           delete record.attention;
           record.requested = true;
           this.write("taskCheckin", taskId, record, taskId);
-          if (
-            ["ready", "approval", "waiting_user"].includes(this.category(task))
-          )
+          if (["ready", "approval", "waiting_user", "waiting_children", "coordinating", "waiting_execution"].includes(this.category(task)))
             this.enqueue([record], false);
         }
         return this.view(taskId);
@@ -668,6 +716,7 @@ export class TaskCheckins {
   }
   tick() {
     this.ledger.workflowAtomic(() => {
+      this.enqueueExecutions();
       for (const message of this.rows<SessionMessage>("sessionMessage")) {
         if (
           message.checkIn &&
@@ -676,6 +725,7 @@ export class TaskCheckins {
         ) {
           this.acknowledge(message, []);
           message.state = "completed";
+          message.withdrawn=true;
           message.reply =
             "Check-in superseded or tasks closed before admission";
           message.updatedAt = this.now();
@@ -753,6 +803,11 @@ export class TaskCheckins {
     }
   }
   disposition(message: SessionMessage): "ready" | "defer" | "obsolete" {
+    if(message.checkIn?.kind==="execution-deadline") {
+      const run=this.read<Run>("run",message.checkIn.runId);
+      if(!run || run.taskId!==message.taskId || run.dispatchOrigin?.kind!=="session" || run.dispatchOrigin.nodeId!==message.nodeId || run.dispatchOrigin.sessionId!==message.sessionId || run.executionExpectation?.phase!=="started" || executionDueAt(run.executionExpectation)>this.now() || !this.executionOpen(run))return "obsolete";
+      return this.executionDeferred(run)?"defer":"ready";
+    }
     let deferred = false;
     for (const ref of message.checkIn?.tasks ?? []) {
       const record = this.record(ref.taskId);
@@ -774,8 +829,7 @@ export class TaskCheckins {
         continue;
       if (
         category === "ready" ||
-        (!message.checkIn?.automatic &&
-          ["approval", "waiting_user"].includes(category))
+        (!message.checkIn?.automatic && ["approval", "waiting_user","waiting_children","coordinating","waiting_execution"].includes(category))
       )
         return "ready";
       deferred = true;
@@ -783,6 +837,7 @@ export class TaskCheckins {
     return deferred ? "defer" : "obsolete";
   }
   prepare(message: SessionMessage): SessionMessage {
+    if(message.checkIn?.kind==="execution-deadline")return {...message,text:this.executionPrompt(this.ledger.getRun(message.checkIn.runId))};
     const records = (message.checkIn?.tasks ?? []).flatMap((ref) => {
       const record = this.record(ref.taskId);
       if (
@@ -793,8 +848,7 @@ export class TaskCheckins {
         return [];
       const category = this.category(this.ledger.getTask(ref.taskId));
       return category === "ready" ||
-        (!message.checkIn?.automatic &&
-          ["approval", "waiting_user"].includes(category))
+        (!message.checkIn?.automatic && ["approval", "waiting_user","waiting_children","coordinating","waiting_execution"].includes(category))
         ? [record]
         : [];
     });
@@ -813,6 +867,7 @@ export class TaskCheckins {
       : message;
   }
   acknowledge(message: SessionMessage, admitted: CheckinRef[]) {
+    if(message.checkIn?.kind==="execution-deadline")return;
     const asked = new Set(admitted.map((ref) => JSON.stringify(ref)));
     for (const ref of message.checkIn?.tasks ?? []) {
       const record = this.record(ref.taskId);
@@ -835,6 +890,7 @@ export class TaskCheckins {
     }
   }
   failure(message: SessionMessage, busy: boolean) {
+    if(message.checkIn?.kind==="execution-deadline")return;
     if (busy) return;
     for (const ref of message.checkIn?.tasks ?? []) {
       const record = this.record(ref.taskId);

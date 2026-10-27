@@ -1,4 +1,5 @@
 import test from 'node:test';
+import {createServer} from 'node:http';
 import assert from 'node:assert/strict';
 import {generateKeyPairSync} from 'node:crypto';
 import {mkdtempSync,rmSync} from 'node:fs';
@@ -6,7 +7,31 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {TaskLedger} from '../../dist/ledger.js';
 import {SessionMessages} from '../../dist/remote/session-messages.js';
-import {RemoteClient,RemoteLedgerClient,RemoteGateway,RecoveryStore,IdentityVerifier,ExecutorWorker} from '../../dist/remote/api.js';
+import {RemoteClient,RemoteLedgerClient,RemoteGateway,RecoveryStore,IdentityVerifier,TrustedNetworkVerifier,ExecutorWorker,httpHandler} from '../../dist/remote/api.js';
+
+for(const mode of ['ed25519','trusted-network'])test(`${mode} fenced workload start, delegation, admission refresh and withdrawal preserve exact event semantics`,async t=>{
+ const dir=mkdtempSync(join(tmpdir(),'execution-protocol-'));let clock=Date.now();const l=TaskLedger.open(join(dir,'tasks.sqlite'),{role:'both',nodeId:'central',now:()=>clock}),server=new RecoveryStore(':memory:'),outbox=new RecoveryStore(':memory:');
+ const operations=['claim','markRunning','bindSession','delegate','sessionMessages','sessionMessageReply'];
+ l.registerNode('node',{nodeId:'worker',roles:['executor'],enabled:true,models:[{provider:'offline',model:'script'}],workspaceIds:['ws'],capabilities:[],maxConcurrent:4});l.registerWorkspace('ws',{workspaceId:'ws',nodeId:'worker',path:dir,state:'ready'});
+ const request=l.executionModels.request('catalog',{nodeId:'worker'}).catalog.request;l.completeExecutionModels('catalog-result',{nodeId:'worker',requestId:request.requestId,generation:request.generation,result:{state:'success',complete:true,observedAt:clock,models:[{provider:'offline',model:'script'}]}});
+ const keys=generateKeyPairSync('ed25519'),peer={nodeId:'worker',audience:'central',operations,workspaces:['ws'],capabilities:[]};
+ let gateway;const httpServer=mode==='trusted-network'?createServer((req,res)=>httpHandler(gateway,{trustedNetwork:network})(req,res)):undefined;if(httpServer)await new Promise(resolve=>httpServer.listen(0,'127.0.0.1',resolve));const port=httpServer?.address().port??49152;
+ const network={listen:{address:'127.0.0.1',port},allowHttp:true,allowedAddresses:['127.0.0.1'],peers:[{...peer,address:'127.0.0.1',role:'executor'}]};
+ const verifier=mode==='ed25519'?new IdentityVerifier({audience:'central',peers:[{...peer,keyId:'key',publicKey:keys.publicKey}]}):new TrustedNetworkVerifier({audience:'central',...network});
+ gateway=new RemoteGateway({role:'planner',nodeId:'central',ledger:l,store:server,verifier});
+ const client=new RemoteClient({authMode:mode,endpoint:mode==='ed25519'?'https://fixture.invalid/commands':`http://127.0.0.1:${port}/commands`,nodeId:'worker',audience:'central',store:outbox,...(mode==='trusted-network'?{trustedNetwork:{address:'127.0.0.1',port,localAddress:'127.0.0.1',allowHttp:true}}:{keyId:'key',privateKey:keys.privateKey,fetch:async(_url,options)=>new Response(JSON.stringify(await gateway.handle(options.body)))})}),remote=new RemoteLedgerClient(client,'worker');
+ t.after(async()=>{await client.dispose();await gateway.dispose();if(httpServer)await new Promise(resolve=>httpServer.close(resolve));outbox.close();server.close();l.close();rmSync(dir,{recursive:true,force:true});});
+ const origin={kind:'session',nodeId:'worker',sessionId:'dispatcher',cwd:dir,composition:{provider:'offline',model:'script',tools:[]}},task=l.withDispatchOrigin(origin,()=>l.createTask('task',{title:'Bounded root',policy:{settlementQuietMs:0}}).value),run=l.withDispatchOrigin(origin,()=>l.createRun('run',{taskId:task.taskId,route:{nodeId:'worker',workspaceId:'ws',provider:'offline',model:'script',requiredCapabilities:[]},expectedExecutionMs:1000}).value);
+ const claim=(await remote.claim('claim',{runId:run.runId,nodeId:'worker',ttlMs:60000})).value,ref={runId:run.runId,attemptId:claim.attempt.attemptId,nodeId:'worker',fence:claim.attempt.fence,executionId:'owned-execution'};
+ await remote.markRunning('running',ref);clock+=10000;l.checkins.tick();assert.equal(l.sessionMessages(task.taskId).length,0);
+ await assert.rejects(remote.markExecutionStarted('forged-start',{...ref,executionId:'other'}));await remote.markExecutionStarted('actual-start',ref);const started=l.getRun(run.runId).executionExpectation.startedAt;clock+=1000;await remote.markExecutionStarted('duplicate-start',ref);assert.equal(l.getRun(run.runId).executionExpectation.startedAt,started);
+ await remote.bindSession('bind',{...ref,sessionId:'executor-session'});const child=(await remote.delegateTask('delegate',{...ref,title:'Protected child',expectedExecutionMs:2000})).value;assert.equal(child.run.executionExpectation.expectedExecutionMs,2000);assert.equal(child.run.dispatchOrigin.sessionId,'executor-session');
+ l.checkins.tick();const message=(await remote.pendingSessionMessages('worker',{kind:'continuation'})).find(m=>m.checkIn?.kind==='execution-deadline');assert.equal(message.sessionId,'dispatcher');
+ const resetAt=new Date(clock+3600000).toISOString();await remote.completeSessionMessage('limited',{messageId:message.messageId,nodeId:'worker',state:'failed',reply:'RATE_LIMIT',failure:{code:'RATE_LIMIT',resetAt}});assert.equal(l.getSessionMessage(message.messageId).deliveryFailure.resetAt,resetAt);assert.equal((await remote.pendingSessionMessages('worker',{messageId:message.messageId,forAdmission:true}))[0].admission,'defer');
+ const childClaim=l.claim('child-claim',{runId:child.run.runId,nodeId:'worker',ttlMs:60000}).value;l.submit('child-done',{runId:child.run.runId,attemptId:childClaim.attempt.attemptId,nodeId:'worker',fence:childClaim.attempt.fence,outcome:'success',summary:'Child result'});clock+=1000;
+ l.submit('done',{...ref,outcome:'success',summary:'Actual result'});l.checkins.tick();assert.equal((await remote.pendingSessionMessages('worker',{messageId:message.messageId,forAdmission:true}))[0].admission,'obsolete');
+ await remote.completeSessionMessage('withdrawn-ack',{messageId:message.messageId,nodeId:'worker',state:'completed',reply:'Check-in no longer relevant',checkInTasks:[],withdrawn:true});assert.equal(l.getSessionMessage(message.messageId).withdrawn,true);assert.equal(l.getRun(run.runId).state,'succeeded');
+});
 
 function fixture(t,count=6) {
  const dir=mkdtempSync(join(tmpdir(),'message-query-')),file=join(dir,'ledger.sqlite');

@@ -12,17 +12,24 @@ import type { Claim as CoreClaim, Run as CoreRun, Task as CoreTask } from "../co
 
 export const CheckinRefs = z.array(z.object({taskId:z.string().min(1).max(200),revision:z.number().int().nonnegative()}).strict()).max(8);
 export type CheckinRef = z.infer<typeof CheckinRefs>[number];
-export type SessionContinuationReceipt = string | {reply:string;checkInTasks:CheckinRef[]};
+export type SessionContinuationReceipt = string | {reply:string;checkInTasks:CheckinRef[];withdrawn?:true};
 export function continuationReply(receipt:SessionContinuationReceipt) { return typeof receipt === "string" ? {reply:receipt} : receipt; }
 
+type SessionCheckinBase = {eventId:string;origin:Extract<import("../contracts.js").DispatchOrigin,{kind:"session"}>};
+export type SessionCheckin = SessionCheckinBase & (
+  | {kind?:"task";tasks:CheckinRef[];automatic:boolean}
+  | {kind:"execution-deadline";runId:string;tasks:[];automatic:true}
+);
 export interface SessionMessage {
+  admission?: "ready" | "defer" | "obsolete";
+  withdrawn?: true;
   deliveryAttempts?: number;
   consecutiveDeliveryFailures?: number;
   deliveryFailure?: import("../task-return-failure.js").ReturnFailure;
   lastDeliveryError?: string;
   lastAttemptAt?: string;
   nextAttemptAt?: string;
-  checkIn?: { eventId: string; origin: Extract<import("../contracts.js").DispatchOrigin, {kind:"session"}>; tasks: CheckinRef[]; automatic:boolean };
+  checkIn?: SessionCheckin;
   completion?: {eventId: string; origin: import("../contracts.js").DispatchOrigin; runId: string};
   /** Ledger-owned link to an operator-opened materials request. */
   supplementFor?: string;
@@ -38,12 +45,14 @@ export interface SessionMessage {
   reply?: string;
 }
 export interface SessionMessageResult {
+  withdrawn?: true;
   failure?: import("../task-return-failure.js").ReturnFailure;
   checkInTasks?: CheckinRef[];
   state: "completed" | "failed" | "uncertain";
   reply: string;
 }
 export interface SessionMessageQuery {
+  forAdmission?: boolean;
   kind?: "completion" | "continuation" | "message";
   messageId?: string;
   excludeMessageIds?: string[];
@@ -120,6 +129,7 @@ export interface Task {
   policy?: TaskPolicy;
 }
 export interface Run {
+  executionExpectation?: CoreRun["executionExpectation"];
   createdAt?: string;
   executionParentKind?: "coordinator" | "executor";
   executionParentRunId?: string;
@@ -234,6 +244,7 @@ export interface ObservationCandidate {
   cwd?: string;
 }
 export interface DelegationInput {
+  expectedExecutionMs?: number;
   display?: import("../delegation-presentation.js").DelegationDisplayInput;
   title: string;
   description?: string;
@@ -443,6 +454,7 @@ export interface LedgerPort {
     commandId: string,
     input: LeaseRef,
   ): MaybePromise<Receipt<Attempt>>;
+  markExecutionStarted?(commandId:string,input:LeaseRef):MaybePromise<Receipt<Run>>;
   acknowledgeCancellation?(
     commandId: string,
     input: LeaseRef,
@@ -516,6 +528,7 @@ export interface LedgerPort {
   ): MaybePromise<Receipt<unknown>>;
 }
 export interface ExecutionRequest {
+  executionStarted?: () => Promise<void>;
   claim: Claim;
   sessionId: string;
   resumeSession?: boolean;

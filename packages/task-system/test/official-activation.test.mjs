@@ -48,6 +48,9 @@ for (const cancelled of [false, true]) {
     const observed = running.then(value => { settled = true; return value; }, error => { settled = true; throw error; });
     const rejected = cancelled ? assert.rejects(observed, /fixture cancellation/) : undefined;
     assert.ok(await published.promise);
+    let secondPublished=false;
+    const queued=executeOfficialSubagent({subagents:h.ctx.subagents,parent:parent.agent,route:{nodeId:'local',backend:backend.backend,provider:backend.provider,model:backend.model,reasoningEffort:backend.reasoningEffort},policy:{allowedBackends:[backend.backend]},backends:[backend],prompt:'Wait behind the same profile',signal:new AbortController().signal,onPublished:()=>{secondPublished=true;}});
+    await new Promise(resolve=>setImmediate(resolve));assert.equal(secondPublished,false,'waiting for the profile mutex is not workload start');
     if (cancelled) abort.abort(new Error('fixture cancellation'));
     else output.resolve({ stopReason: 'completed', output: [{ type: 'text', text: 'verified' }] });
     await disposing.promise;
@@ -56,5 +59,6 @@ for (const cancelled of [false, true]) {
     if (cancelled) await rejected;
     else assert.equal((await observed).outcome, 'success');
     assert.equal(quiescent, true);
+    await queued;assert.equal(secondPublished,true,'the start callback follows actual activation publication');
   });
 }

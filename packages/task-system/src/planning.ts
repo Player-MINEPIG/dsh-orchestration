@@ -1,4 +1,5 @@
 import { ExecutionModelChoice } from "./execution-models.js";
+import { ExpectedExecutionMs } from "./execution-expectation.js";
 import type {
   DecisionRequest,
   DecisionReceipt,
@@ -20,6 +21,7 @@ export interface PlanningInput {
   requestId: string;
   title: string;
   description: string;
+  expectedExecutionMs?: number;
   /** Optional decision-call overrides. Workload routing is selected from the catalog unless route is explicit. */
   provider?: string;
   model?: string;
@@ -140,6 +142,8 @@ export class TaskPlanner {
     };
   }
   async plan(input: PlanningInput, options: { signal?: AbortSignal } = {}) {
+    if (input.expectedExecutionMs !== undefined)
+      input = { ...input, expectedExecutionMs: ExpectedExecutionMs.parse(input.expectedExecutionMs) };
     const projectId = input.projectId ?? (input.taskId ? this.ledger.projectForTask(input.taskId) : this.ledger.dispatchProjectId());
     const projectPolicy = projectId ? this.ledger.projectExecutionPolicy(projectId, input.route?.nodeId ?? input.nodeId) : undefined;
     if (projectPolicy) {
@@ -381,6 +385,9 @@ export class TaskPlanner {
       currentStateHash: current.stateHash,
       title: input.title,
       description: input.description,
+      ...(input.expectedExecutionMs !== undefined
+        ? { expectedExecutionMs: input.expectedExecutionMs }
+        : {}),
       persistence: proposal.persistence,
       ...(proposal.attachTaskId ? { attachTaskId: proposal.attachTaskId } : {}),
       ...(route ? { route,executionModel:this.ledger.selectExecutionModel(route.nodeId,input.route ?? input.executionModel).executionModel } : {}),

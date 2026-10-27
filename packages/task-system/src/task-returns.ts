@@ -108,6 +108,7 @@ export class TaskReturnDelivery {
     state.admission = admitted.then(() => {}, () => {});
     const delivery = admitted.then(async receipt => {
       const reply=await receipt.completion;
+      if(receipt.withdrawn && message.checkIn)return {reply,checkInTasks:[],withdrawn:true as const};
       if (!message.checkIn) return reply;
       const events=await this.read(origin.sessionId);
       let checkInTasks: CheckinRef[]=[];
@@ -144,7 +145,7 @@ export class TaskReturnDelivery {
     const handle = await this.ctx.sessionPersistence.open(SessionId(sessionId), "read");
     try { return (await handle.read()).events; } finally { await handle.close(); }
   }
-  private async admit(message: SessionMessage, origin: Extract<DispatchOrigin, {kind:"session"}>, state: ReturnSession, signal?: AbortSignal): Promise<{completion: Promise<string>}> {
+  private async admit(message: SessionMessage, origin: Extract<DispatchOrigin, {kind:"session"}>, state: ReturnSession, signal?: AbortSignal): Promise<{completion: Promise<string>;withdrawn?:true}> {
     const abort = signal ? AbortSignal.any([signal, this.lifetime.signal]) : this.lifetime.signal;
     abort.throwIfAborted();
     const eventId = sessionContinuation(message)!.eventId;
@@ -159,7 +160,7 @@ export class TaskReturnDelivery {
     };
     const previousHandle = state.handle;
     try {
-      if (!await refresh()) return {completion:Promise.resolve("Check-in no longer relevant")};
+      if (!await refresh()) return {completion:Promise.resolve("Check-in no longer relevant"),withdrawn:true};
       const events=await this.read(origin.sessionId);
       if (taskReturnCompleted(events,eventId)) return {completion: Promise.resolve("Task result processed in the original session")};
       this.assertReady(origin.sessionId,events);
@@ -223,7 +224,7 @@ export class TaskReturnDelivery {
       if (taskReturnCompleted(current, eventId)) {liveMask?.();return {completion: Promise.resolve("Task result processed in the original session")};}
       this.assertReady(origin.sessionId,current);
       abort.throwIfAborted();
-      if (!await refresh()) {liveMask?.();return {completion:Promise.resolve("Check-in no longer relevant")};}
+      if (!await refresh()) {liveMask?.();return {completion:Promise.resolve("Check-in no longer relevant"),withdrawn:true};}
       if (message.checkIn) {
         const otherInput=[...agent.inbox.nextTurn,...agent.inbox.nextStep].some(input=>!("eventId" in input.source) || input.source.eventId!==eventId);
         if (agent.status!=="idle" || otherInput) throw new TaskError("CHECKIN_BUSY", "Responsible session became active before admission");

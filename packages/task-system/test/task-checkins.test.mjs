@@ -20,6 +20,56 @@ function route(f){
  return {nodeId:'worker',workspaceId:'ws',provider:'offline',model:'script',requiredCapabilities:[]};
 }
 
+function expectedRun(f,key='bounded',expectedExecutionMs=2000){
+ const r=route(f),task=f.task(key),run=f.l.withDispatchOrigin(owner(),()=>f.l.createRun(key+'-run',{taskId:task.taskId,route:r,expectedExecutionMs}).value);
+ return {task,run,start(){const claim=f.l.claim(key+'-claim',{runId:run.runId,nodeId:'worker',ttlMs:60000}).value;const ref={runId:run.runId,attemptId:claim.attempt.attemptId,nodeId:'worker',fence:claim.attempt.fence,executionId:key+'-execution'};f.l.markRunning(key+'-running',ref);return ref;}};
+}
+
+test('execution bound starts only on the fenced actual start, survives renew and restart, and fires once under a valid lease',t=>{
+ const f=fixture(t),{task,run,start}=expectedRun(f);f.advance(10000);f.l.checkins.tick();assert.equal(f.messages().length,0);assert.equal(f.l.checkins.executionView(task.taskId).phase,'pending_start');
+ const ref=start();f.advance(10000);f.l.checkins.tick();assert.equal(f.messages().length,0,'markRunning is preparation, not actual execution');
+ assert.throws(()=>f.l.markExecutionStarted('foreign',{...ref,executionId:'foreign'}));
+ f.l.markExecutionStarted('actual',ref);const started=f.l.getRun(run.runId).executionExpectation.startedAt;
+ f.advance(1000);f.l.markExecutionStarted('actual-again',ref);f.l.renew('renew',{...ref,ttlMs:60000});assert.equal(f.l.getRun(run.runId).executionExpectation.startedAt,started);
+ f.advance(1000);f.l.checkins.tick();const message=f.messages()[0];assert.equal(message.checkIn.kind,'execution-deadline');assert.equal(message.checkIn.runId,run.runId);assert.deepEqual(message.checkIn.tasks,[]);assert.equal(f.l.getRun(run.runId).state,'running');
+ f.reopen();f.l.checkins.tick();assert.equal(f.messages()[0].messageId,message.messageId);f.ack(message);f.advance(100000);f.l.checkins.tick();assert.equal(f.l.sessionMessages(task.taskId).filter(m=>m.checkIn?.kind==='execution-deadline').length,1);assert.equal(f.l.checkins.view(task.taskId).checksWithoutUpdate,0);assert.equal(f.l.getRun(run.runId).state,'running');
+});
+
+test('completion while waiting withdraws the exact deadline and a genuinely late ACK remains idempotent',t=>{
+ const f=fixture(t),{task,run,start}=expectedRun(f),ref=start();f.l.markExecutionStarted('actual',ref);f.advance(2000);f.l.checkins.tick();const message=f.messages()[0];
+ f.l.recordTaskReturnFailure(message.messageId,'CHECKIN_BUSY');assert.equal(f.l.getSessionMessage(message.messageId).consecutiveDeliveryFailures??0,0);
+ f.l.submit('done',{...ref,outcome:'success',summary:'Actual finished result'});f.l.checkins.tick();assert.equal(f.l.getSessionMessage(message.messageId).withdrawn,true);assert.equal(f.l.pendingSessionMessages('central',{messageId:message.messageId,forAdmission:true})[0].admission,'obsolete');
+ f.ack(message,'late-real-ack');assert.equal(f.l.getSessionMessage(message.messageId).withdrawn,undefined);assert.equal(f.l.checkins.executionView(task.taskId).phase,'processed');f.ack(message,'late-real-ack');assert.equal(f.l.getRun(run.runId).state,'succeeded');
+});
+
+test('deadline delivery failures share quota cooldown, stop after three real no replies and retry the same event',t=>{
+ const f=fixture(t),{task,run,start}=expectedRun(f),ref=start();f.l.markExecutionStarted('actual',ref);f.advance(2000);f.l.checkins.tick();const message=f.messages()[0],resetAt=new Date(f.now+60000).toISOString();
+ f.l.recordTaskReturnFailure(message.messageId,'RATE_LIMIT',{code:'RATE_LIMIT',resetAt});assert.equal(f.l.getSessionMessage(message.messageId).consecutiveDeliveryFailures,0);f.reopen();assert.equal(f.l.pendingSessionMessages('central',{messageId:message.messageId,forAdmission:true})[0].admission,'defer');
+ f.advance(60000);for(let n=0;n<3;n++)f.l.recordTaskReturnFailure(message.messageId,'RETURN_UNAVAILABLE');assert.equal(f.l.getSessionMessage(message.messageId).state,'failed');assert.equal(f.l.checkins.view(task.taskId).phase,'needs_action');f.l.checkins.tick();assert.equal(f.messages().length,0);
+ f.l.retryTaskReturn('manual-recover',message.messageId);f.advance(30*60000);assert.equal(f.messages()[0].messageId,message.messageId);assert.equal(f.l.snapshot().runs.length,1);assert.equal(f.l.getRun(run.runId).state,'running');
+});
+
+test('factual queued or running children suppress ordinary periodic checks but not the parents explicit upper bound',t=>{
+ const f=fixture(t),{task,run,start}=expectedRun(f),ref=start();f.l.markExecutionStarted('actual',ref);f.l.bindSession('binding',{...ref,sessionId:'worker-parent'});
+ const child=f.l.delegateTask('child',{...ref,title:'Child',expectedExecutionMs:3000}).value;assert.equal(child.run.executionExpectation.phase,'pending_start');
+ f.advance(1000);f.l.checkins.tick();assert.equal(f.l.checkins.view(task.taskId).category,'waiting_children');assert.equal(f.messages().length,0);
+ f.advance(1000);f.l.checkins.tick();assert.equal(f.messages()[0].checkIn.runId,run.runId);f.ack(f.messages()[0]);f.advance(10000);f.l.checkins.tick();assert.equal(f.messages().length,0,'a check reply does not rearm a deadline or the normal child wait');
+});
+
+test('invalid explicit bounds reject before a Run and legacy records have no invented execution start',t=>{
+ const f=fixture(t),r=route(f),task=f.task();for(const value of [0,-1,1.5,Infinity,31*86400000])assert.throws(()=>f.l.createRun('invalid-'+value,{taskId:task.taskId,route:r,expectedExecutionMs:value}));
+ assert.equal(f.l.snapshot().runs.length,0);assert.equal(f.l.checkins.executionView(task.taskId).phase,'not_set');
+});
+
+test('deadline stays in outbox during an explicit pause or user decision and resumes without replacing its event',t=>{
+ const f=fixture(t),{task,run,start}=expectedRun(f),ref=start();f.l.markExecutionStarted('actual',ref);
+ const responsibility=(state,key)=>f.l.withDispatchOrigin(owner(),()=>f.l.taskCheckin({action:'responsibility',taskId:task.taskId,commandId:key,expectedVersion:f.l.checkins.view(task.taskId).responsibilityVersion,state,summary:'Recorded by the responsible coordinator'}));
+ responsibility('needs_user','needs-user');f.advance(2000);f.l.checkins.tick();const message=f.l.sessionMessages(task.taskId).find(m=>m.checkIn?.kind==='execution-deadline');assert.ok(message);assert.equal(f.l.checkins.disposition(message),'defer');assert.equal(f.messages().length,0);assert.equal(f.l.checkins.view(task.taskId).responsibility.state,'needs_user','enqueuing a reminder is not new business evidence');
+ responsibility('coordinator','resume-owner');assert.equal(f.messages()[0].messageId,message.messageId);
+ f.update(task,{kind:'paused',reason:'Explicitly paused pending external approval'},'pause-deadline');assert.equal(f.messages().length,0);f.reopen();assert.equal(f.l.checkins.disposition(message),'defer');
+ f.update(task,{kind:'scheduled'},'unpause-deadline');assert.equal(f.messages()[0].messageId,message.messageId);assert.equal(f.l.getRun(run.runId).state,'running');
+});
+
 test('new draft checks are atomic, batched, persistent and never create execution Runs',t=>{
  const f=fixture(t),a=f.task('a'),b=f.task('b');assert.equal(f.l.checkins.view(a.taskId).phase,'scheduled');
  f.l.checkins.tick();assert.equal(f.messages().length,0);f.advance();f.l.checkins.tick();
@@ -59,9 +109,10 @@ test('three no-update rounds or delivery failures need action; busy does not con
  assert.equal(f.l.checkins.view(task.taskId).phase,'needs_action');assert.equal(f.l.getSessionMessage(message.messageId).state,'failed');
 });
 
-test('queued work is checked, valid execution defers; changing eligibility is checked again before delivery',t=>{
+test('queued work waits without periodic questions; explicit checks and real failure recovery remain available',t=>{
  const f=fixture(t),r=route(f),task=f.task(),run=f.l.createRun('run',{taskId:task.taskId,route:r}).value;
- f.advance();f.l.checkins.tick();const message=f.messages()[0];assert.ok(message,'unclaimed queue does not defer forever');
+ f.advance();f.l.checkins.tick();assert.equal(f.messages().length,0);assert.equal(f.l.checkins.view(task.taskId).category,'waiting_execution');
+ f.l.checkins.request('explicit-queue-check',task.taskId);const message=f.messages()[0];assert.ok(message);
  f.l.claim('claim',{runId:run.runId,nodeId:'worker',ttlMs:10000});assert.equal(f.l.checkins.disposition(message),'defer');assert.equal(f.messages().length,0);
  f.advance(11000);f.l.recoverExpired('recover');assert.equal(f.l.getRun(run.runId).state,'uncertain');assert.equal(f.l.checkins.disposition(message),'ready');assert.equal(f.l.snapshot().runs.length,1,'checking never retries uncertain effects');
 });
