@@ -10,6 +10,7 @@ import * as remotePlugin from '../../packages/task-system/dist/remote/index.js';
 import {RemoteGateway,RecoveryStore,IdentityVerifier,TrustedNetworkVerifier,httpHandler} from '../../packages/task-system/dist/remote/api.js';
 import {TaskPluginSettings} from '../../packages/task-system/dist/settings.js';
 import {deploymentPolicy,ledgerRole} from '../../packages/task-system/dist/deployment.js';
+import {Workbench} from '../../packages/task-system/dist/workbench.js';
 
 let sequence = 0;
 async function call(h, agent, name, args) {
@@ -93,6 +94,24 @@ for (const authMode of ['ed25519','trusted-network']) test(`remote central with 
     assert.equal(row.canCancel,true);
     await controls.actOnProjectTask({commandId:'cancel-through-ui',taskId:row.id,runId:row.runId,expectedVersion:row.actionVersion,action:'cancel'});
     assert.equal(ledger.getTask(row.id).state,'cancelled');
+    const owned=ledger.withDispatchOrigin(ledger.getRun(extra.dispatch.runId).dispatchOrigin,()=>{
+      const task=ledger.createTask('return-control-task',{title:'Unanswered return control'}).value;
+      const wb=new Workbench(ledger),backlog=wb.snapshot().backlogs.find(backlog=>backlog.projectId===project.binding.projectId);
+      wb.manage('link-return-control','link_backlog_task',{taskId:task.taskId,backlogId:backlog.backlogId});
+      const run=ledger.createRun('return-control-run',{taskId:task.taskId}).value;
+      ledger.cancel('return-control-cancel',{taskId:task.taskId,reason:'Fixture stopped before execution'});
+      const message=ledger.history(task.taskId).resultReturns[0];
+      for(let n=0;n<3;n++)ledger.recordTaskReturnFailure(message.messageId,'RETURN_UNAVAILABLE');
+      return {task,run,message};
+    });
+    const returnRow=(await controls.projectSnapshot({view:'planner'})).tasks.find(task=>task.id===owned.task.taskId);
+    assert.equal(returnRow.status,'error');assert.equal(returnRow.checkin.returnDelivery.messageId,owned.message.messageId);
+    const retry={commandId:'return-through-ui',taskId:owned.task.taskId,runId:owned.run.runId,expectedVersion:returnRow.actionVersion,action:'retry-return',returnMessageId:owned.message.messageId};
+    const receipt=await controls.actOnProjectTask(retry);
+    assert.deepEqual(await controls.actOnProjectTask(retry),receipt,'signed control replay retains the original event');
+    assert.equal(ledger.getSessionMessage(owned.message.messageId).state,'queued');
+    assert.equal(ledger.history(owned.task.taskId).runs.length,1);
+    await assert.rejects(controls.actOnProjectTask({...retry,commandId:'wrong-return-owner',taskId:row.id,expectedVersion:ledger.taskActionState(row.id).version}));
     await assert.rejects(controls.actOnProjectTask({commandId:'cross-device-ui',taskId:outsider.taskId,runId:null,expectedVersion:ledger.taskActionState(outsider.taskId).version,action:'cancel'}));
   } finally {await controller.dispose();}
   offline=true;
