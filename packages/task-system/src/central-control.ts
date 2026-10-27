@@ -2,7 +2,8 @@ import { z } from "zod";
 
 /** Remote device controls are limited to its own origin tasks. */
 export const CentralTaskControl = z.object({
-  action: z.enum(["cancel", "status", "check"]),
+  action: z.enum(["cancel", "status", "check", "retry-return"]),
+  returnMessageId: z.string().min(1).max(200).optional(),
   taskId: z.string().min(1).max(200),
   expectedVersion: z.string().min(1).max(200),
   runId: z.string().min(1).max(200).nullable(),
