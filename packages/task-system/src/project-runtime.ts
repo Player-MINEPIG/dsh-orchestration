@@ -25,6 +25,7 @@ import { TaskLedger, TaskError, canonical } from "./ledger.js";
 import { Workbench } from "./workbench.js";
 import { WorkspaceManager } from "./workspaces.js";
 import { ScheduledPlans } from "./scheduled-plans.js";
+import { ExpectedExecutionMs } from "./execution-expectation.js";
 import type { TaskPlanner, PlanningInput } from "./planning.js";
 import type { ExecutionRoute, Json, Role, Report } from "./contracts.js";
 
@@ -133,6 +134,7 @@ export class ProjectRuntime {
       CREATE TABLE IF NOT EXISTS pr_sessions(session TEXT PRIMARY KEY,owner TEXT NOT NULL,generation INTEGER NOT NULL,summary TEXT NOT NULL,created TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS pr_turns(command TEXT PRIMARY KEY,digest TEXT NOT NULL,owner TEXT NOT NULL,session TEXT NOT NULL,text TEXT NOT NULL,state TEXT NOT NULL,error TEXT,created TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS pr_dispatch(task TEXT PRIMARY KEY,decision TEXT NOT NULL,candidates TEXT NOT NULL,state TEXT NOT NULL,run TEXT,generation INTEGER NOT NULL,attempted TEXT NOT NULL,updated TEXT NOT NULL);`);
+    if(!(this.db.prepare("PRAGMA table_info(pr_task_routes)").all() as {name:string}[]).some(column=>column.name==="expected_execution_ms"))this.db.exec("ALTER TABLE pr_task_routes ADD COLUMN expected_execution_ms INTEGER");
     // Existing project sessions keep their IDs; the column now names the
     // conversation owner, which can be a real project or a temporary task.
     for (const table of ["pr_sessions", "pr_turns"]) {
@@ -1235,6 +1237,7 @@ export class ProjectRuntime {
             {
               taskId: row.task,
               route,
+              ...(decisionInput?.expectedExecutionMs!==undefined?{expectedExecutionMs:decisionInput.expectedExecutionMs}:{}),
               configuration: { ...retryConfig, decisionId: row.decision, reporting: "summary" },
               ...(previous?.parentRunId?{parentRunId:previous.parentRunId}:{}),
               ...(contextNotes.length ? { contextNotes } : {}),
@@ -1385,7 +1388,7 @@ export class ProjectRuntime {
             order: 99,
             interpolate: false,
             text: () =>
-              `${p.taskId ? `你负责临时任务 ${p.taskId} 的规划。所有执行规划必须沿用此 Task ID，不创建新任务；结果不确定时先核实；只有明确授权重新执行后才使用重试，不得把补问结果当成重跑授权。` : ""}你负责「${p.title}」的统筹。目标：${p.goal}\n${summary}\n已有任务：${JSON.stringify(related)}\n工作区：${p.cwd}，仅存项目上下文。你可以调用 ${TOOLS.join(", ")} 调度其他执行端。用户授权创建的任务优先交给适合的在线闲置执行端；没有在线执行端时，选择注册的合适执行端排队等待上线。纯调度端不得接单或自行完成工作负载。执行端自己选择其授权工作区，不要把调度端目录设为执行约束。不要指定 route/provider/model/effort，让 task_plan 的决策服务选择。任务先登记，再按推荐的执行端顺序尝试。都不在线、忙碌或不可接单时保留 inbox，宿主会在执行端上线后自动派发。已经开始或结果不确定的任务不重复派发；先检查相关任务状态。仅当用户明确要重新执行时，才指引用户使用“核实并确认已停止”和“重新执行”。没有 result 报告仅表示调度账本未收到完成证据，不得断言执行端没有完成。若用户要求不重跑、只通信、询问现状或补传回执，不得 task_plan/task_dispatch，也不得把重新派发描述为唯一取回结果的方法。当前这些统筹工具只能读取调度账本和规划任务，没有向执行端会话发送普通消息或从已停止会话补取回执的工具；不得谎称已发消息或编造报告。此时可以如实解释已有记录，并指引用户在输入框的“对话对象”中选择执行端原会话直接发送消息；普通聊天不代表正式完成回执。只有用户明确授权执行规划时，才使用 requestId="project-message:${command}"，可先 task_plan 提案，再 task_dispatch（commandId 和 requestId 使用同一 ID）登记 Task 和持久候选顺序；只有执行端能接单时才创建 Run。不要重复派发。只调用一次 task_dispatch。提交后简短回复已排队或派发，完成与否必须依据真实报告或账本中用户的人工确认；补交内容会更新执行报告展示，不改写历史 Run 结果。若为普通交流或澄清可直接回复。`,
+              `${p.taskId ? `你负责临时任务 ${p.taskId} 的规划。所有执行规划必须沿用此 Task ID，不创建新任务；结果不确定时先核实；只有明确授权重新执行后才使用重试，不得把补问结果当成重跑授权。` : ""}你负责「${p.title}」的统筹。目标：${p.goal}\n${summary}\n已有任务：${JSON.stringify(related)}\n工作区：${p.cwd}，仅存项目上下文。你可以调用 ${TOOLS.join(", ")} 调度其他执行端。用户授权创建的任务优先交给适合的在线闲置执行端；没有在线执行端时，选择注册的合适执行端排队等待上线。纯调度端不得接单或自行完成工作负载。执行端自己选择其授权工作区，不要把调度端目录设为执行约束。不要指定 route/provider/model/effort，让 task_plan 的决策服务选择。任务先登记，再按推荐的执行端顺序尝试。都不在线、忙碌或不可接单时保留 inbox，宿主会在执行端上线后自动派发。已经开始或结果不确定的任务不重复派发；先检查相关任务状态。仅当用户明确要重新执行时，才指引用户使用“核实并确认已停止”和“重新执行”。没有 result 报告仅表示调度账本未收到完成证据，不得断言执行端没有完成。若用户要求不重跑、只通信、询问现状或补传回执，不得 task_plan/task_dispatch，也不得把重新派发描述为唯一取回结果的方法。当前这些统筹工具只能读取调度账本和规划任务，没有向执行端会话发送普通消息或从已停止会话补取回执的工具；不得谎称已发消息或编造报告。此时可以如实解释已有记录，并指引用户在输入框的“对话对象”中选择执行端原会话直接发送消息；普通聊天不代表正式完成回执。只有用户明确授权执行规划时，才使用 requestId="project-message:${command}"，可先 task_plan 提案，再 task_dispatch（commandId 和 requestId 使用同一 ID）登记 Task 和持久候选顺序；只有执行端能接单时才创建 Run。不要重复派发。task_plan/task_dispatch 派发时按任务给出合理的 expectedExecutionMs（整数毫秒，最多30天），它只从实际执行开始计时并在到期时向原调度会话提醒，不终止或重跑任务。遗漏时表示未设置预计执行上界。正常等待已关联的子任务期间不要另设周期问询；真实故障仍需处理。只调用一次 task_dispatch。提交后简短回复已排队或派发，完成与否必须依据真实报告或账本中用户的人工确认；补交内容会更新执行报告展示，不改写历史 Run 结果。若为普通交流或澄清可直接回复。`,
           });
         },
       });
@@ -1638,7 +1641,7 @@ export class ProjectRuntime {
       if(view.version!==input.expectedVersion)throw new TaskError("CONFLICT","Task changed; refresh before retrying its return");
       if(!input.returnMessageId)throw new TaskError("INVALID","Return retry requires the original message ID");
       const message=this.ledger.getSessionMessage(input.returnMessageId);
-      if(message.taskId!==task.taskId || !message.completion)throw new TaskError("FORBIDDEN","Return does not belong to this Task");
+      if(message.taskId!==task.taskId || (!message.completion && message.checkIn?.kind!=="execution-deadline"))throw new TaskError("FORBIDDEN","Return does not belong to this Task");
       return this.ledger.retryTaskReturn(input.commandId,message.messageId);
     }
     if (input.action === "check") {
@@ -1936,7 +1939,7 @@ export class ProjectRuntime {
       );
 
       const attention = this.ledger.taskActionState(t.taskId);
-      const resultReturn=this.ledger.sessionMessages(t.taskId).findLast(m=>m.completion && m.state==="failed");
+      const resultReturn=this.ledger.sessionMessages(t.taskId).findLast(m=>(m.completion || m.checkIn?.kind==="execution-deadline") && m.state==="failed");
       const cancelled = t.state === "cancelled";
       const manual = t.state === "completed" ? t.manualCompletion : undefined;
       const materialRequest = manual?.requestMessageId
@@ -2286,8 +2289,9 @@ export class ProjectRuntime {
       sampledAt: now(),
     };
   }
-  createDirectTask(input:{commandId:string;projectId:string;title:string;description:string;routeId:string;start:boolean}) {
+  createDirectTask(input:{commandId:string;projectId:string;title:string;description:string;routeId:string;start:boolean;expectedExecutionMs?:number}) {
     this.authorize();
+    if(input.expectedExecutionMs!==undefined)ExpectedExecutionMs.parse(input.expectedExecutionMs);
     const created=this.ledger.managementCommand(input.commandId,"project-agent-task",input,()=>{
       const project=this.workbench.snapshot().projects.find(p=>p.projectId===input.projectId&&p.state!=="archived");
       if(!project)throw new TaskError("NOT_FOUND","Project unavailable");
@@ -2297,19 +2301,21 @@ export class ProjectRuntime {
       const backlogId=`direct-backlog:${input.projectId}`;
       this.db.prepare("INSERT OR IGNORE INTO wb_backlogs(backlog_id,revision,project_id,title,goal,state,priority,criteria) VALUES(?,1,?,'项目任务',?,'open','normal','[]')").run(backlogId,input.projectId,project.goal);
       this.db.prepare("INSERT INTO wb_backlog_tasks(backlog_id,task_id) VALUES(?,?)").run(backlogId,task.taskId);
-      this.db.prepare("INSERT INTO pr_task_routes VALUES(?,?)").run(task.taskId,canonical(selected.route));
+      this.db.prepare("INSERT INTO pr_task_routes(task,route,expected_execution_ms) VALUES(?,?,?)").run(task.taskId,canonical(selected.route),input.expectedExecutionMs??null);
       return {taskId:task.taskId};
     });
     const run=input.start?this.runDirectTask({commandId:`project-task-start:${input.commandId}`,taskId:created.taskId}):null;
     return {taskId:created.taskId,...(run?{runId:run.runId}:{})};
   }
-  runDirectTask(input:{commandId:string;taskId:string}) {
+  runDirectTask(input:{commandId:string;taskId:string;expectedExecutionMs?:number}) {
     this.authorize();
-    const row=this.db.prepare("SELECT route FROM pr_task_routes WHERE task=?").get(input.taskId);
+    const row=this.db.prepare("SELECT route,expected_execution_ms FROM pr_task_routes WHERE task=?").get(input.taskId);
     if(!row)throw new TaskError("NOT_FOUND","Task execution settings unavailable");
     const route=JSON.parse(String(row.route)) as import("./contracts.js").ExecutionRoute;
     this.ledger.validateRoute(route);
-    return this.ledger.createRun(input.commandId,{taskId:input.taskId,route}).value;
+    const expectedExecutionMs=input.expectedExecutionMs ?? (row.expected_execution_ms===null?undefined:Number(row.expected_execution_ms));
+    if(expectedExecutionMs!==undefined)ExpectedExecutionMs.parse(expectedExecutionMs);
+    return this.ledger.createRun(input.commandId,{taskId:input.taskId,route,...(expectedExecutionMs!==undefined?{expectedExecutionMs}:{})}).value;
   }
   scheduleOptions() { this.authorize(); return new ScheduledPlans(this.ledger).options(); }
   createScheduledPlan(input:unknown) { this.authorize(); return new ScheduledPlans(this.ledger).create(input); }

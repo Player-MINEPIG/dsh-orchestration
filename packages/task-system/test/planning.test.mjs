@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { registerExecutor } from "../../../tests/dsh/executor-fixture.mjs";
 import { TaskLedger } from "../dist/index.js";
 import { TaskPlanner, taskDecisionCatalog } from "../dist/planning.js";
 import {
@@ -179,4 +180,59 @@ test('heartbeat health changes during a decision preserve route evidence, while 
    else {assert.equal(result.routingStatus,'ready',JSON.stringify(result.proposal));const applied=planner.apply('intent',{deferExecution:true});assert.equal(applied.value.taskId,task.taskId);assert.equal(ledger.getTask(task.taskId).state,'inbox');assert.equal(ledger.snapshot().tasks.length,1);}
   }finally{await engine.close();ledger.close();}
  }
+});
+
+test('expected execution estimate is immutable proposal intent and reaches exactly one applied Run', async () => {
+  const ledger = TaskLedger.open(':memory:');
+  try {
+    registerExecutor(ledger, 'expected-worker', {
+      nodeId: 'worker', roles: ['executor'], enabled: true,
+      models: [{ provider: 'fixture', model: 'fixture', reasoningEfforts: [] }],
+      capabilities: [], workspaceIds: [],
+    });
+    const route = { nodeId: 'worker', provider: 'fixture', model: 'fixture', requiredCapabilities: [] };
+    const planner = new TaskPlanner(ledger, undefined, () => taskDecisionCatalog(ledger, {}), () => {});
+    const input = { requestId: 'expected-plan', title: 'Bounded work', description: 'Keep the caller estimate', route, expectedExecutionMs: 45000 };
+    const proposal = await planner.plan(input);
+    assert.equal(proposal.input.expectedExecutionMs, 45000);
+    assert.equal(ledger.getDecision(input.requestId).input.expectedExecutionMs, 45000);
+    assert.deepEqual(await planner.plan(input), proposal);
+    for (const expectedExecutionMs of [undefined, 46000]) {
+      await assert.rejects(planner.plan({ ...input, expectedExecutionMs }), { code: 'CONFLICT' });
+      assert.throws(() => ledger.applyDecision(`override-${expectedExecutionMs}`, {
+        decisionId: input.requestId, currentStateHash: proposal.stateHash,
+        title: input.title, description: input.description, persistence: 'create',
+        route, reporting: 'none', ...(expectedExecutionMs !== undefined ? { expectedExecutionMs } : {}),
+      }), { code: 'CONFLICT' });
+    }
+    assert.equal(ledger.snapshot().tasks.length, 0);
+    assert.equal(ledger.snapshot().runs.length, 0);
+    const applied = planner.apply(input.requestId);
+    assert.deepEqual(ledger.getRun(applied.value.runId).executionExpectation, { phase: 'pending_start', expectedExecutionMs: 45000 });
+    assert.deepEqual(planner.apply(input.requestId), applied);
+    assert.equal(ledger.snapshot().runs.length, 1);
+
+    const withoutEstimate = await planner.plan({ requestId: 'legacy-plan', title: 'Unbounded work', description: 'No caller estimate', route });
+    assert.equal(withoutEstimate.input.expectedExecutionMs, undefined);
+    const legacy = planner.apply('legacy-plan');
+    assert.equal(ledger.getRun(legacy.value.runId).executionExpectation, undefined);
+  } finally {
+    ledger.close();
+  }
+});
+
+test('planning rejects invalid expected execution estimates before persisting a proposal', async () => {
+  const ledger = TaskLedger.open(':memory:');
+  try {
+    const planner = new TaskPlanner(ledger, undefined, () => taskDecisionCatalog(ledger, {}), () => {});
+    for (const [index, expectedExecutionMs] of [0, -1, 1.5, '1000', null, 30 * 86400000 + 1].entries()) {
+      const requestId = `invalid-estimate-${index}`;
+      await assert.rejects(planner.plan({ requestId, title: 'Invalid estimate', description: '', expectedExecutionMs }));
+      assert.equal(ledger.getDecision(requestId), undefined);
+    }
+    assert.equal(ledger.snapshot().tasks.length, 0);
+    assert.equal(ledger.snapshot().runs.length, 0);
+  } finally {
+    ledger.close();
+  }
 });

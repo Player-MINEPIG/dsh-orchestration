@@ -1,5 +1,6 @@
 import { CheckinRefs } from "./remote/ports.js";
 import { TaskCheckins } from "./task-checkins.js";
+import { ExpectedExecutionMs } from "./execution-expectation.js";
 import { ReturnFailure, rateLimited, returnRetryAt } from "./task-return-failure.js";
 import { taskRead, type TaskReadOptions } from "./task-reads.js";
 import { nodeRead, type NodeReadOptions } from "./node-reads.js";
@@ -244,6 +245,7 @@ export interface TaskInput {
 }
 export interface DispatcherSession {nodeId:string;sessionId:string;taskId:string;runId:string;projectId:string;cwd:string}
 export interface RunInput {
+  expectedExecutionMs?: number;
   runId?: string;
   taskId: string;
   parentRunId?: string;
@@ -861,7 +863,7 @@ export class TaskLedger {
     this.planner();
     return this.command(commandId,"retryTaskReturn",{messageId},()=>{
       const message=this.getSessionMessage(messageId);
-      if(!message.completion)fail("INVALID","Not a task result return");
+      if(!message.completion && message.checkIn?.kind!=="execution-deadline")fail("INVALID","Not a task result return or execution progress check");
       if(message.state==="completed")return message;
       message.state="queued";message.consecutiveDeliveryFailures=0;delete message.reply;delete message.nextAttemptAt;message.updatedAt=this.now();
       this.put("sessionMessage",messageId,message,message.taskId,message.state);
@@ -2385,6 +2387,7 @@ export class TaskLedger {
         );
     }
     const run: Run = {
+      ...(input.expectedExecutionMs !== undefined ? {executionExpectation:{phase:"pending_start" as const,expectedExecutionMs:ExpectedExecutionMs.parse(input.expectedExecutionMs)}} : {}),
       runId: key,
       taskId: task.taskId,
       ...(parentRunId ? { parentRunId, executionParentKind: this.getRun(parentRunId).coordinatorSession ? "coordinator" : "executor", ...(!this.getRun(parentRunId).coordinatorSession ? {executionParentRunId: parentRunId} : {}) } : {}),
@@ -3057,6 +3060,7 @@ export class TaskLedger {
     commandId: string,
     input: LeaseRef & {
       display?: DelegationDisplayInput;
+      expectedExecutionMs?: number;
       title: string;
       description?: string;
       route?: ExecutionRoute;
@@ -3091,6 +3095,7 @@ export class TaskLedger {
         route,
         executionModel:selected.executionModel,
         configuration: input.configuration,
+        ...(input.expectedExecutionMs!==undefined?{expectedExecutionMs:input.expectedExecutionMs}:{}),
       });
       task.dispatchOrigin = origin;
       run.dispatchOrigin = origin;
@@ -3469,6 +3474,19 @@ export class TaskLedger {
       return attempt;
     });
   }
+  markExecutionStarted(commandId: string, ref: LeaseRef) {
+    return this.command(commandId,"markExecutionStarted",ref,()=>{
+      const executionId=ref.executionId ?? fail("INVALID","executionId is required to start workload");
+      const {run,attempt}=this.owned(ref);
+      if(attempt.state!=="running" || attempt.executionId!==executionId)fail("EXECUTION_OWNER","Workload start requires its running execution owner");
+      if(run.executionExpectation?.phase==="pending_start") {
+        run.executionExpectation={phase:"started",expectedExecutionMs:run.executionExpectation.expectedExecutionMs,startedAt:this.now()};
+        this.saveRun(run);
+        this.event("run.execution_started",{attemptId:attempt.attemptId,executionId},run.taskId,run.runId);
+      }
+      return run;
+    });
+  }
   /** Nonsecret stable authority identity, scoped to this ledger rather than an endpoint. */
   executionDisposition(input:{runId:string;attemptId?:string}) {
     const run=this.getRun(input.runId),task=this.getTask(run.taskId);
@@ -3542,6 +3560,14 @@ export class TaskLedger {
     const messages = this.list<import("./remote/ports.js").SessionMessage>(
       "sessionMessage",
     );
+    if(options?.forAdmission) {
+      if(!options.messageId)fail("INVALID","Admission refresh requires one exact message ID");
+      const message=messages.find(m=>m.messageId===options.messageId && m.nodeId===nodeId);
+      if(!message)return [];
+      let admission=message.state!=="queued"?"obsolete" as const:message.checkIn?this.checkins.disposition(message):"ready" as const;
+      if(admission==="ready" && ((message.nextAttemptAt ?? "")>this.now() || (this.get<{until:string}>("sessionReturnCooldown",hash([message.nodeId,message.sessionId]))?.until ?? "")>this.now()))admission="defer";
+      return [{...(admission==="ready" && message.checkIn?this.checkins.prepare(message):message),admission}];
+    }
     for(const message of messages)if(message.completion && message.state==="queued" && (message.consecutiveDeliveryFailures ?? (!message.deliveryFailure ? message.deliveryAttempts ?? 0 : 0))>=3) {
       message.state="failed";
       message.reply="原会话连续三次未能处理回信，已停止自动问询；请修复会话后手动重试。";
@@ -3578,11 +3604,23 @@ export class TaskLedger {
         return this.getSessionMessage(message.messageId);
       }
       if (message.state !== "queued") {
+        if(message.checkIn && message.state==="completed" && message.withdrawn && input.state==="completed" && input.withdrawn)return message;
+        if(message.checkIn?.kind==="execution-deadline" && message.state==="completed" && message.withdrawn && input.state==="completed" && !input.withdrawn && Array.isArray(input.checkInTasks) && input.checkInTasks.length===0) {
+          delete message.withdrawn;
+          message.reply=input.reply;
+          message.updatedAt=this.now();
+          this.put("sessionMessage",message.messageId,message,message.taskId,message.state);
+          return message;
+        }
         if (message.state !== input.state || message.reply !== input.reply)
           fail("CONFLICT", "Message already answered");
         return message;
       }
       if (message.checkIn && input.state === "completed") {
+        if(input.withdrawn===true) {
+          if(this.checkins.disposition(message)!=="obsolete")fail("CONFLICT","A live progress check cannot be withdrawn");
+          message.withdrawn=true;
+        }
         const refs=CheckinRefs.safeParse(input.checkInTasks);
         if(!refs.success)throw new TaskError("INVALID","Check-in acknowledgement requires its admitted task references");
         const keys=refs.data.map(ref=>canonical(ref));
@@ -5162,6 +5200,7 @@ export class TaskLedger {
       decisionId: string;
       deferExecution?: boolean;
       expectedActionVersion?: string;
+      expectedExecutionMs?: number;
       currentStateHash: string;
       title: string;
       description: string;
@@ -5183,6 +5222,7 @@ export class TaskLedger {
         decision.validUntil <= this.clock()
       )
         fail("STALE_DECISION", "Decision catalog expired or changed");
+      if(input.expectedExecutionMs !== (decision.input as Record<string,Json>).expectedExecutionMs)fail("CONFLICT","Expected execution upper bound differs from the reviewed dispatch intent");
       const proposal = decision.proposal as Record<string, Json>;
       if (
         proposal.kind !== "proposal" ||
@@ -5350,6 +5390,7 @@ export class TaskLedger {
         input.route && !input.deferExecution
           ? this.newRun({
               taskId: task.taskId,
+              ...(input.expectedExecutionMs!==undefined?{expectedExecutionMs:input.expectedExecutionMs}:{}),
               route: input.route,
               executionModel:input.executionModel,
               configuration: {

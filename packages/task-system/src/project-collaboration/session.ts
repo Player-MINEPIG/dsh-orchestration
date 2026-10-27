@@ -21,6 +21,7 @@ export interface CollaborationInput {
   goal?: string;
   summary?: string;
   description?: string;
+  expectedExecutionMs?: number;
   route?: unknown;
   nodeId?: string;
   executionModel?: unknown;
@@ -171,7 +172,7 @@ export class SessionCollaboration {
       rejectedOperations: operations.filter(op => op.state === "rejected").map(op => ({ commandId: op.commandId, action: op.input.action, code: op.errorCode })),
     };
   }
-  async invoke(agent: Agent | undefined, action: Exclude<CollaborationAction, "activate">, args: { title?: string; goal?: string; summary?: string; description?: string; route?: unknown; nodeId?: string; executionModel?: unknown; taskId?:string;retry?:boolean;expectedActionVersion?:string;configuration?:Json;read?:import("../task-reads.js").TaskReadOptions | import("../node-reads.js").NodeReadOptions }, callId: string, requestId?: string) {
+  async invoke(agent: Agent | undefined, action: Exclude<CollaborationAction, "activate">, args: { title?: string; goal?: string; summary?: string; description?: string; expectedExecutionMs?: number; route?: unknown; nodeId?: string; executionModel?: unknown; taskId?:string;retry?:boolean;expectedActionVersion?:string;configuration?:Json;read?:import("../task-reads.js").TaskReadOptions | import("../node-reads.js").NodeReadOptions }, callId: string, requestId?: string) {
     const identity = this.identity(agent), binding = this.binding(agent);
     if (!binding || binding.state !== "active" || !binding.projectId) throw new TaskError("FORBIDDEN", "请先在当前会话运行 /project 激活协作模式。");
     const readOnly = action === "status" || action === "nodes";

@@ -70,6 +70,7 @@ export function runSummary(run: Run, details = false) {
     backend: run.route.backend,
   };
   return {
+    executionExpectation:run.executionExpectation ?? {phase:"not_set"},
     runId,
     taskId,
     parentRunId,

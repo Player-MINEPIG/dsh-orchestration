@@ -11,6 +11,19 @@ let seq=0;
 async function call(h,agent,name,args){const result=await h.ctx.tools.execute({name,arguments:args,callId:ToolCallId('checkin-'+ ++seq),agent,signal:new AbortController().signal});assert.equal(result.isError,false,JSON.stringify(result.error));return result.value;}
 async function events(h,id){const handle=await h.ctx.sessionPersistence.open(SessionId(id),'read');try{return(await handle.read()).events;}finally{await handle.close();}}
 async function draft(h,id){const handle=await h.ctx.agents.create({sessionId:SessionId(id),meta:{cwd:h.dir},agentOptions:{provider:'test-offline',model:'script'}});await call(h,handle.agent,'task_create',{commandId:'draft-'+id,title:'Task '+id});return{handle,task:h.ledger.snapshot().tasks.find(task=>task.title==='Task '+id)};}
+
+test('a Run completing during the final deadline refresh withdraws without steering or a false failed ACK',async()=>{
+ const h=await createNativeHarness({config:{centralMode:'host',executionEnabled:false}});let delivery;
+ try{
+  const {handle,task}=await draft(h,'completed-at-admission');let clock=Date.now();h.ledger.clock=()=>clock;
+  h.ledger.registerNode('worker',{nodeId:'worker',roles:['executor'],enabled:true,models:[{provider:'test-offline',model:'script'}],workspaceIds:[],capabilities:[],maxConcurrent:1});
+  const catalog=h.ledger.executionModels.request('catalog',{nodeId:'worker'}).catalog.request;h.ledger.completeExecutionModels('catalog-result',{nodeId:'worker',requestId:catalog.requestId,generation:catalog.generation,result:{state:'success',complete:true,observedAt:clock,models:[{provider:'test-offline',model:'script'}]}});
+  const run=h.ledger.withDispatchOrigin(task.dispatchOrigin,()=>h.ledger.createRun('bounded',{taskId:task.taskId,expectedExecutionMs:1000,route:{nodeId:'worker',provider:'test-offline',model:'script',requiredCapabilities:[]}}).value),claim=h.ledger.claim('claim',{runId:run.runId,nodeId:'worker',ttlMs:60000}).value,ref={runId:run.runId,attemptId:claim.attempt.attemptId,nodeId:'worker',fence:claim.attempt.fence,executionId:'work'};
+  h.ledger.markRunning('prepare',ref);h.ledger.markExecutionStarted('actual',ref);clock+=1000;h.ledger.checkins.tick();const message=h.ledger.pendingSessionMessages('local',{kind:'continuation'})[0];let refreshes=0;
+  delivery=new TaskReturnDelivery(h.ctx,async current=>{if(++refreshes===2){h.ledger.submit('done',{...ref,outcome:'success',summary:'Finished before admission'});h.ledger.checkins.tick();}const refreshed=h.ledger.pendingSessionMessages('local',{messageId:current.messageId,forAdmission:true})[0];return refreshed?.admission==='obsolete'?'obsolete':refreshed?.admission==='defer'?undefined:refreshed;});
+  const receipt=await delivery.deliver(message);assert.equal(receipt.withdrawn,true);h.ledger.completeSessionMessage('withdrawn-ack',{nodeId:'local',messageId:message.messageId,state:'completed',...receipt});assert.equal(h.ledger.getSessionMessage(message.messageId).withdrawn,true);assert.equal(h.adapter.requests.length,0);assert.equal((await events(h,String(handle.agent.id))).filter(e=>e.type==='user/message'&&e.data.source.kind==='dsh-task-checkin').length,0);assert.equal(h.ledger.getRun(run.runId).state,'succeeded');
+ }finally{await delivery?.dispose();await h.dispose();}
+});
 function remote(h){
  h.ledger.registerNode("remote-local",{nodeId:"local",roles:["planner"],enabled:true,models:[],capabilities:[],workspaceIds:[],maxConcurrent:1});
  const keys=generateKeyPairSync('ed25519'),server=new RecoveryStore(':memory:'),outbox=new RecoveryStore(':memory:');
@@ -37,7 +50,7 @@ test('busy responsible turn defers a check without steering, model calls or deli
   const {handle,task}=await draft(h,'busy-checkin');handle.agent.followup(createUserMessage({source:{kind:'user'},content:[{type:'text',text:'Actual current work'}]}));await ready;
   h.ledger.checkins.request('manual',task.taskId);const message=h.ledger.pendingSessionMessages('local',{kind:'continuation'})[0];h.ctx.taskSystem.tick();await h.ctx.taskSystem.returnJob;
   assert.equal(h.adapter.requests.length,1);assert.equal(handle.agent.inbox.nextTurn.length+handle.agent.inbox.nextStep.length,0);assert.equal(h.ledger.checkins.view(task.taskId).deliveryFailures,0);assert.equal(h.ledger.getSessionMessage(message.messageId).deliveryAttempts,undefined);
-  release();await handle.agent.whenIdle();await h.ctx.taskSystem.taskReturns.deliver(message);assert.equal((await events(h,'busy-checkin')).filter(e=>e.type==='user/message'&&e.data.source.kind==='dsh-task-checkin').length,1);
+  release();await handle.agent.whenIdle();h.ledger.clock=()=>Date.now()+60001;await h.ctx.taskSystem.taskReturns.deliver(message);assert.equal((await events(h,'busy-checkin')).filter(e=>e.type==='user/message'&&e.data.source.kind==='dsh-task-checkin').length,1);
  }finally{release?.();await h.dispose();}
 });
 

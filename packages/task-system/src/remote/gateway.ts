@@ -1,4 +1,5 @@
 import { sessionContinuation, CheckinRefs } from "./ports.js";
+import { ExpectedExecutionMs } from "../execution-expectation.js";
 import { ReturnFailure } from "../task-return-failure.js";
 import { TaskReadOptions } from "../task-reads.js";
 import { NodeReadOptions } from "../node-reads.js";
@@ -461,7 +462,8 @@ export function validatePayload(envelope: CommandEnvelope): void {
       break;
     }
     case "sessionMessages":
-      fields(p, [], ["kind", "messageId", "excludeMessageIds", "afterMessageId"]);
+      fields(p, [], ["kind", "messageId", "excludeMessageIds", "afterMessageId", "forAdmission"]);
+      if(p.forAdmission!==undefined)insist(typeof p.forAdmission==="boolean" && p.messageId!==undefined,"INVALID_ADMISSION_QUERY");
       insist(p.kind === undefined || p.kind === "completion" || p.kind === "continuation" || p.kind === "message", "INVALID_MESSAGE_KIND");
       if (p.excludeMessageIds !== undefined) {
         insist(Array.isArray(p.excludeMessageIds) && p.excludeMessageIds.length <= 256 && p.excludeMessageIds.every(identifier), "INVALID_MESSAGE_EXCLUSIONS");
@@ -470,7 +472,8 @@ export function validatePayload(envelope: CommandEnvelope): void {
       if (p.messageId !== undefined) id(p, "messageId");
       break;
     case "sessionMessageReply":
-      fields(p, ["messageId", "state", "reply"], ["checkInTasks", "failure"]);
+      fields(p, ["messageId", "state", "reply"], ["checkInTasks", "failure", "withdrawn"]);
+      if(p.withdrawn!==undefined)insist(p.withdrawn===true,"INVALID_WITHDRAWAL_RECEIPT");
       if(p.failure!==undefined)insist(ReturnFailure.safeParse(p.failure).success,"INVALID_RETURN_FAILURE");
       if(p.checkInTasks!==undefined)insist(CheckinRefs.safeParse(p.checkInTasks).success,"INVALID_CHECKIN_RECEIPT");
       id(p, "messageId");
@@ -583,7 +586,8 @@ export function validatePayload(envelope: CommandEnvelope): void {
         insist(typeof p.allowRetry === "boolean", "INVALID_RETRY_ALLOWANCE");
       break;
     case "markRunning":
-      fields(p, ["runId", "attemptId", "fence", "executionId"]);
+      fields(p, ["runId", "attemptId", "fence", "executionId"], ["workloadStarted"]);
+      if(p.workloadStarted!==undefined)insist(p.workloadStarted===true,"INVALID_WORKLOAD_START");
       lease(p, envelope.nodeId);
       break;
     case "acknowledgeCancellation":
@@ -594,9 +598,10 @@ export function validatePayload(envelope: CommandEnvelope): void {
       fields(
         p,
         [...ownedFields, "title"],
-        ["description", "route", "policy", "configuration", "display"],
+        ["description", "route", "policy", "configuration", "display", "expectedExecutionMs"],
       );
       lease(p, envelope.nodeId);
+      if(p.expectedExecutionMs!==undefined)insist(ExpectedExecutionMs.safeParse(p.expectedExecutionMs).success,"INVALID_EXPECTED_EXECUTION");
       delegation(p);
       break;
     case "taskHistory":
@@ -943,6 +948,7 @@ export class RemoteGateway {
             ...(Array.isArray(p.excludeMessageIds) ? {excludeMessageIds:p.excludeMessageIds.filter(identifier)} : {}),
             ...(typeof p.afterMessageId === "string" ? {afterMessageId:p.afterMessageId} : {}),
             ...(typeof p.messageId === "string" ? {messageId:p.messageId} : {}),
+            ...(p.forAdmission===true ? {forAdmission:true} : {}),
           })).filter(
             (m) => {
               if (
@@ -969,6 +975,7 @@ export class RemoteGateway {
             messageId: String(p.messageId),
             state: p.state as "completed" | "failed" | "uncertain",
             reply: String(p.reply),
+            ...(p.withdrawn===true?{withdrawn:true}:{}),
             ...(p.failure ? {failure:ReturnFailure.parse(p.failure)} : {}),
             ...(p.checkInTasks ? {checkInTasks:CheckinRefs.parse(p.checkInTasks)} : {}),
           });
@@ -1198,7 +1205,10 @@ export class RemoteGateway {
           });
           break;
         case "markRunning":
-          result = await ledger.markRunning(commandId, lease(p, peer.nodeId));
+          if(p.workloadStarted===true) {
+            insist(ledger.markExecutionStarted,"EXECUTION_START_UNSUPPORTED",503);
+            result=await ledger.markExecutionStarted(commandId,lease(p,peer.nodeId));
+          }else result = await ledger.markRunning(commandId, lease(p, peer.nodeId));
           break;
         case "acknowledgeCancellation":
           insist(

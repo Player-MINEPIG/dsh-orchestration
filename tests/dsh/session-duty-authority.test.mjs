@@ -38,12 +38,14 @@ test('deployment separates central hosting and execution, preserves explicit leg
 });
 
 for (const authMode of ['ed25519','trusted-network']) test(`remote central with execution disabled coordinates, cold-returns over ${authMode} HTTP and never claims or creates local authority`,async t=>{
-  const central=await createNativeHarness({executionRoot:true,config:{nodeId:'central',centralMode:'host',executionEnabled:true,planningDecisionEnabled:false},script:[{name:'task_submit_result',args:{outcome:'success',summary:'Child verified',reportBody:'Native child evidence'}}]});
+  const workloadReady=Promise.withResolvers(),workloadGate=Promise.withResolvers();
+  const central=await createNativeHarness({executionRoot:true,config:{nodeId:'central',centralMode:'host',executionEnabled:true,planningDecisionEnabled:false},script:[async()=>{workloadReady.resolve();await workloadGate.promise;return {name:'task_submit_result',args:{outcome:'success',summary:'Child verified',reportBody:'Native child evidence'}};}]});
   const local=await createNativeHarness({config:{nodeId:'dispatcher',centralMode:'remote',executionEnabled:false,planningDecisionEnabled:false}});
   let origin;
   const stores=[], servers=[];
   t.after(async()=>{await origin?.dispose();await local.dispose();await central.dispose();for(const server of servers)await new Promise(resolve=>server.close(resolve));for(const store of stores)store.close();delete process.env.DSH_SESSION_DUTY_TEST_KEY;});
-  const ledger=central.ledger;
+  const ledger=central.ledger;let clock=Date.now();ledger.clock=()=>clock;
+  t.after(()=>workloadGate.resolve());
   ledger.registerNode('central-node',{nodeId:'central',roles:['both'],models:[{provider:'test-offline',model:'script',reasoningEfforts:[]}],capabilities:[],workspaceIds:[],enabled:true,maxConcurrent:2});models(ledger,'central');
   if (authMode === 'ed25519') ledger.registerNode('dispatcher-node',{nodeId:'dispatcher',roles:['planner'],models:[],capabilities:[],workspaceIds:[],enabled:true});
   const keys=generateKeyPairSync('ed25519');process.env.DSH_SESSION_DUTY_TEST_KEY=keys.privateKey.export({type:'pkcs8',format:'pem'});
@@ -68,19 +70,27 @@ for (const authMode of ['ed25519','trusted-network']) test(`remote central with 
   assert.equal(central.ctx.taskSystem.projects.snapshot().projects[0].title,'Device-local materials');
   const draft=(await call(local,origin.agent,'task_create',{commandId:'parent',title:'Parent',policy:{settlementQuietMs:0}})).value;
   const binding=(await call(local,origin.agent,'task_bind_dispatcher',{commandId:'bind',taskId:draft.taskId})).value;
-  const request={commandId:'child',title:'Child',description:'Execute on the enabled central device',nodeId:'central',executionModel:{provider:'test-offline',model:'script'}};
+  const request={commandId:'child',title:'Child',description:'Execute on the enabled central device',nodeId:'central',expectedExecutionMs:1000,executionModel:{provider:'test-offline',model:'script'}};
   const dispatched=await call(local,origin.agent,'task_dispatch',request);
   assert.deepEqual(await call(local,origin.agent,'task_dispatch',request),dispatched);
   const child=ledger.snapshot().tasks.find(task=>task.parentTaskId===draft.taskId),run=ledger.history(child.taskId).runs[0];
   assert.equal(run.dispatchOrigin.nodeId,'dispatcher');assert.equal(run.dispatchOrigin.cwd,local.dir);assert.equal(run.parentRunId,binding.runId);assert.equal(run.workspaceConstraint,undefined);
+  assert.equal(run.executionParentKind,'coordinator');assert.equal(run.executionExpectation.phase,'pending_start');assert.equal(run.dispatchOrigin.parentLease,undefined);
+  ledger.checkins.tick();assert.equal(ledger.checkins.view(draft.taskId).category,'waiting_children');
   assert.equal((await call(local,origin.agent,'task_query',{})).tasks.length,2);
   const outsider=ledger.createTask('outside',{title:'Unrelated private task'}).value;
   const rejected=await local.ctx.tools.execute({name:'task_history',arguments:{taskId:outsider.taskId},callId:ToolCallId('outside'),agent:origin.agent,signal:new AbortController().signal});assert.equal(rejected.isError,true);
   assert.equal(local.ledger.snapshot().tasks.length,0);
   await local.ctx.sessions.flush(origin.agent.session);await origin.dispose();origin=undefined;
-  local.adapter.script.push({name:'task_history',args:{taskId:child.taskId}},{name:'task_submit_result',args:{outcome:'success',summary:'Reviewed child',reportBody:'Original local session reviewed native result'}});
+  local.adapter.script.push('Verified child still running; wait for its formal result.',{name:'task_history',args:{taskId:child.taskId}},{name:'task_submit_result',args:{outcome:'success',summary:'Reviewed child',reportBody:'Original local session reviewed native result'}});
   const claim=ledger.claim('enabled-claim',{runId:run.runId,nodeId:'central',ttlMs:10000}).value;
-  await central.ctx.taskSystem.native.execute(claim);
+  const execution=central.ctx.taskSystem.native.execute(claim);await workloadReady.promise;
+  assert.equal(ledger.getRun(run.runId).executionExpectation.phase,'started');clock+=1000;ledger.checkins.tick();
+  const progress=ledger.sessionMessages(child.taskId).find(message=>message.checkIn?.kind==='execution-deadline');assert.ok(progress);assert.equal(progress.sessionId,'local-original');
+  for(let i=0;i<100&&ledger.getSessionMessage(progress.messageId).state!=='completed';i++)await new Promise(resolve=>setTimeout(resolve,25));
+  assert.equal(ledger.getSessionMessage(progress.messageId).state,'completed');assert.equal(ledger.getRun(run.runId).state,'running');assert.equal(ledger.getRun(binding.runId).state,'running');
+  ledger.checkins.tick();assert.equal(ledger.sessionMessages(child.taskId).filter(message=>message.checkIn?.kind==='execution-deadline').length,1);
+  workloadGate.resolve();await execution;
   for(let i=0;i<100&&ledger.getRun(binding.runId).state==='running';i++)await new Promise(resolve=>setTimeout(resolve,50));
   assert.equal(ledger.getRun(binding.runId).state,'succeeded');
   assert.equal(ledger.snapshot().attempts.length,1);assert.equal(ledger.snapshot().attempts[0].nodeId,'central');

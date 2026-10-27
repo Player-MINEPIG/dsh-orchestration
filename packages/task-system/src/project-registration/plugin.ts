@@ -61,6 +61,7 @@ export function apply(ctx: Context, config: Config) {
       "dispatch",
       {
         ...(input.taskId?{taskId:input.taskId}:{title:input.title,description:input.description}),
+        ...(input.expectedExecutionMs !== undefined ? { expectedExecutionMs: input.expectedExecutionMs } : {}),
         ...(input.retry?{retry:input.retry}:{}),
         ...(input.expectedActionVersion?{expectedActionVersion:input.expectedActionVersion}:{}),
         ...(input.configuration!==undefined?{configuration:JSON.parse(JSON.stringify(input.configuration))}:{}),

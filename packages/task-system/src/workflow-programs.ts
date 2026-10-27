@@ -157,6 +157,7 @@ export class ProgramRegistry {
         summary: `Program input rejected: ${this.ajv.errorsText(entry.input.errors)}`,
       };
     try {
+      await request.executionStarted?.();
       const result = Result.parse(
         await entry.execute({
           input: configuration.input,

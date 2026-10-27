@@ -151,6 +151,7 @@ export interface DispatchIssue {
   action: "refresh_catalog" | "choose_execution_model" | "repair_context" | "review_assignment";
 }
 export interface Run {
+  executionExpectation?: import("./execution-expectation.js").ExecutionExpectation;
   coordinatorSession?: {nodeId:string;sessionId:string};
   resultSummary?: string;
   dispatchOrigin?: DispatchOrigin;

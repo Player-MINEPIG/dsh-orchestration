@@ -10,6 +10,7 @@ import type { ExecutionRoute, Json } from "../contracts.js";
 import type { TaskPlanner } from "../planning.js";
 import type { CollaborationSummary, ProjectCollaborationInput } from "./types.js";
 import { ExecutionModelChoice } from "../execution-models.js";
+import { ExpectedExecutionMs } from "../execution-expectation.js";
 import { projectSessionAction, type ProjectSessionAction } from "../project-session-service.js";
 const hash = (value: unknown) => createHash("sha256").update(canonical(value)).digest("hex");
 const json = (value: unknown): Json => JSON.parse(JSON.stringify(value));
@@ -26,15 +27,16 @@ export function validateCollaborationInput(value: unknown): asserts value is Pro
     if (Object.keys(p).some(key=>!["action","control"].includes(key)) || !CentralTaskControl.safeParse(p.control).success) fail("INVALID", "Invalid central task control");
     return;
   }
-  const keys = ["action", "sessionId", "cwd", "projectId", "title", "goal", "summary", "route", "description", "nodeId", "executionModel", "composition", "command", "taskId", "retry", "expectedActionVersion", "configuration", "read"];
+  const keys = ["action", "sessionId", "cwd", "projectId", "title", "goal", "summary", "route", "description", "nodeId", "executionModel", "composition", "command", "taskId", "retry", "expectedActionVersion", "expectedExecutionMs", "configuration", "read"];
   if (Object.keys(p).some(k => !keys.includes(k)) || canonical(p).length > 64_000) fail("INVALID", "Unknown or oversized collaboration input");
   if (!["session", "activate", "status", "nodes", "dispatch", "update", "submit"].includes(String(p.action))) fail("INVALID", "Unknown collaboration action");
-  for (const key of keys.filter(k => k !== "route" && k !== "executionModel" && k !== "composition" && k !== "command" && k !== "retry" && k !== "configuration" && k !== "read")) {
+  for (const key of keys.filter(k => k !== "route" && k !== "executionModel" && k !== "composition" && k !== "command" && k !== "retry" && k !== "expectedExecutionMs" && k !== "configuration" && k !== "read")) {
     const v = p[key];
     if (v !== undefined && (typeof v !== "string" || v.length > (key === "description" || key === "summary" ? 20_000 : 4096) || v.includes("\0"))) fail("INVALID", `Invalid ${key}`);
   }
   if (typeof p.sessionId !== "string" || !p.sessionId.trim() || p.sessionId.length > 200 || typeof p.cwd !== "string" || !isAbsolute(p.cwd)) fail("INVALID", "A session and absolute working directory are required");
   if(p.retry!==undefined && typeof p.retry!=="boolean")fail("INVALID","Invalid retry");
+  if (p.expectedExecutionMs !== undefined && (p.action !== "dispatch" || !ExpectedExecutionMs.safeParse(p.expectedExecutionMs).success)) fail("INVALID", "Expected execution duration requires dispatch and a positive integer within 30 days");
   if(p.read!==undefined && !(p.action==="nodes"?NodeReadOptions:TaskReadOptions).safeParse(p.read).success)fail("INVALID","Invalid read options");
   if (p.action === "session" && !SessionCommand.safeParse(p.command).success) fail("INVALID", "Invalid session command");
   else if (p.action !== "session" && p.command !== undefined) fail("INVALID", "Command requires session action");
@@ -196,7 +198,7 @@ export class ProjectCollaborationAuthority {
         const needsConfirmation = task.confirmation?.required && task.confirmation.state !== "approved";
         try {
         if (planner && !input.nodeId && !existing) {
-          const decision = await planner.plan({ requestId: `${key}:plan`, title, description, projectId: b.projectId, taskId: task.taskId, ...(input.route ? { route: input.route } : {}),...(input.executionModel?{executionModel:input.executionModel}:{}) });
+          const decision = await planner.plan({ requestId: `${key}:plan`, title, description, projectId: b.projectId, taskId: task.taskId, ...(input.expectedExecutionMs !== undefined ? { expectedExecutionMs: input.expectedExecutionMs } : {}), ...(input.route ? { route: input.route } : {}),...(input.executionModel?{executionModel:input.executionModel}:{}) });
           if (decision.routingStatus !== "ready") {
             // Planning has not applied any execution. Preserve the audit record,
             // but do not leave an unstartable task blocking project submission.
@@ -204,7 +206,7 @@ export class ProjectCollaborationAuthority {
             fail("ROUTE_REQUIRED", "Central planner could not select an available execution route; the unstarted task was cancelled");
           }
           planner.apply(`${key}:plan`, { deferExecution: Boolean(needsConfirmation) });
-        } else if(!needsConfirmation)this.ledger.dispatchExistingTask(`${key}:run`, { taskId: task.taskId,...(input.route?{route:input.route}:{nodeId:route?.nodeId,...(input.executionModel?{executionModel:input.executionModel}:{})}),...(input.configuration!==undefined?{configuration:input.configuration}:{}),...(input.retry?{retry:input.retry,expectedActionVersion:input.expectedActionVersion}:{}) }).value;
+        } else if(!needsConfirmation)this.ledger.dispatchExistingTask(`${key}:run`, { taskId: task.taskId, ...(input.expectedExecutionMs !== undefined ? { expectedExecutionMs: input.expectedExecutionMs } : {}),...(input.route?{route:input.route}:{nodeId:route?.nodeId,...(input.executionModel?{executionModel:input.executionModel}:{})}),...(input.configuration!==undefined?{configuration:input.configuration}:{}),...(input.retry?{retry:input.retry,expectedActionVersion:input.expectedActionVersion}:{}) }).value;
         } catch(error) {
           if(!existing && !this.ledger.history(task.taskId).runs.length)this.ledger.cancel(`${key}:rejected`,{taskId:task.taskId,reason:"Dispatch was rejected before execution; retain this Task for explicit retry or cancellation"});
           if(error instanceof TaskError)throw new TaskError(error.code,`${error.message}. taskId=${task.taskId}; inspect task_history and reuse this Task with a new commandId after repair`);

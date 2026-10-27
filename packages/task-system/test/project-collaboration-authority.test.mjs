@@ -81,6 +81,76 @@ test('dynamic central planner preserves confirmation and missing route never fab
   assert.equal(f.ledger.snapshot().runs.length, 0);
   await assert.rejects(call('submit', 'submit'), { code: 'PROJECT_NOT_QUIESCENT' });
 });
+
+test('existing project dispatch preserves its explicit estimate and rejects changed command replay', async t => {
+  const f = fixture(t);
+  await f.call('estimate-activate', 'activate');
+  const draft = (await f.call('estimate-draft', 'session', { command: { kind: 'create', title: 'Existing bounded work' } })).result.value;
+  const input = { taskId: draft.taskId, route: f.route, expectedExecutionMs: 75000 };
+  const dispatched = await f.call('estimate-dispatch', 'dispatch', input);
+  const run = f.ledger.getRun(dispatched.dispatch.runId);
+  assert.deepEqual(run.executionExpectation, { phase: 'pending_start', expectedExecutionMs: 75000 });
+  assert.deepEqual(await f.call('estimate-dispatch', 'dispatch', input), dispatched);
+  for (const expectedExecutionMs of [undefined, 76000]) {
+    await assert.rejects(f.call('estimate-dispatch', 'dispatch', { ...input, expectedExecutionMs }), { code: 'CONFLICT' });
+  }
+  assert.equal(f.ledger.snapshot().runs.length, 1);
+  f.ledger.cancel('estimate-cancel', { taskId: draft.taskId, reason: 'Explicit test cancellation before execution' });
+  const retry = await f.call('estimate-retry', 'dispatch', {
+    taskId: draft.taskId, route: f.route, retry: true,
+    expectedActionVersion: f.ledger.taskActionState(draft.taskId).version,
+  });
+  assert.notEqual(retry.dispatch.runId, run.runId);
+  assert.equal(f.ledger.getRun(retry.dispatch.runId).executionExpectation, undefined);
+  assert.deepEqual(f.ledger.getRun(run.runId).executionExpectation, { phase: 'pending_start', expectedExecutionMs: 75000 });
+});
+
+test('project collaboration strictly validates expected execution estimates before dispatch', async t => {
+  const f = fixture(t);
+  await f.call('strict-estimate-activate', 'activate');
+  for (const [index, expectedExecutionMs] of [0, -1, 1.5, '1000', null, 30 * 86400000 + 1].entries()) {
+    await assert.rejects(f.call(`strict-estimate-${index}`, 'dispatch', {
+      title: 'Reject invalid estimate', route: f.route, expectedExecutionMs,
+    }), { code: 'INVALID' });
+  }
+  await assert.rejects(f.call('estimate-status', 'status', { expectedExecutionMs: 1000 }), { code: 'INVALID' });
+  await assert.rejects(f.call('estimate-unknown', 'dispatch', {
+    title: 'Unknown duration field', route: f.route, expectedExecutionSeconds: 10,
+  }), { code: 'INVALID' });
+  assert.equal(f.ledger.snapshot().tasks.length, 0);
+  assert.equal(f.ledger.snapshot().runs.length, 0);
+  const accepted = await f.call('estimate-maximum', 'dispatch', {
+    title: 'Maximum supported estimate', route: f.route, expectedExecutionMs: 30 * 86400000,
+  });
+  assert.deepEqual(f.ledger.getRun(accepted.dispatch.runId).executionExpectation, { phase: 'pending_start', expectedExecutionMs: 30 * 86400000 });
+});
+
+test('confirmation defers direct project dispatch without storing an estimate for a later dispatch', async t => {
+  const f = fixture(t, { requireConfirmation: true });
+  await f.call('confirmation-estimate-activate', 'activate');
+  for (const [index, nextEstimate] of [undefined, 90000].entries()) {
+    const request = { title: `Confirm bounded work ${index}`, route: f.route, expectedExecutionMs: 1000 };
+    const queued = await f.call(`confirmation-estimate-${index}`, 'dispatch', request);
+    assert.equal(queued.pendingConfirmation, true);
+    assert.equal(f.ledger.history(queued.taskId).runs.length, 0);
+    const task = f.ledger.getTask(queued.taskId);
+    f.ledger.setTaskConfirmation(`approve-estimate-${index}`, {
+      taskId: task.taskId, expectedRevision: task.confirmation.revision,
+      expectedActionVersion: f.ledger.taskActionState(task.taskId).version,
+      approved: true, actor: 'test-operator', reason: 'Operator authorized this task',
+    });
+    assert.deepEqual(await f.call(`confirmation-estimate-${index}`, 'dispatch', request), queued);
+    assert.equal(f.ledger.history(queued.taskId).runs.length, 0);
+    const dispatched = await f.call(`confirmed-estimate-dispatch-${index}`, 'dispatch', {
+      taskId: task.taskId, route: f.route,
+      ...(nextEstimate !== undefined ? { expectedExecutionMs: nextEstimate } : {}),
+    });
+    assert.equal(dispatched.pendingConfirmation, false);
+    const run = f.ledger.getRun(dispatched.dispatch.runId);
+    assert.deepEqual(run.executionExpectation, nextEstimate === undefined ? undefined : { phase: 'pending_start', expectedExecutionMs: 90000 });
+    assert.equal(f.ledger.history(task.taskId).runs.length, 1);
+  }
+});
 test('signed remote collaboration binds trusted node, preserves domain errors and recovers committed work after lost ACK', async t => {
   const f = fixture(t), keys = generateKeyPairSync('ed25519');
   let failAfterCommit = false;

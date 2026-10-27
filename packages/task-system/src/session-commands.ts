@@ -107,7 +107,8 @@ export class SessionDispatcherAuthority {
         return json(this.ledger.submitDispatcherResult(commandId, {nodeId, sessionId: input.sessionId, ...result}));
       }
       case "retryReturn": {
-        const origin = this.ledger.getSessionMessage(command.messageId).completion?.origin;
+        const message=this.ledger.getSessionMessage(command.messageId);
+        const origin = message.completion?.origin ?? (message.checkIn?.kind==="execution-deadline"?message.checkIn.origin:undefined);
         if (origin?.kind !== "session" || origin.nodeId !== nodeId || origin.sessionId !== input.sessionId || origin.cwd !== input.cwd) throw new TaskError("FORBIDDEN", "Only the original session can retry this result");
         return json(this.ledger.retryTaskReturn(commandId, command.messageId));
       }

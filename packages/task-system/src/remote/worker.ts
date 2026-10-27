@@ -646,6 +646,10 @@ export class ExecutorWorker {
             workspacePath,
             signal: abort.signal,
             collaboration: boundedCollaboration,
+            ...(claim.run.executionExpectation ? {executionStarted:async()=>{
+              insist(ledger.markExecutionStarted,"EXECUTION_START_UNSUPPORTED",503);
+              await ledger.markExecutionStarted(`execution-started-${executionId}`,lease);
+            }} : {}),
           });
         } finally {
           this.executing--;

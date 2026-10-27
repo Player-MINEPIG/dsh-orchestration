@@ -491,6 +491,7 @@ export class RemoteLedgerClient implements LedgerPort {
       const messages = await this.command<SessionMessage[]>("sessionMessages", `messages-${randomUUID()}`, {
         ...(options?.kind ? {kind: options.kind} : {}),
         ...(options?.messageId ? {messageId: options.messageId} : {}),
+        ...(options?.forAdmission ? {forAdmission:true} : {}),
         ...(excludeMessageIds.length ? {excludeMessageIds} : {}),
         ...(afterMessageId ? {afterMessageId} : {}),
       });
@@ -511,6 +512,8 @@ export class RemoteLedgerClient implements LedgerPort {
       state: input.state,
       reply: input.reply,
       ...(input.checkInTasks ? {checkInTasks:input.checkInTasks} : {}),
+      ...(input.withdrawn ? {withdrawn:true} : {}),
+      ...(input.failure ? {failure:input.failure} : {}),
     });
   }
   private client: RemoteClient;
@@ -822,6 +825,9 @@ export class RemoteLedgerClient implements LedgerPort {
   markRunning(commandId: string, input: LeaseRef): Promise<Receipt<Attempt>> {
     return this.command("markRunning", commandId, this.scoped(input));
   }
+  markExecutionStarted(commandId:string,input:LeaseRef):Promise<Receipt<Run>> {
+    return this.command("markRunning",commandId,{...this.scoped(input),workloadStarted:true});
+  }
   acknowledgeCancellation(
     commandId: string,
     input: LeaseRef,
@@ -982,6 +988,7 @@ export class RemoteLedgerClient implements LedgerPort {
       {
         ...this.scoped(input),
         title: input.title,
+        ...(input.expectedExecutionMs!==undefined ? {expectedExecutionMs:input.expectedExecutionMs} : {}),
         ...(input.display ? { display: input.display as unknown as Json } : {}),
         ...(input.description !== undefined
           ? { description: input.description }
