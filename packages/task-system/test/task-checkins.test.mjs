@@ -61,6 +61,15 @@ test('invalid explicit bounds reject before a Run and legacy records have no inv
  assert.equal(f.l.snapshot().runs.length,0);assert.equal(f.l.checkins.executionView(task.taskId).phase,'not_set');
 });
 
+test('deadline stays in outbox during an explicit pause or user decision and resumes without replacing its event',t=>{
+ const f=fixture(t),{task,run,start}=expectedRun(f),ref=start();f.l.markExecutionStarted('actual',ref);
+ const responsibility=(state,key)=>f.l.withDispatchOrigin(owner(),()=>f.l.taskCheckin({action:'responsibility',taskId:task.taskId,commandId:key,expectedVersion:f.l.checkins.view(task.taskId).responsibilityVersion,state,summary:'Recorded by the responsible coordinator'}));
+ responsibility('needs_user','needs-user');f.advance(2000);f.l.checkins.tick();const message=f.l.sessionMessages(task.taskId).find(m=>m.checkIn?.kind==='execution-deadline');assert.ok(message);assert.equal(f.l.checkins.disposition(message),'defer');assert.equal(f.messages().length,0);assert.equal(f.l.checkins.view(task.taskId).responsibility.state,'needs_user','enqueuing a reminder is not new business evidence');
+ responsibility('coordinator','resume-owner');assert.equal(f.messages()[0].messageId,message.messageId);
+ f.update(task,{kind:'paused',reason:'Explicitly paused pending external approval'},'pause-deadline');assert.equal(f.messages().length,0);f.reopen();assert.equal(f.l.checkins.disposition(message),'defer');
+ f.update(task,{kind:'scheduled'},'unpause-deadline');assert.equal(f.messages()[0].messageId,message.messageId);assert.equal(f.l.getRun(run.runId).state,'running');
+});
+
 test('new draft checks are atomic, batched, persistent and never create execution Runs',t=>{
  const f=fixture(t),a=f.task('a'),b=f.task('b');assert.equal(f.l.checkins.view(a.taskId).phase,'scheduled');
  f.l.checkins.tick();assert.equal(f.messages().length,0);f.advance();f.l.checkins.tick();
@@ -166,4 +175,84 @@ test('exhausted uncertain result return stops task check-ins until that original
  f.l.completeSessionMessage('return-processed',{messageId:message.messageId,nodeId:'central',state:'completed',reply:'Verified current uncertain execution'});
  f.l.checkins.tick();assert.ok(f.messages().some(m=>m.checkIn),'manual recovery restores follow-up without rerunning uncertain effects');
  assert.equal(f.l.history(task.taskId).runs.length,1);
+});
+
+test('responsibility is owner-only, versioned and separate from execution and user acceptance',t=>{
+ const f=fixture(t),task=f.task(),r=route(f),run=f.l.createRun('run',{taskId:task.taskId,route:r}).value;
+ const claim=f.l.claim('claim',{runId:run.runId,nodeId:'worker',ttlMs:10000}).value;
+ f.l.submit('failure',{runId:run.runId,attemptId:claim.attempt.attemptId,nodeId:'worker',fence:claim.attempt.fence,outcome:'failure',summary:'Actual execution failed'});
+ const before=JSON.stringify({run:f.l.getRun(run.runId),reports:f.l.history(task.taskId).reports});
+ const status=()=>f.l.checkins.view(task.taskId);
+ const write=(state,commandId,version=status().responsibilityVersion,actor=owner())=>f.l.withDispatchOrigin(actor,()=>f.l.taskCheckin({action:'responsibility',taskId:task.taskId,commandId,expectedVersion:version,state,summary:state==='needs_user'?'Please restore the missing workspace grant':'Checked the original evidence and arranged follow-up'}));
+ const first=status().responsibilityVersion;
+ assert.throws(()=>write('resolved','forged',first,owner('other')),e=>e.code==='FORBIDDEN');
+ write('coordinator','take');assert.equal(status().responsibility.state,'coordinator');
+ assert.throws(()=>write('resolved','stale',first),e=>e.code==='CONFLICT');
+ write('needs_user','escalate');assert.match(status().responsibility.summary,/workspace grant/);
+ write('resolved','resolve');assert.equal(status().phase,'closed');assert.equal(status().responsibility.state,'resolved');
+ assert.equal(JSON.stringify({run:f.l.getRun(run.runId),reports:f.l.history(task.taskId).reports}),before);
+ f.advance(10000);f.l.checkins.tick();assert.equal(f.messages().filter(m=>m.checkIn).length,0);
+ f.reopen();assert.equal(status().responsibility.state,'resolved');
+ f.l.createRun('next-run',{taskId:task.taskId,route:r});assert.equal(status().responsibility,null);assert.notEqual(status().phase,'closed');
+});
+
+test('responsible session cannot close pending user review or approval and evidence invalidates declarations',t=>{
+ const f=fixture(t),task=f.task(),r=route(f),run=f.l.createRun('run',{taskId:task.taskId,route:r}).value;
+ const claim=f.l.claim('claim',{runId:run.runId,nodeId:'worker',ttlMs:10000}).value;
+ const write=(state,key)=>f.l.withDispatchOrigin(owner(),()=>f.l.taskCheckin({action:'responsibility',taskId:task.taskId,commandId:key,expectedVersion:f.l.checkins.view(task.taskId).responsibilityVersion,state,summary:'Explicit responsible session declaration'}));
+ write('coordinator','working');
+ f.l.submit('partial',{runId:run.runId,attemptId:claim.attempt.attemptId,nodeId:'worker',fence:claim.attempt.fence,outcome:'partial',summary:'Only part delivered'});
+ assert.equal(f.l.checkins.view(task.taskId).responsibility,null);
+ assert.equal(f.l.getRun(run.runId).reviewStatus,'pending_user');
+ assert.throws(()=>write('resolved','bypass-review'),e=>e.code==='FORBIDDEN');
+ write('coordinator','coordinate-review');f.l.reviewRun('rejected',{runId:run.runId,decision:'rejected',reason:'User requests revision'});
+ assert.equal(f.l.checkins.view(task.taskId).responsibility,null);
+ const gated=f.l.withDispatchOrigin(owner(),()=>f.l.createTask('gated',{title:'Requires approval',requiresConfirmation:true}).value);
+ assert.throws(()=>f.l.withDispatchOrigin(owner(),()=>f.l.taskCheckin({action:'responsibility',commandId:'bypass-approval',taskId:gated.taskId,expectedVersion:f.l.checkins.view(gated.taskId).responsibilityVersion,state:'resolved',summary:'Cannot grant myself approval'})),e=>e.code==='FORBIDDEN');
+});
+
+test('responsibility written while processing a result survives its ACK but a new delivery failure invalidates it',t=>{
+ const f=fixture(t),task=f.task(),run=f.l.withDispatchOrigin(owner(),()=>f.l.createRun('run',{taskId:task.taskId,route:route(f)}).value);
+ const claim=f.l.claim('claim',{runId:run.runId,nodeId:'worker',ttlMs:10000}).value;
+ f.l.submit('failure',{runId:run.runId,attemptId:claim.attempt.attemptId,nodeId:'worker',fence:claim.attempt.fence,outcome:'failure',summary:'Failed, coordinator can handle'});
+ const message=f.messages().find(m=>m.completion);
+ assert.ok(message);
+ const write=(state,key)=>f.l.withDispatchOrigin(owner(),()=>f.l.taskCheckin({action:'responsibility',taskId:task.taskId,commandId:key,expectedVersion:f.l.checkins.view(task.taskId).responsibilityVersion,state,summary:'Inspected failure and ended this follow-up'}));
+ write('coordinator','coordinating-return');
+ f.l.recordTaskReturnFailure(message.messageId,'RETURN_UNAVAILABLE');assert.equal(f.l.checkins.view(task.taskId).responsibility,null);
+ write('resolved','resolved-during-return');
+ f.l.completeSessionMessage('return-ack',{messageId:message.messageId,nodeId:'central',state:'completed',reply:'Handled in the original session'});
+ assert.equal(f.l.checkins.view(task.taskId).responsibility.state,'resolved');
+ assert.equal(f.l.checkins.view(task.taskId).phase,'closed');
+ f.l.queueTaskNote('new-evidence',{taskId:task.taskId,body:'A newly discovered issue',actor:'fixture'});
+ assert.equal(f.l.checkins.view(task.taskId).responsibility,null);
+});
+
+test('active, queued and uncertain effects including child execution cannot be hidden as resolved',t=>{
+ const f=fixture(t),r=route(f),parent=f.task(),child=f.l.withDispatchOrigin(owner(),()=>f.l.createTask('child',{title:'Child',parentTaskId:parent.taskId}).value);
+ const run=f.l.createRun('child-run',{taskId:child.taskId,route:r}).value;
+ const resolve=key=>f.l.withDispatchOrigin(owner(),()=>f.l.taskCheckin({action:'responsibility',taskId:parent.taskId,commandId:key,expectedVersion:f.l.checkins.view(parent.taskId).responsibilityVersion,state:'resolved',summary:'Must not hide active work'}));
+ assert.throws(()=>resolve('queued'),e=>e.code==='CONFLICT');
+ f.l.claim('claim-child',{runId:run.runId,nodeId:'worker',ttlMs:10000});assert.throws(()=>resolve('running'),e=>e.code==='CONFLICT');
+ f.advance(11000);f.l.recoverExpired('expired');assert.equal(f.l.getRun(run.runId).state,'uncertain');assert.throws(()=>resolve('uncertain'),e=>e.code==='CONFLICT');
+ assert.equal(f.l.checkins.view(parent.taskId).responsibility,null);
+});
+
+test('needs_user suppresses automatic wakeups but allows a one-shot check and coordinator resumption',t=>{
+ const f=fixture(t),task=f.task();
+ const write=(state,key)=>f.l.withDispatchOrigin(owner(),()=>f.l.taskCheckin({action:'responsibility',taskId:task.taskId,commandId:key,expectedVersion:f.l.checkins.view(task.taskId).responsibilityVersion,state,summary:'Explicitly recorded handling responsibility'}));
+ write('needs_user','needs-user');f.advance(5000);f.l.checkins.tick();assert.equal(f.messages().length,0);
+ assert.equal(f.l.checkins.view(task.taskId).category,'waiting_user');
+ f.l.checkins.request('one-shot',task.taskId);const message=f.messages()[0];assert.ok(message);assert.equal(message.checkIn.automatic,false);
+ f.ack(message);assert.equal(f.l.checkins.view(task.taskId).responsibility.state,'needs_user');
+ f.advance(5000);f.l.checkins.tick();assert.equal(f.messages().length,0);
+ write('coordinator','resume');f.l.checkins.tick();assert.equal(f.messages().length,1);
+});
+
+test('a child result awaiting user review blocks parent resolution and remains a user-facing gate',t=>{
+ const f=fixture(t),r=route(f),parent=f.task(),child=f.l.withDispatchOrigin(owner(),()=>f.l.createTask('review-child',{title:'Child candidate',parentTaskId:parent.taskId}).value);
+ const run=f.l.createRun('child-run',{taskId:child.taskId,route:r}).value,claim=f.l.claim('child-claim',{runId:run.runId,nodeId:'worker',ttlMs:10000}).value;
+ f.l.submit('child-partial',{runId:run.runId,attemptId:claim.attempt.attemptId,nodeId:'worker',fence:claim.attempt.fence,outcome:'partial',summary:'User must review this delivery'});
+ assert.equal(f.l.checkins.view(parent.taskId).approvalRequired,true);
+ assert.throws(()=>f.l.withDispatchOrigin(owner(),()=>f.l.taskCheckin({action:'responsibility',commandId:'close-parent',taskId:parent.taskId,expectedVersion:f.l.checkins.view(parent.taskId).responsibilityVersion,state:'resolved',summary:'Cannot close a child review'})),e=>e.code==='FORBIDDEN');
 });

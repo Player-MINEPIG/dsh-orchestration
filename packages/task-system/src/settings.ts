@@ -657,7 +657,7 @@ export class TaskPluginSettings extends TypertRemoteService {
       return {taskId:run.taskId,runId:run.runId,title:ownerTask?.title ?? run.intentSnapshot?.title ?? run.taskId,
         description:ownerTask?.description ?? run.intentSnapshot?.description ?? "",state:run.state,source:"local-ledger",nodeId,time:run.updatedAt,
         sessionIds:[...new Set([...(run.sessionIds??[]),...(attempt?.sessionId?[attempt.sessionId]:[])])],
-        parentTaskId:ownerTask?.parentTaskId,parentRunId:run.parentRunId,projectId:run.projectContext?.project?.projectId,
+        executionDriver:run.route?.backend || run.route?.execution ? "external" : "dsh",parentTaskId:ownerTask?.parentTaskId,parentRunId:run.parentRunId,projectId:run.projectContext?.project?.projectId,
         projectTitle:run.projectContext?.project?.title,model:run.route?.model,workspaceId:run.route?.workspaceId,
         report:report?.body,outcome:run.outcome,attemptId:attempt?.attemptId,authorityDisposition:ownerTask ? {schedulerId:task.ledger.schedulerIdentity(),runId:run.runId,taskId:run.taskId,taskState:ownerTask.state,runState:run.state,attemptId:attempt?.attemptId??null,attemptState:attempt?.state??null,currentAttemptId:run.currentAttemptId??null,cancellationRequested:run.cancellationRequested===true}:undefined};
     });

@@ -87,3 +87,21 @@ test('snapshots without optional view context retain the scheduler labels and om
   assert.match(text(tree),/当前会话/);assert.match(text(tree),/已完成/);
   assert.doesNotMatch(text(tree),/本机执行|队列轮询|会话 ID|Invalid Date|undefined/);
 });
+
+test('task session navigation opens only ledger-linked sessions on their actual node',async()=>{
+ const snapshot={viewContext:{nodeId:'MBP'},tasks:[{id:'task',checkin:{owner:{kind:'session',nodeId:'MBP',sessionId:'origin'}}}],attempts:[{taskId:'task',runId:'r',nodeId:'MBP',sessionId:'execution'}],runs:[{id:'r',taskId:'task',node:'MBP',executionDriver:'dsh',sessionIds:['execution']}]};
+ const opened=[],invoke=async(method,input)=>{assert.equal(method,'projectSnapshot');assert.equal(input.view,'planner');return snapshot;};
+ for(const sessionId of ['origin','execution'])await ui.openTaskSession({taskId:'task',nodeId:'MBP',sessionId},invoke,id=>opened.push(id));
+ assert.deepEqual(opened,['origin','execution']);
+ await assert.rejects(ui.openTaskSession({taskId:'task',nodeId:'AWS',sessionId:'origin'},invoke,id=>opened.push(id)),/所属设备/);
+ await assert.rejects(ui.openTaskSession({taskId:'task',nodeId:'MBP',sessionId:'unrelated'},invoke,id=>opened.push(id)),/不在当前任务/);
+ assert.equal(opened.length,2);
+});
+
+test('local executor session navigation reads only the local snapshot and never switches to a coordinator view',async()=>{
+ const opened=[],snapshot={viewContext:{nodeId:'MBP',role:'executor',scope:'local'},tasks:[{id:'local-task'}],runs:[{id:'local-run',taskId:'local-task',node:'MBP',executionDriver:'dsh',sessionIds:['local-dsh-session']}],attempts:[]};
+ const invoke=async(method,input)=>{assert.equal(method,'projectSnapshot');assert.equal(input.view,'executor');return snapshot;};
+ await ui.openTaskSession({view:'executor',taskId:'local-task',nodeId:'MBP',sessionId:'local-dsh-session'},invoke,id=>opened.push(id));
+ assert.deepEqual(opened,['local-dsh-session']);snapshot.runs[0].executionDriver='external';
+ await assert.rejects(ui.openTaskSession({view:'executor',taskId:'local-task',nodeId:'MBP',sessionId:'local-dsh-session'},invoke,id=>opened.push(id)),/不在当前任务/);
+});
