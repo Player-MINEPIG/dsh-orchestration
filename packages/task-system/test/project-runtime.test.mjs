@@ -643,3 +643,31 @@ test('unanswered completion is visible as needs action even after task success, 
   assert.equal(h.ledger.getSessionMessage(message.messageId).state,'queued');assert.equal(h.ledger.getRun(run.runId).state,'succeeded');assert.equal(h.ledger.history(task.taskId).runs.length,1);
  }finally{await h.dispose();}
 });
+
+test('overview separates execution facts from explicit responsibility and proven user blockers',async()=>{
+ const h=await createNativeHarness({config:{role:'planner',nodeId:'central'}});
+ try{
+  registerExecutor(h.ledger,'worker',{...worker,nodeId:'worker'});
+  const origin={kind:'session',nodeId:'central',sessionId:'owner',cwd:h.dir};
+  const protectedTask=h.ledger.withDispatchOrigin({...origin,parentLease:{runId:'parent',attemptId:'parent-a',nodeId:'central',fence:1}},()=>h.ledger.createTask('protected-task',{title:'Protected active task'}).value);
+  const run=h.ledger.createRun('protected-run',{taskId:protectedTask.taskId,route:{nodeId:'worker',provider:'worker-model',model:'small',requiredCapabilities:[]}}).value;
+  h.ledger.claim('protected-claim',{runId:run.runId,nodeId:'worker',ttlMs:10000});
+  const unowned=h.ledger.createTask('unowned-queue',{title:'Unowned queued task'}).value;
+  h.ledger.createRun('unowned-run',{taskId:unowned.taskId,route:{nodeId:'worker',provider:'worker-model',model:'small',requiredCapabilities:[]}});
+  const failed=fixtureRun(h,'unowned-failure');h.ledger.submit('fail-unowned',{...failed.lease,outcome:'failure',summary:'No responsible session can repair this failure'});
+  const source=h.ledger.withDispatchOrigin(origin,()=>h.ledger.createTask('owned-return',{title:'Failed result return'}).value);
+  const returned=h.ledger.withDispatchOrigin(origin,()=>h.ledger.createRun('return-run',{taskId:source.taskId,route:{nodeId:'worker',provider:'worker-model',model:'small',requiredCapabilities:[]}}).value);
+  const claim=h.ledger.claim('return-claim',{runId:returned.runId,nodeId:'worker',ttlMs:10000}).value;
+  h.ledger.submit('return-failure',{runId:returned.runId,attemptId:claim.attempt.attemptId,nodeId:'worker',fence:claim.attempt.fence,outcome:'failure',summary:'Coordinator can assess the execution failure'});
+  let rows=h.ctx.taskSystem.projects.snapshot().tasks;
+  assert.notEqual(rows.find(t=>t.id===protectedTask.taskId).checkin.responsibility.state,'needs_user');
+  assert.notEqual(rows.find(t=>t.id===unowned.taskId).checkin.responsibility.state,'needs_user');
+  assert.equal(rows.find(t=>t.id===failed.task.taskId).checkin.responsibility.state,'needs_user');
+  assert.equal(rows.find(t=>t.id===source.taskId).checkin.responsibility.state,'unreviewed');
+  const message=h.ledger.sessionMessages(source.taskId).find(m=>m.completion);
+  for(let i=0;i<3;i++)h.ledger.recordTaskReturnFailure(message.messageId,'RETURN_UNAVAILABLE');
+  rows=h.ctx.taskSystem.projects.snapshot().tasks;
+  assert.equal(rows.find(t=>t.id===source.taskId).checkin.responsibility.state,'needs_user');
+  assert.match(rows.find(t=>t.id===source.taskId).checkin.responsibility.summary,/原会话/);
+ }finally{await h.dispose();}
+});

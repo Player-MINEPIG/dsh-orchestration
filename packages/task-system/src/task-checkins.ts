@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { Task, Run, Attempt, DispatchOrigin, Event } from "./contracts.js";
 import type { SessionMessage, CheckinRef } from "./remote/ports.js";
@@ -8,6 +8,16 @@ const identifier = z.string().min(1).max(200);
 const instant = z.iso.datetime({ offset: true });
 export const CheckinCommand = z.discriminatedUnion("action", [
   z.object({ action: z.literal("status"), taskId: identifier }).strict(),
+  z
+    .object({
+      action: z.literal("responsibility"),
+      commandId: identifier,
+      taskId: identifier,
+      expectedVersion: identifier,
+      state: z.enum(["coordinator", "needs_user", "resolved"]),
+      summary: z.string().min(1).max(2000),
+    })
+    .strict(),
   z
     .object({
       action: z.literal("request"),
@@ -46,6 +56,15 @@ export const CheckinCommand = z.discriminatedUnion("action", [
 ]);
 export type CheckinCommand = z.infer<typeof CheckinCommand>;
 type SessionOrigin = Extract<DispatchOrigin, { kind: "session" }>;
+export interface ResponsibilityReceipt {
+  state: "coordinator" | "needs_user" | "resolved";
+  summary: string;
+  at: string;
+  nodeId: string;
+  sessionId: string;
+  fingerprint: string;
+  revision: number;
+}
 type Plan =
   | { kind: "scheduled"; nextCheckAt: string }
   | { kind: "paused"; reason: string };
@@ -70,6 +89,7 @@ export type CheckinCategory =
   | "needs_owner"
   | "protected_execution"
   | "approval"
+  | "waiting_user"
   | "active_execution"
   | "result_pending"
   | "return_unavailable"
@@ -94,6 +114,12 @@ export interface CheckinView {
   deliveryFailures: number;
   pendingMessageId: string | null;
   parentTaskId?: string;
+  responsibilityVersion: string;
+  approvalRequired: boolean;
+  responsibility: Omit<
+    ResponsibilityReceipt,
+    "fingerprint" | "revision"
+  > | null;
 }
 const reasons: Record<CheckinCategory, string> = {
   closed: "任务已结束或结果已验收，无需自动检查",
@@ -101,9 +127,11 @@ const reasons: Record<CheckinCategory, string> = {
   needs_owner: "未记录负责会话，不能自动选择替代会话",
   protected_execution: "负责会话属于受管执行租约，请通过原执行或人工核实处理",
   approval: "等待用户确认，不会通过检查授予执行权限",
+  waiting_user: "负责会话明确等待你的决定，暂停自动检查",
   active_execution: "实际执行租约仍有效，检查暂缓",
   result_pending: "已有结果回信等待负责会话处理，检查暂缓",
-  return_unavailable: "原会话连续三次未能处理结果回信，已停止自动检查；请先重试回信",
+  return_unavailable:
+    "原会话连续三次未能处理结果回信，已停止自动检查；请先重试回信",
   ready: "到期后请负责会话核对任务并更新进度",
 };
 
@@ -172,6 +200,90 @@ export class TaskCheckins {
       ? task.dispatchOrigin
       : undefined;
   }
+  private responsibilityState(taskId: string) {
+    const receipt = this.read<ResponsibilityReceipt>(
+      "taskResponsibility",
+      taskId,
+    );
+    const scope = this.responsibilityScope(taskId);
+    const fingerprint = createHash("sha256")
+      .update(
+        JSON.stringify({
+          tasks: [...this.responsibilityTaskIds(taskId)].map((id) => [
+            id,
+            this.ledger.taskActionState(id).fingerprint,
+          ]),
+          scope: scope.map((run) => [
+            run.runId,
+            this.ledger.taskActionState(run.taskId).fingerprint,
+          ]),
+          returns: this.ledger
+            .sessionMessages(taskId)
+            .filter((m) => m.completion)
+            .map((m) => [m.messageId, m.deliveryAttempts ?? 0]),
+          attention: this.record(taskId)?.attention ?? null,
+        }),
+      )
+      .digest("hex");
+    return {
+      fingerprint,
+      receipt: receipt?.fingerprint === fingerprint ? receipt : undefined,
+      version: createHash("sha256")
+        .update(JSON.stringify({ fingerprint, receipt }))
+        .digest("hex"),
+    };
+  }
+  private responsibilityTaskIds(taskId: string) {
+    const tasks = this.rows<Task>("task"),
+      ids = new Set([taskId]);
+    for (let changed = true; changed; ) {
+      changed = false;
+      for (const task of tasks)
+        if (
+          task.parentTaskId &&
+          ids.has(task.parentTaskId) &&
+          !ids.has(task.taskId)
+        ) {
+          ids.add(task.taskId);
+          changed = true;
+        }
+    }
+    return ids;
+  }
+  private responsibilityScope(taskId: string) {
+    const ids = this.responsibilityTaskIds(taskId);
+    const runs = this.rows<Run>("run").filter(
+      (run) => !run.historyOnly && !run.observationOnly,
+    );
+    const scope = new Set(
+      runs.filter((run) => ids.has(run.taskId)).map((run) => run.runId),
+    );
+    for (let changed = true; changed; ) {
+      changed = false;
+      for (const run of runs)
+        if (
+          run.parentRunId &&
+          scope.has(run.parentRunId) &&
+          !scope.has(run.runId)
+        ) {
+          scope.add(run.runId);
+          changed = true;
+        }
+    }
+    return runs.filter((run) => scope.has(run.runId));
+  }
+  private approvalRequired(taskId: string) {
+    return (
+      [...this.responsibilityTaskIds(taskId)].some(
+        (id) => this.ledger.taskActionState(id).confirmationPending,
+      ) ||
+      this.responsibilityScope(taskId).some(
+        (run) =>
+          run.reviewStatus === "pending_user" ||
+          this.ledger.taskActionState(run.taskId).confirmationPending,
+      )
+    );
+  }
   private category(task: Task): CheckinCategory {
     const runs = this.rows<Run>("run").filter(
       (run) => !run.historyOnly && !run.observationOnly,
@@ -207,6 +319,10 @@ export class TaskCheckins {
       latest?.reviewStatus === "pending_user"
     )
       return "approval";
+    if (this.responsibilityState(task.taskId).receipt?.state === "resolved")
+      return "closed";
+    if (this.responsibilityState(task.taskId).receipt?.state === "needs_user")
+      return "waiting_user";
     const scope = new Set(own.map((run) => run.runId));
     for (let changed = true; changed; ) {
       changed = false;
@@ -236,7 +352,15 @@ export class TaskCheckins {
       )
     )
       return "active_execution";
-    if(this.rows<SessionMessage>("sessionMessage").some(message=>message.taskId===task.taskId && message.completion && message.state==="failed"))return "return_unavailable";
+    if (
+      this.rows<SessionMessage>("sessionMessage").some(
+        (message) =>
+          message.taskId === task.taskId &&
+          message.completion &&
+          message.state === "failed",
+      )
+    )
+      return "return_unavailable";
     if (
       this.rows<SessionMessage>("sessionMessage").some(
         (message) =>
@@ -281,6 +405,7 @@ export class TaskCheckins {
     const task = this.ledger.getTask(taskId),
       record = this.record(taskId),
       category = this.category(task);
+    const responsibility = this.responsibilityState(taskId);
     const eligible = ![
       "closed",
       "not_admitted",
@@ -293,7 +418,9 @@ export class TaskCheckins {
         ? "closed"
         : category === "needs_owner"
           ? "needs_owner"
-          : category === "protected_execution" || category === "return_unavailable" || record?.attention
+          : category === "protected_execution" ||
+              category === "return_unavailable" ||
+              record?.attention
             ? "needs_action"
             : record?.pendingMessageId || record?.requested
               ? "queued"
@@ -325,6 +452,17 @@ export class TaskCheckins {
       checksWithoutUpdate: record?.checksWithoutUpdate ?? 0,
       deliveryFailures: record?.deliveryFailures ?? 0,
       pendingMessageId: record?.pendingMessageId ?? null,
+      responsibilityVersion: responsibility.version,
+      approvalRequired: this.approvalRequired(taskId),
+      responsibility: responsibility.receipt
+        ? {
+            state: responsibility.receipt.state,
+            summary: responsibility.receipt.summary,
+            at: responsibility.receipt.at,
+            nodeId: responsibility.receipt.nodeId,
+            sessionId: responsibility.receipt.sessionId,
+          }
+        : null,
       ...(task.parentTaskId ? { parentTaskId: task.parentTaskId } : {}),
     };
   }
@@ -345,6 +483,58 @@ export class TaskCheckins {
         "Only the recorded responsible session can manage this check-in",
       );
     if (input.action === "status") return this.view(input.taskId);
+    if (input.action === "responsibility")
+      return this.ledger.managementCommand(
+        input.commandId,
+        "task_checkin.responsibility",
+        { input, actor },
+        () => {
+          const current = this.responsibilityState(input.taskId);
+          if (input.expectedVersion !== current.version)
+            throw new TaskError(
+              "CONFLICT",
+              "Task evidence or responsibility changed; read status before updating",
+            );
+          if (input.state === "resolved" && this.approvalRequired(task.taskId))
+            throw new TaskError(
+              "FORBIDDEN",
+              "Responsible sessions cannot resolve user approval or result review",
+            );
+          if (
+            input.state === "resolved" &&
+            this.responsibilityScope(task.taskId).some((run) =>
+              ["queued", "running", "uncertain"].includes(run.state),
+            )
+          )
+            throw new TaskError(
+              "CONFLICT",
+              "Execution or its child effects are still active or uncertain; verify stopped before resolving responsibility",
+            );
+          const receipt: ResponsibilityReceipt = {
+            state: input.state,
+            summary: input.summary,
+            at: this.now(),
+            nodeId: actor.nodeId,
+            sessionId: actor.sessionId,
+            fingerprint: current.fingerprint,
+            revision: (current.receipt?.revision ?? 0) + 1,
+          };
+          this.write(
+            "taskResponsibility",
+            task.taskId,
+            receipt,
+            task.taskId,
+            input.state,
+          );
+          this.audit("task.responsibility_updated", task.taskId, {
+            state: receipt.state,
+            summary: receipt.summary,
+            nodeId: receipt.nodeId,
+            sessionId: receipt.sessionId,
+          });
+          return this.view(task.taskId);
+        },
+      );
     if (input.action === "request")
       return this.request(input.commandId, input.taskId);
     return this.ledger.managementCommand(
@@ -425,7 +615,9 @@ export class TaskCheckins {
           delete record.attention;
           record.requested = true;
           this.write("taskCheckin", taskId, record, taskId);
-          if (["ready", "approval"].includes(this.category(task)))
+          if (
+            ["ready", "approval", "waiting_user"].includes(this.category(task))
+          )
             this.enqueue([record], false);
         }
         return this.view(taskId);
@@ -472,7 +664,7 @@ export class TaskCheckins {
     }
   }
   private prompt(records: CheckinRecord[]) {
-    return `任务进度检查。你是这些任务已记录的负责会话，可自行完成或按既有授权派发子任务。请先用 task_checkin(action=status) 核对当前检查计划，再读取 task_history/task_query/task_wait 的当前记录和已有报告，核对实际进度。不要把回信ACK、空闲或工具文字当成任务完成，也不要重复已完成的外部操作。若工作已完成，请用现有 task_submit_result 等正式工具收尾；草稿可按现有项目和 creator 权限先 task_bind_dispatcher。若仍需继续、等待子任务/外部条件或人工处理，请用 task_checkin(action=update,taskId,commandId,observation,summary,plan) 记录进度和下一次检查时间，或暂停并说明原因。若现有工具/权限不允许收尾，明确记录限制，不能扩大权限。此检查不授予审批、执行租约或重跑结果不确定操作的权限。若当前任务已结束，不再执行。\n${JSON.stringify(records.map((record) => ({ taskId: record.taskId, title: this.ledger.getTask(record.taskId).title, category: this.category(this.ledger.getTask(record.taskId)), previousObservation: record.observation ?? null })))}\n如果原会话能力中没有 task_checkin，使用已有正式任务工具完成可做的工作，并说明无法设置检查时间；不要自行安装或扩大工具权限。`;
+    return `任务进度检查。你是这些任务已记录的负责会话，可自行完成或按既有授权派发子任务。请先用 task_checkin(action=status) 核对当前检查计划，再读取 task_history/task_query/task_wait 的当前记录和已有报告，核对实际进度。不要把回信ACK、空闲或工具文字当成任务完成，也不要重复已完成的外部操作。在聊天中接手处理时，请先用 task_checkin(action=status) 读取 responsibilityVersion，再用 action=responsibility、expectedVersion、state=coordinator、summary 明确由你跟进。只有需要用户决定、授权或你无法修复的阻碍时才用 needs_user，summary 写清具体卡点和所需决定；你已核实本轮异常处理完毕时用 resolved 并说明处理结果，这只关闭本轮跟进，不替代正式提交或人工验收。新执行、报告或审核变化会使声明失效。若工作已完成，请用现有 task_submit_result 等正式工具收尾；草稿可按现有项目和 creator 权限先 task_bind_dispatcher。若仍需继续、等待子任务/外部条件或人工处理，请用 task_checkin(action=update,taskId,commandId,observation,summary,plan) 记录进度和下一次检查时间，或暂停并说明原因。若现有工具/权限不允许收尾，明确记录限制，不能扩大权限。此检查不授予审批、执行租约或重跑结果不确定操作的权限。若当前任务已结束，不再执行。\n${JSON.stringify(records.map((record) => ({ taskId: record.taskId, title: this.ledger.getTask(record.taskId).title, category: this.category(this.ledger.getTask(record.taskId)), previousObservation: record.observation ?? null })))}\n如果原会话能力中没有 task_checkin，使用已有正式任务工具完成可做的工作，并说明无法设置检查时间；不要自行安装或扩大工具权限。`;
   }
   tick() {
     this.ledger.workflowAtomic(() => {
@@ -511,7 +703,10 @@ export class TaskCheckins {
             (record.plan.kind === "paused" ||
               record.plan.nextCheckAt > this.now())) ||
           (category !== "ready" &&
-            !(record.requested && category === "approval"))
+            !(
+              record.requested &&
+              ["approval", "waiting_user"].includes(category)
+            ))
         )
           continue;
         const owner = this.owner(task)!;
@@ -579,7 +774,8 @@ export class TaskCheckins {
         continue;
       if (
         category === "ready" ||
-        (!message.checkIn?.automatic && category === "approval")
+        (!message.checkIn?.automatic &&
+          ["approval", "waiting_user"].includes(category))
       )
         return "ready";
       deferred = true;
@@ -597,7 +793,8 @@ export class TaskCheckins {
         return [];
       const category = this.category(this.ledger.getTask(ref.taskId));
       return category === "ready" ||
-        (!message.checkIn?.automatic && category === "approval")
+        (!message.checkIn?.automatic &&
+          ["approval", "waiting_user"].includes(category))
         ? [record]
         : [];
     });
@@ -621,7 +818,7 @@ export class TaskCheckins {
       const record = this.record(ref.taskId);
       if (!record || record.pendingMessageId !== message.messageId) continue;
       delete record.pendingMessageId;
-      record.deliveryFailures=0;
+      record.deliveryFailures = 0;
       if (
         asked.has(JSON.stringify(ref)) &&
         record.revision === ref.revision &&

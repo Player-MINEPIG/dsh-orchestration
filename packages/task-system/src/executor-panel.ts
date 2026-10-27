@@ -10,6 +10,7 @@ export interface ExecutorPanelRecord {
   nodeId: string;
   time: string;
   sessionIds: string[];
+  executionDriver?: "dsh" | "external";
   parentTaskId?: string;
   parentRunId?: string;
   projectId?: string;
@@ -58,7 +59,7 @@ export function executorPanelSnapshot(nodeId: string, records: readonly Executor
     id: row.runId, taskId: row.taskId, alert:row.alert??null, authorityEndpoint:row.authorityEndpoint??null,authorityNotice:row.authorityNotice??null,authorityDisposition:row.authorityDisposition??null, dispositionObservedAt:row.dispositionObservedAt??null, parentTaskId: row.parentTaskId ?? null,
     parentRunId: row.parentRunId ?? null, state: row.state, ...presentation(row),
     node: row.nodeId, model: row.model ?? null, createdAt: row.time,
-    sessionIds: row.sessionIds, workspaceId: row.workspaceId ?? null,
+    sessionIds: row.sessionIds, executionDriver:row.executionDriver??null, workspaceId: row.workspaceId ?? null,
     executionDirectory: row.executionDirectory ?? null, source: row.source,
     settlementSummary: row.report?.slice(0, 8000) ?? null, detail: row.detail?.slice(0, 500) ?? null,
   }));

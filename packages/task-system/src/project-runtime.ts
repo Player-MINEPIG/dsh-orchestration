@@ -1937,6 +1937,12 @@ export class ProjectRuntime {
 
       const attention = this.ledger.taskActionState(t.taskId);
       const resultReturn=this.ledger.sessionMessages(t.taskId).findLast(m=>m.completion && m.state==="failed");
+      const checkin=this.ledger.checkins.view(t.taskId);
+      const responsibility=checkin.responsibility;
+      const requiresUser=checkin.approvalRequired;
+      const missingOwnerForFailure=checkin.category==="needs_owner" &&
+        (t.state==="failed" || ["failed","partial","uncertain","blocked"].includes(run?.state??"") || run?.reviewStatus==="rejected" || run?.dispatchIssue?.kind==="needs_action");
+      const capabilityBlocked=!!resultReturn || checkin.deliveryFailures>=3 || missingOwnerForFailure;
       const cancelled = t.state === "cancelled";
       const manual = t.state === "completed" ? t.manualCompletion : undefined;
       const materialRequest = manual?.requestMessageId
@@ -2015,7 +2021,13 @@ export class ProjectRuntime {
         title: t.title,
         description: t.description,
         status,
-        checkin:{...this.ledger.checkins.view(t.taskId),returnDelivery:resultReturn ? {messageId:resultReturn.messageId,state:resultReturn.state,reason:resultReturn.reply ?? "原会话回信需处理",nextAttemptAt:resultReturn.nextAttemptAt ?? null} : null},
+        checkin:{...checkin,owner: t.dispatchOrigin?.kind === "session"
+          ? {kind:"session",nodeId:t.dispatchOrigin.nodeId,sessionId:t.dispatchOrigin.sessionId,cwd:t.dispatchOrigin.cwd??null,
+            model:t.dispatchOrigin.composition?.model??null,reasoningEffort:t.dispatchOrigin.composition?.reasoningEffort??null,preset:t.dispatchOrigin.composition?.preset??null}
+          : t.dispatchOrigin ? {kind:"system",nodeId:t.dispatchOrigin.nodeId} : null,returnDelivery:resultReturn ? {messageId:resultReturn.messageId,state:resultReturn.state,reason:resultReturn.reply ?? "原会话回信需处理",nextAttemptAt:resultReturn.nextAttemptAt ?? null} : null,
+        responsibility:{state:requiresUser?"needs_user":responsibility?.state??(capabilityBlocked?"needs_user":status==="error"?"unreviewed":"none"),
+          summary:requiresUser?"等待你的执行授权或结果审核":responsibility?.summary??(capabilityBlocked?resultReturn?.reply??checkin.reason:status==="error"?"执行有异常，尚无负责会话对当前证据的处理声明":""),
+          at:responsibility?.at??null,nodeId:responsibility?.nodeId??null,sessionId:responsibility?.sessionId??null}},
         actionVersion: attention.version,
         dispatchIssue: run?.dispatchIssue ?? null,
         canRepair: attention.canRepair,

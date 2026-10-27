@@ -768,7 +768,7 @@ export class RemoteExecutionService extends Service {
     for (const row of dispatches.slice(0,200).reverse()) records.push({
       taskId:row.claim.task.taskId,runId:row.claim.run.runId,title:row.claim.task.title,description:row.claim.task.description,
       state:row.state,source:"local-recovery",nodeId:this.config.nodeId,time:row.receipt?.acceptedAt ?? row.claim.run.updatedAt ?? "",
-      sessionIds:row.sessionId ? [row.sessionId] : [],parentTaskId:row.claim.task.parentTaskId,parentRunId:row.claim.run.parentRunId,
+      sessionIds:row.sessionId ? [row.sessionId] : [],executionDriver:row.claim.run.route?.backend || row.claim.run.route?.execution ? "external" : "dsh",parentTaskId:row.claim.task.parentTaskId,parentRunId:row.claim.run.parentRunId,
       projectId:row.claim.run.projectContext?.project?.projectId,projectTitle:row.claim.run.projectContext?.project?.title,
       model:row.claim.run.route?.model,workspaceId:row.claim.run.route?.workspaceId,executionDirectory:row.workspacePath,
       report:row.result?.report?.body ?? row.result?.summary,detail:row.detail,outcome:row.result?.outcome,attemptId:row.attemptId,
