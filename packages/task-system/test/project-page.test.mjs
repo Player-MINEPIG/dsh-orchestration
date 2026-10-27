@@ -29,19 +29,19 @@ function page() {
 }
 const snapshot={projects:[],tasks:[],settings:{root:null,revision:0},nodes:[]};
 test('offline page offers local activity without false zero task counts or repeated role requests', async () => {
-  const p=page();assert.match(p.content(),/正在读取/);assert.doesNotMatch(p.content(),/暂无任务|hub-stats|kanban-col/);
+  const p=page();assert.match(p.content(),/正在读取/);assert.doesNotMatch(p.content(),/暂无任务|task-filter-groups|kanban-col/);
   await p.answer({error:'当前节点为执行端，项目任务中心需要调度端身份。',errorCode:'PLANNER_REQUIRED'});
-  assert.match(p.content(),/项目任务中心暂不可用/);assert.match(p.content(),/本机活动/);assert.doesNotMatch(p.content(),/暂无任务|hub-stats|kanban-col/);
+  assert.match(p.content(),/项目任务中心暂不可用/);assert.match(p.content(),/本机活动/);assert.doesNotMatch(p.content(),/暂无任务|task-filter-groups|kanban-col/);
   await p.startPoll();assert.equal(p.requests.length,0);
   const retry=p.startRetry();assert.equal(p.requests.length,1);await p.answer({value:snapshot});await retry;
-  assert.match(p.content(),/hub-stats/);assert.doesNotMatch(p.content(),/项目任务中心暂不可用/);
+  assert.match(p.content(),/task-filter-groups/);assert.doesNotMatch(p.content(),/项目任务中心暂不可用/);
 });
 test('initial read failure and stale real data stay distinct and clear after recovery', async () => {
   const p=page();await p.answer({error:'服务内部错误',errorCode:'gateway/internal'});
-  assert.match(p.content(),/数据尚未读取成功/);assert.doesNotMatch(p.content(),/hub-stats/);
+  assert.match(p.content(),/数据尚未读取成功/);assert.doesNotMatch(p.content(),/task-filter-groups/);
   let pending=p.startRetry();await p.answer({value:snapshot});await pending;
   pending=p.startPoll();await p.answer({error:'连接中断',errorCode:'gateway/disconnected'});await pending;
-  assert.match(p.content(),/保留上次/);assert.match(p.content(),/hub-stats/);
+  assert.match(p.content(),/保留上次/);assert.match(p.content(),/task-filter-groups/);
   pending=p.startPoll();await p.answer({value:snapshot});await pending;
   assert.doesNotMatch(p.content(),/保留上次|连接中断/);
 });
@@ -446,7 +446,7 @@ test('accepted partial results have their own section and filter while retaining
  const p=page(),task={id:'accepted-daily',project:'unassigned',title:'Accepted daily',status:'accepted',stateLabel:'已验收',reviewStatus:'accepted',runState:'partial',runId:'accepted-run',reportId:'accepted-report',report:'Partial delivery; PC_AU source unavailable'};
  await p.answer({value:{...snapshot,tasks:[task],runs:[{id:'accepted-run',taskId:task.id,state:'partial',reviewStatus:'accepted'}],reports:[{id:'accepted-report',taskId:task.id,runId:'accepted-run',kind:'result',body:task.report}]}});
  assert.match(p.content(),/data-status="accepted"><span>已验收<\/span><span>1<\/span>/);
- assert.match(p.content(),/data-status="error"><span>执行异常<\/span><span>0<\/span>/);
+ assert.match(p.content(),/data-id="error" data-status="error"[^>]*><span>执行异常<\/span><b>0<\/b>/);
  await p.action('filter','accepted');assert.match(p.content(),/Accepted daily/);assert.doesNotMatch(p.content(),/data-status="error"><span>需处理/);
  await p.action('task',task.id);assert.match(p.overlay(),/部分交付 · 已验收/);assert.match(p.overlay(),/PC_AU source unavailable/);
  assert.doesNotMatch(p.overlay(),/>审核通过<|>审核不通过<|>标记已处理</);
@@ -710,7 +710,7 @@ test('responsibility filters distinguish explicit user blockers, coordinator han
  await p.answer({value:{...snapshot,tasks:rows}});
  assert.match(p.content(),/需要你/);assert.match(p.content(),/待调度核对/);
  for(const [id,state]of [['human','needs_user'],['working','coordinator'],['resolved','resolved'],['unknown','unreviewed']]){
-  await p.action('filter',state);assert.match(p.content(),new RegExp('Task '+id));
+  await p.action('responsibility-filter',state);assert.match(p.content(),new RegExp('Task '+id));
   for(const other of rows.filter(t=>t.id!==id))assert.doesNotMatch(p.content(),new RegExp('Task '+other.id));
   await p.action('task',id);assert.match(p.overlay(),new RegExp(rows.find(t=>t.id===id).checkin.responsibility.summary));await p.action('close');
  }
@@ -730,4 +730,38 @@ test('executor activity offers read-only navigation to proven native sessions in
  assert.match(p.content(),/本机执行会话/);assert.match(p.content(),/打开原生会话/);
  const open=p.action('task-session-open',JSON.stringify({view:'executor',taskId:task.id,nodeId:'MBP',sessionId:'actual-session'}));
  assert.equal(p.requests[0].method,'projectOpenTaskSession');assert.equal(p.requests[0].input.view,'executor');await p.answer({value:{opened:true}});await open;
+});
+
+test('follow-up and task filters form independent complete partitions and intersect without clearing each other',async()=>{
+ const p=page(),statuses=['error','review','running','draft','queued','cancelling','accepted','done','handled','cancelled','archived','observed'],responsibilities=['needs_user','coordinator','unreviewed','resolved','none'];
+ const rows=statuses.flatMap(status=>responsibilities.map(kind=>({id:status+'-'+kind,title:status+' '+kind,project:'p',status,unreadResultCount:['accepted','done'].includes(status)?1:0,...(kind==='none'?{}:{checkin:{responsibility:{state:kind,summary:'Explicit handling statement'}}})})));
+ await p.answer({value:{...snapshot,tasks:rows}});
+ const cards=()=>[...p.content().matchAll(/data-dom-key="task:([^"]+)"/g)].map(m=>m[1]);
+ const group=legend=>p.content().split('<legend>'+legend+'</legend>')[1].split('</fieldset>')[0];
+ const counts=legend=>[...group(legend).matchAll(/<b>(\d+)<\/b>/g)].map(m=>Number(m[1]));
+ for(const legend of ['跟进状态','任务状态']){const [total,...categories]=counts(legend);assert.equal(total,rows.length);assert.equal(categories.reduce((a,b)=>a+b,0),rows.length);}
+ await p.action('responsibility-filter','needs_user');assert.equal(cards().length,statuses.length);assert.ok(cards().every(id=>id.endsWith('-needs_user')));
+ await p.action('filter','error');assert.deepEqual(cards(),['error-needs_user']);
+ assert.equal(vm.runInContext('state.responsibilityFilter',p.context),'needs_user');
+ await p.action('filter','all');assert.equal(cards().length,statuses.length);assert.equal(vm.runInContext('state.responsibilityFilter',p.context),'needs_user');
+ await p.action('filter','done');await p.action('responsibility-filter','all');assert.equal(cards().length,responsibilities.length);assert.ok(cards().every(id=>id.startsWith('done-')));
+ await p.action('responsibility-filter','none');assert.deepEqual(cards(),['done-none']);assert.match(p.content(),/未声明/);
+ await p.action('filter','all');assert.equal(cards().length,statuses.length);
+ await p.action('unread-only');assert.deepEqual(cards().sort(),['accepted-none','done-none']);
+ await p.action('filter','error');assert.equal(cards().length,0);assert.match(p.content(),/当前筛选没有任务/);assert.equal(vm.runInContext('state.unreadOnly',p.context),true);
+ await p.action('unread-only');assert.deepEqual(cards(),['error-none']);
+ assert.equal(counts('跟进状态')[0],rows.length,'Counts retain the project scope rather than the selected intersection');
+});
+
+test('project scope, full panel and task navigation restore both dimensions and the independent unread choice',async()=>{
+ const p=page(),project={id:'p',title:'Project',goal:'Goal',session:1,canChat:true,messages:[]},t={id:'target',title:'Target',project:'p',status:'done',unreadResultCount:1,checkin:{responsibility:{state:'resolved',summary:'Verified prior result'}}};
+ await p.answer({value:{...snapshot,projects:[project],tasks:[t,{id:'other',title:'Other',project:'other',status:'done'}]}});
+ await p.action('responsibility-filter','resolved');await p.action('filter','done');await p.action('unread-only');
+ await p.action('pick-project');await p.action('scope-select','p');
+ for(const [field,value]of [['filter','done'],['responsibilityFilter','resolved'],['unreadOnly',true],['scope','p']])assert.equal(vm.runInContext('state.'+field,p.context),value);
+ await p.action('task',t.id);await p.action('nav-back');
+ await p.action('fullpanel');await p.action('filter','all');await p.action('return');
+ for(const [field,value]of [['filter','done'],['responsibilityFilter','resolved'],['unreadOnly',true],['scope','p']])assert.equal(vm.runInContext('state.'+field,p.context),value);
+ await p.action('project','p');await p.action('home');
+ assert.equal(vm.runInContext('state.responsibilityFilter',p.context),'resolved');assert.equal(vm.runInContext('state.unreadOnly',p.context),true);
 });

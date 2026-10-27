@@ -253,11 +253,40 @@ export async function testNativeProject(browser, { output } = {}) {
     ledger.withDispatchOrigin(owner,()=>ledger.taskCheckin({action:'responsibility',commandId:'browser-needs-user-declaration',taskId:needsUser.taskId,expectedVersion:ledger.checkins.view(needsUser.taskId).responsibilityVersion,state:'needs_user',summary:'Please restore the missing workspace grant; the coordinator cannot authorize this directory.'}));
     ledger.withDispatchOrigin(owner,()=>ledger.taskCheckin({action:'responsibility',commandId:'browser-coordinator-declaration',taskId:trace.taskId,expectedVersion:ledger.checkins.view(trace.taskId).responsibilityVersion,state:'coordinator',summary:'The original responsible session is arranging the next revision.'}));
     await frame.locator(`[data-action="task"][data-id="${trace.taskId}"]`).first().waitFor();
-    await frame.locator('[data-action="filter"][data-id="needs_user"]').click();
+    await frame.locator('[data-action="responsibility-filter"][data-id="needs_user"]').click();
     await frame.getByText(needsUser.title,{exact:true}).waitFor();
     assert.equal(await frame.getByText(trace.title,{exact:true}).count(),0);
-    if(output)await page.screenshot({path:join(output,'task-responsibility-filter.png'),fullPage:true});
-    await frame.locator('[data-action="filter"][data-id="all"]').click();
+    const followupGroup=frame.getByRole('group',{name:'跟进状态',exact:true});
+    const taskGroup=frame.getByRole('group',{name:'任务状态',exact:true});
+    const followup=kind=>followupGroup.locator(`[data-id="${kind}"]`),taskStatus=kind=>taskGroup.locator(`[data-id="${kind}"]`);
+    await taskStatus('draft').click();assert.equal(await followup('needs_user').getAttribute('aria-pressed'),'true');
+    await frame.getByText(needsUser.title,{exact:true}).waitFor();
+    await taskStatus('done').click();await frame.locator('.kanban .empty').waitFor();
+    assert.equal(await followup('needs_user').getAttribute('aria-pressed'),'true');assert.equal(await taskStatus('done').getAttribute('aria-pressed'),'true');
+    await followup('all').click();assert.equal(await taskStatus('done').getAttribute('aria-pressed'),'true');
+    await taskStatus('all').click();await followup('needs_user').click();
+    const theme=async value=>{
+      await page.evaluate(value=>document.querySelector('iframe[title="项目与任务"]').contentWindow.postMessage({channel:'dsh-project-runtime',method:'theme',input:value},'*'),value);
+      await frame.locator(`html[data-theme="${value}"]`).waitFor();
+    };
+    const verifyColors=async()=>{
+      const colors=await followup('needs_user').evaluate(async element=>{await Promise.all(element.getAnimations().map(animation=>animation.finished));const style=getComputedStyle(element),root=getComputedStyle(document.documentElement);return {color:style.color,label:getComputedStyle(element.querySelector('span')).color,count:getComputedStyle(element.querySelector('b')).color,border:style.borderTopColor,state:style.getPropertyValue('--state-color').trim(),token:root.getPropertyValue('--status-review').trim()};});
+      assert.equal(colors.color,colors.label);assert.equal(colors.color,colors.count);assert.equal(colors.color,colors.border);assert.equal(colors.state,colors.token);
+      assert.equal(await frame.locator('.responsibility-badge[data-responsibility="needs_user"]').first().evaluate(element=>getComputedStyle(element).color),colors.color);
+    };
+    await theme('light');await verifyColors();
+    if(output)await page.locator('iframe[title="项目与任务"]').screenshot({path:join(output,'task-filter-light.png')});
+    await theme('dark');await verifyColors();
+    if(output){await page.locator('iframe[title="项目与任务"]').screenshot({path:join(output,'task-filter-dark.png')});await frame.locator('.task-filter-groups').screenshot({path:join(output,'task-filter-groups-dark.png')});}
+    const sidebarCollapse=page.getByRole('button',{name:'收起侧边栏',exact:true}).first();if(await sidebarCollapse.isVisible())await sidebarCollapse.click();
+    await page.setViewportSize({width:390,height:844});
+    await theme('dark');await verifyColors();
+    for(const group of [followupGroup,taskGroup])assert.ok(await group.locator('.task-filter-options').evaluate(element=>element.scrollWidth<=element.clientWidth+1),'Filter groups wrap without horizontal scrolling');
+    if(output)await page.locator('iframe[title="项目与任务"]').screenshot({path:join(output,'task-filter-mobile-dark.png')});
+    await theme('light');if(output)await page.locator('iframe[title="项目与任务"]').screenshot({path:join(output,'task-filter-mobile-light.png')});
+    await page.setViewportSize({width:1440,height:1000});
+    console.log('native browser: independent filter dimensions, shared semantic colors and mobile wrapping passed');
+    await frame.locator('[data-action="responsibility-filter"][data-id="all"]').click();
     await frame.locator(`[data-action="task"][data-id="${trace.taskId}"]`).first().click();
     await frame.getByRole('heading',{name:'原负责会话',exact:true}).waitFor();
     await frame.getByText(binding.cwd,{exact:false}).first().waitFor();
