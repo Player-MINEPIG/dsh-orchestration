@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { generateKeyPairSync } from 'node:crypto';
 import { createServer } from 'node:http';
-import { TaskLedger } from '../dist/ledger.js';
+import { TaskLedger, TaskError } from '../dist/ledger.js';
 import { Workbench } from '../dist/workbench.js';
 import { TaskPlanner, taskDecisionCatalog } from '../dist/planning.js';
 import { ProjectCollaborationAuthority } from '../dist/project-collaboration/authority.js';
@@ -66,14 +66,17 @@ test('concurrent stable dispatch creates one linked execution; submit waits for 
   assert.deepEqual(await reopened.projectCollaborate('mbp', 'dispatch', { ...f.input, action: 'dispatch', title: 'Cross-node work', route: f.route }), one);
   assert.equal(f.ledger.snapshot().runs.length, 1);
 });
-test('dynamic central planner preserves confirmation and missing route never fabricates a model', async t => {
+test('dynamic central planner preserves confirmation for pooled and explicit routes and rejects unsupported models', async t => {
   const f = fixture(t, { requireConfirmation: true });
   let planner;
   const authority = new ProjectCollaborationAuthority(f.ledger, { planner: () => planner });
   const call = (id, action, extra = {}) => authority.projectCollaborate('mbp', id, { ...f.input, action, ...extra });
   await call('a', 'activate');
-  await assert.rejects(call('no-route', 'dispatch', { title: 'No configured route' }), { code: 'EXECUTOR_REQUIRED' });
+  await assert.rejects(call('no-model', 'dispatch', { title: 'No supported workload model', executionModel: {provider:'missing',model:'missing'} }), { code: 'EXECUTOR_REQUIRED' });
   assert.equal(f.ledger.snapshot().tasks.length, 0);
+  const pooled = await call('pooled-route', 'dispatch', {title:'Use an authorized executor'});
+  assert.equal(pooled.pendingConfirmation,true);assert.equal(f.ledger.getTask(pooled.taskId).confirmation.state,'pending');assert.equal(f.ledger.snapshot().runs.length,0);
+  assert.deepEqual(await call('pooled-route','dispatch',{title:'Use an authorized executor'}),pooled);
   planner = new TaskPlanner(f.ledger, undefined, () => taskDecisionCatalog(f.ledger, {}), () => {});
   const queued = await call('with-route', 'dispatch', { title: 'Needs operator confirmation', route: f.route });
   assert.equal(queued.pendingConfirmation, true);
@@ -164,7 +167,7 @@ test('signed remote collaboration binds trusted node, preserves domain errors an
   const activate = await remote.projectCollaborate('mbp', 'activate', { ...f.input, action: 'activate' });
   assert.equal(activate.binding.ownerNodeId, 'mbp');
   await assert.rejects(remote.projectCollaborate('other', 'spoof', { ...f.input, action: 'status' }), /WRONG_CLIENT_NODE/);
-  await assert.rejects(remote.projectCollaborate('mbp', 'no-route', { ...f.input, action: 'dispatch', title: 'Unrouted' }), /EXECUTOR_REQUIRED/);
+  await assert.rejects(remote.projectCollaborate('mbp', 'no-model', { ...f.input, action: 'dispatch', title: 'Unsupported model', executionModel:{provider:'missing',model:'missing'} }), /EXECUTOR_REQUIRED/);
   failAfterCommit = true;
   const request = { ...f.input, action: 'dispatch', title: 'Exactly once despite missing ACK', route: f.route };
   await assert.rejects(remote.projectCollaborate('mbp', 'dispatch', request), /REMOTE_OUTCOME_UNCERTAIN/);
@@ -238,21 +241,23 @@ test('new accepted work reopens all project bindings; replay cannot undo a later
   assert.ok(beforeReplay.every(b => b.state === 'pending_review'));
 });
 
-test('actual planner route refusal cancels only the unstarted task and does not block project finish', async t => {
+test('planner authorization refusal cancels only the unstarted task and does not block project finish', async t => {
   const f = fixture(t);
-  const planner = new TaskPlanner(f.ledger, undefined, () => taskDecisionCatalog(f.ledger, {}), () => {});
+  let authorized=false;
+  const planner = new TaskPlanner(f.ledger, {ask:async()=>{throw Error('Formal dispatch must not ask a model');}}, () => taskDecisionCatalog(f.ledger, {}), () => {if(!authorized)throw new TaskError('FORBIDDEN','Operator policy denies this dispatch');});
   const authority = new ProjectCollaborationAuthority(f.ledger, { planner });
   const call = (id, action, extra = {}) => authority.projectCollaborate('mbp', id, { ...f.input, action, ...extra });
   await call('activate', 'activate');
-  const rejected = () => call('no-configured-route', 'dispatch', { title: 'No route available to planner' });
-  await assert.rejects(rejected(), { code: 'ROUTE_REQUIRED' });
+  const rejected = () => call('authorization-denied', 'dispatch', { title: 'Operator policy rejects this work' });
+  await assert.rejects(rejected(), { code: 'FORBIDDEN' });
   assert.equal(f.ledger.snapshot().tasks.length, 1);
   assert.equal(f.ledger.snapshot().tasks[0].state, 'cancelled');
   assert.equal(f.ledger.snapshot().runs.length, 0);
-  await assert.rejects(rejected(), { code: 'ROUTE_REQUIRED' });
+  await assert.rejects(rejected(), { code: 'FORBIDDEN' });
   assert.equal(f.ledger.snapshot().tasks.length, 1);
   const finished = await call('finish', 'submit');
   assert.equal(finished.binding.state, 'pending_review');
+  authorized=true;
   const accepted = await call('explicit-route', 'dispatch', { title: 'Operator supplied a valid route', route: f.route });
   assert.equal(accepted.confirmed, true);
   assert.equal(accepted.binding.state, 'active');
