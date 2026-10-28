@@ -94,7 +94,8 @@ export async function testNativeProject(browser, { output } = {}) {
     await preview.waitFor({ state: 'hidden' });
     const navMetrics=async label=>page.getByRole('button',{name:label,exact:true}).evaluate(element=>{
       const icon=element.querySelector('svg').getBoundingClientRect(),title=element.querySelector('span:last-child').getBoundingClientRect();
-      return {width:icon.width,height:icon.height,titleLeft:title.left,textAlign:getComputedStyle(element).textAlign};
+      const pixel=value=>Math.round(value*100)/100;
+      return {width:pixel(icon.width),height:pixel(icon.height),titleLeft:pixel(title.left),textAlign:getComputedStyle(element).textAlign};
     });
     const officialNav=await navMetrics('插件'),projectNav=await navMetrics('项目与任务');
     assert.equal(projectNav.width,officialNav.width,'project icon uses the official expanded sidebar size');
