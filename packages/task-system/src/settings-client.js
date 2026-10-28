@@ -3332,12 +3332,12 @@ h(
         }),
       },
     }));
-    function ProjectIcon() {
+    function ProjectIcon({ size }) {
       return h(
         "svg",
         {
-          width: 24,
-          height: 24,
+          width: size,
+          height: size,
           viewBox: "0 0 24 24",
           fill: "none",
           stroke: "currentColor",

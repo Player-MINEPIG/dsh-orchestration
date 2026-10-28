@@ -95,7 +95,7 @@
 
 用户只提供任务描述时，调度会话通过 `task_nodes` 读取已登记的执行端能力、模型/强度目录和采样健康状态，再调用 `task_dispatch`，提供稳定 commandId、标题和完整说明，无需传 `route`。启用规划决策且配置可用决策服务时，模型选择执行端和模型/强度组合；`task_plan` 只生成提案；需要先审核时，使用 task_plan 的 requestId 调用 `task_dispatch({commandId: requestId, requestId})` 应用提案并创建 Run。不要重复派发。完整 route 是执行领取阶段的要求，不是用户消息的必填项。
 
-planner/both 宿主在可用的原生 systemPrompt 中增加优先派发提示：已授权的执行任务优先交给合适的执行端，简短对话可本地回答；pending-route 或 abstain 时说明缺失条件，不静默改成本地执行。提示不加入 Task 拥有的工作负载 Agent。`task_plan` 顶层 provider/model/reasoningEffort 是决策调用覆盖项，执行模型选择来自目录或明确 route；工具参数说明已区分两者。
+中央宿主仅向具有当前项目协作绑定、活动 dispatcher 职责或宿主项目／临时任务统筹职责的会话增加优先派发提示。普通未绑定会话不默认承担调度职责，仍可按用户请求使用公开的绑定与派发工具。普通协作会话退出项目后移除此提示；仍有活动 dispatcher 时保留至该职责结束。已绑定会话恢复后按持久状态重新判断。此提示要求：已授权的执行任务优先交给合适的执行端，简短对话可本地回答；pending-route 或 abstain 时说明缺失条件，不静默改成本地执行。提示不加入 Task 拥有的工作负载 Agent。`task_plan` 顶层 provider/model/reasoningEffort 是决策调用覆盖项，执行模型选择来自目录或明确 route；工具参数说明已区分两者。
 
 飞书原生入口允许 task_nodes 作为 operator 的 plannerTools。宿主仍需配置 taskIntegration、operatorUserIds 和 plannerTools；模型只看到该入口实际允许的工具，普通发送者不会因提示获得调度权限。
 

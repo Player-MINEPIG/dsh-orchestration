@@ -117,10 +117,10 @@ test('orchestration prompt follows active session duties and clears after leavin
     await prompt(true)
     await h.ctx.sessions.flush(handle.agent.session)
     await handle.dispose()
-    handle=await create()
+    handle=await h.ctx.agents.resume({resumeSessionId:sessionId,agentOptions:{provider:'test-offline',model:'script'}})
     await prompt(true)
-    const parent=h.ledger.withDispatchOrigin({kind:'session',nodeId:'local',sessionId,cwd:h.dir},()=>h.ledger.createTask('duty-parent',{title:'Parent',policy:{settlementQuietMs:0}}).value)
-    h.ledger.bindDispatcher('duty-bind',{nodeId:'local',sessionId,cwd:h.dir,projectId:active.binding.projectId,taskId:parent.taskId})
+    const parent=(await h.ctx.taskSystem.sessionCollaboration.command(handle.agent,{kind:'create',title:'Parent',policy:{settlementQuietMs:0}},'duty-parent')).value
+    await h.ctx.taskSystem.sessionCollaboration.command(handle.agent,{kind:'bind',taskId:parent.taskId},'duty-bind')
     h.ctx.taskSystem.sessionCollaboration.leave(handle.agent)
     await prompt(true)
     h.ledger.submitDispatcherResult('duty-settle',{nodeId:'local',sessionId,outcome:'success',summary:'Verified',report:{title:'Result',body:'Completed the coordinator responsibility'}})
