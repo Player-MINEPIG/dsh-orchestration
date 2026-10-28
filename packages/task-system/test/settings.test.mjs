@@ -537,7 +537,6 @@ test("startup drafts contain only approved fields; unchanged values and reset do
     "followExecutionPreset",
     "planningDecisionEnabled",
     "role",
-    "sessionDecisionEnabled",
   ]);
   assert.equal(ui.startupChanges("task", values, draft).dirty, false);
   draft.executionAgentPreset = "codex";
@@ -546,7 +545,7 @@ test("startup drafts contain only approved fields; unchanged values and reset do
   const changes = ui.startupChanges("task", values, draft).changes;
   assert.equal(changes.executionAgentPreset, "codex");
   assert.equal(changes.defaultWorkspaceId, undefined);
-  assert.equal(changes.sessionDecisionEnabled, true);
+  assert.equal(changes.sessionDecisionEnabled, undefined);
   assert.equal(changes.centralMode, "host");
   assert.equal(changes.executionEnabled, true);
   assert.equal(changes.role, undefined);
@@ -644,7 +643,7 @@ test("startup transport descriptors match the final host and carry only one stri
     changes: { role: "planner" },
   };
   assert.equal(parameter.codec.create().parse(input), input);
-  for (const key of ["planningDecisionEnabled", "sessionDecisionEnabled"]) {
+  for (const key of ["planningDecisionEnabled"]) {
     const booleanEdit = { ...input, changes: { [key]: false } };
     assert.equal(parameter.codec.create().parse(booleanEdit), booleanEdit);
     assert.throws(
@@ -655,6 +654,7 @@ test("startup transport descriptors match the final host and carry only one stri
       /Invalid startup value/,
     );
   }
+  assert.throws(()=>parameter.codec.create().parse({...input,changes:{sessionDecisionEnabled:true}}),/Invalid startup values/);
   const missingPlanning = { ...input, expected: { ...input.expected } };
   delete missingPlanning.expected.planningDecisionEnabled;
   assert.throws(

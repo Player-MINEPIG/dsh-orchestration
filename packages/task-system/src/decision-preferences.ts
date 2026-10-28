@@ -9,7 +9,7 @@ export function readDecisionPreferences(ctx:Context) {
   return {available:!!cfg,writable:!!cfg && !!ctx.get('configEditor'),presets,bindings,revision:digest({presets,bindings}),defaultProvider:cfg?.provider ?? '',defaultModel:cfg?.model ?? ''};
 }
 /** The caller owns which configured model profile to use for each business question. */
-export async function saveDecisionPreference(ctx:Context,input:{expected:string;consumer:'task-planning'|'task-session';id:string}) {
+export async function saveDecisionPreference(ctx:Context,input:{expected:string;consumer:'task-planning';id:string}) {
   const current = readDecisionPreferences(ctx);
   if (current.revision !== input.expected) throw new Error('DECISION_CONFLICT');
   if (input.id && !current.presets.some(p=>p.id === input.id)) throw new Error('DECISION_PROFILE_MISSING');

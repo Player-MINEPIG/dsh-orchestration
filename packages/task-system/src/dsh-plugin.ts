@@ -367,7 +367,6 @@ const PLANNING_TOOLS = [
   "task_cancel",
   "task_schedule",
   "task_workspace",
-  "task_plan",
   "task_observations",
   "task_curate",
   "task_note",
@@ -1799,17 +1798,7 @@ export class NativeExecutionProvider {
                 node.workspaceIds.includes(workspace.workspaceId),
             }),
           ),
-          ...(this.owner.config.sessionDecisionEnabled &&
-          this.ctx.get("decisionModels")
-            ? {
-                decisions: this.ctx.get("decisionModels"),
-                decisionProvider:
-                  this.owner.config.decisionBindings?.["task-session"],
-              }
-            : {}),
           signal: owned.creation.signal,
-          ttlMs: this.owner.config.decisionTtlMs,
-          refresh: () => this.owner.ledger.sessionContext(ref),
         });
         const selected = this.owner.ledger.selectTaskSession(
           `select:${ref.attemptId}:${ref.executionId}`,
@@ -2861,7 +2850,7 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
   }
 
   let dispatchPlanned: ((args: {
-    expectedExecutionMs?:number; commandId: string; requestId?: string; title?: string; description?: string;
+    expectedExecutionMs?:number; commandId: string; requestId?: string; taskId?:string; title?: string; description?: string;
     route?: Claim["run"]["route"]; nodeId?: string; executionModel?: ExecutionModelChoice; workspaceId?: string;
   }, exec: ToolRunContext) => Promise<Json>) | undefined;
   if (config.centralMode === "host") {
@@ -2878,7 +2867,7 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
             service.projects?.projectForSession(String(agent.id)) ||
             service.projects?.taskForSession(String(agent.id))
           )
-            ? "You coordinate work across registered execution nodes. For an authorized user request that requires task execution, prefer dispatching to a suitable executor over doing the workload in this conversation. When available, use task_nodes for a compact executor summary and details=true with nodeId/model filters to page model routes. Divide write scopes, dependencies and shared Git/GUI operations before parallel dispatch. Use task_cancel for authorized cancellation or deferral, task_repair_dispatch for an unclaimed Run, and task_dispatch with the same taskId and an explicit retry=true/current expectedActionVersion for a new execution after a confirmed terminal Run. Never rerun active or uncertain effects. Read reports/history details only when needed. Use project_progress/project_finish with commandId and distinguish execution completion, accepted submission and user approval. Use task_nodes to inspect executor capabilities and runtime health, then task_dispatch with a stable commandId, task title and complete instructions in description. The user need not specify an executor, provider, model, or reasoning effort: omit route to let the planning decision service choose an eligible executor; its configured node default supplies the workload model/effort. If the user explicitly requests an execution model, extract it into executionModel {provider,model,reasoningEffort?,backend?}; never use the decision-call fields or guess a model from unrelated context. task_plan provider/model/reasoningEffort configure the decision call itself, not the workload model; normally omit them. task_plan only proposes and never dispatches. To dispatch a reviewed proposal, call task_dispatch with commandId and requestId set to that proposal requestId. task_dispatch creates the assigned Run once. If routing is pending or the decision abstains, report the missing configuration or clarification instead of inventing a route or silently performing the workload locally. Follow host and channel tool permissions. Track the actual Run/report outcome with task_query, task_history or task_wait; an applied proposal or delivery ACK alone does not prove task success. For a user-requested project coordinator workflow, use project_list then project_bind_session in this project's current workspace, create a draft parent with task_create, and register this current session with task_bind_dispatcher. Subsequent task_dispatch calls automatically create children under that parent Task/Run. Results return asynchronously to this original session; inspect task_history and submit the parent final report with task_submit_result once child work is settled. Use the task-specific business submission tool when the workflow defines one. Public tool names from older templates have changed: task_plan only proposes, task_dispatch is the only formal dispatch tool, codex_delegate is local Codex, task_wait with timeoutMs=0 replaces task_children, and task_submit_result replaces task_settle. Brief conversation and planning explanations can be answered here."
+            ? "You coordinate work across registered execution nodes. For an authorized user request that requires task execution, prefer dispatching to a suitable executor over doing the workload in this conversation. When available, use task_nodes for a compact executor summary and details=true with nodeId/model filters to page model routes. Divide write scopes, dependencies and shared Git/GUI operations before parallel dispatch. Use task_cancel for authorized cancellation or deferral, task_repair_dispatch for an unclaimed Run, and task_dispatch with the same taskId and an explicit retry=true/current expectedActionVersion for a new execution after a confirmed terminal Run. Never rerun active or uncertain effects. Read reports/history details only when needed. Use project_progress/project_finish with commandId and distinguish execution completion, accepted submission and user approval. Use task_nodes to inspect executor capabilities and runtime health, then task_dispatch with a stable commandId, task title and complete instructions in description. Use task_nodes to select an explicit nodeId for work tied to a device, OS, capability or file location. Omit nodeId only when any executor in the authorized pool is acceptable; the host then ranks readiness and capacity and uses that node default model/effort. If the user explicitly requests an execution model, extract it into executionModel {provider,model,reasoningEffort?,backend?}; never guess a model from unrelated context. task_dispatch registers the task and its execution once, without another model decision. If no authorized route is available, inspect task_nodes and explain the specific configuration needed. Follow host and channel tool permissions. Track the actual Run/report outcome with task_query, task_history or task_wait; an applied proposal or delivery ACK alone does not prove task success. For a user-requested project coordinator workflow, use project_list then project_bind_session in this project's current workspace, create a draft parent with task_create, and register this current session with task_bind_dispatcher. Subsequent task_dispatch calls automatically create children under that parent Task/Run. Results return asynchronously to this original session; inspect task_history and submit the parent final report with task_submit_result once child work is settled. Use the task-specific business submission tool when the workflow defines one. Public tool names from older templates have changed: task_dispatch is the only formal dispatch tool, codex_delegate is local Codex, task_wait with timeoutMs=0 replaces task_children, and task_submit_result replaces task_settle. Brief conversation and planning explanations can be answered here."
             : "",
       });
     });
@@ -2977,12 +2966,9 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
       lifecycle.signal.throwIfAborted();
       const requestId = args.requestId ?? args.commandId;
       const projectId = service.projects?.projectForSession(exec.agent?.id ?? "");
-      const taskIdScope = service.projects?.taskForSession(exec.agent?.id ?? "");
-      if (args.nodeId && (projectId || taskIdScope))
-        throw new TaskError(
-          "FORBIDDEN",
-          "Bound project planning uses the configured executor catalog",
-        );
+      const ownedTask = service.projects?.taskForSession(exec.agent?.id ?? "");
+      if(ownedTask && args.taskId && ownedTask!==args.taskId)throw new TaskError("FORBIDDEN","Temporary coordinator cannot select another Task");
+      const taskIdScope = ownedTask ?? args.taskId;
       if (
         ledger.getDecision(requestId) &&
         !args.title &&
@@ -3042,86 +3028,7 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
       }
       return json(applied);
     };
-    planningCtx.tools.register(
-      defineTool({
-        name: "task_plan",
-        description:
-          "Propose a task plan for review without creating a task or Run. No caller-specified execution model or route is required when planning decisions are configured. Scheduler decisions select executor/provider/model/effort, never workspace/session. Use task_dispatch with this requestId to authorize execution. With planning decisions disabled or unavailable, preserve an explicit route or leave routing pending.",
-        parameters: {
-        expectedExecutionMs:{type:"integer",description:"Caller-estimated positive integer milliseconds, at most 30 days, from actual execution start until one progress check. Does not stop or retry execution. Omit only when no estimate is set."},
-          requestId: { type: "string", required: true },
-          title: { type: "string" },
-          description: { type: "string" },
-          route: {
-            type: "object",
-            additionalProperties: true,
-            description:
-              "Optional explicit complete execution assignment. Omit to let planning select an executor and use its node default workload model.",
-          },
-          executionModel: {type:"object",additionalProperties:true,description:"Explicit workload model requested by the user context: {provider,model,reasoningEffort?,backend?}. Omit to use the executor node default. Do not infer a workload model from decision-call provider/model or let the planner guess it."},
-          workspaceId: {
-            type: "string",
-            description:
-              "Optional explicit user workspace constraint. Omit unless the user specified a workspace; the executor owns workspace selection.",
-          },
-          provider: {
-            type: "string",
-            description:
-              "Optional decision-provider override, not the workload provider.",
-          },
-          model: {
-            type: "string",
-            description:
-              "Optional decision-model override, not the workload model.",
-          },
-          reasoningEffort: {
-            type: "string",
-            description:
-              "Optional decision-call reasoning effort, not the workload effort.",
-          },
-        },
-        output,
-        execute: async (args, exec) => service.withDispatchOrigin(exec.agent, async () => {
-          exec.signal.throwIfAborted();
-          lifecycle.signal.throwIfAborted();
-          const projectId = service.projects?.projectForSession(
-            exec.agent?.id ?? "",
-          );
-          const taskIdScope = service.projects?.taskForSession(
-            exec.agent?.id ?? "",
-          );
-          service.projects?.assertProposalScope(exec.agent?.id ?? "", args);
-          if (!args.title) throw new Error("planning requires title");
-          return json(
-            await track(
-              planner.plan(
-                {
-                  requestId: args.requestId,
-                  ...(projectId ? { projectId } : {}),
-                  ...(taskIdScope ? { taskId: taskIdScope } : {}),
-                  title: args.title,
-                  description: args.description ?? "",
-              ...(args.expectedExecutionMs!==undefined?{expectedExecutionMs:ExpectedExecutionMs.parse(args.expectedExecutionMs)}:{}),
-                  ...(args.route
-                    ? { route: args.route as unknown as Claim["run"]["route"] }
-                    : {}),
-                  ...(args.executionModel ? {executionModel:ExecutionModelChoice.parse(args.executionModel)} : {}),
-                  ...(args.workspaceId
-                    ? { workspaceId: args.workspaceId }
-                    : {}),
-                  ...(args.provider ? { provider: args.provider } : {}),
-                  ...(args.model ? { model: args.model } : {}),
-                  ...(args.reasoningEffort
-                    ? { reasoningEffort: args.reasoningEffort }
-                    : {}),
-                },
-                { signal: AbortSignal.any([exec.signal, lifecycle.signal]) },
-              ),
-            ),
-          );
-        }),
-      }),
-    );
+
   }
 
   mountDispatcherTools(ctx,service);
@@ -3191,7 +3098,7 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
     defineTool({
       name: "task_nodes",
       description:
-        "Read compact executor summaries; details=true adds one paged route list with optional nodeId/model filters and limit/cursor. Inspect node defaults, capabilities, sampled runtime health and catalog freshness before task_plan. Catalog requests are bounded and can return pending/stale/unavailable without erasing the last good models. Owned execution and executor profiles see only their own node; provider connectivity is unprobed.",
+        "Read compact executor summaries; details=true adds one paged route list with optional nodeId/model filters and limit/cursor. Inspect node defaults, capabilities, sampled runtime health and catalog freshness before dispatch. Catalog requests are bounded and can return pending/stale/unavailable without erasing the last good models. Owned execution and executor profiles see only their own node; provider connectivity is unprobed.",
       parameters: {nodeId:{type:"string"},model:{type:"string"},details:{type:"boolean"},limit:{type:"integer"},cursor:{type:"string"}},
       output,
       execute: async (args, exec) => {
@@ -3388,15 +3295,10 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
     defineTool({
       name: "task_dispatch",
       description:
-        "Dispatch one authorized task with a stable commandId. Ordinary callers create/apply a plan; requestId can identify a reviewed proposal, or taskId can dispatch an existing draft. Active /project sessions use their bound central project. Owned execution agents delegate a child through their authoritative ledger and fenced lease. Omit executionModel to use the chosen executor node default. Set expectedExecutionMs to a reasonable task-specific upper bound for a one-time progress check after actual execution starts. Collect actual reports with task_query/history/wait; dispatch ACK is not completion.",
+        "Dispatch one authorized task with a stable commandId. Ordinary callers register and dispatch directly without a separate planning tool or decision-model call. taskId can dispatch an existing draft. Omit nodeId only to accept general allocation within the authorized executor pool; use task_nodes and specify nodeId for device-specific requirements. Active /project sessions use their bound central project. Owned execution agents delegate a child through their authoritative ledger and fenced lease. Omit executionModel to use the chosen executor node default. Set expectedExecutionMs to a reasonable task-specific upper bound for a one-time progress check after actual execution starts. Collect actual reports with task_query/history/wait; dispatch ACK is not completion.",
       parameters: {
         expectedExecutionMs:{type:"integer",description:"Caller-estimated positive integer milliseconds, at most 30 days, from actual execution start until one progress check. Does not stop or retry execution. Omit only when no estimate is set."},
         commandId: { type: "string", required: true },
-        requestId: {
-          type: "string",
-          description:
-            "Optional reviewed task_plan proposal ID. Defaults to commandId.",
-        },
         title: { type: "string" },
         description: { type: "string" },
         taskId: {
@@ -3406,7 +3308,7 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
         },
         retry:{type:"boolean",description:"Explicitly create a new Run for an ended Task; requires current expectedActionVersion."},
         expectedActionVersion:{type:"string"},
-        nodeId: { type: "string" },
+        nodeId: { type: "string", description: "Choose explicitly for a required device, OS, capability or file location. Omit only to accept general allocation within the authorized executor pool, ranked by readiness and available capacity." },
         executionModel: {
           type: "object",
           additionalProperties: true,
@@ -3436,7 +3338,6 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
             if (
               args.taskId ||
               args.retry ||
-              args.requestId ||
               args.nodeId ||
               args.executionModel ||
               args.workspaceId
@@ -3485,7 +3386,7 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
           const project = !managedLocal ? await service.sessionProjectDispatch?.(exec.agent, args, String(exec.callId)) : undefined;
           if (project?.handled) return project.value;
           if (!managedLocal && exec.agent && service.sessionCollaboration.binding(exec.agent)?.state === "active") {
-            if ((!args.taskId && !args.title) || args.requestId || args.workspaceId) throw new TaskError("INVALID", "Project dispatch requires title/description and uses its central binding");
+            if ((!args.taskId && !args.title) || args.workspaceId) throw new TaskError("INVALID", "Project dispatch requires title/description and uses its central binding");
             return json(await service.sessionCollaboration.invoke(exec.agent,"dispatch",{...(args.expectedExecutionMs!==undefined?{expectedExecutionMs:args.expectedExecutionMs}:{}),...(args.taskId?{taskId:args.taskId}:{title:args.title,description:args.description ?? args.title}),...(args.retry?{retry:args.retry,expectedActionVersion:args.expectedActionVersion}:{}),...(args.configuration!==undefined?{configuration:json(args.configuration)}:{}),...(args.route?{route:args.route}:{}),...(args.nodeId?{nodeId:args.nodeId}:{}),...(args.executionModel?{executionModel:args.executionModel}:{})},String(exec.callId),args.commandId));
           }
           if (!dispatchPlanned)
@@ -3495,23 +3396,22 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
             );
           if (args.taskId) {
             if (
-              args.requestId ||
               args.title ||
               args.description ||
               args.workspaceId
             )
               throw new TaskError(
                 "INVALID",
-                "Existing draft dispatch uses taskId and its stored intent; omit requestId/title/description/workspaceId",
+                "Existing draft dispatch uses taskId and its stored intent; omit title/description/workspaceId",
               );
             if (
               service.projects?.projectForSession(exec.agent?.id ?? "") ||
               service.projects?.taskForSession(exec.agent?.id ?? "")
-            )
-              throw new TaskError(
-                "FORBIDDEN",
-                "Bound planning sessions dispatch their host-owned task through a proposal",
-              );
+            ) {
+              if(args.retry || args.expectedActionVersion)throw new TaskError("FORBIDDEN","Use the authorized task retry action for an ended managed task");
+              const task=ledger.getTask(args.taskId);
+              return dispatchPlanned({commandId:args.commandId,taskId:args.taskId,title:task.title,description:task.description,...(args.expectedExecutionMs!==undefined?{expectedExecutionMs:args.expectedExecutionMs}:{}),...(args.nodeId?{nodeId:args.nodeId}:{}),...(args.route?{route:args.route as unknown as Claim["run"]["route"]}:{}),...(args.executionModel?{executionModel:ExecutionModelChoice.parse(args.executionModel)}:{})},exec);
+            }
             const receipt=ledger.dispatchExistingTask(args.commandId,{
               taskId:args.taskId,
               ...(args.expectedExecutionMs!==undefined?{expectedExecutionMs:args.expectedExecutionMs}:{}),
@@ -3531,7 +3431,6 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
           return dispatchPlanned(
             {
               commandId: args.commandId,
-              requestId: args.requestId,
               title: args.title,
               description: args.description,
               route: args.route as unknown as Claim["run"]["route"] | undefined,

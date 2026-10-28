@@ -103,7 +103,7 @@ export async function testSettings(browser, { output } = {}) {
     const role = page.locator('#task-startup-task-centralMode');
     const execution = page.getByRole('switch', {name:'允许本机接受任务执行', exact:true});
     await execution.uncheck();
-    assert.equal(await page.locator('[data-task-executor-decision] [role=switch]').isDisabled(), true);
+    assert.equal(await page.locator('[data-task-executor-decision]').count(), 0);
     assert.equal(await page.locator('[data-task-scheduler-decision] [role=switch]').isDisabled(), false);
     await page.locator('[data-task-scheduler-decision] [role=switch]').uncheck();
     assert.equal(await page.evaluate(() => fixture.writes.length), 0);
@@ -131,7 +131,7 @@ export async function testSettings(browser, { output } = {}) {
     assert.equal(await page.locator('#fixture-save').isDisabled(), true);
     await page.evaluate(() => mountStartup('task', { decisionAvailable: false }));
     await page.getByText(/需要安装并启用 dsh-jev-plugin 决策插件/).waitFor();
-    assert.equal(await page.locator('[data-task-executor-decision] [role=switch]').isDisabled(), true);
+    assert.equal(await page.locator('[data-task-executor-decision]').count(), 0);
 
     await page.evaluate(() => mountStartupSettings());
     await execution.uncheck();
@@ -141,8 +141,8 @@ export async function testSettings(browser, { output } = {}) {
     assert.equal(await role.inputValue(), 'host', 'refresh retains an edited startup draft');
     await page.getByRole('button', { name: '丢弃草稿', exact: true }).click();
     assert.equal(await role.inputValue(), 'remote', 'discard adopts the refreshed Host snapshot');
-    assert.equal(await page.locator('[data-task-executor-decision] [role=switch]').isChecked(), true);
-    assert.equal(await page.locator('[data-task-scheduler-decision] [role=switch]').isDisabled(), true);
+    assert.equal(await page.locator('[data-task-executor-decision]').count(), 0);
+    assert.equal(await page.locator('[data-task-scheduler-decision]').count(), 0);
     assert.equal(await page.evaluate(() => fixture.writes.length), 0);
 
     await role.selectOption('remote');
@@ -150,7 +150,7 @@ export async function testSettings(browser, { output } = {}) {
     assert.equal(await role.inputValue(),'remote');
     assert.equal(await execution.isChecked(),false);
     if (output) await page.screenshot({path:join(output,'central-remote-execution-disabled.png'),fullPage:true});
-    assert.equal(await page.locator('[data-task-executor-decision] [role=switch]').isDisabled(),true);
+    assert.equal(await page.locator('[data-task-executor-decision]').count(),0);
 
     await page.evaluate(() => mountStartup('remote'));
     const port = page.locator('#task-startup-remote-connectionPort');

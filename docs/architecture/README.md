@@ -23,7 +23,7 @@ These source-grounded diagrams preserve the 0.1.x four-package snapshot. The cur
 3. 日报、游戏日报以及新任务类型都通过版本化 Template/Schedule 配置；工作区表示实际目录。
 4. 私有 dashboard 消费同一 query 或明确导入的任务快照，展示 source、observedAt 与 stale；不维护第二本权威账本。
 5. attempt 在执行副作用前原子绑定 executionId；续租、session 绑定、submit 和取消 ACK 校验同一实例。remote 恢复日志持久化非秘密 instance UUID，同节点不同日志不能重复执行同一 claim。
-6. native decision bridge 提供可选单次模型提案；task_plan 仅提案，task_dispatch 由确定性授权 apply。Feishu native chat 已实现，外部连通仍待验证；session 观察按工作区配置转发，收录不能派发。
+6. task_dispatch 直接完成确定性授权、设备分配和落账；可选 JEV 仅处理自动观察归并。Feishu native chat 已实现，外部连通仍待验证；session 观察按工作区配置转发，收录不能派发。
 7. native 静止并 flush/dispose、预检后先写独立 FULL/WAL 终态日志；精确恢复仍经核心重新检查。普通迟到结果不能逆转终态，未知副作用须核实。
 8. confirmation revision 与绑定具体调用/参数摘要的 native once/deny 批准分开，均不由模型授权。admitted/dismissed 独立管理收录。
 9. note 原子进入 nextRun.contextNotes；协作绑定有效 lease 与自有子树。parentRunId 将每轮后代预算和 quiet window 与旧周期分开。

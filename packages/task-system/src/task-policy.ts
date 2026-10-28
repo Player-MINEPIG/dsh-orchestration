@@ -26,6 +26,8 @@ export interface ExecutorCandidate extends TaskCandidate {
 }
 export interface ModelRouteCandidate extends TaskCandidate {
   executorId: string;
+  backend?: string;
+  workspaceId?: string;
   provider: string;
   model: string;
   reasoningEffort?: string;

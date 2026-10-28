@@ -59,6 +59,7 @@ const taskConfig = {
   autoExecute: false,
   healthAlerts: false,
   executionTimeoutMs: 2000,
+  sessionDecisionEnabled:true,
   workspaceRoots: [{ id: "fixture-root", path: tmp, allowCreate: false }],
   localNode: {
     workspaceIds: ["default"],
@@ -178,7 +179,6 @@ try {
     changes: {
       role: "executor",
       planningDecisionEnabled: false,
-      sessionDecisionEnabled: true,
     },
   };
   const connectionEditor=ctx.get("configEditor"),connectionEntry=connectionEditor.entries().find(e=>e.options.id==="task-remote-execution");
@@ -257,7 +257,6 @@ try {
       changes: {
         role: "both",
         planningDecisionEnabled: true,
-        sessionDecisionEnabled: false,
       },
     },
   });
@@ -266,7 +265,7 @@ try {
   assert.equal("defaultWorkspaceId" in final.task.values,false);
   assert.equal(final.task.values.role, "both");
   assert.equal(final.task.values.planningDecisionEnabled, true);
-  assert.equal(final.task.values.sessionDecisionEnabled, false);
+  assert.equal(final.task.values.sessionDecisionEnabled, true);
   pass(
     "restart persistence and explicit null default restoration use the real official ConfigEditor",
   );

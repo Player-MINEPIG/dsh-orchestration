@@ -90,15 +90,10 @@ export class TaskPlanner {
     const catalog = this.catalog();
     const projectId = input.projectId ?? (input.taskId ? this.ledger.projectForTask(input.taskId) : this.ledger.dispatchProjectId());
     const projectPolicy = projectId ? this.ledger.projectExecutionPolicy(projectId) : undefined;
-    const base = {...catalog, executors: catalog.executors.filter(node => projectPolicy?.allowedNodeIds == null || projectPolicy.allowedNodeIds.includes(node.id))};
-    // The decision may choose an executor, never override the caller/default workload policy.
-    const modelRoutes=base.executors.filter(node=>node.eligible).map(node=>{
-      const selected=this.ledger.selectExecutionModel(node.id,input.executionModel);
-      return {id:digest({nodeId:node.id,...selected.choice}).slice(0,32),description:`${node.id}: ${selected.choice.provider}/${selected.choice.model}${selected.choice.reasoningEffort?" "+selected.choice.reasoningEffort:""} (${selected.executionModel.origin})`,executorId:node.id,provider:selected.choice.provider,model:selected.choice.model,...(selected.choice.reasoningEffort?{reasoningEffort:selected.choice.reasoningEffort}:{}),eligible:true};
-    });
-    const constraint = input.workspaceId
-      ? this.ledger.getWorkspace(input.workspaceId)
-      : undefined;
+    const constraint = input.workspaceId ? this.ledger.getWorkspace(input.workspaceId) : undefined;
+    const routes=input.observationCandidateId?[]:this.ledger.dispatchRoutes({...input,...(projectId?{projectId}:{})});
+    const base={...catalog,executors:catalog.executors.filter(node=>routes.some(route=>route.nodeId===node.id))};
+    const modelRoutes=routes.map(route=>({id:digest(route).slice(0,32),description:`${route.nodeId}: ${route.provider}/${route.model}`,executorId:route.nodeId,provider:route.provider,model:route.model,...(route.reasoningEffort?{reasoningEffort:route.reasoningEffort}:{}),...(route.backend?{backend:route.backend}:{}),...(route.workspaceId?{workspaceId:route.workspaceId}:{}),eligible:true})).sort((a,b)=>a.executorId.localeCompare(b.executorId));
     return {
       ...base,
       stateHash: digest({base:base.stateHash,projectPolicy:projectPolicy ?? null,modelRoutes,policies:base.executors.map(node=>this.ledger.executionModels.view(node.id).policy)}),
@@ -167,20 +162,21 @@ export class TaskPlanner {
         throw new TaskError("CONFLICT", "Decision request ID reused");
       return this.view(existing);
     }
-    if(!input.observationCandidateId)await Promise.all(this.ledger.decisionCatalog().nodes.filter(node=>node.enabled&&(projectPolicy?.allowedNodeIds == null || projectPolicy.allowedNodeIds.includes(node.nodeId))&&node.roles.some(role=>role==="executor"||role==="both")&&this.ledger.executionModels.view(node.nodeId).catalog.state!=="fresh").map(node=>this.ledger.refreshNodeModels(node.nodeId)));
+    const selectedNode=input.route?.nodeId ?? input.nodeId ?? (input.workspaceId?this.ledger.getWorkspace(input.workspaceId).nodeId:undefined);
+    if(!input.observationCandidateId)await Promise.all(this.ledger.decisionCatalog().nodes.filter(node=>node.enabled&&(!selectedNode||node.nodeId===selectedNode)&&(projectPolicy?.allowedNodeIds == null || projectPolicy.allowedNodeIds.includes(node.nodeId))&&node.roles.some(role=>role==="executor"||role==="both")&&this.ledger.executionModels.view(node.nodeId).catalog.state!=="fresh").map(node=>this.ledger.refreshNodeModels(node.nodeId)));
     const snapshot = this.snapshot(input);
-    const decisions = this.enabled()
+    const decisions = input.observationCandidateId && this.enabled()
       ? typeof this.decisions === "function"
         ? this.decisions()
         : this.decisions
       : undefined;
-    if (!decisions || input.route || input.nodeId) {
+    if (!decisions || !input.observationCandidateId) {
       options.signal?.throwIfAborted();
-      const assignment = input.route ?? (input.nodeId ? {
-        nodeId: input.nodeId,
-        ...this.ledger.selectExecutionModel(input.nodeId, input.executionModel).choice,
-        requiredCapabilities: [],
-      } : undefined);
+      const order=new Map((input.observationCandidateId?[]:this.ledger.dispatchRoutes(input)).map((route,index)=>[route.nodeId,index]));
+      const ranked=[...snapshot.modelRoutes].sort((a,b)=>(order.get(a.executorId) ?? 0)-(order.get(b.executorId) ?? 0));
+      const primary=ranked[0];
+      const assignment = input.route ?? (primary ? {nodeId:primary.executorId,...this.ledger.selectExecutionModel(primary.executorId,input.executionModel).choice,requiredCapabilities:[],...("workspaceId" in primary ? {workspaceId:primary.workspaceId} : {})} : undefined);
+      if(!input.observationCandidateId && !assignment)throw new TaskError("EXECUTOR_REQUIRED","No authorized executor supports the requested route or model. Inspect task_nodes and select an eligible nodeId.");
       const route = assignment && {
         ...assignment,
         ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
@@ -203,6 +199,7 @@ export class TaskPlanner {
           }
         : {
             kind: "proposal",
+            ...(snapshot.rankExecutors && !input.route && !input.nodeId ? {fallbackRoutes:ranked.slice(1)} : {}),
             persistence: input.taskId ? "attach" : "create",
             attachTaskId: input.taskId ?? null,
             executor: route
@@ -215,6 +212,8 @@ export class TaskPlanner {
                   executorId: route.nodeId,
                   provider: route.provider,
                   model: route.model,
+                  ...(route.backend?{backend:route.backend}:{}),
+                  ...(route.workspaceId?{workspaceId:route.workspaceId}:{}),
                   ...(route.reasoningEffort
                     ? { reasoningEffort: route.reasoningEffort }
                     : {}),
@@ -238,9 +237,7 @@ export class TaskPlanner {
           source: "default",
           reason: input.route
             ? "explicit-route"
-            : this.enabled()
-              ? "service-unavailable"
-              : "decision-disabled",
+            : input.nodeId ? "explicit-node" : "authorized-executor-pool",
         },
         proposal: proposal as unknown as Json,
         stateHash: snapshot.stateHash,
@@ -364,6 +361,7 @@ export class TaskPlanner {
             nodeId: proposal.executor.id,
             provider: proposal.modelRoute.provider,
             model: proposal.modelRoute.model,
+            ...(proposal.modelRoute.backend?{backend:proposal.modelRoute.backend}:{}),
             ...(proposal.modelRoute.reasoningEffort
               ? { reasoningEffort: proposal.modelRoute.reasoningEffort }
               : {}),

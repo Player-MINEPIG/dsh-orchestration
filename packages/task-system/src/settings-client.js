@@ -113,12 +113,12 @@ window.__ModuleLoader__.load({
       decisionClose: "Close model settings",
       decisionDependencyRequired: "Install and enable the dsh-jev-plugin decision plugin to use this feature. Refresh startup configuration after enabling it.",
       startupError_STARTUP_DECISION_REQUIRED: "Install and enable dsh-jev-plugin before enabling decisions.",
-      schedulerDecisionTitle: "Scheduler · executor selection",
+      schedulerDecisionTitle: "Automatic observation admission",
       schedulerDecisionHint:
-        "The scheduler uses the existing task_plan decision tool to propose an executor. Applying a proposal checks the authoritative executor catalog and permissions.",
-      planningDecisionEnabled: "Enable scheduler executor-selection decisions",
+        "Only automatic observation admission uses JEV to classify or attach observed material. Dispatch uses authorized executor defaults without JEV.",
+      planningDecisionEnabled: "Enable automatic observation decisions",
       schedulerDecisionStatus:
-        "Enable this switch and configure the existing model to choose an executor. When disabled or the decision plugin is not loaded, an explicit route is retained; work without an assigned executor remains pending assignment.",
+        "Used only when automatic observation admission is configured. Executor allocation is independent of this switch.",
       schedulerDecisionModelEntry: "Scheduler decision model settings",
       schedulerDecisionSetup:
         "Open Decision model settings. Both roles reuse the same configured model.",
@@ -243,9 +243,7 @@ window.__ModuleLoader__.load({
       workspaceUnavailableSuffix: "unavailable",
       sessionDecisionEnabled: "Enable executor workspace/session decisions",
       workspaceHint:
-        "The default workspace must already be registered locally. Saved changes apply to future tasks immediately. Without a valid decision, execution uses the default Task session and workspace policy.",
-      decisionHint:
-        "Decision adapters reuse dsh-jev-plugin: DSH LLM, Typesafe Jev, or a registered AnyJev adapter. Select the model in this form; manage credentials through Models.",
+        "The default workspace must already be registered locally. Saved changes apply to future tasks immediately. Execution follows the authorized project directory or registered default and reuses the current Task session.",
       settingsPending:
         "This Host has not loaded the session/workspace settings interface yet.",
       queueTitle: "Local task queue · read only",
@@ -381,12 +379,12 @@ window.__ModuleLoader__.load({
       decisionClose: "关闭模型配置",
       decisionDependencyRequired: "需要安装并启用 dsh-jev-plugin 决策插件后才能使用。启用后请刷新启动配置。",
       startupError_STARTUP_DECISION_REQUIRED: "请先安装并启用 dsh-jev-plugin 决策插件，再开启决策功能。",
-      schedulerDecisionTitle: "中央服务 · 选择执行者",
+      schedulerDecisionTitle: "自动观察归并",
       schedulerDecisionHint:
-        "调度端使用现有 task_plan 决策工具提出执行者建议；应用建议时校验权威执行端目录与权限。",
-      planningDecisionEnabled: "启用调度端执行者决策",
+        "仅自动观察归并使用 JEV 判断已有材料是否需记录或关联。任务派发和会话选择按授权与确定规则执行，不调用 JEV。",
+      planningDecisionEnabled: "启用自动观察归并决策",
       schedulerDecisionStatus:
-        "打开此开关并选择决策预设后，使用该预设选择执行者。关闭或未加载决策插件时沿用明确路由；未确定执行者则保持待分配。",
+        "仅在已配置自动观察准入时使用此预设判断材料归并；不参与执行者、工作区或会话选择。",
       schedulerDecisionModelEntry: "选择调度端决策预设",
       schedulerDecisionSetup:
         "在本页分别选择调度端与执行端的决策预设；预设内容在独立“决策”设置中管理。",
@@ -506,9 +504,7 @@ window.__ModuleLoader__.load({
       workspaceUnavailableSuffix: "不可用",
       sessionDecisionEnabled: "启用执行端会话决策",
       workspaceHint:
-        "父目录保存后用于新建项目工作区；已有项目和任务会话保留原位置。没有有效决策时，按默认规则创建或复用任务会话。",
-      decisionHint:
-        "在“决策”设置中管理 Rules、DSH LLM、Typesafe Jev 和已注册适配器的预设；本插件只选择使用哪一个。凭据在官方“模型”或原有环境引用中管理。",
+        "父目录保存后用于新建项目工作区；已有项目和任务会话保留原位置。按授权目录和已有 Task 绑定创建或复用任务会话。",
       settingsPending: "当前宿主尚未加载会话／工作区设置接口。",
       queueTitle: "本机任务队列 · 只读",
       queueHint:
@@ -899,7 +895,7 @@ window.__ModuleLoader__.load({
       ],
     };
     function parseStartupValues(value, target, partial = false) {
-      const keys = startupKeys[target].filter(key=>!(partial && ((target==="remote" && key==="role") || key==="nodeId")));
+      const keys = startupKeys[target].filter(key=>!(partial && ((target==="remote" && key==="role") || key==="nodeId" || key==="sessionDecisionEnabled")));
       if (
         !keys ||
         !value ||
@@ -1259,13 +1255,7 @@ window.__ModuleLoader__.load({
               state.value.role === "planner"
                 ? h("p", { style: hintStyle }, t("executorDecisionInactive"))
                 : null,
-              Object.hasOwn(state.value, "sessionDecisionEnabled")
-                ? fields(state.value, [
-                    "sessionDecisionEnabled",
-                  ])
-                : h("p", { style: hintStyle }, t("settingsPending")),
               h("p", { style: hintStyle }, t("workspaceHint")),
-              h("p", { style: hintStyle }, t("decisionHint")),
               h("h3", { style: headingStyle }, t("remoteTitle")),
               state.value.remote
                 ? fields(state.value.remote, [
@@ -1605,7 +1595,6 @@ window.__ModuleLoader__.load({
             databasePath: values.databasePath ?? "",
             ...(values.nodeCapacities ? {nodeCapacities: values.nodeCapacities.map(node => ({nodeId: node.nodeId, maxConcurrent: String(node.maxConcurrent)}))} : {}),
             planningDecisionEnabled: values.planningDecisionEnabled,
-            sessionDecisionEnabled: values.sessionDecisionEnabled,
           }
         : {
             paused: values.paused,
@@ -1639,7 +1628,6 @@ window.__ModuleLoader__.load({
         }
         for (const key of [
           "planningDecisionEnabled",
-          "sessionDecisionEnabled",
         ]) {
           next[key] = draft[key];
           if (typeof next[key] !== "boolean") invalid.push(key);
@@ -2129,19 +2117,11 @@ h(
           !draft.nodeCapacities?.length ? h("p", {style:hintStyle}, t("nodeCapacityEmpty")) : null) : null,
 
           )),
-        h(SettingsArea,{id:"task-decisions",title:"决策模型",description:"两种用途分别绑定 JEV 预设；决策开关共享本机启动配置草稿，目录单独保存。"},
-          h("div",{className:"task-decision-grid"},
-            h("div",{"data-task-scheduler-decision":true},
-              h("h3",null,t("schedulerDecisionTitle")),h("p",{style:hintStyle},t("schedulerDecisionHint")),
-              !planner ? h("p",{style:hintStyle},"本机未托管中央服务，执行者选择由中央配置。") : null,
-              decisionToggle("planningDecisionEnabled",planner),
-              renderDecisionModels?.("planner")),
-            h("div",{"data-task-executor-decision":true},
-              h("h3",null,t("executorDecisionTitle")),h("p",{style:hintStyle},t("executorDecisionHint")),
-              !executor ? h("p",{style:hintStyle},t("executorDecisionInactive")) : null,
-              decisionToggle("sessionDecisionEnabled",executor),
-              renderDecisionModels?.("executor"))),
-          !decisionAvailable ? h("p",{role:"note",style:hintStyle},t("decisionDependencyRequired")) : null),
+        planner ? h(SettingsArea,{id:"task-decisions",title:"观察归并",description:"仅供没有对话模型参与的自动观察筛选。派发和执行会话不调用 JEV。"},
+          h("div",{"data-task-scheduler-decision":true},
+            h("h3",null,t("schedulerDecisionTitle")),h("p",{style:hintStyle},t("schedulerDecisionHint")),
+            decisionToggle("planningDecisionEnabled",planner),renderDecisionModels?.("planner")),
+          !decisionAvailable ? h("p",{role:"note",style:hintStyle},t("decisionDependencyRequired")) : null) : null,
         parsed.invalid.length
           ? h(
               "p",
@@ -2825,7 +2805,7 @@ h(
     function DecisionPresetSettings({role, readDecisionConsole, setDecisionPreset, openDecisions, close, saveCoordinator}) {
       const {state, refresh} = useReadSnapshot(readDecisionConsole);
       const [selected, select] = React.useState(null), [saving, setSaving] = React.useState(false), [message, setMessage] = React.useState(null);
-      const consumer = role === "planner" ? "task-planning" : "task-session";
+      const consumer = "task-planning";
       const current = state.value?.bindings?.[consumer] ?? "";
       const choice = selected ?? current;
       const savePreset=async()=>{setSaving(true);setMessage(null);try {const latest=await readDecisionConsole();if((latest.bindings?.[consumer] ?? "")!==current)throw {details:{reason:"DECISION_CONFLICT"}};await setDecisionPreset({expected:latest.revision,consumer,id:choice});select(null);await refresh();setMessage("预设选择已保存。");return true;} catch(error){setMessage(error?.details?.reason==="DECISION_CONFLICT" ? "配置已变化，请刷新后核对草稿。" : "保存未能确认，请查看决策插件状态。");return false;} finally {setSaving(false);}};
@@ -2835,7 +2815,7 @@ h(
         h("p", {style:hintStyle}, "在本插件选择预设。服务商、模型与思考强度在“JEV”中管理。此处只选择任务调用的模型配置。"),
         state.failed ? h("p", {role:"alert"}, "无法读取决策预设，请检查 Jev 是否启用。") : null,
         state.value ? h(React.Fragment, null,
-          h("label", {htmlFor:`task-preset-select-${role}`,style:{display:"block",margin:"12px 0 6px"}}, role === "planner" ? "选择执行者使用的预设" : "选择会话使用的预设"),
+          h("label", {htmlFor:`task-preset-select-${role}`,style:{display:"block",margin:"12px 0 6px"}}, "自动观察归并使用的预设"),
           h("select", {id:`task-preset-select-${role}`, value:choice, disabled:saving || !state.value.writable, style:controlStyle, onChange:e=>{select(e.target.value);setMessage(null);}},
             h("option", {value:""}, "跟随 Jev 默认服务商与模型"),
             ...(state.value.presets ?? []).map(p => h("option", {key:p.id,value:p.id}, p.name))),
@@ -3083,7 +3063,7 @@ h(
           h("div",null,h("h1",null,"设置"),h("p",{style:hintStyle},`当前服务设备 · ${hostIdentity.state.value?.nodeId ?? (hostIdentity.state.failed ? "身份读取失败" : "正在读取身份…")} · 本机配置`)),
           h("nav",{className:"task-primary-nav","aria-label":"任务系统导航"},...[ ["tasks","任务"],["projects","项目"],["fullpanel","完整面板"],["settings","设置"] ].map(([target,label])=>h("button",{type:"button",key:target,"aria-current":target==="settings"?"page":undefined,onClick:()=>props.onNavigate?.(target)},label)))),
         h("p",{style:hintStyle},"修改先保留为草稿；底部统一保存。即时设置与需重启插件的设置会分别标明，部分保存失败会保留未完成草稿。"),
-        h("nav",{className:"task-settings-nav","aria-label":"设置分区"},...[ ["task-local","本机与工作区"],["task-connections","协作连接"],["task-decisions","决策模型"],["task-runtime","运行控制"],["task-diagnostics","状态与诊断"] ].map(([id,title])=>h("a",{key:id,href:`#${id}`,onClick:event=>{event.preventDefault();document.getElementById(id)?.scrollIntoView({block:"start",behavior:"smooth"});}},title))),
+        h("nav",{className:"task-settings-nav","aria-label":"设置分区"},...[ ["task-local","本机与工作区"],["task-connections","协作连接"],["task-decisions","观察归并"],["task-runtime","运行控制"],["task-diagnostics","状态与诊断"] ].map(([id,title])=>h("a",{key:id,href:`#${id}`,onClick:event=>{event.preventDefault();document.getElementById(id)?.scrollIntoView({block:"start",behavior:"smooth"});}},title))),
         props.startup
           ? h(StartupSettings, {
               t,

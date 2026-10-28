@@ -183,17 +183,14 @@ export class ProjectCollaborationAuthority {
         if (!existing && !input.title?.trim()) fail("INVALID", "Dispatch requires a task title");
         const title=existing?.title ?? input.title!,description=existing?.description ?? input.description ?? title;
         const planner = typeof this.options.planner === "function" ? this.options.planner() : this.options.planner;
-        const candidates=this.ledger.decisionCatalog().nodes.filter(node=>node.enabled&&node.roles.some(role=>role==="executor"||role==="both"));
-        const nodeId=input.route?.nodeId ?? input.nodeId ?? ((!planner || existing) && candidates.length===1?candidates[0]?.nodeId:undefined);
-        const selection=nodeId?this.ledger.selectExecutionModel(nodeId,input.route ?? input.executionModel):undefined;
-        const route=input.route ?? (nodeId && selection?{nodeId,provider:selection.choice.provider,model:selection.choice.model,...(selection.choice.reasoningEffort?{reasoningEffort:selection.choice.reasoningEffort}:{}),...(selection.choice.backend?{backend:selection.choice.backend}:{}),requiredCapabilities:[]}:undefined);
-        if(!route && (!planner || existing))fail("EXECUTOR_REQUIRED","Choose an executor from task_nodes or configure central planning");
+        const route=this.ledger.dispatchRoutes({...(existing?{taskId:existing.taskId}:{}),projectId:b.projectId,...(input.route?{route:input.route}:{}),...(input.nodeId?{nodeId:input.nodeId}:{}),...(input.executionModel?{executionModel:input.executionModel}:{})})[0];
+        if(!route)fail("EXECUTOR_REQUIRED","No authorized executor supports this task; inspect task_nodes");
         if(route) {
           this.ledger.projectExecutionPolicy(b.projectId,route.nodeId);
           this.ledger.validateRoute(route,{admission:true,skipModel:true});
         }
         if(route?.backend && !this.publicRoutes().some(candidate=>["nodeId","provider","model","reasoningEffort","backend"].every(key=>candidate[key as keyof ExecutionRoute]===route[key as keyof ExecutionRoute])))fail("BACKEND_UNAVAILABLE","Requested native backend is not advertised by an available execution host");
-        const task = existing ?? this.ledger.createTask(`${key}:task`, { taskId: `collab-task-${hash(key)}`, title, description, ...(route?.backend ? { policy: { allowedBackends: [route.backend] } } : {}), ...(route?.workspaceId ? { workspaceId: route.workspaceId } : {}) }).value;
+        const task = existing ?? this.ledger.createTask(`${key}:task`, { taskId: `collab-task-${hash(key)}`, title, description, ...(route?.backend ? { policy: { allowedBackends: [route.backend] } } : {}), ...(input.route?.workspaceId ? { workspaceId: input.route.workspaceId } : {}) }).value;
         this.wb.manage(`${key}:link`, "link_backlog_task", { backlogId: b.backlogId, taskId: task.taskId });
         const needsConfirmation = task.confirmation?.required && task.confirmation.state !== "approved";
         try {

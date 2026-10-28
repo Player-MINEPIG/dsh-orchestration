@@ -72,7 +72,7 @@ DSH 自带 WebUI；入口是 `dsh web` 或 `dsh --profile web`。自定义名称
 
 启动表单先读取 `startup()` 的条目和值；草稿仅在点击 **保存并重启插件** 后提交。`saveStartup({target, expected, changes})` 只接收指定 task/remote 的严格字段子集；后端使用实际公开 ConfigEditor.edit 合并保存，拒绝旧快照、配置覆盖层与运行中工作。保存后重新读取 startup，并清除旧部署／队列摘要；改变连接不会继承页面之前显示的执行端身份。
 
-Task 允许 role、planningDecisionEnabled、sessionDecisionEnabled；remote 允许 paused、endpoint、audience、pollIntervalMs、concurrency 和受限制的 trustedNetworkTarget。旧连接的 Task 会话迁移使用明确的“保存并重启”操作，无常驻开关，也不扩展 peer grant。身份查询只在点击 **向调度端查询本机执行端 ID** 时调用无参数 RPC，不能指定其他节点。
+Task 允许 role 和用于自动观察归并的 planningDecisionEnabled；旧 sessionDecisionEnabled 只读兼容；remote 允许 paused、endpoint、audience、pollIntervalMs、concurrency 和受限制的 trustedNetworkTarget。旧连接的 Task 会话迁移使用明确的“保存并重启”操作，无常驻开关，也不扩展 peer grant。身份查询只在点击 **向调度端查询本机执行端 ID** 时调用无参数 RPC，不能指定其他节点。
 
 协作连接为空时可直接填写并点击“保存连接配置”或统一保存，内部通过官方 profile 增量写入接口建立暂停配置。首次保存保持暂停，完成配置后再启用。调度端表单分别保存本机监听地址/端口和执行端来源地址；执行端表单通过同一组地址、端口和路径生成调度端协议 URL 与目标绑定，并独立保存本机来源地址。首次保存不创建密钥；握手之前不会根据昵称生成身份或登记模型。节点卡编辑昵称与允许的来源地址，绑定后的执行端 ID 只读。节点 audience 自动沿用本机调度服务 audience，用户不必重复填写。受信任配对节点采用固定任务协议操作，页面不再要求手工填写 operation/workspace/capability grant；角色、任务/运行归属、会话所有者、租约/fence、执行端实际目录、模型可用性及宿主明确权限继续校验。旧签名身份与显式宿主/任务限制保持。
 
@@ -88,7 +88,7 @@ DSH **设置 → 决策** 由 `@dsh-task/typed-decisions` 自己提供，不依�
 
 模型预设各自拥有配置条目，保留原凭据引用、能力声明、未知字段和其他模型路由；规则预设共享其明确引用的规则集。保存使用公开 ConfigEditor 和 CAS，按正常生命周期重载相关决策插件。有活动任务或模型调用、启动参数覆盖、旧快照或引用未解除时，给出对应失败原因。
 
-任务系统 **选择调度端决策预设** 与 **选择执行端决策预设** 在决策模型区常驻显示，仅选择已有预设，或跟随独立决策页的默认预设。两个角色可使用不同预设；“打开独立决策设置”直接跳转到“决策”页。选择草稿不写配置，点击底部统一保存才生效。原有决策开关仍决定是否使用决策服务，远程暂停设置保留。
+任务系统只为自动观察归并选择 JEV 预设，沿用原 task-planning binding。正式派发、工作区和会话选择不调用 JEV；旧 task-session 绑定保留解析，不再提供编辑入口。预设草稿在统一保存时提交。
 
 其他插件在自己的配置页面显示 `ctx.typedDecisions.presets()` 返回的 ID/名称列表，保存所选 ID，并以 `evaluate({...request, preset: selectedId})` 调用。预设不能和显式 provider/model/reasoningEffort 混用。请求摘要始终校验调用方原始请求，预设选择不会放宽任务候选集、执行端身份或权限。
 
@@ -231,6 +231,6 @@ DSH **设置 → 决策** 由 `@dsh-task/typed-decisions` 自己提供，不依�
 
 保存节点默认模型时，调度端使用当前新鲜目录确认用户选择的精确模型与档位。目录过期时有界刷新，不要求重新选择，也不因目录版本变化替换草稿。刷新失败或部分目录未确认所选项时保留草稿；仅完整新鲜目录缺项才明确报告该选择不可用。并发修改默认值或调度端身份变化仍拒绝保存。
 
-公共 `task_plan` 的 `provider/model/reasoningEffort` 仍指决策调用；实际工作模型使用独立 `executionModel` 对象。调用者应将用户明确的模型要求放入该对象，未指定就省略。`task_dispatch` 选择节点后可使用其默认；`task_repair_dispatch` 带原 `runId` 与 `expectedActionVersion` 可修复未领取请求，保留原 ID，不新增 Attempt。定时任务必须绑定项目。
+正式派发不调用 JEV，实际工作模型使用独立 `executionModel` 对象或节点默认值。调用者应将用户明确的模型要求放入该对象，未指定就省略。`task_dispatch` 选择节点后可使用其默认；`task_repair_dispatch` 带原 `runId` 与 `expectedActionVersion` 可修复未领取请求，保留原 ID，不新增 Attempt。定时任务必须绑定项目。
 
 临时任务的执行上下文由权威调度端生成，无需调用方创建规划会话或手填工作区。执行端缺目录、显式模型不可用或明确工作区绑定缺失时，任务中心及查询工具显示原因和下一步。正常离线、容量满和等待目录属于等待状态；恢复配置后继续原请求，不把等待伪造为执行失败。

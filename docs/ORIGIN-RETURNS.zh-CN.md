@@ -1,6 +1,6 @@
 # 会话调度与任务结果回报
 
-正式派发统一使用 `task_dispatch`。宿主从当前调用会话绑定发起者；系统调用绑定系统，不借用创建任务时的旧会话。规划工具 `task_plan` 只生成方案。`task_create` 只建草稿；修复未领取请求使用 `task_repair_dispatch`，本机 Desktop Codex 使用独立的 `codex_delegate`。节点查询统一为 `task_nodes`，宿主按当前项目协作或执行任务范围处理，不再公开重复的 `project_nodes`。`task_wait` 的 `timeoutMs=0` 查询子树状态，代替旧 `task_children`。本地领取/执行由宿主 worker 内部处理，不再公开 `task_claim` 或 `task_execute`。通用最终提交使用 `task_submit_result`，执行任务和协调父任务由宿主分别核验所有权。
+正式派发统一使用 `task_dispatch`。宿主从当前调用会话绑定发起者；系统调用绑定系统，不借用创建任务时的旧会话。正式派发直接完成授权校验和落账，不调用额外规划模型。`task_create` 只建草稿；修复未领取请求使用 `task_repair_dispatch`，本机 Desktop Codex 使用独立的 `codex_delegate`。节点查询统一为 `task_nodes`，宿主按当前项目协作或执行任务范围处理，不再公开重复的 `project_nodes`。`task_wait` 的 `timeoutMs=0` 查询子树状态，代替旧 `task_children`。本地领取/执行由宿主 worker 内部处理，不再公开 `task_claim` 或 `task_execute`。通用最终提交使用 `task_submit_result`，执行任务和协调父任务由宿主分别核验所有权。
 
 普通会话可以按以下提示使用公开工具：
 
@@ -20,7 +20,7 @@ DMC 0.1.2 的业务行为恢复至 9ab56c8：先保存首次分析，子任务�
 
 | 功能 | 当前公开入口 | 旧入口处理 |
 | --- | --- | --- |
-| 规划 | `task_plan` | 删除 `apply` 派发职责 |
+| 派发 | `task_dispatch` | 统一授权意图、分配与落账 |
 | 正式派发 | `task_dispatch` | 删除 `task_run`、`task_delegate`、`project_dispatch` |
 | 本机 Desktop Codex | `codex_delegate` | 从旧 `task_delegate` 分离 |
 | 结果终结 | `task_submit_result` | 删除 `task_settle`，宿主核验执行或调度角色 |

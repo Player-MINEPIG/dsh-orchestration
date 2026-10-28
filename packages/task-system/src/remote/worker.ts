@@ -562,7 +562,6 @@ export class ExecutorWorker {
                   eligible: true,
                 })),
                 signal: abort.signal,
-                refresh,
               });
           const selected = (
             await ledger.selectTaskSession(`select-${executionId}`, {

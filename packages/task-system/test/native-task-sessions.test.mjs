@@ -52,7 +52,7 @@ test('resuming an attempt cannot adopt a session whose immutable workspace is di
   } finally {await handle?.dispose();await h.dispose()}
 })
 
-test('native decision wait renews the lease before evaluating and still finishes after its initial expiry',async()=>{
+test('native workload renews its lease beyond initial expiry without a session decision',async()=>{
   let choices=0;
   const decisions={ask:async input=>{
     choices++;
@@ -62,7 +62,7 @@ test('native decision wait renews the lease before evaluating and still finishes
     return {provider:'fixture',model:'judge',answers:{session:{type:'choice',choice:'new'}}};
   }};
   const settle={name:'task_submit_result',args:{outcome:'success',summary:'fixture after session selection'}};
-  const h=await createNativeHarness({executionRoot:true,config:{leaseTtlMs:1000,executionTimeoutMs:4000,sessionDecisionEnabled:true},script:[settle,settle]});
+  const h=await createNativeHarness({executionRoot:true,config:{leaseTtlMs:1000,executionTimeoutMs:4000,sessionDecisionEnabled:true},script:[settle,async()=>{await new Promise(resolve=>setTimeout(resolve,1200));return settle;}]});
   h.ctx.provide('decisionModels',decisions);
   try {
     const l=h.ledger;
@@ -75,7 +75,7 @@ test('native decision wait renews the lease before evaluating and still finishes
     const run=l.createRun('second',{taskId:task.taskId,route}).value;
     const claim=l.claim('claim',{runId:run.runId,nodeId:'local',ttlMs:1000}).value,originalExpiry=Date.parse(claim.attempt.leaseExpiresAt);
     const result=await h.ctx.taskSystem.native.execute(claim);
-    assert.ok(Date.now()>originalExpiry);assert.equal(result.run.state,'succeeded');assert.equal(choices,1);assert.equal(h.adapter.requests.length,2);assert.notEqual(result.sessionId,initial.sessionId);
+    assert.ok(Date.now()>originalExpiry);assert.equal(result.run.state,'succeeded');assert.equal(choices,0);assert.equal(h.adapter.requests.length,2);assert.equal(result.sessionId,initial.sessionId);
   } finally {await h.dispose();}
 });
 
