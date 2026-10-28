@@ -109,6 +109,17 @@ test('three no-update rounds or delivery failures need action; busy does not con
  assert.equal(f.l.checkins.view(task.taskId).phase,'needs_action');assert.equal(f.l.getSessionMessage(message.messageId).state,'failed');
 });
 
+test('a processed current result supersedes old check delivery failure and actually resumes one due check',t=>{
+ const f=fixture(t),task=f.task('recovered-check');f.l.checkins.request('first-check',task.taskId);const check=f.messages()[0];
+ for(let n=0;n<3;n++)f.l.recordTaskReturnFailure(check.messageId,'RETURN_UNAVAILABLE');
+ const run=f.l.withDispatchOrigin(owner(),()=>f.l.createRun('run',{taskId:task.taskId,route:route(f)}).value),a=f.l.claim('claim',{runId:run.runId,nodeId:'worker',ttlMs:10000}).value.attempt;
+ f.advance();f.l.submit('failure',{runId:run.runId,attemptId:a.attemptId,nodeId:'worker',fence:a.fence,outcome:'failure',summary:'Coordinator assessed the actual outcome'});
+ const returned=f.l.sessionMessages(task.taskId).find(m=>m.completion);f.l.completeSessionMessage('return-processed',{messageId:returned.messageId,nodeId:'central',state:'completed',reply:'Current result handled'});
+ assert.equal(f.l.checkins.view(task.taskId).phase,'scheduled');assert.doesNotMatch(f.l.checkins.view(task.taskId).reason,/请修复/);
+ f.advance(60000);f.l.checkins.tick();const due=f.messages().filter(m=>m.checkIn);assert.equal(due.length,1);assert.notEqual(due[0].messageId,check.messageId);f.l.checkins.tick();assert.equal(f.messages().filter(m=>m.checkIn).length,1);
+ assert.equal(f.l.getSessionMessage(check.messageId).state,'failed','old delivery record remains history');
+});
+
 test('queued work waits without periodic questions; explicit checks and real failure recovery remain available',t=>{
  const f=fixture(t),r=route(f),task=f.task(),run=f.l.createRun('run',{taskId:task.taskId,route:r}).value;
  f.advance();f.l.checkins.tick();assert.equal(f.messages().length,0);assert.equal(f.l.checkins.view(task.taskId).category,'waiting_execution');

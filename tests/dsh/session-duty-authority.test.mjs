@@ -104,12 +104,18 @@ for (const authMode of ['ed25519','trusted-network']) test(`remote central with 
     assert.equal(row.canCancel,true);
     await controls.actOnProjectTask({commandId:'cancel-through-ui',taskId:row.id,runId:row.runId,expectedVersion:row.actionVersion,action:'cancel'});
     assert.equal(ledger.getTask(row.id).state,'cancelled');
+    const cancelledReturn=ledger.history(row.id).resultReturns.at(-1);
+    for(let n=0;n<3;n++)ledger.recordTaskReturnFailure(cancelledReturn.messageId,'RETURN_UNAVAILABLE');
+    const cancelledRow=(await controls.projectSnapshot({view:'planner'})).tasks.find(task=>task.id===row.id);
+    assert.equal(cancelledRow.status,'cancelled');assert.equal(cancelledRow.checkin.returnDelivery,null);assert.notEqual(cancelledRow.checkin.responsibility.state,'needs_user');
+    assert.equal(ledger.getSessionMessage(cancelledReturn.messageId).state,'failed','cancelled return remains historical evidence');
     const owned=ledger.withDispatchOrigin(ledger.getRun(extra.dispatch.runId).dispatchOrigin,()=>{
       const task=ledger.createTask('return-control-task',{title:'Unanswered return control'}).value;
       const wb=new Workbench(ledger),backlog=wb.snapshot().backlogs.find(backlog=>backlog.projectId===project.binding.projectId);
       wb.manage('link-return-control','link_backlog_task',{taskId:task.taskId,backlogId:backlog.backlogId});
-      const run=ledger.createRun('return-control-run',{taskId:task.taskId}).value;
-      ledger.cancel('return-control-cancel',{taskId:task.taskId,reason:'Fixture stopped before execution'});
+      const run=ledger.createRun('return-control-run',{taskId:task.taskId,route:{nodeId:'central',provider:'test-offline',model:'script',requiredCapabilities:[]}}).value;
+      const claim=ledger.claim('return-control-claim',{runId:run.runId,nodeId:'central',ttlMs:10000}).value.attempt;
+      ledger.submit('return-control-failed',{runId:run.runId,attemptId:claim.attemptId,nodeId:'central',fence:claim.fence,outcome:'failure',summary:'Active task failed and still needs coordinator follow-up'});
       const message=ledger.history(task.taskId).resultReturns[0];
       for(let n=0;n<3;n++)ledger.recordTaskReturnFailure(message.messageId,'RETURN_UNAVAILABLE');
       return {task,run,message};
