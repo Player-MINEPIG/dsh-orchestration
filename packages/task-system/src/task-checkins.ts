@@ -250,7 +250,8 @@ export class TaskCheckins {
     if(expectation.phase==="pending_start")return expectation;
     const dueAt=executionDueAt(expectation),message=this.read<SessionMessage>("sessionMessage",executionCheckId(run.runId));
     const scopeUnavailable=run.dispatchOrigin?.kind!=="session";
-    return {phase:scopeUnavailable?"needs_action":message?.state==="failed"?"needs_action":message?.withdrawn?"withdrawn":message?.state==="completed"?"processed":message?.state==="queued"?"queued":!this.executionOpen(run)?"withdrawn":dueAt<=this.now()?"due":"running",expectedExecutionMs:expectation.expectedExecutionMs,startedAt:expectation.startedAt,dueAt,...(message?{messageId:message.messageId,...(message.reply?{reason:message.reply}:{})}:{}),...(scopeUnavailable?{reason:"未记录可安全接收问询的原调度会话，不能自动选择替代会话"}:{})};
+    const withdrawn=message?.withdrawn || !this.executionOpen(run);
+    return {phase:message?.state==="completed"?"processed":withdrawn?"withdrawn":scopeUnavailable?"needs_action":message?.state==="failed"?"needs_action":message?.state==="queued"?"queued":dueAt<=this.now()?"due":"running",expectedExecutionMs:expectation.expectedExecutionMs,startedAt:expectation.startedAt,dueAt,...(message?{messageId:message.messageId,...(!withdrawn && message.reply?{reason:message.reply}:{})}:{}),...(!withdrawn && scopeUnavailable?{reason:"未记录可安全接收问询的原调度会话，不能自动选择替代会话"}:{})};
   }
   private responsibilityState(taskId: string) {
     const receipt = this.read<ResponsibilityReceipt>(
@@ -336,6 +337,30 @@ export class TaskCheckins {
       )
     );
   }
+  communicationState(taskId: string) {
+    const task = this.ledger.getTask(taskId), scope = this.responsibilityScope(taskId);
+    const latest = this.latestRun(taskId);
+    const active = scope.some(run => ["queued", "running"].includes(run.state));
+    const uncertain = scope.some(run => run.state === "uncertain");
+    const materialsPending = [...this.responsibilityTaskIds(taskId)].some(id => this.ledger.getTask(id).manualCompletion?.materials === "pending");
+    const settledCancellation = task.state === "cancelled" && !active && !uncertain && !materialsPending && !this.approvalRequired(taskId);
+    const relevant = new Set(scope.filter(run => run.runId === latest?.runId || ["queued", "running", "uncertain"].includes(run.state) || run.reviewStatus === "pending_user").map(run => run.runId));
+    const messages = this.ledger.sessionMessages(taskId);
+    const latestReturns = new Map<string, SessionMessage>();
+    for (const message of messages) {
+      const check = message.checkIn;
+      if (message.completion && relevant.has(message.completion.runId)) latestReturns.set(message.completion.runId, message);
+      else if (check?.kind === "execution-deadline" && !message.withdrawn && scope.some(run => run.runId === check.runId && this.executionOpen(run))) latestReturns.set(check.runId, message);
+    }
+    const failure = settledCancellation ? undefined : [...latestReturns.values()].findLast(message => message.state === "failed");
+    const failedCheck = messages.findLast(message => message.checkIn && message.checkIn.kind !== "execution-deadline" && message.state === "failed");
+    const latestReturn = latest ? latestReturns.get(latest.runId) : undefined;
+    const recoveredCheck = latestReturn?.completion && latestReturn.state === "completed" && failedCheck && latestReturn.createdAt >= failedCheck.createdAt && !scope.some(run => run.runId !== latest?.runId && ["queued", "running", "uncertain"].includes(run.state));
+    return {settledCancellation, active, uncertain, materialsPending, failure, deliveryBlocked: !settledCancellation && !recoveredCheck && (this.record(taskId)?.deliveryFailures ?? 0) >= 3};
+  }
+  private effectiveAttention(record: CheckinRecord | undefined) {
+    return record?.attention === "delivery_unavailable" && !this.communicationState(record.taskId).deliveryBlocked ? undefined : record?.attention;
+  }
   private category(task: Task): CheckinCategory {
     const runs = this.rows<Run>("run").filter(
       (run) => !run.historyOnly && !run.observationOnly,
@@ -366,7 +391,7 @@ export class TaskCheckins {
     const owner = this.owner(task);
     if (!owner) return "needs_owner";
     if (owner.parentLease) return "protected_execution";
-    if(this.rows<SessionMessage>("sessionMessage").some(message=>message.taskId===task.taskId && (message.completion || message.checkIn?.kind==="execution-deadline") && message.state==="failed"))return "return_unavailable";
+    if(this.communicationState(task.taskId).failure)return "return_unavailable";
     if (
       task.confirmation?.state === "pending" ||
       latest?.reviewStatus === "pending_user"
@@ -455,6 +480,7 @@ export class TaskCheckins {
       record = this.record(taskId),
       category = this.category(task);
     const responsibility = this.responsibilityState(taskId);
+    const attention = this.effectiveAttention(record);
     const eligible = ![
       "closed",
       "not_admitted",
@@ -469,7 +495,7 @@ export class TaskCheckins {
           ? "needs_owner"
           : category === "protected_execution" ||
               category === "return_unavailable" ||
-              record?.attention
+              attention
             ? "needs_action"
             : record?.pendingMessageId || record?.requested
               ? "queued"
@@ -480,11 +506,13 @@ export class TaskCheckins {
                   : category !== "ready"
                     ? "deferred"
                     : "scheduled";
-    const reason = task.parentTaskId
+    const reason = category === "closed"
+      ? reasons.closed
+      : task.parentTaskId
       ? "子任务由父任务跟进，请检查父任务"
-      : record?.attention === "no_update"
+      : attention === "no_update"
         ? "连续三次检查未记录进度，已停止自动检查；可人工检查恢复"
-        : record?.attention === "delivery_unavailable"
+        : attention === "delivery_unavailable"
           ? "负责会话连续三次无法处理检查，请修复会话后人工检查"
           : record?.plan.kind === "paused"
             ? record.plan.reason
@@ -497,7 +525,7 @@ export class TaskCheckins {
       canRequest: eligible,
       revision: record?.revision ?? 0,
       nextCheckAt:
-        record?.plan.kind === "scheduled" ? record.plan.nextCheckAt : null,
+        category !== "closed" && record?.plan.kind === "scheduled" ? record.plan.nextCheckAt : null,
       observation: record?.observation ?? null,
       checksWithoutUpdate: record?.checksWithoutUpdate ?? 0,
       deliveryFailures: record?.deliveryFailures ?? 0,
@@ -748,7 +776,7 @@ export class TaskCheckins {
         }
         if (
           record.pendingMessageId ||
-          record.attention ||
+          this.effectiveAttention(record) ||
           (!record.requested &&
             (record.plan.kind === "paused" ||
               record.plan.nextCheckAt > this.now())) ||

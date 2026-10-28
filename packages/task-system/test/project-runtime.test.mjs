@@ -671,3 +671,74 @@ test('overview separates execution facts from explicit responsibility and proven
   assert.match(rows.find(t=>t.id===source.taskId).checkin.responsibility.summary,/原会话/);
  }finally{await h.dispose();}
 });
+
+for(const cancelled of [true,false])test(`a newer same-run return clears obsolete delivery failures${cancelled?' after verified task cancellation':''}`,async()=>{
+ const h=await createNativeHarness({config:{role:'planner'}});
+ try{
+  const l=h.ledger,runtime=h.ctx.taskSystem.projects;registerExecutor(l,'node',worker);
+  const {task,run,lease}=l.withDispatchOrigin({kind:'session',nodeId:'local',sessionId:'return-owner'},()=>fixtureRun(h,'obsolete-return'));
+  l.submit('unknown',{...lease,outcome:'unknown',summary:'No conclusive execution result'});
+  const old=l.sessionMessages(task.taskId).find(m=>m.completion);
+  for(let n=0;n<3;n++)l.recordTaskReturnFailure(old.messageId,'RETURN_UNAVAILABLE');
+  if(cancelled)l.cancel('cancel-task',{taskId:task.taskId,reason:'User no longer wants this task'});
+  l.resolveUncertain('verified-stop',{runId:run.runId,outcome:cancelled?'cancelled':'failed',reason:'Executor stopped; effects verified'});
+  if(!cancelled){const newer=l.sessionMessages(task.taskId).filter(m=>m.completion).at(-1);l.completeSessionMessage('new-return-processed',{messageId:newer.messageId,nodeId:'local',state:'completed',reply:'Current outcome processed'});}
+  const before=JSON.stringify(l.history(task.taskId)),row=runtime.snapshot().tasks.find(t=>t.id===task.taskId);
+  assert.equal(row.checkin.returnDelivery,null,'historical failure must not offer a retry');
+  assert.equal(row.status,cancelled?'cancelled':'error');
+  assert.equal(row.checkin.responsibility.state,cancelled?'none':'unreviewed');
+  assert.equal(l.getSessionMessage(old.messageId).state,'failed','history remains intact');
+  if(cancelled){assert.equal(row.checkin.phase,'closed');assert.doesNotMatch(row.checkin.reason,/请修复|人工检查/);}
+  assert.equal(JSON.stringify(l.history(task.taskId)),before,'projection never changes task or execution evidence');
+  if(cancelled){
+   l.withDispatchOrigin({kind:'session',nodeId:'local',sessionId:'return-owner'},()=>l.taskCheckin({action:'responsibility',commandId:'independent-decision',taskId:task.taskId,expectedVersion:row.checkin.responsibilityVersion,state:'needs_user',summary:'Choose whether to retain the cancelled tasks existing output'}));
+   const declared=runtime.snapshot().tasks.find(t=>t.id===task.taskId).checkin.responsibility;
+   assert.equal(declared.state,'needs_user');assert.match(declared.summary,/Choose whether/);assert.equal(declared.sessionId,'return-owner');
+  }
+ }finally{await h.dispose();}
+});
+
+for(const failedReturn of [true,false])test(`task cancellation retains unresolved execution effects with ${failedReturn?'failed':'processed'} return`,async()=>{
+ const h=await createNativeHarness({config:{role:'planner'}});
+ try{
+  const l=h.ledger;registerExecutor(l,'node',worker);
+  const {task,lease}=l.withDispatchOrigin({kind:'session',nodeId:'local',sessionId:'return-owner'},()=>fixtureRun(h,'unresolved-cancel'));
+  l.submit('unknown',{...lease,outcome:'unknown',summary:'Effects remain unknown'});const message=l.sessionMessages(task.taskId).find(m=>m.completion);
+  if(failedReturn)for(let n=0;n<3;n++)l.recordTaskReturnFailure(message.messageId,'RETURN_UNAVAILABLE');
+  else l.completeSessionMessage('return-processed',{messageId:message.messageId,nodeId:'local',state:'completed',reply:'Uncertainty noted in the original session'});
+  l.cancel('cancel-task',{taskId:task.taskId,reason:'Requested cancellation'});
+  const row=h.ctx.taskSystem.projects.snapshot().tasks.find(t=>t.id===task.taskId);
+  assert.equal(row.status,'error');assert.equal(row.canReconcile,true);assert.equal(row.checkin.responsibility.state,'needs_user');assert.match(row.checkin.responsibility.summary,/执行结果仍未核实/);assert.equal(row.checkin.returnDelivery?.messageId??null,failedReturn?message.messageId:null);
+ }finally{await h.dispose();}
+});
+
+test('a successful different run cannot clear an uncertain runs failed return',async()=>{
+ const h=await createNativeHarness({config:{role:'planner'}});
+ try{
+  const l=h.ledger,origin={kind:'session',nodeId:'local',sessionId:'return-owner'};registerExecutor(l,'node',{...worker,maxConcurrent:2});
+  const {task,run,lease}=l.withDispatchOrigin(origin,()=>fixtureRun(h,'overlapping-results'));
+  const newer=l.withDispatchOrigin(origin,()=>l.createRun('new-run',{taskId:task.taskId,route:run.route}).value);
+  const claim=l.claim('new-claim',{runId:newer.runId,nodeId:'worker',ttlMs:10000}).value.attempt;
+  l.submit('old-unknown',{...lease,outcome:'unknown',summary:'Older effects still unresolved'});
+  const old=l.sessionMessages(task.taskId).find(m=>m.completion?.runId===run.runId);for(let n=0;n<3;n++)l.recordTaskReturnFailure(old.messageId,'RETURN_UNAVAILABLE');
+  l.submit('new-success',{runId:newer.runId,attemptId:claim.attemptId,nodeId:'worker',fence:claim.fence,outcome:'success',summary:'Different execution succeeded'});
+  const success=l.sessionMessages(task.taskId).find(m=>m.completion?.runId===newer.runId);l.completeSessionMessage('new-return',{messageId:success.messageId,nodeId:'local',state:'completed',reply:'New execution processed'});
+  const row=h.ctx.taskSystem.projects.snapshot().tasks.find(t=>t.id===task.taskId);
+  assert.equal(row.status,'error');assert.equal(row.checkin.responsibility.state,'needs_user');assert.equal(row.checkin.returnDelivery.messageId,old.messageId);assert.equal(l.taskActionState(task.taskId).uncertain,true);
+ }finally{await h.dispose();}
+});
+
+test('cancelled parent retains a real child review gate',async()=>{
+ const h=await createNativeHarness({config:{role:'planner'}});
+ try{
+  const l=h.ledger;registerExecutor(l,'node',{...worker,maxConcurrent:2});
+  const {task,run,lease}=l.withDispatchOrigin({kind:'session',nodeId:'local',sessionId:'return-owner'},()=>fixtureRun(h,'cancelled-parent-review'));
+  const child=l.createTask('child',{title:'Child result',parentTaskId:task.taskId}).value;
+  const childRun=l.createRun('child-run',{taskId:child.taskId,parentRunId:run.runId,route:run.route}).value;
+  const a=l.claim('child-claim',{runId:childRun.runId,nodeId:'worker',ttlMs:10000}).value.attempt;
+  l.submit('child-partial',{runId:childRun.runId,attemptId:a.attemptId,nodeId:'worker',fence:a.fence,outcome:'partial',summary:'Requires actual user result review'});
+  l.submit('unknown',{...lease,outcome:'unknown',summary:'Parent stopped'});l.cancel('cancel-parent',{taskId:task.taskId,reason:'Cancel parent'});l.resolveUncertain('parent-verified',{runId:run.runId,outcome:'cancelled',reason:'Verified parent effects'});
+  const row=h.ctx.taskSystem.projects.snapshot().tasks.find(t=>t.id===task.taskId);
+  assert.equal(row.checkin.approvalRequired,true);assert.equal(row.checkin.responsibility.state,'needs_user');assert.equal(l.getRun(childRun.runId).reviewStatus,'pending_user');
+ }finally{await h.dispose();}
+});

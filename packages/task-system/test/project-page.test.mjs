@@ -703,6 +703,7 @@ test('failed completion exposes its reason and a return-only retry control',()=>
  const p=page();
  const html=vm.runInContext('resultReturnStatus({id:"returned-task",checkin:{returnDelivery:{state:"failed",reason:"原会话连续三次未回信"}}})',p.context);
  assert.match(html,/原会话回信需处理/);assert.match(html,/连续三次/);assert.match(html,/data-action="task-return-retry"/);assert.match(html,/保留原事件/);
+ assert.equal(vm.runInContext('resultReturnStatus({id:"cancelled-task",checkin:{returnDelivery:null}})',p.context),'','historical delivery failures have no actionable retry panel');
 });
 
 test('responsibility filters distinguish explicit user blockers, coordinator handling and unreviewed failures',async()=>{
