@@ -622,7 +622,7 @@ export class ProjectRuntime {
       goal,
       description: goal,
       state: "active",
-      nextStep: "向统筹端描述下一项工作",
+      nextStep: "",
     });
     this.workbench.manage(`pr:${p.id}:backlog`, "create_backlog", {
       backlogId: `pr:${p.id}`,
