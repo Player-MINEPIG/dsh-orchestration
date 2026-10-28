@@ -2463,6 +2463,34 @@ export class TaskLedger {
     );
     return this.getRun(run.runId);
   }
+  dispatchRoutes(input:{taskId?:string;projectId?:string;route?:ExecutionRoute;nodeId?:string;executionModel?:ExecutionModelChoice;workspaceId?:string},excludedNodeId?:string): ExecutionRoute[] {
+    const task=input.taskId?this.getTask(input.taskId):undefined;
+    const projectId=input.projectId ?? (task?this.projectForTask(task.taskId):this.dispatchProjectId());
+    const explicitWorkspace=input.route?.workspaceId ?? input.workspaceId ?? task?.workspaceId;
+    const nodeId=input.route?.nodeId ?? input.nodeId ?? (explicitWorkspace?this.getWorkspace(explicitWorkspace).nodeId:undefined);
+    if(nodeId && !this.getNode(nodeId).enabled)fail("FORBIDDEN","Node disabled");
+    const project=projectId?this.projectExecutionPolicy(projectId,nodeId):undefined;
+    const health=new Map(this.nodeStatuses().map(node=>[node.nodeId,node]));
+    const candidates=this.decisionCatalog().nodes.filter(node=>node.enabled && node.nodeId!==excludedNodeId && !(this.role==="planner"&&node.nodeId===this.nodeId) && node.roles.some(role=>role==="executor"||role==="both") && (!nodeId || node.nodeId===nodeId) && (project?.allowedNodeIds==null || project.allowedNodeIds.includes(node.nodeId)) && (!task?.policy?.allowedNodeIds || task.policy.allowedNodeIds.includes(node.nodeId)));
+    const routes=candidates.flatMap(node=>{
+      try {
+        const policy=projectId?this.projectExecutionPolicy(projectId,node.nodeId):undefined;
+        if(explicitWorkspace && policy?.workspaceId && explicitWorkspace!==policy.workspaceId)fail("WORKSPACE_POLICY","Explicit workspace conflicts with the project execution binding");
+        const workspaceId=explicitWorkspace ?? policy?.workspaceId;
+        const route=input.route ?? {nodeId:node.nodeId,...this.selectExecutionModel(node.nodeId,input.executionModel).choice,...(workspaceId?{workspaceId}:{}),requiredCapabilities:[]};
+        if(task?.policy?.allowedWorkspaceIds && (!route.workspaceId || !task.policy.allowedWorkspaceIds.includes(route.workspaceId)))fail("FORBIDDEN","Task policy excludes this workspace");
+        if(route.backend && task && !task.policy?.allowedBackends?.includes(route.backend))fail("FORBIDDEN","Task policy excludes this backend");
+        const catalog=this.executionModels.view(node.nodeId).catalog;
+        this.validateRoute(route,{admission:true,skipModel:catalog.state!=="fresh" || !catalog.snapshot?.complete});
+        return [route];
+      } catch(error) {
+        if(nodeId || !(error instanceof TaskError))throw error;
+        return [];
+      }
+    });
+    const slots=(id:string)=>{const status=health.get(id);return Math.max(0,(status?.maxConcurrent ?? 1)-Math.max(status?.activeClaims ?? 0,status?.activeExecutions ?? 0));};
+    return routes.sort((a,b)=>Number(health.get(b.nodeId)?.state==="online")-Number(health.get(a.nodeId)?.state==="online") || slots(b.nodeId)-slots(a.nodeId) || a.nodeId.localeCompare(b.nodeId));
+  }
   dispatchExistingTask(commandId: string, input: Omit<RunInput,"executionModel"> & {nodeId?:string;executionModel?:ExecutionModelChoice;retry?:boolean;expectedActionVersion?:string}, excludedNodeId?:string) {
     this.planner();
     const rejected=this.get<{digest:string;code:string;message:string}>("taskDispatchRejection",commandId);
@@ -2484,11 +2512,11 @@ export class TaskLedger {
         task.state="ready";task.updatedAt=this.now();delete task.manualCompletion;this.saveTask(task);
       }
       if(input.route && (input.nodeId || input.executionModel))fail("INVALID","route cannot be combined with nodeId or executionModel");
-      const candidates=this.decisionCatalog().nodes.filter(node=>node.enabled && node.nodeId!==excludedNodeId && node.roles.some(role=>role==="executor"||role==="both"));
-      const nodeId=input.route?.nodeId ?? input.nodeId ?? (candidates.length===1?candidates[0]?.nodeId:undefined) ?? fail("EXECUTOR_REQUIRED","Choose nodeId from task_nodes");
+      const assignment=this.dispatchRoutes(input,excludedNodeId)[0] ?? fail("EXECUTOR_REQUIRED","No authorized executor supports this task; inspect task_nodes");
+      const nodeId=assignment.nodeId;
       const selected=this.selectExecutionModel(nodeId,input.route?ExecutionModelChoice.strip().parse(input.route):input.executionModel);
       const {retry:_retry,expectedActionVersion:_version,nodeId:_node,executionModel:_model,...runInput}=input;
-      const run=this.newRun({...runInput,route:input.route ?? {nodeId,...selected.choice,requiredCapabilities:[]},executionModel:selected.executionModel});
+      const run=this.newRun({...runInput,route:assignment,executionModel:selected.executionModel});
       if(input.retry)this.event("task.explicit_retry",{previousRunId:runs.at(-1)?.runId ?? null},task.taskId,run.runId);
       return run;
     });} catch(error) {

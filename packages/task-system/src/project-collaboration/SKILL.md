@@ -9,7 +9,7 @@ disable-model-invocation: true
 此技能只在当前会话协作模式有效时注入；项目身份由插件绑定，不能自行选择其他项目。普通对话可以直接回应。用户授权执行项目工作后按以下流程行动：
 
 1. 用 `project_status` 查看中央已有任务和结果，避免重复派发。用 `task_nodes` 查询执行端身份、默认模型和目录状态；需要显式模型路线时加 `details:true` 并按节点或模型筛选、分页。目录 pending、stale 或节点离线表示等待，不能据此判断某个模型已被移除。
-2. 用 `task_dispatch` 提供标题、完整任务说明和稳定 `commandId`。用户明确指定执行端时传 `nodeId`，否则让中央选择执行端。未指定执行模型时省略模型参数，使用该节点默认模型。用户明确选择了执行模型时，从用户上下文提取 `executionModel`，内容为 `{provider,model,reasoningEffort?,backend?}`；这是工作负载模型，与中央规划决策模型分开。用户明确要求完整路线时，可原样传入 `task_nodes.routes` 返回的对象作为 `route`，保留返回字段，不与 `nodeId` 或 `executionModel` 同传。项目目录由执行端按权威 context 分配，普通项目任务不要求调用者创建 workspace。派发前自行划分写入文件范围、依赖和共享 Git index、分支及 GUI 应用的操作顺序。独立工作可并行，不要求逐任务填写资源声明。queued、pending 或 routing pending 回执不代表执行已开始。
+2. 用 `task_dispatch` 提供标题、完整任务说明和稳定 `commandId`。任务涉及特定设备、操作系统、文件位置或能力时，先核对 `task_nodes` 并传 `nodeId`。仅当授权池内任意执行端均适合时省略，由中央按就绪、容量和稳定节点顺序分配，忙碌或离线时保留合法候选等待。未指定执行模型时省略模型参数，使用该节点默认模型。用户明确选择了执行模型时，从用户上下文提取 `executionModel`，内容为 `{provider,model,reasoningEffort?,backend?}`；这是实际执行任务的模型，不修改对话模型或观察归并预设。用户明确要求完整路线时，可原样传入 `task_nodes.routes` 返回的对象作为 `route`，保留返回字段，不与 `nodeId` 或 `executionModel` 同传。项目目录由执行端按权威 context 分配，普通项目任务不要求调用者创建 workspace。派发前自行划分写入文件范围、依赖和共享 Git index、分支及 GUI 应用的操作顺序。独立工作可并行，不要求逐任务填写资源声明。queued、pending 或 routing pending 回执不代表执行已开始。
 3. 用 `project_status` 跟踪实际任务、Run、报告和验收状态。用 `project_progress` 将已发生的进度、证据和阻塞同步中央；不要编造结果。同一写操作重试保持 commandId；新进度版本使用新的 commandId。查询默认摘要，报告正文用 `task_history {taskId,details:true,reportId}` 精确读取，报告、事件和 Run 历史用 section 与 limit/cursor 分页。
 4. 工作完成后先检查真实任务结果、测试和交付证据，再用 `project_finish` 提交摘要供用户或中央复核。提交不等于验收通过，不得替用户批准或关闭审查。
 

@@ -3,10 +3,6 @@ import {
   defaultTaskSessionSelection,
   type TaskSessionSnapshot,
 } from "./session-default.js";
-import {
-  resolveManagedTaskSessionDecision,
-  type TaskSessionDecisionService,
-} from "./session-policy.js";
 import type {
   Claim,
   TaskSessionChoice,
@@ -18,14 +14,13 @@ export async function chooseExecutionSession(input: {
     task: Claim["task"];
     run: Pick<
       Claim["run"],
-      | "runId"
       | "route"
       | "retry"
       | "workspaceConstraint"
       | "configuration"
       | "projectContext"
     >;
-    attempt: Pick<Claim["attempt"], "attemptId" | "nodeId">;
+    attempt: Pick<Claim["attempt"], "nodeId">;
   };
   context: TaskSessionContext;
   defaultWorkspaceId?: string | null;
@@ -33,17 +28,12 @@ export async function chooseExecutionSession(input: {
   workspaces: {
     workspaceId: string;
     nodeId: string;
-    description: string;
     eligible: boolean;
   }[];
-  decisions?: TaskSessionDecisionService;
-  decisionProvider?: string;
   signal?: AbortSignal;
-  ttlMs?: number;
-  refresh?: () => TaskSessionContext | Promise<TaskSessionContext>;
 }): Promise<TaskSessionChoice> {
-  const { claim } = input;
-  let context = input.context;
+  input.signal?.throwIfAborted();
+  const { claim, context } = input;
   const workspaceId =
     claim.run.route?.workspaceId ??
     claim.task.workspaceId ??
@@ -60,8 +50,6 @@ export async function chooseExecutionSession(input: {
     !Array.isArray(claim.run.configuration)
       ? (claim.run.configuration as Record<string, unknown>)
       : {};
-  // Each scheduled occurrence has a new evidence window. Explicit redispatch and
-  // transport recovery continue the existing session, retaining previous results.
   const independentScheduleRun =
     claim.task.kind === "scheduled" &&
     !config.taskRetry &&
@@ -79,63 +67,29 @@ export async function chooseExecutionSession(input: {
       throw new Error(
         "TASK_WORKSPACE_DENIED: managed directories cannot replace an explicit workspace grant",
       );
-    const managedSnapshot = () => ({
-      taskId: claim.task.taskId,
-      nodeId: claim.attempt.nodeId,
-      schedulerId: context.schedulerId,
-      ...(context.taskSessionId
-        ? { taskSessionId: context.taskSessionId }
-        : {}),
-      validUntil: Date.now() + (input.ttlMs ?? 30000),
-      sessions: independentScheduleRun
-        ? []
-        : context.sessions.filter(
-            (session) =>
-              session.taskId === claim.task.taskId &&
-              session.nodeId === claim.attempt.nodeId &&
-              session.schedulerId === context.schedulerId &&
-              session.workspaceId === undefined,
-          ),
-      context: {
-        title: claim.task.title,
-        ...(claim.task.description
-          ? { description: claim.task.description }
-          : {}),
-        runId: claim.run.runId,
-      },
-    });
-    const selection = await resolveManagedTaskSessionDecision(
-      managedSnapshot(),
-      {
-        decisions: input.decisions,
-        provider: input.decisionProvider,
-        requestId: `task-session-${claim.attempt.attemptId}`,
-        signal: input.signal,
-        ...(input.refresh
-          ? {
-              currentSnapshot: async () => {
-                context = await input.refresh!();
-                return managedSnapshot();
-              },
-            }
-          : {}),
-      },
+    const existing = context.sessions.find(
+      (session) =>
+        session.sessionId === context.taskSessionId &&
+        session.taskId === claim.task.taskId &&
+        session.nodeId === claim.attempt.nodeId &&
+        session.schedulerId === context.schedulerId &&
+        session.workspaceId === undefined,
     );
     return {
       expectedTaskSessionId: context.taskSessionId ?? null,
-      session: selection.session,
-      ...(selection.decision ? { decision: selection.decision } : {}),
+      session:
+        existing && !independentScheduleRun
+          ? { mode: "reuse", sessionId: existing.sessionId }
+          : { mode: "new" },
     };
   }
-  // Older text-only profiles have no workspace grant. Preserve that mode without
-  // inventing a directory or offering a decision that could grant filesystem access.
   if (!workspaceId) {
-    if (input.decisions)
-      throw new Error(
-        "TASK_SESSION_CONFIG: configure a registered default workspace before enabling session decisions",
-      );
     const current = context.sessions.find(
-      (session) => session.sessionId === context.taskSessionId,
+      (session) =>
+        session.sessionId === context.taskSessionId &&
+        session.taskId === claim.task.taskId &&
+        session.nodeId === claim.attempt.nodeId &&
+        session.schedulerId === context.schedulerId,
     );
     if (
       context.taskSessionId &&
@@ -152,90 +106,48 @@ export async function chooseExecutionSession(input: {
           : { mode: "new" },
     };
   }
-  const buildSnapshot = (): TaskSessionSnapshot => {
-    const task = context.task ?? claim.task;
-    return {
-      taskId: claim.task.taskId,
-      nodeId: claim.attempt.nodeId,
-      defaultWorkspaceId: context.workspaceId ?? workspaceId,
-      ...(context.taskSessionId
-        ? { taskSessionId: context.taskSessionId }
-        : {}),
-      context: {
-        title: task.title,
-        description: task.description,
-        runId: claim.run.runId,
-        schedulerId: context.schedulerId,
-        ...(context.projectContext
-          ? {
-              projectContext:
-                context.projectContext as unknown as import("./remote/protocol.js").Json,
-            }
-          : {}),
-      },
-      validUntil: Date.now() + (input.ttlMs ?? 30000),
-      workspaces: input.workspaces.map((workspace) => ({
-        ...workspace,
-        eligible:
-          workspace.eligible &&
-          (!(context.workspaceConstraint ?? claim.run.workspaceConstraint) ||
-            workspace.workspaceId ===
-              (context.workspaceConstraint ?? claim.run.workspaceConstraint)) &&
-          (!context.eligibleWorkspaceIds ||
-            context.eligibleWorkspaceIds.includes(workspace.workspaceId)) &&
-          (!task.workspaceId || task.workspaceId === workspace.workspaceId) &&
-          (!task.policy?.allowedWorkspaceIds ||
-            task.policy.allowedWorkspaceIds.includes(workspace.workspaceId)),
-      })),
-      sessions: context.sessions
-        .filter((session) => session.workspaceId !== undefined)
-        .map((session) => ({
-          sessionId: session.sessionId,
-          taskId: session.taskId,
-          nodeId: session.nodeId,
-          workspaceId: session.workspaceId!,
-          description: `Existing session for Task ${session.taskId}`,
-          eligible: session.schedulerId === context.schedulerId,
-        })),
-    };
+  const task = context.task ?? claim.task;
+  const snapshot: TaskSessionSnapshot = {
+    taskId: claim.task.taskId,
+    nodeId: claim.attempt.nodeId,
+    defaultWorkspaceId: context.workspaceId ?? workspaceId,
+    ...(context.taskSessionId ? { taskSessionId: context.taskSessionId } : {}),
+    workspaces: input.workspaces.map((workspace) => ({
+      ...workspace,
+      eligible:
+        workspace.eligible &&
+        (!(context.workspaceConstraint ?? claim.run.workspaceConstraint) ||
+          workspace.workspaceId ===
+            (context.workspaceConstraint ?? claim.run.workspaceConstraint)) &&
+        (!context.eligibleWorkspaceIds ||
+          context.eligibleWorkspaceIds.includes(workspace.workspaceId)) &&
+        (!task.workspaceId || task.workspaceId === workspace.workspaceId) &&
+        (!task.policy?.allowedWorkspaceIds ||
+          task.policy.allowedWorkspaceIds.includes(workspace.workspaceId)),
+    })),
+    sessions: context.sessions.flatMap((session) =>
+      session.workspaceId === undefined
+        ? []
+        : [
+            {
+              sessionId: session.sessionId,
+              taskId: session.taskId,
+              nodeId: session.nodeId,
+              workspaceId: session.workspaceId,
+              eligible: session.schedulerId === context.schedulerId,
+            },
+          ],
+    ),
   };
-  const snapshot = buildSnapshot();
-  // An authority-owned binding is already a decision. Validate its identity,
-  // workspace and current grants, rather than asking a model to choose again.
-  const selection = independentScheduleRun
-    ? defaultTaskSessionSelection(
-        { ...snapshot, taskSessionId: undefined },
-        "independent-scheduled-run",
-      )
-    : snapshot.taskSessionId
-      ? defaultTaskSessionSelection(snapshot, "existing-task-binding")
-      : input.decisions
-        ? await (
-            await import("./session-policy.js")
-          ).resolveTaskSessionDecision(snapshot, {
-            decisions: input.decisions,
-            route: input.decisionProvider
-              ? { provider: input.decisionProvider }
-              : {},
-            requestId: `task-session-${claim.attempt.attemptId}`,
-            signal: input.signal,
-            ...(input.refresh
-              ? {
-                  currentSnapshot: async () => {
-                    context = await input.refresh!();
-                    return buildSnapshot();
-                  },
-                }
-              : {}),
-          })
-        : defaultTaskSessionSelection(snapshot, "decision-disabled");
+  const selection = defaultTaskSessionSelection(
+    independentScheduleRun
+      ? { ...snapshot, taskSessionId: undefined }
+      : snapshot,
+  );
   input.signal?.throwIfAborted();
   return {
     expectedTaskSessionId: context.taskSessionId ?? null,
     workspaceId: selection.workspaceId,
     session: selection.session,
-    ...("receipt" in selection && selection.receipt
-      ? { decision: JSON.parse(JSON.stringify(selection.receipt)) }
-      : {}),
   };
 }

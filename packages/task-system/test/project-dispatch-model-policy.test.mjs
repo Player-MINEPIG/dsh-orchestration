@@ -41,12 +41,12 @@ test('real task_dispatch tools use bound context and node default or explicit wo
     const selected=await invoke('task_dispatch',{commandId:'explicit-work',title:'Use the user model',description:'Execute with the explicit user selection',nodeId:'worker',executionModel:explicit});assert.equal(selected.isError,false,JSON.stringify(selected));
     const second=h.ledger.history(selected.value.taskId).runs[0];assert.equal(second.route.model,'explicit');assert.equal(second.executionModel.origin,'explicit');
     const missing={provider:'workload',model:'removed',reasoningEffort:'low'};
-    const unavailable=await invoke('task_dispatch',{commandId:'missing-explicit',title:'Preserve explicit choice',description:'Retain the user model when unavailable',nodeId:'worker',executionModel:missing});assert.equal(unavailable.isError,false,JSON.stringify(unavailable));
-    const third=h.ledger.history(unavailable.value.taskId).runs[0];assert.equal(third.route.model,'removed');assert.equal(third.dispatchIssue.code,'EXPLICIT_EXECUTION_MODEL_UNAVAILABLE');
-    const status=await invoke('project_status',{});assert.equal(status.isError,false,JSON.stringify(status));assert.equal(status.value.runs.find(run=>run.runId===third.runId).dispatchIssue.kind,'needs_action');
+    const unavailable=await invoke('task_dispatch',{commandId:'missing-explicit',title:'Preserve explicit choice',description:'Retain the user model when unavailable',nodeId:'worker',executionModel:missing});assert.equal(unavailable.isError,true,JSON.stringify(unavailable));
+    assert.match(JSON.stringify(unavailable),/Provider\/model not advertised/);
+    assert.equal(h.ledger.snapshot().tasks.length,2,'an unavailable explicit choice creates no unstartable task');
     const invalid=await invoke('task_dispatch',{commandId:'two-model-sources',title:'Reject ambiguous route',description:'Reject conflicting model sources',route:nodes.value.routes[0],executionModel:explicit});assert.equal(invalid.isError,true);
     const unowned=await h.ctx.tools.execute({name:'task_dispatch',arguments:{commandId:'no-agent',title:'No bound caller',description:'Reject missing source identity',nodeId:'worker'},callId:ToolCallId('project-policy-no-agent'),signal:new AbortController().signal});assert.equal(unowned.isError,false,JSON.stringify(unowned));
-    assert.equal(h.ledger.snapshot().runs.length,4);assert.equal(h.ledger.snapshot().attempts.length,0);assert.equal(h.adapter.requests.length,0);
+    assert.equal(h.ledger.snapshot().runs.length,3);assert.equal(h.ledger.snapshot().attempts.length,0);assert.equal(h.adapter.requests.length,0);
   }finally{await handle?.dispose();await h.dispose();}
 });
 

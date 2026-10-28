@@ -108,11 +108,11 @@ test('new coordination child Run distinguishes coordination ancestry from real e
 });
 
 test('planner only offers allowed executors; project CAS changes make an unapplied decision stale',async t=>{
- const f=fixture(t);f.settings('p',{allowedNodeIds:['b'],executionBindings:{b:'b1'}});let offered;
- const decisions={async ask(input){const state=JSON.parse(input.state);offered=state.catalog.executors.map(row=>row.id);const model=state.catalog.modelRoutes.find(row=>row.executorId==='b');return{provider:'fixture',model:'decider',answers:Object.fromEntries(Object.entries(input.questions).map(([id])=>[id,{type:'choice',choice:({persist:'create',attach:'none',executor:'b',modelEffort:model.id,reporting:'none'})[id]??'none'}]))};}};
+ const f=fixture(t);f.settings('p',{allowedNodeIds:['b'],executionBindings:{b:'b1'}});let calls=0;
+ const decisions={async ask(){calls++;throw Error('Formal project planning must not ask a model');}};
  const planner=new TaskPlanner(f.ledger,decisions,()=>taskDecisionCatalog(f.ledger,{}),()=>{});
  const plan=await planner.plan({requestId:'project-plan',projectId:'p',title:'Scoped work',description:'Plan only'});
- assert.deepEqual(offered,['b']);assert.equal(plan.proposal.kind,'proposal');
+ assert.equal(calls,0);assert.equal(plan.proposal.kind,'proposal');assert.equal(plan.proposal.executor.id,'b');assert.equal(plan.proposal.modelRoute.workspaceId,'b1');assert.deepEqual(plan.proposal.fallbackRoutes,[]);
  await assert.rejects(planner.plan({requestId:'wrong-node',projectId:'p',title:'Wrong',description:'',nodeId:'a'}),{code:'PROJECT_NODE_NOT_ALLOWED'});
  f.settings('p',{allowedNodeIds:['a']});assert.throws(()=>planner.apply('project-plan'),{code:'STALE_DECISION'});
  f.settings('p',{allowedNodeIds:['b']});

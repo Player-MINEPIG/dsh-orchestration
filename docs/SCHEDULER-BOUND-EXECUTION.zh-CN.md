@@ -85,17 +85,16 @@
 
 - `planningDecisionEnabled: true` 是兼容默认值，只控制调度端 TaskPlanner；`sessionDecisionEnabled` 继续独立控制执行端 Session/Workspace 选择
 - 两个字段均经 Task Config、`describe()`、`startup().task.values` 与 `saveStartup(target='task')` 暴露，保存按原普通配置生命周期生效
-- 调度开关关闭、typed 服务缺失或可选包未安装时，`task_plan` 仍可用且不调用规划模型。明确完整 route 原样沿用；没有 route 则等待明确路由，不添加“第一台机器”之类的新策略
-- task_plan 结果的 `source` 为 `default` 或 `decision`，`routingStatus` 为 `pending-route`、`ready` 或 `not-requested`。`ready` 只表示候选完整，仍需 task_dispatch 与权威校验；pending-route 的提案应用后仅创建 Task/请求记录，不派发 Run
-- task_plan 可传明确 `route`（执行 provider/model/effort/能力约束）与 `workspaceId`（用户 Task 约束）。已有 schedule.route 与 task_dispatch 的明确分配路径保持原样
-
-当前调度模型的请求删除 workspace 问题，不提供工作区候选；仍保留原 modelEffort 功能。返回额外 workspace 答案会被拒。调度模型建议不再写入 Task.workspaceId；该字段只接受明确输入或保留现有 Task 值。尚未应用的旧模型 workspace 回执返回 `WORKSPACE_REPLAN_REQUIRED`，需新 requestId 重新规划；已存历史和已应用结果不清洗。
+- 正式派发不调用 JEV。主模型通过 `task_nodes` 核对设备语义要求，再直接调用 `task_dispatch`；宿主保留确定性候选校验、授权与幂等落账。
+- 明确 route/nodeId 和项目/工作区约束优先。省略节点表示接受授权池通用调度，按就绪、可用容量、稳定节点 ID 排序，项目队列保留同池备用顺序。离线或忙碌候选按既有队列等待，不重跑已开始工作。
+- 执行模型沿用节点 policy；用户明确模型原样保留，不支持该模型的泛池节点被排除，明确节点不支持时返回具体错误。
+- 工作区与会话按授权目录和 Task 绑定确定，不调用 JEV。独立定时发生使用新会话，重试/恢复沿用既有绑定。
 
 ### 自然语言任务与优先派发
 
-用户只提供任务描述时，调度会话通过 `task_nodes` 读取已登记的执行端能力、模型/强度目录和采样健康状态，再调用 `task_dispatch`，提供稳定 commandId、标题和完整说明，无需传 `route`。启用规划决策且配置可用决策服务时，模型选择执行端和模型/强度组合；`task_plan` 只生成提案；需要先审核时，使用 task_plan 的 requestId 调用 `task_dispatch({commandId: requestId, requestId})` 应用提案并创建 Run。不要重复派发。完整 route 是执行领取阶段的要求，不是用户消息的必填项。
+用户只提供任务描述时，会话先决定本地处理或正式委派。委派时通过 `task_nodes` 查询能力、模型和健康状态，再直接调用 `task_dispatch`，提供稳定 commandId、标题和完整说明。涉及特定设备或文件位置时由主模型明确 nodeId；仅通用工作可省略节点接受授权池分配。没有另一个规划模型重复判断任务目的、是否落账和执行者。
 
-中央宿主仅向具有当前项目协作绑定、活动 dispatcher 职责或宿主项目／临时任务统筹职责的会话增加优先派发提示。普通未绑定会话不默认承担调度职责，仍可按用户请求使用公开的绑定与派发工具。普通协作会话退出项目后移除此提示；仍有活动 dispatcher 时保留至该职责结束。已绑定会话恢复后按持久状态重新判断。此提示要求：已授权的执行任务优先交给合适的执行端，简短对话可本地回答；pending-route 或 abstain 时说明缺失条件，不静默改成本地执行。提示不加入 Task 拥有的工作负载 Agent。`task_plan` 顶层 provider/model/reasoningEffort 是决策调用覆盖项，执行模型选择来自目录或明确 route；工具参数说明已区分两者。
+中央宿主仅向具有当前项目协作绑定、活动 dispatcher 职责或宿主项目／临时任务统筹职责的会话增加优先派发提示。普通未绑定会话不默认承担调度职责，仍可按用户请求使用公开的绑定与派发工具。普通协作会话退出项目后移除此提示；仍有活动 dispatcher 时保留至该职责结束。已绑定会话恢复后按持久状态重新判断。此提示要求：已授权的执行任务优先交给合适的执行端，简短对话可本地回答；无法形成合法分配时说明具体缺失条件。提示不加入 Task 拥有的工作负载 Agent。执行模型来自节点 policy 或用户明确的 executionModel/route。
 
 飞书原生入口允许 task_nodes 作为 operator 的 plannerTools。宿主仍需配置 taskIntegration、operatorUserIds 和 plannerTools；模型只看到该入口实际允许的工具，普通发送者不会因提示获得调度权限。
 

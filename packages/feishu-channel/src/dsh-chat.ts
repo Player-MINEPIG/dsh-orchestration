@@ -30,7 +30,7 @@ export const Config: z<Config> = z.object({
   maxReplyChars: z.number().min(100).max(12000).step(1).default(8000),
 });
 type ResolvedConfig = Required<Config>;
-const PLANNER_TOOLS = new Set(['task_nodes', 'task_query', 'task_history', 'task_wait', 'task_create', 'task_dispatch', 'task_repair_dispatch', 'task_report', 'task_cancel', 'task_schedule', 'task_workspace', 'task_plan', 'task_observations', 'task_curate']);
+const PLANNER_TOOLS = new Set(['task_nodes', 'task_query', 'task_history', 'task_wait', 'task_create', 'task_dispatch', 'task_repair_dispatch', 'task_report', 'task_cancel', 'task_schedule', 'task_workspace', 'task_observations', 'task_curate']);
 type RequestState = 'processing' | 'completed' | 'uncertain' | 'reconciled';
 interface Binding { key: string; sessionId: string; persisted: number; state: 'ready' | 'uncertain'; }
 export interface ChatRequest { invocationId: string; fingerprint: string; bindingKey: string; sessionId: string; messageId: string; state: RequestState; reply: string | null; detail: string | null; }

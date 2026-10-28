@@ -1,3 +1,4 @@
+import {registerExecutor} from './executor-fixture.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {join} from 'node:path';
@@ -5,7 +6,7 @@ import {SessionId} from '@deepseek-ai/dsh-session';
 import {ToolCallId} from '@deepseek-ai/dsh-llm';
 import {createNativeHarness} from './native-harness.mjs';
 
-for(const mode of ['inline','proposal']) test(`ordinary project coordinator ${mode} dispatch uses the trusted binding without requiring a built-in project turn`,async()=>{
+for(const mode of ['inline']) test(`ordinary project coordinator ${mode} dispatch uses the trusted binding without requiring a built-in project turn`,async()=>{
  const h=await createNativeHarness({config:{role:'planner',schedulerEnabled:false,projectAgentOptions:{provider:'test-offline',model:'script'}}});
  try{
   const runtime=h.ctx.taskSystem.projects;
@@ -23,7 +24,6 @@ for(const mode of ['inline','proposal']) test(`ordinary project coordinator ${mo
   assert.equal(runtime.projectForSession(String(handle.agent.id)),undefined,'ordinary session is not a managed project session');
   h.ledger.registerNode('mbp',{nodeId:'MBP',roles:['executor'],enabled:true,capabilities:[],workspaceIds:[],models:[{provider:'test-offline',model:'script',reasoningEfforts:[]}]});
   const requestId='read-pr',intent={title:'Review PR',description:'Read the requested repository without modifying it',route:{nodeId:'MBP',provider:'test-offline',model:'script',requiredCapabilities:[]}};
-  if(mode==='proposal')await call('task_plan',{requestId,...intent});
   const applied=await call('task_dispatch',{commandId:requestId,...(mode==='inline'?intent:{})});
   assert.equal(h.ledger.getDecision(requestId).input.projectId,project.projectId);
   const child=h.ledger.getTask(applied.value.taskId),run=h.ledger.getRun(applied.value.runId);
@@ -51,11 +51,12 @@ for(const mode of ['inline','proposal']) test(`ordinary project coordinator ${mo
 test('built-in project tools still require the current managed turn request ID',async()=>{
  const requestId='project-message:managed-turn';
  const h=await createNativeHarness({config:{role:'planner',schedulerEnabled:false,planningDecisionEnabled:false,projectAgentOptions:{provider:'test-offline',model:'script'}},script:[
-  {name:'task_plan',args:{requestId:'wrong-request',title:'Must fail',description:''}},
-  {name:'task_plan',args:{requestId,title:'Managed task',description:'Wait for an explicit route'}},
-  {name:'task_dispatch',args:{commandId:requestId}},'Plan saved'
+  {name:'task_dispatch',args:{commandId:'wrong-request',title:'Must fail',description:''}},
+  {name:'task_dispatch',args:{commandId:requestId,title:'Managed task',description:'Wait for an explicit route'}},
+  'Plan saved'
  ]});
  try{
+  registerExecutor(h.ledger,'available',{nodeId:'MBP',roles:['executor'],enabled:true,capabilities:[],workspaceIds:[],models:[{provider:'test-offline',model:'script',reasoningEfforts:[]}]});
   const runtime=h.ctx.taskSystem.projects;runtime.saveSettings({root:join(h.dir,'projects'),expectedRevision:0});
   const project=await runtime.create({commandId:'managed',title:'Managed project',goal:'Managed turn boundaries'});
   runtime.send({projectId:project.projectId,commandId:'managed-turn',text:'Plan this work'});

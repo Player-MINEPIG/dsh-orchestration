@@ -20,11 +20,7 @@ function fixture(){
   return {l,publish,setDefault,run,now:()=>now,advance:milliseconds=>{now+=milliseconds;},close:()=>l.close()};
 }
 function planner(f,calls){
-  const decisions={ask:async input=>{
-    calls.push(input);const state=JSON.parse(input.state),route=state.catalog.modelRoutes[0];
-    const values={persist:'create',attach:'none',executor:'worker',modelEffort:route.id,reporting:'none'};
-    return {provider:input.provider ?? 'judge',model:input.model ?? 'judge-model',answers:Object.fromEntries(Object.keys(input.questions).map(id=>[id,{type:'choice',choice:values[id]}]))};
-  }};
+  const decisions={ask:async input=>{calls.push(input);throw Error('Formal dispatch must not ask a model');}};
   return new TaskPlanner(f.l,decisions,()=>taskDecisionCatalog(f.l,{nodeId:'scheduler'},30000,f.now()),()=>{},f.now);
 }
 function legacyWithoutContext(l,run){
@@ -32,13 +28,13 @@ function legacyWithoutContext(l,run){
   l.managementDatabase().prepare("UPDATE entities SET data=? WHERE kind='run' AND id=?").run(JSON.stringify(raw),run.runId);
 }
 
-test('decision provider/model/effort remain independent of node workload default and explicit workload fields',async()=>{
+test('formal dispatch ignores decision-call overrides and uses the node default or explicit workload tuple',async()=>{
   for(const choice of [undefined,explicit]){
     const f=fixture();try{
       f.publish([preferred,explicit,fallback]);f.setDefault(preferred);
       const calls=[],p=planner(f,calls),input={requestId:'source-request',title:'Execute authorized work',description:'The user requested work.',provider:'decision-provider',model:'decision-model',reasoningEffort:'ultra',...(choice?{executionModel:choice}:{})};
       await p.plan(input);const applied=p.apply(input.requestId);const run=f.l.getRun(applied.value.runId);
-      assert.equal(calls[0].provider,'decision-provider');assert.equal(calls[0].model,'decision-model');assert.equal(calls[0].reasoningEffort,'ultra');
+      assert.equal(calls.length,0);
       assert.equal(run.route.provider,(choice ?? preferred).provider);assert.equal(run.route.model,(choice ?? preferred).model);assert.equal(run.route.reasoningEffort,(choice ?? preferred).reasoningEffort);
       assert.equal(run.executionModel.origin,choice?'explicit':'node_default');
       assert.deepEqual(run.projectContext,{version:1,schedulerId:f.l.schedulerIdentity(),project:null});

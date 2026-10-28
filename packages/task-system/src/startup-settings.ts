@@ -91,7 +91,7 @@ export const SaveStartupInput = z.discriminatedUnion("target", [
     .object({
       target: z.literal("task"),
       expected: TaskStartupValues,
-      changes: TaskStartupValues.omit({nodeId:true}).partial().extend({executionTools:z.null().optional()}).strict(),
+      changes: TaskStartupValues.omit({nodeId:true,sessionDecisionEnabled:true}).partial().extend({executionTools:z.null().optional()}).strict(),
     })
     .strict(),
   z
@@ -387,8 +387,7 @@ export async function saveStartupSettings(ctx: Context, value: unknown) {
   if (
     input.target === "task" &&
     !ctx.get("decisionModels") &&
-    (input.changes.planningDecisionEnabled === true ||
-      input.changes.sessionDecisionEnabled === true)
+    input.changes.planningDecisionEnabled === true
   )
     reject(
       "STARTUP_DECISION_REQUIRED",

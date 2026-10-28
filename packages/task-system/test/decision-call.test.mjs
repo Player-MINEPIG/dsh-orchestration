@@ -10,18 +10,18 @@ test('caller supplies background and wire criteria, resolves singleton options a
  assert.deepEqual(result.answers.fixed,{type:'choice',choice:'only'});assert.equal(result.requestId,'fixture');assert.equal(result.questionVersions.pick,'2');
  assert.equal(Object.hasOwn(sent,'requestId'),false);assert.equal(Object.hasOwn(sent,'stateHash'),false);
 });
-test('caller catches model failures without executing and replay never repeats the request',async t=>{
+test('observation consumer catches model failures without executing and replay never repeats the request',async t=>{
  const ledger=TaskLedger.open(':memory:');t.after(()=>ledger.close());let calls=0;
  const planner=new TaskPlanner(ledger,{ask:async()=>{calls++;throw Error('private model error');}},()=>taskDecisionCatalog(ledger,{}),()=>{});
- const input={requestId:'intent',title:'Work',description:'Request'};
+ const input={requestId:'intent',title:'Work',description:'Request',observationCandidateId:'fixture-observation'};
  const first=await planner.plan(input);assert.equal(first.proposal.kind,'abstain');assert.equal(first.receipt.status,'abstained');
  await planner.plan(input);assert.equal(calls,1);assert.equal(ledger.snapshot().runs.length,0);assert.equal(ledger.snapshot().attempts.length,0);
  assert.throws(()=>planner.apply('intent'),/clarification/);assert.equal(JSON.stringify(first).includes('private model error'),false);
 });
-test('caller rejects business-invalid choices even when model protocol parsing succeeded',async t=>{
+test('observation consumer rejects business-invalid choices even when model protocol parsing succeeded',async t=>{
  const ledger=TaskLedger.open(':memory:');t.after(()=>ledger.close());
  const planner=new TaskPlanner(ledger,{ask:async input=>({provider:'test',model:'judge',answers:Object.fromEntries(Object.keys(input.questions).map(id=>[id,{type:'choice',choice:'invented'}]))})},()=>taskDecisionCatalog(ledger,{}),()=>{});
- const result=await planner.plan({requestId:'invalid-candidate',title:'No unauthorized execution',description:''});
+ const result=await planner.plan({requestId:'invalid-candidate',title:'No unauthorized execution',description:'',observationCandidateId:'fixture-observation'});
  assert.equal(result.proposal.kind,'abstain');assert.equal(result.receipt.status,'answered');assert.equal(ledger.snapshot().runs.length,0);
 });
 test('cancellation propagates instead of being persisted as a fallback answer',async()=>{

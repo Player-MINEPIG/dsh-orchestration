@@ -9,7 +9,6 @@ import { TaskLedger } from '../dist/ledger.js'
 import { chooseExecutionSession } from '../dist/execution-session.js'
 import { RecoveryStore, IdentityVerifier, TrustedNetworkVerifier, RemoteGateway, RemoteClient, RemoteLedgerClient, ExecutorWorker, signEnvelope } from '../dist/remote/api.js'
 import { TaskPluginSettings, queueDescriptor, executorIdentityDescriptor } from '../dist/settings.js'
-import { DecisionEngine, StructuredModelProvider } from './legacy-model-fixture.mjs'
 const operations = ['executorIdentity','sessionContext','selectTaskSession','claim','markRunning','bindSession','submit','getRun','getAttempt','listWork','renew']
 function legacyStoredRun(ledger,run,workspaceId=run.route.workspaceId??'default') {
   // Pre-managed-directory records derived a node default without making it a
@@ -55,15 +54,20 @@ test('foreign or workspace-mismatched session and a second owner are rejected wi
   const y=f.claim(f.run('two'),'two'); assert.throws(()=>f.ledger.selectTaskSession('duplicate-owner',{...y.ref,session:{mode:'reuse',sessionId:first.sessionId}}),/already owned/)
   assert.equal(f.ledger.getAttempt(x.ref.attemptId).sessionId,first.sessionId)
 })
-test('legacy stored runs permit an optional decision to select an eligible alternate workspace',async t=>{
-  const f=fixture(t,{legacy:true}),x=f.claim(f.run('one'),'one'); let calls=0
-  const provider=new StructuredModelProvider('ordinary',[{model:'judge',version:'fixture',reasoningEfforts:[]}],{complete:async()=>{calls++;return {output:{answers:{session:{type:'choice',choice:'new'},workspace:{type:'choice',choice:'other'}}},modelVersion:'fixture'}}})
-  const decisions=new DecisionEngine([provider],{defaultProvider:'ordinary',maxAttempts:1});t.after(()=>decisions.close())
-  const selected=await select(f,x.ref,x.c,{decisions});assert.equal(calls,1);assert.equal(selected.workspaceId,'other');assert.equal(f.ledger.getRun(x.ref.runId).route.workspaceId,'other')
-  const event=f.ledger.snapshot().events.find(event=>event.type==='session.selected');assert.ok(event.detail.decision);assert.equal(event.detail.decision.status,'answered')
-  f.ledger.submit('settle-decision',{...x.ref,outcome:'success',summary:'fixture'})
-  const nextRun=f.run('after-alternate');assert.equal(nextRun.route.workspaceId,'other')
-  const next=f.claim(nextRun,'after-alternate'),reused=await select(f,next.ref,next.c);assert.equal(reused.sessionId,selected.sessionId);assert.equal(reused.resume,true);assert.equal(reused.workspaceId,'other')
+test('legacy stored runs use their legal default without selecting an alternate workspace',async t=>{
+  const f=fixture(t,{legacy:true}),x=f.claim(f.run('one'),'one')
+  const selected=await select(f,x.ref,x.c);assert.equal(selected.workspaceId,'default');assert.equal(f.ledger.getRun(x.ref.runId).route.workspaceId,'default')
+  const event=f.ledger.snapshot().events.find(event=>event.type==='session.selected');assert.equal(event.detail.decision,undefined)
+  f.ledger.submit('settle-default',{...x.ref,outcome:'success',summary:'fixture'})
+  const next=f.claim(f.run('after-default'),'after-default'),reused=await select(f,next.ref,next.c);assert.equal(reused.sessionId,selected.sessionId);assert.equal(reused.resume,true);assert.equal(reused.workspaceId,'default')
+})
+test('legacy persisted alternate workspace bindings continue to reuse that session',async t=>{
+  const f=fixture(t,{legacy:true}),x=f.claim(f.run('one'),'one')
+  const selected=f.ledger.selectTaskSession('historical-alternate',{...x.ref,workspaceId:'other',session:{mode:'new'},decision:{status:'answered',provider:'historical'}}).value
+  f.ledger.submit('settle-historical',{...x.ref,outcome:'success',summary:'fixture'})
+  const next=f.claim(f.run('after-alternate'),'after-alternate'),reused=await select(f,next.ref,next.c)
+  assert.equal(reused.sessionId,selected.sessionId);assert.equal(reused.resume,true);assert.equal(reused.workspaceId,'other')
+  assert.deepEqual(f.ledger.snapshot().events.find(event=>event.type==='session.selected').detail.decision,{status:'answered',provider:'historical'})
 })
 test('legacy configured invalid default workspace fails rather than inventing a path',async t=>{
   const f=fixture(t,{legacy:true}),x=f.claim(f.run('one'),'one')
@@ -128,28 +132,16 @@ test('concurrent first-run snapshots cannot silently create two default Task ses
   assert.equal(f.ledger.sessionContext(a.ref).sessions.length,1)
 })
 
-test('legacy runtime refresh rejects a stale alternate-workspace decision and falls back to its still-legal default',async t=>{
-  const f=fixture(t,{legacy:true}),x=f.claim(f.run('one'),'one')
-  const provider=new StructuredModelProvider('ordinary',[{model:'judge',version:'fixture',reasoningEfforts:[]}],{complete:async()=>{
-    f.ledger.registerNode('narrow-workspaces',{...f.ledger.getNode('worker'),workspaceIds:['default']})
-    return {output:{answers:{session:{type:'choice',choice:'new'},workspace:{type:'choice',choice:'other'}}},modelVersion:'fixture'}
-  }})
-  const decisions=new DecisionEngine([provider],{defaultProvider:'ordinary',maxAttempts:1});t.after(()=>decisions.close())
-  const selected=await select(f,x.ref,x.c,{decisions,refresh:()=>f.ledger.sessionContext(x.ref)})
-  assert.equal(selected.workspaceId,'default')
+test('authority rejects a stale bound-session snapshot instead of silently replacing the current binding',async t=>{
+  const f=fixture(t),seed=f.claim(f.run('seed'),'seed'),prior=await select(f,seed.ref,seed.c)
+  f.ledger.submit('settle-seed',{...seed.ref,outcome:'success',summary:'Seed compatible managed session'})
+  const x=f.claim(f.run('one'),'one')
+  const choice=await chooseExecutionSession({claim:x.c,context:f.ledger.sessionContext(x.ref),managedWorkspaceAvailable:true,workspaces:[]})
+  const concurrentlyBound=f.ledger.selectTaskSession('other-authority-call',{...x.ref,expectedTaskSessionId:prior.sessionId,session:{mode:'new'}}).value
+  assert.throws(()=>f.ledger.selectTaskSession('stale-selection',{...x.ref,...choice}),/catalog changed/)
+  assert.equal(f.ledger.getAttempt(x.ref.attemptId).sessionId,concurrentlyBound.sessionId)
 })
-test('a refreshed fallback uses the refreshed Task binding in its commit CAS',async t=>{
-  const f=fixture(t),seed=f.claim(f.run('seed'),'seed'),prior=await select(f,seed.ref,seed.c);f.ledger.submit('settle-seed',{...seed.ref,outcome:'success',summary:'Seed compatible managed session'});
-  const x=f.claim(f.run('one'),'one');let concurrentlyBound
-  const provider=new StructuredModelProvider('ordinary',[{model:'judge',version:'fixture',reasoningEfforts:[]}],{complete:async()=>{
-    concurrentlyBound=f.ledger.selectTaskSession('other-authority-call',{...x.ref,expectedTaskSessionId:prior.sessionId,session:{mode:'new'}}).value
-    return {output:{answers:{session:{type:'choice',choice:'new'}}},modelVersion:'fixture'}
-  }})
-  const decisions=new DecisionEngine([provider],{defaultProvider:'ordinary',maxAttempts:1});t.after(()=>decisions.close())
-  const selected=await select(f,x.ref,x.c,{decisions,refresh:()=>f.ledger.sessionContext(x.ref)})
-  assert.equal(selected.sessionId,concurrentlyBound.sessionId);assert.equal(selected.resume,true)
-})
-test('remote worker renews its lease while an optional session decision is pending',async t=>{
+test('remote worker renews its lease while a custom session selector is pending',async t=>{
   const f=fixture(t),store=new RecoveryStore(':memory:');t.after(()=>store.close())
   const worker=new ExecutorWorker({ledger:f.ledger,provider:{id:'mock',capabilities:[],supports:()=>true,execute:async()=>({outcome:'success',summary:'fixture-only'})},store,ttlMs:1000,taskSessions:true,policy:{role:'executor',nodeId:'worker',capabilities:[],workspaces:['default','other'].map(workspaceId=>({workspaceId,nodeId:'worker',path:join(f.dir,workspaceId),allowedRoot:f.dir}))},chooseSession:async(claim,context,signal,refresh)=>{
     await new Promise(resolve=>setTimeout(resolve,1200));signal.throwIfAborted()
@@ -164,14 +156,12 @@ test('remote worker renews its lease while an optional session decision is pendi
 test('explicitly granted bound session is reused without model decisions and revoked workspace grants still fail',async t=>{
  const f=fixture(t),x=f.claim(f.run('first','default'),'first'),bound=await select(f,x.ref,x.c);
  f.ledger.submit('settle-first',{...x.ref,outcome:'failure',summary:'Stopped'});
- const next=f.claim(f.run('retry','default'),'retry');let calls=0;
- const decisions={ask:async()=>{calls++;throw Error('Existing binding must not call a model');}};
+ const next=f.claim(f.run('retry','default'),'retry');
  const context=f.ledger.sessionContext(next.ref),workspaces=['default','other'].map(workspaceId=>({workspaceId,nodeId:'worker',description:workspaceId,eligible:true}));
- const choice=await chooseExecutionSession({claim:next.c,context,workspaces,decisions});
- assert.equal(calls,0);assert.equal(choice.session.sessionId,bound.sessionId);assert.equal(choice.expectedTaskSessionId,bound.sessionId);
+ const choice=await chooseExecutionSession({claim:next.c,context,workspaces});
+ assert.equal(choice.session.sessionId,bound.sessionId);assert.equal(choice.expectedTaskSessionId,bound.sessionId);
  const reused=f.ledger.selectTaskSession('cached-session',{...next.ref,...choice}).value;assert.equal(reused.resume,true);
- await assert.rejects(chooseExecutionSession({claim:next.c,context:{...context,eligibleWorkspaceIds:['other']},workspaces,decisions}),/not eligible/);
- assert.equal(calls,0);
+ await assert.rejects(chooseExecutionSession({claim:next.c,context:{...context,eligibleWorkspaceIds:['other']},workspaces}),/not eligible/);
 });
 
 test('managed task selection requires the execution root instead of borrowing the node default',async t=>{const f=fixture(t),x=f.claim(f.run('root-required'),'root-required');await assert.rejects(chooseExecutionSession({claim:x.c,context:f.ledger.sessionContext(x.ref),workspaces:[{workspaceId:'default',nodeId:'worker',description:'old default',eligible:true}]}),/TASK_EXECUTION_ROOT_REQUIRED/);assert.equal(f.ledger.getAttempt(x.ref.attemptId).sessionId,undefined)});

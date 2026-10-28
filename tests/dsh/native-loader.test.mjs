@@ -903,26 +903,15 @@ test('resume continues a live lease even after its legacy runtime budget', async
   } finally { await h.dispose(); }
 });
 
-test('planning tool keeps a deterministic path before provider load and after unload', async () => {
-  const h = await harness({ role: 'planner' });
-  try {
-    assert.ok(h.ctx.tools.get('task_plan'));
-    const before = await tool(h.ctx, 'task_plan', { requestId: 'before-provider', title: 'Await assignment without a model' });
-    assert.equal(before.isError, false); assert.equal(h.ledger.getDecision('before-provider').receipt.kind, 'deterministic-planning-v1');
-    await h.ctx.loader.create({ id: 'decisions', name: pathToFileURL(resolve('packages/jev/lib/index.js')).href, config: {provider:'native',nativeProvider:'test-offline',model:'script'} });
-    await h.ctx.loader.await();
-    await until(() => h.ctx.tools.get('task_plan'));
-    assert.ok(h.ctx.tools.get('task_plan'));
-    const result = await tool(h.ctx, 'task_plan', { requestId: 'optional-plan', title: 'Inspect whether work should persist' });
-    assert.equal(result.isError, false, JSON.stringify(result));
-    assert.equal(h.ledger.snapshot().tasks.length, 0);
-    assert.ok(h.ledger.getDecision('optional-plan'));
-    await h.ctx.loader.resolve('decisions').fiber.dispose();
-    await h.ctx.loader.await();
-    assert.ok(h.ctx.tools.get('task_plan'));
-    const after = await tool(h.ctx, 'task_plan', { requestId: 'after-provider', title: 'Still available without a model' });
-    assert.equal(after.isError, false); assert.equal(h.ledger.getDecision('after-provider').receipt.kind, 'deterministic-planning-v1');
-  } finally { await h.dispose(); }
+test('dispatch remains available across optional decision service load and unload',async()=>{
+ const h=await harness({role:'planner'});
+ try{
+  assert.equal(h.ctx.tools.get('task_plan'),undefined);
+  assert.ok(h.ctx.tools.get('task_dispatch'));
+  h.ctx.provide('decisionModels',{ask:async()=>{throw Error('Not part of dispatch');}});
+  assert.equal(h.ctx.tools.get('task_plan'),undefined);
+  assert.ok(h.ctx.tools.get('task_dispatch'));
+ }finally{await h.dispose();}
 });
 
 test('actual DSH file tools reject traversal, outside absolute paths, symlinks and escalation; shell stays withheld', async () => {
@@ -1004,7 +993,7 @@ test('optional automatic typed observation admission creates observe-only histor
     h.ctx.llm.registerAdapter(['observation-offline'], new ScriptedModel([JSON.stringify({answers:{persist:{type:'choice',choice:'create'},reporting:{type:'choice',choice:'none'}}})]));
     await h.ctx.loader.create({ id: 'observation-decisions', name: pathToFileURL(resolve('packages/jev/lib/index.js')).href, config: {provider:'native',nativeProvider:'observation-offline',model:'script'} });
     await h.ctx.loader.await();
-    await until(() => h.ctx.tools.get('task_plan'));
+    await until(() => h.ctx.tools.get('task_dispatch'));
   };
   const first = await harness({ config, script: ['Finished outside the task manager'] });
   await mountRules(first);

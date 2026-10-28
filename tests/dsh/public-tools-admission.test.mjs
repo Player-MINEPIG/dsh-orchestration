@@ -19,9 +19,7 @@ test('external public task_dispatch applies a reviewed proposal and creates clai
   const parent=await h.ctx.agents.create({sessionId:SessionId('dmc-external-tool-session'),meta:{cwd:h.dir},agentOptions:{provider:'test-offline',model:'script'}});
   const agent=parent.agent;
   assert.equal(h.ctx.taskSystem.projects.taskForSession(agent.id),undefined);
-  const proposed=body(await call(h,'task_plan',{requestId:'external-task',title:'Inspect issue',description:'Perform the approved isolated issue analysis.',route:{nodeId:'local',provider:'test-offline',model:'script',requiredCapabilities:[]}},agent));
-  assert.equal(proposed.routingStatus,'ready');
-  const applied=body(await call(h,'task_dispatch',{commandId:'external-task'},agent));
+  const applied=body(await call(h,'task_dispatch',{commandId:'external-task',title:'Inspect issue',description:'Perform the approved isolated issue analysis.',route:{nodeId:'local',provider:'test-offline',model:'script',requiredCapabilities:[]}},agent));
   const snapshot=body(await call(h,"task_query",{},agent));
   const run=snapshot.runs.find(run=>run.runId===applied.value.runId);
   assert.ok(run?.runId);assert.equal(run.projectContext.schedulerId,l.schedulerIdentity());assert.equal(run.projectContext.project,null);assert.equal(run.route.workspaceId,undefined);
@@ -47,16 +45,14 @@ test('public task_dispatch uses node policy rather than global model and schedul
  }finally{await h.dispose();}
 });
 
-test('public task tool contract has one formal dispatch entry and proposal calls never dispatch',async()=>{
+test('public task tools expose one formal dispatch entry without a planning tool',async()=>{
  const h=await createNativeHarness();
  try{
-  for(const name of ['task_dispatch','task_plan','task_create','task_repair_dispatch','codex_delegate','task_wait'])assert.ok(h.ctx.tools.get(name),name);
-  for(const name of ['task_run','task_delegate','task_children','project_dispatch','task_claim','task_execute','task_settle','project_nodes'])assert.equal(h.ctx.tools.get(name),undefined,name);
-  const schema=h.ctx.tools.schemas().find(tool=>tool.name==='task_plan');assert.equal(schema.parameters.properties.action,undefined);
-  const proposed=body(await call(h,'task_plan',{requestId:'review-only',title:'Review this work'}));
-  assert.equal(proposed.routingStatus,'pending-route');assert.equal(h.ledger.snapshot().tasks.length,0);assert.equal(h.ledger.snapshot().runs.length,0);
-  await call(h,'task_plan',{action:'apply',requestId:'review-only',title:'Review this work'});
-  assert.equal(h.ledger.snapshot().tasks.length,0);assert.equal(h.ledger.snapshot().runs.length,0);
+  for(const name of ['task_dispatch','task_create','task_repair_dispatch','codex_delegate','task_wait'])assert.ok(h.ctx.tools.get(name),name);
+  for(const name of ['task_plan','task_run','task_delegate','task_children','project_dispatch','task_claim','task_execute','task_settle','project_nodes'])assert.equal(h.ctx.tools.get(name),undefined,name);
+  const schema=h.ctx.tools.schemas().find(tool=>tool.name==='task_dispatch');assert.equal(schema.parameters.properties.requestId,undefined);
+  assert.match(schema.parameters.properties.nodeId.description,/authorized executor pool/);
+  assert.equal(h.ledger.snapshot().tasks.length,0);
  }finally{await h.dispose();}
 });
 

@@ -15,9 +15,9 @@ test('shipped task and session contracts import outside the workspace without a 
     assert.throws(()=>require.resolve('@dsh-task/typed-decisions/validation'),{code:'MODULE_NOT_FOUND'});
     const contract=await import(pathToFileURL(join(dir,'dist/decision-validation.js')));
     const task=await import(pathToFileURL(join(dir,'dist/task-policy.js')));
-    const session=await import(pathToFileURL(join(dir,'dist/session-policy.js')));
+    const session=await import(pathToFileURL(join(dir,'dist/execution-session.js')));
     assert.equal(typeof task.buildTaskDecisionRequest,'function');
-    assert.equal(typeof session.resolveTaskSessionDecision,'function');
+    assert.equal(typeof session.chooseExecutionSession,'function');
     assert.throws(()=>contract.validateRequest({requestId:'invalid'}),/missing/);
     assert.equal(contract.stableStringify({b:2,a:1}),'{'+'"a":1,"b":2}');
   } finally {rmSync(dir,{recursive:true,force:true});}

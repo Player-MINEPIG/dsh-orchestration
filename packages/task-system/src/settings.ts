@@ -302,7 +302,7 @@ export const saveDecisionSettingsDescriptor: InvocationDescriptor = {
 const SetDecisionPresetInput = z
   .object({
     expected: z.string().min(1),
-    consumer: z.enum(["task-planning", "task-session"]),
+    consumer: z.enum(["task-planning"]),
     id: z.string().max(256),
   })
   .strict();

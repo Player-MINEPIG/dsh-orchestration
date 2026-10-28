@@ -13,6 +13,6 @@
         allowedTools: []
         taskIntegration: false
         # With taskIntegration enabled for configured operators, use e.g.
-        # [task_nodes, task_dispatch, task_plan, task_query, task_history, task_wait].
+        # [task_nodes, task_dispatch, task_query, task_history, task_wait].
         plannerTools: []
         timeoutMs: 110000

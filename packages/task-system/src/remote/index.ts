@@ -1212,17 +1212,7 @@ export class RemoteExecutionService extends Service {
             description: workspace.workspaceId,
             eligible: true,
           })),
-          ...(task?.config?.sessionDecisionEnabled &&
-          this.ctx.get("decisionModels")
-            ? {
-                decisions: this.ctx.get("decisionModels"),
-                decisionProvider:
-                  task?.config?.decisionBindings?.["task-session"],
-              }
-            : {}),
           signal,
-          ttlMs: task?.config?.decisionTtlMs,
-          refresh,
         });
       },
     });

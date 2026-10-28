@@ -73,41 +73,15 @@ Observation is opt-in and host-mounted. Only bounded visible assistant text afte
 
 The append-only task/report history is the durable memory. Query/search/summary views are derived from it and must not replace source reports. No general persona or relationship-memory product is included.
 
-## Optional typed decisions
+## Direct dispatch
 
-`task_plan` remains available without the independent `dsh-jev-plugin` bundle. `planningDecisionEnabled` defaults to true for compatibility; when disabled or the service is absent, planning makes no model call, preserves an explicit complete route, or leaves the task pending routing. `@dsh-task/task-system/planning` exports `TaskPlanner` and `taskDecisionCatalog`.
+Use `task_nodes` to inspect authorized executors, then `task_dispatch` with a stable `commandId`, `title` and complete `description`. Select `nodeId` or an exact catalog `route` when work depends on a device, OS, capability or file location. Omitting the node accepts general allocation in the authorized pool, ranked by runtime readiness, available capacity and stable node ID. Project queues retain the eligible fallback order. Explicit choices remain fixed; offline registered executors can wait for admission.
 
-Scheduler model requests retain task admission, executor, provider/model/effort and reporting choices, but never ask for a workspace or session. Those choices belong to the executor under its independent `sessionDecisionEnabled` setting. Explicit Task/Run/Schedule workspace constraints remain binding; derived defaults do not become user constraints. Old unapplied scheduler workspace recommendations require replanning instead of changing stored history. Receipts persist before effects, and current-catalog, capability and workspace checks remain mandatory.
+Dispatch does not call JEV. Node policy supplies the workload model unless the user explicitly chooses `executionModel`. Project and Task workspace constraints remain authoritative. The executor uses its authorized directory and current Task session, or creates a new session when required. Independent scheduled occurrences get separate sessions.
 
-For an ad hoc user message, no execution model or node is required in the input.
-Planner/both conversations receive an orchestration prompt that prefers dispatch
-to an eligible executor. `task_nodes` exposes each visible node's roles,
-capabilities, supported provider/model/effort tuples and sampled runtime health.
-Use `task_dispatch` with a stable `commandId`, `title`, and complete instructions
-in `description`; omit `route` to let planning choose an eligible executor.
-To review a plan first, call `task_plan` with a stable `requestId`, `title`, and
-`description`. This tool only proposes. Dispatch that proposal with
-`task_dispatch({commandId: requestId, requestId})`.
-An existing draft uses `task_dispatch({commandId, taskId, nodeId})`.
-`task_create` creates a draft without execution. `task_repair_dispatch` repairs
-the same unclaimed Run using `runId` and `expectedActionVersion`.
-`task_wait({taskId, timeoutMs: 0})` inspects current settlement without waiting.
-Owned agents use the same `task_dispatch` tool to create and dispatch a child
-through their authoritative fenced lease. Ordinary local Desktop Codex work uses
-`codex_delegate`, which retains the parent workspace and permissions.
-The old `task_run`, `task_delegate`, `task_children`, and `project_dispatch`
-public tools are removed. Active `/project` sessions dispatch through
-`task_dispatch` with their host-bound project identity.
-The top-level `provider`, `model` and `reasoningEffort` parameters of `task_plan`
-override the decision call, not the workload route. Normally leave them unset.
-Without a usable decision service, routing stays pending. Brief conversation
-can still be answered locally. Owned workload agents do not receive the
-conversation's dispatch preference.
+`task_create` creates a draft; `task_dispatch({commandId,taskId})` dispatches an existing draft under the same routing rules. `task_repair_dispatch` repairs an unclaimed Run. `task_wait({taskId,timeoutMs:0})` reads settlement. Owned execution agents use `task_dispatch` to create a child under their fenced lease. Local Desktop Codex uses `codex_delegate`. Channel permissions still apply.
 
-Channel tool restrictions still apply. Feishu planner operators must enable
-task integration and include `task_nodes`, `task_dispatch`, optional `task_plan`, and the desired task
-query tools in `plannerTools`; installing the task package does not grant
-channel planning authority.
+The old planning tool is removed. The internal `TaskPlanner` retains deterministic validation, durable receipts and final application guards. Only optional automatic observation admission uses JEV to ignore, attach or record material; it cannot create execution. Its existing `planningDecisionEnabled` and `decisionBindings["task-planning"]` settings remain supported for that purpose. Legacy session-decision fields are readable but inactive and no longer editable in Task settings.
 
 ## Private WebUI and migration
 
@@ -143,7 +117,7 @@ Project and temporary conversations expose the host provider/model catalog and r
 
 Operator retry reuses a still-valid prior executor/model route and the authority-owned Task session. Readiness, capacity, workspace grants and Task policy are rechecked without asking a model to select the same route/session again. An idle root Agent already opened in DSH WebUI may service the leased attempt through temporary scoped guards and model routing; the original Agent lifecycle is retained and its normal conversation settings return afterward. Running, queued-input or maintenance-owned sessions block before this attempt sends a prompt. Manual continuation uses persisted history and requests verification before repeating an external action; uncertain previous executions still require reconciliation.
 
-Decision calls use `ctx.decisionModels.ask`. The task suite prepares context and questions, validates business answers and owns audit, fallback and execution. `decisionBindings` maps `task-planning` and `task-session` to optional JEV profile IDs; an empty value follows the model-service default. Provider and model configuration is edited in Plugins → Jev. See [migration](../../docs/JEV-MIGRATION.zh-CN.md).
+Decision calls use `ctx.decisionModels.ask`. The task suite prepares context and questions, validates business answers and owns audit, fallback and execution. `decisionBindings["task-planning"]` selects the optional automatic-observation JEV profile; an empty value follows the model-service default. Provider and model configuration is edited in Plugins → Jev. See [migration](../../docs/JEV-MIGRATION.zh-CN.md).
 
 ### Executor project directories
 

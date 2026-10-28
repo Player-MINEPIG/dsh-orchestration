@@ -44,7 +44,7 @@ test('startup read excludes credentials, node grants and full raw config',t=>{
   assert.ok(!JSON.stringify(view).includes('NOT_A_REAL_SECRET'));assert.equal(view.task.values.databasePath,'/tmp/private.sqlite');assert.equal(view.task.values.nodeId,'worker');assert.deepEqual(view.task.values.executionTools,[]);assert.equal(view.task.values.executionAgentPreset,'ptc')
 })
 test('public ConfigEditor merge persists only selected startup fields and preserves unknown data',async t=>{
-  const f=fixture(t),result=await saveStartupSettings(f.ctx,input(f,'task',{sessionDecisionEnabled:true}))
+  const f=fixture(t),result=await saveStartupSettings(f.ctx,input(f,'task',{planningDecisionEnabled:false}))
   assert.deepEqual(result,{saved:true,applies:'live'});assert.equal(f.writes.length,1)
   assert.equal(f.taskRow.options.config.privateMarker,'NOT_A_REAL_SECRET');assert.deepEqual(f.taskRow.options.config.unknownExtension,{keep:true});assert.equal(f.taskRow.options.config.defaultWorkspaceId,'default')
   assert.equal(f.task.configurationPaused,false)
@@ -108,10 +108,10 @@ test('an unconfigured connection cannot be enrolled or granted permissions throu
   await assert.rejects(saveStartupSettings(f.ctx,input(f,'remote',{endpoint:'https://new.invalid/commands'})),{code:'STARTUP_CONNECTION_REQUIRED'});assert.equal(f.writes.length,0)
 })
 
-test('JEV can be enabled with no legacy default workspace and does not invent one',async t=>{
+test('observation decision setting does not invent a default workspace',async t=>{
  const f=fixture(t);delete f.taskRow.options.config.defaultWorkspaceId;
- await saveStartupSettings(f.ctx,input(f,'task',{sessionDecisionEnabled:true}));
- assert.equal(f.taskRow.options.config.sessionDecisionEnabled,true);
+ await saveStartupSettings(f.ctx,input(f,'task',{planningDecisionEnabled:false}));
+ assert.equal(f.taskRow.options.config.sessionDecisionEnabled,false);
  assert.equal('defaultWorkspaceId' in f.taskRow.options.config,false);
  assert.equal('defaultWorkspaceId' in readStartupSettings(f.ctx).task.values,false);
 })
@@ -177,10 +177,10 @@ test('startup RPC preserves a specific business failure through the official Rem
   assert.equal(f.writes.length,0);
 });
 
-test('missing decision service locks availability and rejects enabling either switch, while allowing other edits',async t=>{
+test('missing decision service rejects enabling observation decisions while allowing other edits',async t=>{
  const f=fixture(t); f.decisions.enabled=false;
  assert.equal(readStartupSettings(f.ctx).task.decisionAvailable,false);
- for(const key of ['planningDecisionEnabled','sessionDecisionEnabled']) await assert.rejects(saveStartupSettings(f.ctx,input(f,'task',{[key]:true})),{code:'STARTUP_DECISION_REQUIRED'});
+ for(const key of ['planningDecisionEnabled']) await assert.rejects(saveStartupSettings(f.ctx,input(f,'task',{[key]:true})),{code:'STARTUP_DECISION_REQUIRED'});
  assert.equal(f.writes.length,0);
  await saveStartupSettings(f.ctx,input(f,'task',{planningDecisionEnabled:false}));
  f.decisions.enabled=true;assert.equal(readStartupSettings(f.ctx).task.decisionAvailable,true);

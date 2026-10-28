@@ -5,7 +5,6 @@ import { TaskLedger } from "../dist/index.js";
 import { TaskPlanner, taskDecisionCatalog } from "../dist/planning.js";
 import {
   DecisionEngine,
-  RulesProvider,
 } from "./legacy-model-fixture.mjs";
 function provider() {
   return {
@@ -43,73 +42,55 @@ function provider() {
     },
   };
 }
-test("decisions persist before atomic task application and replay does not call backend or create twice", async () => {
+function workload(ledger) {
+  registerExecutor(ledger, 'workload', {nodeId: 'worker', roles: ['executor'], enabled: true, models: [{provider: 'worker-model', model: 'small', reasoningEfforts: []}], capabilities: [], workspaceIds: [], maxConcurrent: 2});
+}
+
+test("formal planning persists before application and replay neither calls a decision backend nor creates twice", async () => {
   const ledger = TaskLedger.open(":memory:");
-  let calls = 0;
-  const p = provider();
-  const original = p.evaluate;
-  p.evaluate = async (r) => {
-    calls++;
-    return original(r);
-  };
-  const engine = new DecisionEngine([p], { defaultProvider: "fixture" });
   try {
-    const planner = new TaskPlanner(
-      ledger,
-      engine,
-      () => taskDecisionCatalog(ledger, { channel: "fixture" }),
-      () => {},
-    );
-    const input = {
-      requestId: "intent-1",
-      title: "Persist this project",
-      description: "A long task",
-    };
+    workload(ledger);
+    let calls = 0;
+    const planner = new TaskPlanner(ledger, {ask: async () => {calls++; throw Error('Formal planning must not ask a model');}}, () => taskDecisionCatalog(ledger, {channel: 'fixture'}), () => {});
+    const input = {requestId: 'intent-1', title: 'Persist this project', description: 'A long task'};
     const record = await planner.plan(input);
-    assert.equal(record.proposal.kind, "proposal");
-    const applied = planner.apply("intent-1");
+    assert.equal(record.proposal.kind, 'proposal');
+    assert.equal(record.source, 'default');
+    assert.equal(record.proposal.executor.id, 'worker');
+    assert.equal(ledger.snapshot().tasks.length, 0);
+    assert.equal(ledger.snapshot().runs.length, 0);
+    assert.deepEqual(ledger.getDecision(input.requestId).receipt, {kind: 'deterministic-planning-v1', source: 'default', reason: 'authorized-executor-pool'});
+    assert.deepEqual(await planner.plan(input), record);
+    const applied = planner.apply(input.requestId);
     assert.ok(applied.value.taskId);
+    assert.equal(ledger.getRun(applied.value.runId).route.nodeId, 'worker');
     assert.equal(ledger.snapshot().tasks.length, 1);
-    assert.deepEqual(planner.apply("intent-1"), applied);
-    await planner.plan(input);
-    assert.equal(calls, 1);
-    assert.equal(ledger.snapshot().reports.length, 1);
-    assert.equal(ledger.getDecision("intent-1").receipt.status, "answered");
-  } finally {
-    engine.close();
-    ledger.close();
-  }
+    assert.equal(ledger.snapshot().runs.length, 1);
+    assert.deepEqual(planner.apply(input.requestId), applied);
+    assert.deepEqual(await planner.plan(input), record);
+    await assert.rejects(planner.plan({...input, description: 'Changed intent'}), {code: 'CONFLICT'});
+    assert.equal(calls, 0);
+  } finally {ledger.close();}
 });
-test("changed catalog or denied authorization cannot silently apply a model proposal", async () => {
-  const ledger = TaskLedger.open(":memory:");
-  const engine = new DecisionEngine([provider()], {
-    defaultProvider: "fixture",
-  });
+
+test("changed catalog, expiry, or denied authorization cannot silently apply a deterministic proposal", async () => {
+  let now = Date.now();
+  const ledger = TaskLedger.open(":memory:", {now: () => now});
   try {
-    const planner = new TaskPlanner(
-      ledger,
-      engine,
-      () => taskDecisionCatalog(ledger, {}),
-      () => {
-        throw new Error("Operator policy denies");
-      },
-    );
-    await planner.plan({
-      requestId: "intent",
-      title: "Task",
-      description: "Do work",
-    });
-    assert.throws(() => planner.apply("intent"), /policy denies/);
-    ledger.createTask("other", { title: "Catalog changed" });
-    assert.throws(
-      () => planner.apply("intent"),
-      (e) => e.code === "STALE_DECISION",
-    );
+    workload(ledger);
+    const planner = new TaskPlanner(ledger, undefined, () => taskDecisionCatalog(ledger, {}, 30000, now), () => {throw Error('Operator policy denies');}, () => now);
+    await planner.plan({requestId: 'intent', title: 'Task', description: 'Do work'});
+    assert.throws(() => planner.apply('intent'), /policy denies/);
+    assert.equal(ledger.snapshot().tasks.length, 0);
+    ledger.createTask('other', {title: 'Catalog changed'});
+    assert.throws(() => planner.apply('intent'), {code: 'STALE_DECISION'});
+    const expiry = new TaskPlanner(ledger, undefined, () => taskDecisionCatalog(ledger, {}, 30000, now), () => {}, () => now);
+    await expiry.plan({requestId: 'expires', title: 'Expires', description: ''});
+    now += 30001;
+    assert.throws(() => expiry.apply('expires'), {code: 'STALE_DECISION'});
     assert.equal(ledger.snapshot().tasks.length, 1);
-  } finally {
-    engine.close();
-    ledger.close();
-  }
+    assert.equal(ledger.snapshot().runs.length, 0);
+  } finally {ledger.close();}
 });
 test("typed admission of observed work offers no executor candidates and never dispatches", async () => {
   const ledger = TaskLedger.open(":memory:");
@@ -146,39 +127,49 @@ test("typed admission of observed work offers no executor candidates and never d
   }
 });
 
-test('planner consumes its configured preset without changing explicit decision routing', async () => {
+test('observation filtering consumes its configured preset and preserves explicit decision routing', async () => {
   const ledger=TaskLedger.open(':memory:');
   const engine=new DecisionEngine([provider()],{defaultProvider:'fixture',presets:[{id:'planner-work',name:'Planner work',provider:'fixture',model:'test'}]});
   const requests=[];
   const service={ask:async(request,options)=>{requests.push(request);return engine.ask(request,options);}};
   try {
     const planner=new TaskPlanner(ledger,service,()=>taskDecisionCatalog(ledger,{channel:'fixture'}),()=>{},Date.now,()=>true,()=> 'planner-work');
-    assert.equal((await planner.plan({requestId:'preset-plan',title:'Plan',description:'Use saved preset'})).proposal.kind,'proposal');
+    const capture=id=>ledger.captureObservation(id,{seq:id==='preset-plan'?1:2,sessionId:id,sourceId:'dsh-session:'+id,sourceRevision:'1',title:'Observed work',body:'Existing evidence',observedAt:new Date().toISOString(),truncated:false}).value;
+    assert.equal((await planner.planObservation(capture('preset-plan').candidateId)).proposal.kind,'proposal');
     assert.equal(requests[0].provider,'planner-work');assert.equal(requests[0].model,undefined);
-    assert.equal((await planner.plan({requestId:'explicit-plan',title:'Explicit',description:'Pinned route',provider:'fixture'})).proposal.kind,'proposal');
+    assert.equal((await planner.planObservation(capture('explicit-plan').candidateId,{provider:'fixture'})).proposal.kind,'proposal');
     assert.equal(requests[1].preset,undefined);assert.equal(requests[1].provider,'fixture');
   } finally {await engine.close();ledger.close();}
 });
 
 
-test('heartbeat health changes during a decision preserve route evidence, while authority changes still reject it',async()=>{
- for(const mutateAuthority of [false,true]) {
-  const ledger=TaskLedger.open(':memory:');const worker={nodeId:'worker',roles:['executor'],models:[{provider:'worker-model',model:'small',reasoningEfforts:['off']}],capabilities:[],workspaceIds:[],enabled:true,lastSeenAt:new Date().toISOString()};ledger.registerNode('worker',worker);
-  const task=ledger.createTask('task',{title:'Calculate'}).value;
-  const p=provider();p.evaluate=async({request})=>{
-   assert.notEqual(ledger.nodeStatuses()[0].state,"online");
-   ledger.recordNodeHeartbeat('heartbeat',{nodeId:'worker',runtimeReady:true,activeExecutions:0});
-   if(mutateAuthority)ledger.registerNode('disable',{...worker,enabled:false});
-   const route=request.context.catalog.modelRoutes[0];
-   return {modelVersion:'1',answers:Object.fromEntries(request.questions.map(q=>[q.questionId,{type:'choice',choice:{persist:'attach',attach:task.taskId,executor:'worker',modelEffort:route.id,reporting:'summary'}[q.questionId]}]))};
-  };
-  const engine=new DecisionEngine([p],{defaultProvider:'fixture'});
+test('heartbeat and slot changes preserve a planned route while authority changes invalidate its application',async()=>{
+ for(const mutateAuthority of [false,true]) for(const deferExecution of [false,true]) {
+  const ledger=TaskLedger.open(':memory:');
   try {
-   const planner=new TaskPlanner(ledger,engine,()=>taskDecisionCatalog(ledger,{role:'planner',nodeId:'planner'}),()=>{});
+   workload(ledger);
+   registerExecutor(ledger,'alternate',{nodeId:'alternate',roles:['executor'],enabled:true,models:[{provider:'worker-model',model:'small',reasoningEfforts:[]}],capabilities:[],workspaceIds:[],maxConcurrent:2});
+   ledger.recordNodeHeartbeat('worker-online',{nodeId:'worker',runtimeReady:true,activeExecutions:0});
+   ledger.recordNodeHeartbeat('alternate-busy',{nodeId:'alternate',runtimeReady:true,activeExecutions:2});
+   const task=ledger.createTask('task',{title:'Calculate'}).value;
+   const planner=new TaskPlanner(ledger,{ask:async()=>{throw Error('Authorized work must not ask a model');}},()=>taskDecisionCatalog(ledger,{role:'planner',nodeId:'planner'}),()=>{});
    const result=await planner.plan({requestId:'intent',taskId:task.taskId,title:'Calculate',description:'Compute 1+1'});
-   if(mutateAuthority){assert.equal(result.proposal.kind,'abstain');assert.equal(result.proposal.reason,'stale-snapshot');assert.equal(ledger.snapshot().runs.length,0);}
-   else {assert.equal(result.routingStatus,'ready',JSON.stringify(result.proposal));const applied=planner.apply('intent',{deferExecution:true});assert.equal(applied.value.taskId,task.taskId);assert.equal(ledger.getTask(task.taskId).state,'inbox');assert.equal(ledger.snapshot().tasks.length,1);}
-  }finally{await engine.close();ledger.close();}
+   assert.equal(result.proposal.executor.id,'worker');
+   ledger.recordNodeHeartbeat('worker-busy',{nodeId:'worker',runtimeReady:true,activeExecutions:2});
+   ledger.recordNodeHeartbeat('alternate-free',{nodeId:'alternate',runtimeReady:true,activeExecutions:0});
+   assert.equal(ledger.dispatchRoutes({taskId:task.taskId})[0].nodeId,'alternate');
+   if(mutateAuthority) {
+    ledger.registerNode('disable',{...ledger.getNode('worker'),enabled:false});
+    assert.throws(()=>planner.apply('intent',{deferExecution}),{code:'STALE_DECISION'});
+    assert.equal(ledger.snapshot().runs.length,0);
+   } else {
+    const applied=planner.apply('intent',{deferExecution});
+    assert.equal(applied.value.taskId,task.taskId);
+    assert.equal(ledger.snapshot().tasks.length,1);
+    if(deferExecution){assert.equal(ledger.getTask(task.taskId).state,'inbox');assert.equal(ledger.snapshot().runs.length,0);}
+    else {assert.equal(ledger.snapshot().runs.length,1);assert.equal(ledger.getRun(applied.value.runId).route.nodeId,'worker');}
+   }
+  }finally{ledger.close();}
  }
 });
 
