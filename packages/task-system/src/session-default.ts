@@ -1,9 +1,6 @@
-import type { Json } from "./contracts.js";
-
 export interface TaskSessionWorkspace {
   workspaceId: string;
   nodeId: string;
-  description: string;
   eligible: boolean;
 }
 export interface TaskSessionCandidate {
@@ -11,7 +8,6 @@ export interface TaskSessionCandidate {
   taskId: string;
   nodeId: string;
   workspaceId: string;
-  description: string;
   eligible: boolean;
 }
 /** All candidates and their eligibility come from the execution owner. */
@@ -21,16 +17,12 @@ export interface TaskSessionSnapshot {
   /** Effective explicit run/task workspace, otherwise the configured default. */
   defaultWorkspaceId: string;
   taskSessionId?: string;
-  context: Json;
-  validUntil: number;
   workspaces: TaskSessionWorkspace[];
   sessions: TaskSessionCandidate[];
 }
 export interface TaskSessionSelection {
-  source: "default" | "decision";
   session: { mode: "new" } | { mode: "reuse"; sessionId: string };
   workspaceId: string;
-  reason?: string;
 }
 export class TaskSessionConfigurationError extends Error {
   readonly code = "TASK_SESSION_CONFIG";
@@ -44,8 +36,7 @@ function identifier(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
 }
 
-/** Does not import the optional decision package or perform execution effects. */
-export function taskSessionCatalog(snapshot: TaskSessionSnapshot) {
+function taskSessionCatalog(snapshot: TaskSessionSnapshot) {
   if (
     !identifier(snapshot.taskId) ||
     !identifier(snapshot.nodeId) ||
@@ -96,7 +87,6 @@ export function taskSessionCatalog(snapshot: TaskSessionSnapshot) {
 /** Reuse this Task's bound session; only a missing compatible binding needs a new one. */
 export function defaultTaskSessionSelection(
   snapshot: TaskSessionSnapshot,
-  reason = "decision-unavailable",
 ): TaskSessionSelection {
   const { sessions } = taskSessionCatalog(snapshot);
   const existing = sessions.find(
@@ -109,11 +99,9 @@ export function defaultTaskSessionSelection(
       "The Task's bound session is unavailable or incompatible with its effective workspace",
     );
   return {
-    source: "default",
     session: existing
       ? { mode: "reuse", sessionId: existing.sessionId }
       : { mode: "new" },
     workspaceId: snapshot.defaultWorkspaceId,
-    reason,
   };
 }
