@@ -56,7 +56,7 @@ test('a native user message exposes orchestration tools and applies an executor/
         assert.equal(run.state,'queued')
         assert.equal(h.ledger.snapshot().attempts.length,0,'the conversation did not execute the workload locally')
         const request=h.adapter.requests[(index-1)*4]
-        assert.match(JSON.stringify(request.messages.filter(row=>row.role==='system')),/prefer dispatching to a suitable executor/)
+        assert.doesNotMatch(JSON.stringify(request.messages.filter(row=>row.role==='system')),/prefer dispatching to a suitable executor/)
         assert.ok(request.tools.some(row=>row.name==='task_nodes'))
         const plan=request.tools.find(row=>row.name==='task_plan')
         assert.ok(plan)
@@ -89,6 +89,41 @@ test('planner role exposes dispatch tools to its conversation model and hides wo
     const names=h.adapter.requests[0].tools.map(tool=>tool.name)
     for(const name of ['task_nodes','task_plan','task_dispatch','task_query','task_history','task_wait']) assert.ok(names.includes(name),name)
     for(const name of ['task_delegate','task_run','task_children','codex_delegate']) assert.ok(!names.includes(name),name)
-    assert.match(JSON.stringify(h.adapter.requests[0].messages.filter(row=>row.role==='system')),/prefer dispatching to a suitable executor/)
+    assert.doesNotMatch(JSON.stringify(h.adapter.requests[0].messages.filter(row=>row.role==='system')),/prefer dispatching to a suitable executor/)
+  } finally {await handle?.dispose();await h.dispose()}
+})
+
+
+test('orchestration prompt follows active session duties and clears after leaving or settlement',async()=>{
+  const h=await createNativeHarness({config:{centralMode:'host',executionEnabled:false}})
+  let handle
+  const sessionId=SessionId('switching-session-duty')
+  const create=()=>h.ctx.agents.create({sessionId,meta:{cwd:h.dir},agentOptions:{provider:'test-offline',model:'script'}})
+  const prompt=async expected=>{
+    h.adapter.script.push('Session state checked')
+    handle.agent.followup(createUserMessage({source:{kind:'user'},content:[{type:'text',text:'Explain your current session responsibility.'}]}))
+    await handle.agent.whenIdle()
+    const system=JSON.stringify(h.adapter.requests.at(-1).messages.filter(row=>row.role==='system'))
+    assert.equal(system.includes('prefer dispatching to a suitable executor'),expected)
+  }
+  try {
+    handle=await create()
+    await prompt(false)
+    const active=await h.ctx.taskSystem.sessionCollaboration.activate(handle.agent,'Session duty fixture')
+    await prompt(true)
+    h.ctx.taskSystem.sessionCollaboration.leave(handle.agent)
+    await prompt(false)
+    await h.ctx.taskSystem.sessionCollaboration.activate(handle.agent,undefined,active.binding.projectId)
+    await prompt(true)
+    await h.ctx.sessions.flush(handle.agent.session)
+    await handle.dispose()
+    handle=await h.ctx.agents.resume({resumeSessionId:sessionId,agentOptions:{provider:'test-offline',model:'script'}})
+    await prompt(true)
+    const parent=(await h.ctx.taskSystem.sessionCollaboration.command(handle.agent,{kind:'create',title:'Parent',policy:{settlementQuietMs:0}},'duty-parent')).value
+    await h.ctx.taskSystem.sessionCollaboration.command(handle.agent,{kind:'bind',taskId:parent.taskId},'duty-bind')
+    h.ctx.taskSystem.sessionCollaboration.leave(handle.agent)
+    await prompt(true)
+    h.ledger.submitDispatcherResult('duty-settle',{nodeId:'local',sessionId,outcome:'success',summary:'Verified',report:{title:'Result',body:'Completed the coordinator responsibility'}})
+    await prompt(false)
   } finally {await handle?.dispose();await h.dispose()}
 })

@@ -92,6 +92,23 @@ export async function testNativeProject(browser, { output } = {}) {
     await preview.waitFor();
     await preview.getByRole('button', { name: '继续', exact: true }).click();
     await preview.waitFor({ state: 'hidden' });
+    const navMetrics=async label=>page.getByRole('button',{name:label,exact:true}).evaluate(element=>{
+      const icon=element.querySelector('svg').getBoundingClientRect(),title=element.querySelector('span:last-child').getBoundingClientRect();
+      const pixel=value=>Math.round(value*100)/100;
+      return {width:pixel(icon.width),height:pixel(icon.height),titleLeft:pixel(title.left),textAlign:getComputedStyle(element).textAlign};
+    });
+    const officialNav=await navMetrics('插件'),projectNav=await navMetrics('项目与任务');
+    assert.equal(projectNav.width,officialNav.width,'project icon uses the official expanded sidebar size');
+    assert.equal(projectNav.height,officialNav.height);
+    assert.equal(projectNav.titleLeft,officialNav.titleLeft,'sidebar labels share the same left column');
+    assert.equal(projectNav.textAlign,'left');
+    if(output)await page.getByRole('button',{name:'项目与任务',exact:true}).locator('..').screenshot({path:join(output,'sidebar-icons-expanded.png')});
+    await page.getByRole('button',{name:'收起侧边栏',exact:true}).click();
+    await page.waitForTimeout(250);
+    assert.equal((await navMetrics('项目与任务')).width,(await navMetrics('插件')).width,'project icon uses the official collapsed sidebar size');
+    if(output)await page.getByRole('button',{name:'项目与任务',exact:true}).locator('..').screenshot({path:join(output,'sidebar-icons-collapsed.png')});
+    await page.getByRole('button',{name:'打开侧边栏',exact:true}).click();
+    await page.waitForTimeout(250);
     await page.getByRole('button', { name: '项目与任务', exact: true }).click();
     const frame = page.frameLocator('iframe[title="项目与任务"]');
     await frame.getByRole('button', { name: '项目', exact: true }).click();
