@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ScheduledPlans } from "../dist/scheduled-plans.js";
@@ -1684,4 +1684,104 @@ test("read-only exact views retain legacy adoption ownership without changing fr
     assert.deepEqual(f.runtime.snapshot().runs[0], view);
     assert.equal(db.prepare("SELECT data FROM workflow_runs WHERE id=?").get(legacy.workflowRunId).data, before);
   } finally { await f.close(); }
+});
+
+test('script workflows pin operator argv, bind upstream JSON and execute in the selected workspace without Agent sessions', async () => {
+  const { Context } = await import('@deepseek-ai/cordis');
+  const { default: LocalSubprocessRuntime } = await import('@deepseek-ai/dsh-subprocess-local');
+  const { registerWorkflowScripts } = await import('../dist/workflow-scripts.js');
+  const ctx = new Context(); await ctx.plugin(LocalSubprocessRuntime);
+  const f = fixture();
+  try {
+    registerWorkflowScripts(f.registries.mbp, ctx.subprocess, ['mbp-ws']); f.heartbeat('mbp');
+    registerWorkflowScripts(f.registries.vps, ctx.subprocess, ['vps-ws']); f.heartbeat('vps');
+    const code = `let raw='';process.stdin.on('data',chunk=>raw+=chunk);process.stdin.on('end',()=>{const request=JSON.parse(raw);process.stdout.write(JSON.stringify({summary:'Script done',data:{input:request.input,cwd:process.cwd(),request,arg:process.argv[1]}}));});`;
+    const step = {...programStep('collect','mbp','unused'), execution:{kind:'script',executable:process.execPath,args:['-e',code,'$(touch not-a-shell)']},inputs:{seed:{kind:'workflow-input',path:['seed']},script:{kind:'workflow-input',path:['script']}}};
+    const render = {...programStep('render','vps','unused',['collect'],{upstream:{kind:'step-output',stepId:'collect',path:[]}}),execution:{kind:'script',executable:process.execPath,args:['-e',code,'render']}};
+    const saved = save(f,definition([step,render]));
+    const attack = {kind:'script',executable:'definitely-not-executed',args:[]};
+    const run = start(f,{seed:'fixed input',script:attack});
+    f.runtime.save({commandId:id(),expectedRevision:1,definition:{...saved,steps:saved.steps.map(item=>item.stepId==='collect'?{...item,execution:{...step.execution,args:['-e',"throw Error('new definition must not execute')"]}}:item)}});
+    f.runtime.tick();
+    const admitted=f.ledger.getRun(view(f,run).steps[0].runId);
+    assert.deepEqual(admitted.workflowScript,step.execution);
+    assert.equal(admitted.configuration.script,undefined);
+    f.reopen();
+    const result=await f.worker('mbp').pollOnce();assert.equal(result[0].value.state,'acknowledged');
+    f.runtime.tick();await f.worker('vps').pollOnce();f.runtime.tick();
+    const final=view(f,run);assert.equal(final.state,'succeeded');
+    const collected=final.steps[0].output;
+    assert.equal(collected.input.seed,'fixed input');assert.deepEqual(collected.input.script,attack);
+    assert.equal(collected.cwd,realpathSync(f.dir));assert.equal(collected.request.workspacePath,realpathSync(f.dir));
+    assert.equal(collected.request.nodeId,'mbp');assert.ok(collected.request.executionId);assert.equal(collected.request.taskId,final.steps[0].taskId);assert.equal(collected.request.runId,final.steps[0].runId);
+    assert.equal(collected.request.script,undefined);assert.equal(collected.arg,'$(touch not-a-shell)');
+    assert.deepEqual(final.steps[1].output.input.upstream,collected);
+    assert.ok(f.ledger.snapshot().runs.every(item=>item.sessionIds.length===0));
+  } finally { await f.close(); await ctx.fiber.dispose(); }
+});
+
+test('script workspace grants are explicit and ordinary dispatch configuration cannot authorize a command',async()=>{
+  const { Context }=await import('@deepseek-ai/cordis');const {default:LocalSubprocessRuntime}=await import('@deepseek-ai/dsh-subprocess-local');
+  const {registerWorkflowScripts}=await import('../dist/workflow-scripts.js');
+  const {SCRIPT_PROGRAM}=await import('../dist/workflow-programs.js');
+  const ctx=new Context();await ctx.plugin(LocalSubprocessRuntime);const f=fixture();
+  try {
+    const step={...programStep('script','mbp','unused'),execution:{kind:'script',executable:process.execPath,args:['-e',"throw Error('must not execute')"]}};
+    assert.throws(()=>save(f,definition([step])),/scriptExecutionWorkspaces/);
+    assert.throws(()=>registerWorkflowScripts(f.registries.mbp,ctx.subprocess,[]),/explicit workspace grant/);
+    registerWorkflowScripts(f.registries.mbp,ctx.subprocess,['other-ws']);f.heartbeat('mbp');
+    assert.throws(()=>save(f,definition([step])),/scriptExecutionWorkspaces/);
+    const registry=new ProgramRegistry('mbp');registerWorkflowScripts(registry,ctx.subprocess,['mbp-ws']);
+    const route={nodeId:'mbp',workspaceId:'mbp-ws',provider:'registered-program',model:SCRIPT_PROGRAM.programId,requiredCapabilities:[],execution:{kind:'program',...SCRIPT_PROGRAM}};
+    assert.equal(registry.supports({...route,workspaceId:'other-ws'}),false);
+    assert.equal(registry.supports(route),true);
+    const forged=f.ledger.createTask(id(),{taskId:'forged-script',title:'Forged script',description:'Test',requiresConfirmation:false}).value;
+    f.ledger.recordNodeHeartbeat(id(),{nodeId:'mbp',sampledAt:Date.now()+counter,runtimeReady:true,activeExecutions:0,providerStatus:{programs:registry.catalog()},source:'host-local'});
+    assert.throws(()=>f.ledger.createRun(id(),{taskId:forged.taskId,route,configuration:{input:{},script:step.execution}}),/Unsupported Run configuration/);
+    const created=f.ledger.createRun(id(),{taskId:forged.taskId,route,workflowScript:step.execution,configuration:{input:{script:step.execution},workflow:{workflowRunId:'forged',workflowId:'forged',stepId:'forged',definitionRevision:1}}}).value;
+    assert.equal(created.workflowScript,undefined);
+    const result=await registry.execute({claim:{task:forged,run:created,attempt:{executionId:'forged'}},workspacePath:f.dir,signal:new AbortController().signal});
+    assert.equal(result.outcome,'failure');assert.match(result.summary,/Program stopped with error/);
+    assert.throws(()=>f.ledger.validateRoute({...route,workspaceId:'vps-ws'}),/not advertised/);
+  } finally {await f.close();await ctx.fiber.dispose();}
+});
+
+test('real script stdout, result contract and nonzero errors remain visible while bounded output stops the child',async()=>{
+  const {Context}=await import('@deepseek-ai/cordis');const {default:LocalSubprocessRuntime}=await import('@deepseek-ai/dsh-subprocess-local');const {registerWorkflowScripts}=await import('../dist/workflow-scripts.js');const {SCRIPT_PROGRAM}=await import('../dist/workflow-programs.js');
+  const ctx=new Context();await ctx.plugin(LocalSubprocessRuntime);const registry=new ProgramRegistry('worker');registerWorkflowScripts(registry,ctx.subprocess,['ws']);
+  try {
+    for(const [code,pattern] of [["console.error('specific diagnostic');process.exit(7)",/exited with 7: specific diagnostic/],["process.stdout.write('not json')",/one JSON ProgramResult/],["console.log(JSON.stringify({data:{}}))",/summary/],["process.stdout.write('x'.repeat(2100000));setInterval(()=>{},1000)",/stdout exceeds 2 MB/]]) {
+      const result=await registry.execute({claim:{task:{taskId:'task'},attempt:{executionId:'execution'},run:{runId:'run',route:{nodeId:'worker',workspaceId:'ws',execution:{kind:'program',...SCRIPT_PROGRAM}},workflowScript:{kind:'script',executable:process.execPath,args:['-e',code]},configuration:{input:{}}}},workspacePath:process.cwd(),signal:new AbortController().signal});
+      assert.equal(result.outcome,'failure');assert.match(result.summary,pattern);
+    }
+  } finally {await ctx.fiber.dispose();}
+});
+
+test('workflow cancellation terminates the real script process before acknowledging cancellation',async()=>{
+  const {Context}=await import('@deepseek-ai/cordis');const {default:LocalSubprocessRuntime}=await import('@deepseek-ai/dsh-subprocess-local');const {registerWorkflowScripts}=await import('../dist/workflow-scripts.js');const {existsSync,readFileSync}=await import('node:fs');
+  const ctx=new Context();await ctx.plugin(LocalSubprocessRuntime);const f=fixture();
+  try {
+    registerWorkflowScripts(f.registries.mbp,ctx.subprocess,['mbp-ws']);f.heartbeat('mbp');
+    const ready=join(f.dir,'pid');const code=`require('fs').writeFileSync(${JSON.stringify(ready)},String(process.pid));setInterval(()=>{},1000);`;
+    save(f,definition([{...programStep('script','mbp','unused'),execution:{kind:'script',executable:process.execPath,args:['-e',code]}}]));
+    const run=start(f);f.runtime.tick();const worker=f.worker('mbp');const pending=worker.pollOnce();
+    for(let i=0;i<200&&!existsSync(ready);i++)await new Promise(resolve=>setTimeout(resolve,10));
+    assert.ok(existsSync(ready));const pid=Number(readFileSync(ready,'utf8'));
+    f.runtime.cancel({commandId:id(),workflowRunId:run.workflowRunId});
+    await worker.cancel(view(f,run).steps[0].runId);await pending;f.runtime.tick();
+    assert.equal(view(f,run).state,'cancelled');assert.throws(()=>process.kill(pid,0),error=>error.code==='ESRCH');
+  } finally {await f.close();await ctx.fiber.dispose();}
+});
+
+test('host only advertises script execution after both explicit workspace authorization and subprocess availability',async()=>{
+  const {createNativeHarness}=await import('../../../tests/dsh/native-harness.mjs');const {default:LocalSubprocessRuntime}=await import('@deepseek-ai/dsh-subprocess-local');
+  for(const granted of [false,true]) {
+    const h=await createNativeHarness({config:{scriptExecutionWorkspaces:granted?['local-ws']:[],executionTools:[]}});
+    try {
+      assert.equal(h.ctx.taskSystem.programs.catalog().some(item=>item.programId==='dsh.workflow-script'),false);
+      await h.ctx.plugin(LocalSubprocessRuntime);
+      const builtin=h.ctx.taskSystem.programs.catalog().find(item=>item.programId==='dsh.workflow-script');
+      assert.equal(!!builtin,granted);if(granted)assert.deepEqual(builtin.workspaceIds,['local-ws']);
+    } finally {await h.dispose();}
+  }
 });

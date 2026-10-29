@@ -17,6 +17,7 @@ import { resolveDeviceNodeId } from "./device-identity.js";
 import { ExecutionModelInventory } from "./executor-models.js";
 import { workflowInputPage, workflowPromptConfiguration } from "./workflow-input.js";
 import { ProgramRegistry } from "./workflow-programs.js";
+import { registerWorkflowScripts } from "./workflow-scripts.js";
 import { WorkflowRuntime } from "./workflows.js";
 import { ExecutorWorker } from "./remote/worker.js";
 import { RecoveryStore } from "./remote/store.js";
@@ -114,6 +115,7 @@ export interface Config {
   role?: Role;
   centralMode?: DeploymentPolicy["centralMode"];
   executionEnabled?: boolean;
+  scriptExecutionWorkspaces?: string[];
   keepAlive?: boolean;
   maintenanceIntervalMs?: number;
   checkinIntervalMs?: number;
@@ -190,6 +192,7 @@ const PlainConfig: z<Config> = z.object({
     .required(false),
   centralMode: z.union([z.const("host"), z.const("remote")]).required(false),
   executionEnabled: z.boolean().required(false),
+  scriptExecutionWorkspaces: z.array(z.string()).default([]).description("允许执行脚本的工作区。仅此清单授权工作流固定命令执行，与默认工作区和会话注册无关。"),
   keepAlive: z.boolean().default(true),
   maintenanceIntervalMs: z.number().min(100).step(1).default(1000),
   checkinIntervalMs: z.number().min(1000).max(86400000).step(1).default(300000),
@@ -2677,6 +2680,11 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
     throw error;
   }
   const service = new TaskSystemService(ctx, config, ledger, results);
+  if (config.executionEnabled && config.scriptExecutionWorkspaces.length) {
+    ctx.inject(["subprocess"], scriptCtx => {
+      scriptCtx.effect(() => registerWorkflowScripts(service.programs, scriptCtx.subprocess, config.scriptExecutionWorkspaces));
+    });
+  }
   ctx.inject(["agents","agentLoop","sessions","sessionPersistence","tools","systemPrompt"],returnCtx=>{
     service.taskReturns.bindContext(returnCtx);
     service.sessionPortal.bindContext(returnCtx);

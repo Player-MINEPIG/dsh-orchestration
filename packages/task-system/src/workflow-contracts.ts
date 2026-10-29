@@ -5,7 +5,10 @@ import type {
   NodeStatus,
   Workspace,
 } from "./contracts.js";
-import type { ProgramCatalogEntry } from "./workflow-programs.js";
+import {
+  ScriptExecution,
+  type ProgramCatalogEntry,
+} from "./workflow-programs.js";
 export const WorkflowPosition = z
   .object({ x: z.number().finite(), y: z.number().finite() })
   .strict();
@@ -43,6 +46,7 @@ const StepFields = z
   })
   .strict();
 const BoundExecution = z.discriminatedUnion("kind", [
+  ScriptExecution,
   z
     .object({
       kind: z.literal("program"),

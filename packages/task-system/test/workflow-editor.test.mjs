@@ -706,3 +706,17 @@ test("unavailable associations are omitted without hiding the result or inventin
   assert.doesNotMatch(html, /data-result-section="associations"|补充内容/);
   assert.match(html, /尚未产生输出/);
 });
+
+test('script editor saves fixed argv and blocks malformed argument JSON without retaining the previous command',()=>{
+  const e=editor();e.state.stepId='a';
+  e.state.snapshot.workspaces=[{workspaceId:'vps-ws',nodeId:'vps',state:'ready'}];
+  e.state.snapshot.programs=[{nodeId:'vps',programId:'dsh.workflow-script',version:'1',workspaceIds:['vps-ws']}];
+  e.listeners.change({target:{id:'step-kind',value:'script',dataset:{}}});
+  const step=e.state.draft.steps[0];assert.equal(step.execution.kind,'script');
+  assert.match(e.element('step-detail').innerHTML,/id="step-executable"/);assert.match(e.element('step-detail').innerHTML,/已允许在所选工作区执行脚本/);
+  e.listeners.input({target:{id:'step-executable',value:'python3',dataset:{}}});
+  e.listeners.change({target:{id:'step-args',value:'["scripts/report.py", "literal $HOME"]',dataset:{}}});
+  assert.doesNotThrow(()=>e.validate(e.state.draft));assert.deepEqual(Array.from(step.execution.args),['scripts/report.py','literal $HOME']);
+  e.listeners.change({target:{id:'step-args',value:'[broken',dataset:{}}});
+  assert.throws(()=>e.validate(e.state.draft),/JSON 参数数组/);
+});

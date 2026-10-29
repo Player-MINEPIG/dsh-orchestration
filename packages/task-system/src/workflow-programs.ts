@@ -24,11 +24,36 @@ export const ProgramCatalog = z
     description: z.string().max(2000).optional(),
     inputSchema: z.record(z.string(), z.json()).optional(),
     outputSchema: z.record(z.string(), z.json()).optional(),
+    workspaceIds: z.array(z.string().min(1).max(120)).max(100).optional(),
   })
   .strict();
 export type ProgramCatalogEntry = z.infer<typeof ProgramCatalog>;
+export const SCRIPT_PROGRAM = {
+  programId: "dsh.workflow-script",
+  version: "1",
+} as const;
+export const ScriptExecution = z
+  .object({
+    kind: z.literal("script"),
+    executable: z
+      .string()
+      .min(1)
+      .max(4096)
+      .refine((value) => !value.includes("\0"), "Executable contains NUL"),
+    args: z
+      .array(
+        z
+          .string()
+          .max(32768)
+          .refine((value) => !value.includes("\0"), "Argument contains NUL"),
+      )
+      .max(100),
+  })
+  .strict();
+export type ScriptExecution = z.infer<typeof ScriptExecution>;
 export interface ProgramContext {
   input: Json;
+  script?: ScriptExecution;
   signal: AbortSignal;
   workspacePath: string;
   nodeId: string;
@@ -47,7 +72,7 @@ export interface ProgramRegistration
   extends Omit<ProgramCatalogEntry, "nodeId"> {
   execute(context: ProgramContext): Promise<ProgramResult> | ProgramResult;
 }
-const Result = z
+export const ProgramResultSchema = z
   .object({
     data: z.json(),
     summary: z
@@ -133,10 +158,14 @@ export class ProgramRegistry {
   }
   supports(route: Route): boolean {
     const program = programExecution(route);
+    if (!program || route.nodeId !== this.nodeId) return false;
+    const entry = this.entries.get(
+      JSON.stringify([program.programId, program.version]),
+    );
     return (
-      !!program &&
-      route.nodeId === this.nodeId &&
-      this.entries.has(JSON.stringify([program.programId, program.version]))
+      !!entry &&
+      (!entry.catalog.workspaceIds ||
+        entry.catalog.workspaceIds.includes(route.workspaceId ?? ""))
     );
   }
   async execute(request: ExecutionRequest): Promise<ExecutionResult> {
@@ -158,9 +187,12 @@ export class ProgramRegistry {
       };
     try {
       await request.executionStarted?.();
-      const result = Result.parse(
+      const result = ProgramResultSchema.parse(
         await entry.execute({
           input: configuration.input,
+          ...(request.claim.run.workflowScript
+            ? { script: request.claim.run.workflowScript }
+            : {}),
           signal: request.signal,
           workspacePath: request.workspacePath,
           nodeId: this.nodeId,

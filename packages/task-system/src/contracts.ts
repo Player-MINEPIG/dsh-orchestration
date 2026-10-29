@@ -152,6 +152,8 @@ export interface DispatchIssue {
 }
 export interface Run {
   executionExpectation?: import("./execution-expectation.js").ExecutionExpectation;
+  /** Only internal workflow admission writes this frozen command snapshot. */
+  workflowScript?: import("./workflow-programs.js").ScriptExecution;
   coordinatorSession?: {nodeId:string;sessionId:string};
   resultSummary?: string;
   dispatchOrigin?: DispatchOrigin;
