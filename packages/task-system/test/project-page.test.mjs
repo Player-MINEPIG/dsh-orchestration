@@ -589,6 +589,18 @@ test('card hierarchy has project first, compact units, short type and actual dev
  vm.runInContext("state.records.runs=state.records.runs.filter(r=>r.id!=='child-b')",p.context);assert.equal(vm.runInContext('cardDeviceLabel(state.tasks[0])',p.context),'VPS');vm.runInContext('state.records.runs=[]',p.context);assert.equal(vm.runInContext('cardDeviceLabel(state.tasks[0])',p.context),'未记录');assert.equal(vm.runInContext("cardDeviceLabel({node:'VPS',runId:null})",p.context),'未记录','planned/candidate device is not execution evidence');
 });
 
+test('card task types distinguish project tasks from temporary tasks and preserve specific types',()=>{
+ const p=page();
+ for(const [task,expected] of [
+  [{project:'p'},'项目任务'],
+  [{project:'unassigned'},'临时任务'],
+  [{},'临时任务'],
+  [{project:'p',parentTaskId:'parent'},'独立子任务'],
+  [{project:'p',observationOnly:true,parentTaskId:'parent'},'来源任务'],
+  [{project:'p',kind:'scheduled',observationOnly:true,parentTaskId:'parent'},'周期任务'],
+ ])assert.equal(vm.runInContext('cardTaskType('+JSON.stringify(task)+')',p.context),expected);
+});
+
 test('HTML preview is lazy, sandboxed and records reading only after the exact visible iframe loads',async()=>{
  const p=page(),report={id:'html-old',taskId:'task',runId:'old-run',kind:'result',body:'Text alternative',hasHtmlPresentation:true,contentVersion:'a'.repeat(64),unread:true},task={id:'task',title:'HTML task',project:'unassigned',status:'done',runId:'old-run',reportId:report.id,report:report.body};
  await p.answer({value:{...snapshot,tasks:[task],runs:[{id:'old-run',taskId:task.id,state:'succeeded'}],reports:[report]}});await p.action('task',task.id);assert.equal(p.requests.length,0);assert.match(p.overlay(),/data-action="report-preview"/);assert.doesNotMatch(p.overlay(),/<iframe/);
