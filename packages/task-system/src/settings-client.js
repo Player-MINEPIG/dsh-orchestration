@@ -3237,6 +3237,9 @@ h(
     const openModels = (ctx) => openSettingsSection(ctx, "models");
     const projectMethods = [
       "stewardSnapshot", "stewardSend", "stewardReconcile", "stewardResolve",
+      "stewardMemoryRead", "stewardMemoryConfigure",
+      "stewardGateRead", "stewardGateArm", "stewardGateDecide", "stewardGateAmend", "stewardGateContinue", "stewardGateAcceptContinue",
+      "stewardGateIndependent",
       "executionPresets",
       "connectionSettings","saveConnectionSettings",
       "nodeModelSettings","refreshNodeModels","saveNodeModelDefault",

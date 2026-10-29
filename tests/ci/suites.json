@@ -70,7 +70,9 @@
     "packages/task-system/test/project-session-carrier.test.mjs",
     "packages/task-system/test/task-checkins.test.mjs",
     "packages/task-system/test/steward-conversations.test.mjs",
-    "packages/task-system/test/steward-routing.test.mjs"
+    "packages/task-system/test/steward-routing.test.mjs",
+    "packages/task-system/test/acceptance-gates.test.mjs",
+    "packages/task-system/test/steward-pagination.test.mjs"
   ],
   "native": [
     "packages/task-system/test/project-native-client.test.mjs",
@@ -112,7 +114,13 @@
     "tests/dsh/task-checkins-native.test.mjs",
     "tests/dsh/steward-conversation.test.mjs",
     "tests/dsh/steward-memory-native.test.mjs",
-    "tests/dsh/steward-observation.test.mjs"
+    "tests/dsh/steward-observation.test.mjs",
+    "tests/dsh/steward-memory-productization.test.mjs",
+    "tests/dsh/steward-recall-native.test.mjs",
+    "tests/dsh/steward-recall-executor-native.test.mjs",
+    "tests/dsh/steward-compaction-native.test.mjs",
+    "tests/dsh/acceptance-gates-native.test.mjs",
+    "tests/dsh/steward-recovery-gates.test.mjs"
   ],
   "ui": [
     "packages/task-system/test/executor-alerts.test.mjs",

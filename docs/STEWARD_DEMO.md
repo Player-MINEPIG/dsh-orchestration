@@ -1,8 +1,10 @@
 # Run the isolated steward demo
 
-This branch adds one canonical chat in the existing task plugin. Personal chat and each project PM keep separate native DSH sessions. The demo uses the real Loader, AgentLoop, session persistence, tools and SQLite task authority on one machine. Its model responses and routing classifications are offline scripts. They prove transport and state behavior, not live model understanding or business task quality.
+The existing task plugin now provides one canonical chat backed by separate personal and per-project native DSH sessions. A single window routes each turn without a compulsory steward model hop. It uses the real Loader, AgentLoop, session persistence, SQLite task authority and local native executor. The default demo uses explicitly labeled offline model responses; a separate live mode can reuse an existing supported provider configuration in process memory.
 
-Use Node 24 and the branch worktree. Install the locked dependencies and build:
+## Start a local demo
+
+Use Node 24 in this branch worktree:
 
 ```sh
 npm ci --ignore-scripts
@@ -11,51 +13,63 @@ npm run build:fixtures
 node tests/dsh/steward-demo.mjs
 ```
 
-Open the loopback URL printed by the process. Its random access token belongs only to this local fixture. The process creates isolated state in `.runtime/steward-demo`; `DSH_STEWARD_DEMO_ROOT` selects another absolute directory, and `DSH_STEWARD_DEMO_PORT` selects a port. No production credentials or personal DSH profile are loaded.
+Open the loopback URL printed by the process. Its random token belongs only to the isolated fixture. The default state directory is `.runtime/steward-demo`; `DSH_STEWARD_DEMO_ROOT` selects another absolute directory and `DSH_STEWARD_DEMO_PORT` selects a port. Stop with Ctrl-C and run the same command to retain the isolated history. Restart never automatically resends an accepted canonical command.
 
-The page serves the same `StewardPanel` embedded in the plugin settings client. In the installed host it uses the `taskPluginSettings` RPC surface. This standalone fixture calls that surface's underlying real task service through a local HTTP adapter; it does not demonstrate the full official host shell, real provider credentials or remote machines.
+The page serves the production `StewardPanel`. Installed hosts use authenticated `taskPluginSettings` RPC. The standalone demo calls the same task service through a loopback HTTP adapter, so it does not establish the full official WebHost shell or remote-machine support. Its **本机任务链验证** action exercises real PM `task_dispatch` → ledger admission → local claim → native worker `task_submit_result`; its business content is an offline script.
 
-1. Send a personal message using **闲聊**, then choose A 项目 and B 项目 and send distinct markers.
-2. Return to 闲聊. Reply to an older A message; its source scope determines the destination.
-3. Reload. The server restores the canonical history from SQLite and the panel restores any uncertain original request from local storage.
-4. Select **自动判断**. Leading `A 项目：` or `@B 项目` addresses route directly. Other text uses a bounded auxiliary classifier request containing only current text, authorized project names/IDs and previous scope. The offline demo recognizes `闲聊`, `散心`, `聊点别的` and a single exact project title; ambiguous text asks you to choose. A configured live provider's semantic accuracy remains unverified.
-5. Click **本机任务链验证**. The real project PM calls `task_dispatch`, the host admits a Run, the same local node claims it, and a native worker calls `task_submit_result`. The report explicitly identifies its content as an offline fixture. Project notifications retain their task origin and do not select that project in the UI.
-
-The evidence link returns actual captured provider requests and ledger tasks. `.runtime/steward-demo/demo.json` records the current entry URL; `local-execution.json` records the last local task result. Stop with Ctrl-C and run the same command to reuse the isolated state. Restart does not automatically replay an accepted canonical message.
-
-The local verification receipt is `.runtime/steward-validation.json`; it records the source commit, exact logs and synthetic execution receipt. Browser captures from this run are `/private/tmp/steward-ui-conversation.jpg` and `/private/tmp/steward-ui-clarification.jpg`. These runtime artifacts are intentionally outside Git.
-
-## Verify the source change
+To mount optional memory controls, obtain the exact public plugin source revisions below under `.runtime/steward-plugins/{manager,assembler}`, with their declared dependencies available, then run:
 
 ```sh
-node --test packages/task-system/test/steward-conversations.test.mjs packages/task-system/test/steward-routing.test.mjs tests/dsh/steward-conversation.test.mjs
-npm run test:core
-TZ=UTC npm run test:ui
-npm run test:native
-npm run test:official
+DSH_STEWARD_DEMO_MEMORY=1 DSH_STEWARD_DEMO_ROOT="$PWD/.runtime/steward-demo-memory" DSH_STEWARD_DEMO_PORT=56005 node tests/dsh/steward-demo.mjs
 ```
 
-These are local checks. They do not establish Linux CI, a release, deployment, user acceptance or real model quality. The native tests inspect complete captured requests for personal/A/B history isolation, exact replay, restart, session rotation, old replies and runtime-context injection. The task-chain test runs a local coordinator and native executor with real tool admission and reports.
+Mounting does not authorize delegation. In **当前对话的记忆与人格来源**, read the current scope, select a preset, and explicitly enable it. Creating missing default resource rules and inheriting a selection across generations require separate checkboxes. Existing deny rules, conditions, disabled selections and user presets are preserved. An uncertain partial configuration keeps its original command for retry; explicitly restoring native persona ownership does not erase already saved rules or presets. Unavailable optional services do not silently switch ownership.
 
-## Current boundaries
+## Try the conversation
 
-- Replying inherits the original scope. A conflicting explicit destination is rejected. Explicit cross-project quotation/sharing is not implemented; no project history is automatically copied into another project.
-- Durable phase acceptance such as “修完等我验收再拆分” is not implemented by this increment. Existing task approval/review and native turn state are separate concepts; prompt text alone does not enforce that phase gate.
-- The stable persona section supplies a consistent identity/version and current scope. This fixture does not validate long-term personality quality or semantic memory recall.
-- Message state **本轮已回复** means the native turn completed, not that a dispatched task succeeded or the user accepted its result. Task notifications carry their ledger event and task provenance separately.
-- A context manifest records selected persona/resources and native scope. It does not by itself prove what a remote provider received. Actual request capture in this fixture is separate evidence.
-- Automatic routing cannot grant project access. The host revalidates the selected project. Oversized metadata, malformed classifier output and unavailable targets require explicit selection instead of a PM send.
-- Remote PM relocation needs an owner-side context/persona adapter. Optional memory-manager/request-assembler support must be established by the separate compatibility fixture; source presence alone is not integration evidence.
-- The canonical log currently returns its complete history. Long-log pagination and bounded frontend rendering remain outstanding.
+1. Chat personally, send separate A and B markers, and return to personal chat. **自动判断** uses an explicit address or a bounded classifier over current text, authorized project names and previous scope. Ambiguity asks for selection; classification grants no access.
+2. Reply to an old A message. It returns to A's current authorized generation. A conflicting explicit target is rejected.
+3. Choose **引用到…**, retain one contiguous original excerpt, and explicitly select B. The host validates source access, message revision and exact text, and records an immutable sharing receipt. Only that excerpt crosses scopes; ordinary replies do not share history.
+4. Reload or browse older messages. The server pages at most 100 rows, the panel retains at most 300, and parent previews/state refresh/old unresolved attention are separately bounded. A stale quote rejected before admission leaves an editable draft. A lost acknowledgement retains the exact original request until reconciliation or explicit retry; it never automatically resends.
+5. Run the local task-chain action and inspect its report. Set a phase gate for an existing workstream and declared repair tasks. A background A notification can open its exact candidate while the next chat target remains B. **通过验收，继续等待** records acceptance only; **验收并继续此请求** also submits the reviewed continuation with a stable receipt. Ordinary chat cannot impersonate a human decision. Repair revisions invalidate the prior candidate; historical admitted effects are disclosed, not canceled. Explicit independent work has its own trusted action.
+6. Ask an actual scoped agent to use `steward_recall` for earlier history or project/task/report/decision/gate records. Results are bounded data with source revisions, not new authorization. Task workers cannot borrow current or historical steward/PM native sessions, and executor tool views and recall/resource binding independently reject owned task execution.
 
-No production deployment, `dev` merge or pull request is part of this demo.
+Phase gates protect formal plans, task creation, workflows and confirmed local managed-PM continuations. They do not prove that an unrestricted external agent cannot plan in free text or mutate arbitrary external systems. Remote owner adapters are not implemented for the new memory/gate configuration path. New gate setup currently uses explicit IDs rather than an automatic natural-language phase parser.
 
-## Optional memory integration evidence
+## Live provider mode
 
-The interactive demo uses the official native persona section. A separate actual native fixture exercises Memory Manager **1.0.0** at `d8fe9cfea344f972d34fd9a7e8eb2fd28acf8831` and Request Assembler **1.1.3** at `374ab6107e4c98ce99fc69eeefcf3714314a73b7`. The legacy sibling Manager checkout at 0.1 lacks this integration API.
+```sh
+DSH_STEWARD_DEMO_MODE=live DSH_STEWARD_DEMO_ROOT="$PWD/.runtime/steward-demo-live" DSH_STEWARD_DEMO_PORT=56015 node tests/dsh/steward-demo.mjs
+```
 
-`tests/dsh/steward-memory-native.test.mjs` loads those exact optional sources from `.runtime/steward-plugins/{manager,assembler}` into an isolated official native host. The fixture configures Manager entries for `dsh-steward` and `steward.project.<actualProjectId>` through adapter `dsh-task.steward`, with `before_model_request` retrieval using `memory.read_content` and `memory.to_text`. Each source checks the actual native session binding; a global whitelist does not grant cross-project content access. The Assembler preset explicitly orders native system, selected Manager resources, history and current input, and is applied to each actual native session.
+The current supported bridge reads existing Web profile/Magpie settings without invoking production `SettingsStore.read` or plugin `apply`. Credentials stay in process memory; cache/status live only under the isolated root. It neither changes the global running model nor mounts production task state. If configuration or adapter support is missing, the page reports the actual reason. Live prompts incur provider usage; the demo limits output to 512 tokens and 120 model requests per process. The deterministic task-chain button is disabled in live mode.
 
-After configuring both plugins, a trusted Host calls `ctx.taskSystem.steward.memory.delegateToManager()`. Merely installing the plugins or registering a resource does not transfer context ownership. This increment has no end-user opt-in/settings control. Delegation persists across restart; optional unload or invalid rules cannot silently restore a second persona injector. New native generations still need their own Assembler preset. Do not overwrite a user's existing preset to enable this fixture.
+Live mode mounts the pinned optional plugins without delegation and official `token-meter`/`compaction-basic` from the isolated official 0.2.1-rc.2 runtime with automatic compaction enabled. A separate actual-native test forces a 4096-token-window surface replacement and verifies unique persona plus scoped recall of an early value no longer in the native surface. This is a tested lifecycle path, not a claim of unlimited context or perfect recall.
 
-Run the optional fixture only after obtaining the pinned sources and their declared dependencies. Without them the test reports an explicit skip. Its captured full native requests distinguish configured resource inclusion, rule exclusion and missing preset behavior; it does not establish long-term semantic memory recall.
+The bounded configured-provider smoke used Magpie 0.4.1 with `aws-vps-magpie` / `claude/claude-opus-5-5` / medium. Its successful second run made 10 requests (2 classifications, 8 native steps) across personal/A/B/personal/old-A reply/actual scoped recall. Each native request contained one persona and no foreign-scope markers. An earlier one-request failure remains recorded with an unclassified cause: total 11 requests, not an all-run zero-error claim. This short synthetic sample does not establish long-term personality, semantic retrieval accuracy or business-task quality.
+
+## Evidence and verification
+
+`demo.json` in each isolated root records its current URL. The evidence link exposes offline captured requests or safe live hashes/stats, current request observations and ledger tasks. `local-execution.json` records the last deterministic task chain. The final local receipt is `.runtime/steward-validation.json`; evidence artifacts and tokens are intentionally outside Git.
+
+Pinned optional sources:
+
+- Memory Manager 1.0.0: `d8fe9cfea344f972d34fd9a7e8eb2fd28acf8831`.
+- Request Assembler 1.1.3: `374ab6107e4c98ce99fc69eeefcf3714314a73b7`.
+
+The legacy sibling Manager 0.1 lacks the current resource API. Optional fixtures report explicit skips when pinned sources are absent. Manager owns policy, sources own content/revision/authorization, and Assembler owns native preset assembly. The task plugin adds only the scoped source and trusted configuration bridge; it does not duplicate their stores or composer. A global Manager whitelist does not override the source's actual-session authorization.
+
+Applicable local commands include:
+
+```sh
+npm run test:core
+DSH_OFFICIAL_ROOT="$PWD/.runtime/official-dsh-0.2.1-rc.2" npm run test:native
+TZ=UTC npm run test:ui
+npm run test:official
+npm run test:browser
+DSH_CI_RESULTS_DIR="$PWD/.runtime/steward-current-packages" npm run test:distribution
+```
+
+Use a fresh results directory for newly changed package bytes; never overwrite a prior tested tarball receipt. Local macOS results do not establish Linux PR CI. Native request observation proves the official model-call boundary snapshot, not network delivery or model comprehension. Canonical pagination bounds returned/processed records; underlying JSONL persistence can still scan files. Project continuation carries bounded authority references and truncation markers, preserves original Task IDs, and retrieves full records by scoped pages instead of dumping all reports.
+
+No `dev` merge, production preflight/deployment, version bump or release belongs to this isolated demo. Delivery follows a draft feature PR to `dev` and its required checks, without merging it.
