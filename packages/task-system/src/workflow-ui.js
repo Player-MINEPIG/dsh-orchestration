@@ -31,7 +31,7 @@
     unavailable: "执行端未就绪",
     disabled: "已停用",
   };
-  const kindName = (kind) => ({ unbound: "待选执行方式", program: "程序", agent: "Agent" })[kind] || kind;
+  const kindName = (kind) => ({ unbound: "待选执行方式", program: "程序", script: "脚本", agent: "Agent" })[kind] || kind;
   const badge = (status) =>
     `<span class="badge ${esc(status)}">${esc(statusNames[status] || status)}</span>`;
   const context = window.__DSH_WORKFLOW_CONTEXT__ || {};
@@ -591,7 +591,7 @@
     const models = capabilities?.models || [];
     const selectedModel = JSON.stringify([e.provider, e.model]);
     $("step-detail").innerHTML =
-      `<h3 class="detail-section-title">步骤设置</h3><div class="fields"><div><label for="step-title">步骤名称</label><input id="step-title" value="${esc(step.title)}"></div><div><label for="step-kind">执行方式</label><select id="step-kind">${option("unbound", "待选执行方式", e.kind)}${option("program", "程序", e.kind)}${option("agent", "Agent", e.kind)}</select></div>${e.kind !== "unbound" ? `<div class="span-all"><label for="step-workspace">执行工作区</label><select id="step-workspace">${workspaceOptions(step.nodeId, step.workspaceId)}</select></div>` : ""}</div>${e.kind === "unbound" ? `<p class="hint">此步骤描述计划中的工作，尚未选择执行方式。可以保存设计。执行前请选择执行方式（Agent 或程序），并指定工作区。Agent 可以根据自然语言工作要求执行。</p>` : e.kind === "program" ? `<label for="step-program">已登记的程序与版本</label><select id="step-program">${programOptions(step)}</select><p class="hint">${programsFor(step.nodeId).length ? "程序入口由该设备的插件登记。工作流只引用入口与版本。" : "此设备没有公布可用程序。请先在设备上安装并登记业务程序，恢复连接后刷新。"}</p>` : `<label for="step-model">模型</label><select id="step-model">${option("", models.length ? "选择模型" : "此设备未公布模型", selectedModel)}${models.map((row) => option(JSON.stringify([row.provider, row.model]), `${row.provider} / ${row.model}`, selectedModel)).join("")}${e.model && !models.some((row) => row.provider === e.provider && row.model === e.model) ? option(selectedModel, `${e.provider} / ${e.model} · 当前不可用`, selectedModel) : ""}</select><label for="step-effort">推理档位</label><select id="step-effort">${option("", "模型默认", e.reasoningEffort || "")}${(models.find((row) => row.provider === e.provider && row.model === e.model)?.reasoningEfforts || []).map((value) => option(value, value, e.reasoningEffort)).join("")}</select><label for="step-input-exposure">输入提供方式</label><select id="step-input-exposure">${option("inline", "直接提供给 Agent", e.inputExposure || "inline")}${option("tools", "通过工具按需读取", e.inputExposure || "inline")}</select><p class="muted">大量来源数据可由工具分页读取。选择此方式前，需要为 Agent 配置可读取本次工作流输入的工具。</p><label for="step-instructions">Agent 执行要求</label><textarea id="step-instructions">${esc(e.instructions)}</textarea><label for="step-tools">允许使用的工具（每行一个）</label><textarea id="step-tools">${esc(e.allowedTools.join("\n"))}</textarea>`}<label for="step-retries">${e.kind === "unbound" ? "选择执行方式后可配置重试" : e.kind === "agent" ? "Agent 自动重试次数" : "程序步骤仅支持手动重试"}</label><input id="step-retries" type="number" min="0" max="5" value="${step.maxRetries}"${e.kind !== "agent" ? " disabled" : ""}><h3 style="margin-top:20px">等待哪些步骤完成</h3><div id="dependencies">${
+      `<h3 class="detail-section-title">步骤设置</h3><div class="fields"><div><label for="step-title">步骤名称</label><input id="step-title" value="${esc(step.title)}"></div><div><label for="step-kind">执行方式</label><select id="step-kind">${option("unbound", "待选执行方式", e.kind)}${option("program", "程序", e.kind)}${option("script", "脚本", e.kind)}${option("agent", "Agent", e.kind)}</select></div>${e.kind !== "unbound" ? `<div class="span-all"><label for="step-workspace">执行工作区</label><select id="step-workspace">${workspaceOptions(step.nodeId, step.workspaceId)}</select></div>` : ""}</div>${e.kind === "unbound" ? `<p class="hint">此步骤描述计划中的工作，尚未选择执行方式。可以保存设计。执行前请选择执行方式（Agent 或程序），并指定工作区。Agent 可以根据自然语言工作要求执行。</p>` : e.kind === "script" ? `<label for="step-executable">可执行文件</label><input id="step-executable" value="${esc(e.executable)}" placeholder="python3 或绝对路径"><label for="step-args">参数（JSON 字符串数组）</label><textarea id="step-args">${esc(JSON.stringify(e.args, null, 2))}</textarea><p class="hint">脚本在此步骤的工作区执行。固定参数不经过 shell 展开。stdin 接收包含 input 与运行身份的 JSON，stdout 返回包含 data、summary 的 JSON，日志写 stderr。</p><p class="hint">${programsFor(step.nodeId).some(row => row.programId === "dsh.workflow-script" && row.version === "1" && row.workspaceIds?.includes(step.workspaceId)) ? "此设备已允许在所选工作区执行脚本。" : "此工作区尚未获脚本执行授权。请由设备操作者配置 scriptExecutionWorkspaces（允许执行脚本的工作区），或选择已授权工作区。"}</p>` : e.kind === "program" ? `<label for="step-program">已登记的程序与版本</label><select id="step-program">${programOptions(step)}</select><p class="hint">${programsFor(step.nodeId).length ? "程序入口由该设备的插件登记。工作流只引用入口与版本。" : "此设备没有公布可用程序。请先在设备上安装并登记业务程序，恢复连接后刷新。"}</p>` : `<label for="step-model">模型</label><select id="step-model">${option("", models.length ? "选择模型" : "此设备未公布模型", selectedModel)}${models.map((row) => option(JSON.stringify([row.provider, row.model]), `${row.provider} / ${row.model}`, selectedModel)).join("")}${e.model && !models.some((row) => row.provider === e.provider && row.model === e.model) ? option(selectedModel, `${e.provider} / ${e.model} · 当前不可用`, selectedModel) : ""}</select><label for="step-effort">推理档位</label><select id="step-effort">${option("", "模型默认", e.reasoningEffort || "")}${(models.find((row) => row.provider === e.provider && row.model === e.model)?.reasoningEfforts || []).map((value) => option(value, value, e.reasoningEffort)).join("")}</select><label for="step-input-exposure">输入提供方式</label><select id="step-input-exposure">${option("inline", "直接提供给 Agent", e.inputExposure || "inline")}${option("tools", "通过工具按需读取", e.inputExposure || "inline")}</select><p class="muted">大量来源数据可由工具分页读取。选择此方式前，需要为 Agent 配置可读取本次工作流输入的工具。</p><label for="step-instructions">Agent 执行要求</label><textarea id="step-instructions">${esc(e.instructions)}</textarea><label for="step-tools">允许使用的工具（每行一个）</label><textarea id="step-tools">${esc(e.allowedTools.join("\n"))}</textarea>`}<label for="step-retries">${e.kind === "unbound" ? "选择执行方式后可配置重试" : e.kind === "agent" ? "Agent 自动重试次数" : "程序步骤仅支持手动重试"}</label><input id="step-retries" type="number" min="0" max="5" value="${step.maxRetries}"${e.kind !== "agent" ? " disabled" : ""}><h3 style="margin-top:20px">等待哪些步骤完成</h3><div id="dependencies">${
         definition()
           .steps.filter((row) => row.stepId !== step.stepId)
           .map(
@@ -778,6 +778,7 @@
         (!step.execution.programId || !step.execution.version)
       )
         throw Error(`${step.title} 尚未选择程序`);
+      if (step.execution.kind === "script" && (!step.execution.executable.trim() || !Array.isArray(step.execution.args) || step.execution.args.some(value => typeof value !== "string"))) throw Error(`${step.title} 需要可执行文件和有效的 JSON 参数数组`);
       if (
         step.execution.kind === "agent" &&
         (!step.execution.provider ||
@@ -1166,6 +1167,8 @@
         step.execution =
           el.value === "unbound"
             ? { kind: "unbound" }
+            : el.value === "script"
+              ? { kind: "script", executable: "", args: [] }
             : el.value === "program"
               ? { kind: "program", programId: "", version: "" }
               : {
@@ -1179,6 +1182,13 @@
         graph();
         stepList();
         renderStepEditor();
+      } else if (el.id === "step-args") {
+        step.execution.args = null;
+        setDirty();
+        const args = JSON.parse(el.value);
+        if (!Array.isArray(args) || args.some(value => typeof value !== "string")) throw Error("脚本参数必须为 JSON 字符串数组");
+        step.execution.args = args;
+        setDirty();
       } else if (el.id === "step-program") {
         const [programId, version] = el.value ? JSON.parse(el.value) : ["", ""];
         Object.assign(step.execution, { programId, version });
@@ -1199,6 +1209,7 @@
       } else if (el.id === "step-workspace") {
         step.workspaceId = el.value;
         setDirty();
+        if (step.execution.kind === "script") renderStepEditor();
       } else if (el.dataset.dependency) {
         try {
           changeCall(el.dataset.dependency, step.stepId, !el.checked);
@@ -1297,6 +1308,9 @@
       stepList();
     } else if (el.id === "step-retries") {
       step.maxRetries = Number(el.value);
+      setDirty();
+    } else if (el.id === "step-executable") {
+      step.execution.executable = el.value;
       setDirty();
     } else if (el.id === "step-instructions") {
       step.execution.instructions = el.value;

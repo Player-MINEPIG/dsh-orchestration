@@ -7,6 +7,7 @@ import type { ExecutionRoute, Json, Run, Task } from "./contracts.js";
 import { scheduleInput } from "./schedule-window.js";
 import {
   ProgramCatalog,
+  SCRIPT_PROGRAM,
   type ProgramCatalogEntry,
   type ProgramRegistry,
 } from "./workflow-programs.js";
@@ -31,12 +32,12 @@ function fail(code: string, message: string): never {
 }
 function requireRunnableStep(step: WorkflowStep): asserts step is RunnableWorkflowStep {
   if (step.execution.kind === "unbound" || !step.workspaceId)
-    fail("WORKFLOW_UNBOUND", `Choose an execution mode (Agent or program) and workspace for step ${step.title} (${step.stepId}) before running`);
+    fail("WORKFLOW_UNBOUND", `Choose an execution mode (Agent, program or script) and workspace for step ${step.title} (${step.stepId}) before running`);
 }
 function requireRunnableDefinition(definition: WorkflowDefinition) {
   const unbound = definition.steps.filter(step => step.execution.kind === "unbound");
   if (unbound.length)
-    fail("WORKFLOW_UNBOUND", `Choose an execution mode (Agent or program) for these steps before running: ${unbound.map(step => `${step.title} (${step.stepId})`).join(", ")}`);
+    fail("WORKFLOW_UNBOUND", `Choose an execution mode (Agent, program or script) for these steps before running: ${unbound.map(step => `${step.title} (${step.stepId})`).join(", ")}`);
 }
 function readPath(value: Json, path: string[]): Json {
   let current = value;
@@ -585,19 +586,22 @@ export class WorkflowRuntime {
         !node.workspaceIds.includes(step.workspaceId)
       )
         fail("WORKFLOW_ROUTE", "Executor workspace unavailable");
-      if (step.execution.kind === "program") {
-        const execution = step.execution;
+      if (step.execution.kind !== "agent") {
+        const execution = step.execution.kind === "script" ? SCRIPT_PROGRAM : step.execution;
         if (
           !catalog.some(
             (item) =>
               item.nodeId === step.nodeId &&
               item.programId === execution.programId &&
-              item.version === execution.version,
+              item.version === execution.version &&
+              (!item.workspaceIds || item.workspaceIds.includes(step.workspaceId)),
           )
         )
           fail(
             "WORKFLOW_PROGRAM",
-            "Program version is not registered on executor",
+            step.execution.kind === "script"
+              ? `Script execution is not enabled for workspace ${step.workspaceId} on ${step.nodeId}; configure scriptExecutionWorkspaces and the subprocess service on that executor`
+              : "Program version is not registered on executor",
           );
       } else {
         const execution = step.execution;
@@ -799,12 +803,12 @@ export class WorkflowRuntime {
       workspaceId: step.workspaceId,
       requiredCapabilities: [],
     };
-    return step.execution.kind === "program"
+    return step.execution.kind !== "agent"
       ? {
           ...common,
           provider: "registered-program",
-          model: step.execution.programId,
-          execution: step.execution,
+          model: step.execution.kind === "script" ? SCRIPT_PROGRAM.programId : step.execution.programId,
+          execution: step.execution.kind === "script" ? { kind: "program", ...SCRIPT_PROGRAM } : step.execution,
         }
       : {
           ...common,
@@ -1037,7 +1041,9 @@ export class WorkflowRuntime {
             description:
               definition.execution.kind === "agent"
                 ? definition.execution.instructions
-                : `Registered program ${definition.execution.programId}@${definition.execution.version}`,
+                : definition.execution.kind === "script"
+                  ? `Script ${definition.execution.executable}`
+                  : `Registered program ${definition.execution.programId}@${definition.execution.version}`,
             workspaceId: definition.workspaceId,
             ...(run.taskId && run.runId
               ? { parentTaskId: run.taskId, parentRunId: run.runId }
@@ -1078,6 +1084,7 @@ export class WorkflowRuntime {
             `workflow-admit:${run.workflowRunId}:${step.stepId}:${step.attemptCount}`,
             {
               ...(!step.taskId ? { task } : {}),
+              ...(definition.execution.kind === "script" ? { script: definition.execution } : {}),
               run: {
                 taskId,
                 ...(run.runId ? { parentRunId: run.runId } : {}),

@@ -130,6 +130,7 @@ export interface Task {
 }
 export interface Run {
   executionExpectation?: CoreRun["executionExpectation"];
+  workflowScript?: CoreRun["workflowScript"];
   createdAt?: string;
   executionParentKind?: "coordinator" | "executor";
   executionParentRunId?: string;

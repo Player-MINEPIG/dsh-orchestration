@@ -11,7 +11,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { ExecutionModels, ExecutionModelChoice, sameExecutionModel } from "./execution-models.js";
 import type { CompleteExecutionModels } from "./execution-models.js";
 import { pairedExecutorModels } from "./paired-executors.js";
-import { ProgramCatalog, ProgramRoute } from "./workflow-programs.js";
+import { ProgramCatalog, ProgramRoute, ScriptExecution } from "./workflow-programs.js";
 import type {
   TaskSession,
   TaskSessionContext,
@@ -591,11 +591,15 @@ export class TaskLedger {
     this.assertManagementWritable();
     return this.command(commandId, `workflow.${operation}`, input, fn).value;
   }
-  workflowAdmission(commandId: string, input: {task?: TaskInput; run: RunInput}, link: (task: Task, run: Run) => void) {
+  workflowAdmission(commandId: string, input: {task?: TaskInput; run: RunInput; script?: ScriptExecution}, link: (task: Task, run: Run) => void) {
     this.assertManagementWritable();
     return this.command(commandId, "workflow.admit", input, () => {
       const task = input.task ? this.newTask(input.task) : this.getTask(input.run.taskId);
       const run = this.newRun({...input.run, taskId:task.taskId});
+      if (input.script) {
+        run.workflowScript = ScriptExecution.parse(input.script);
+        this.saveRun(run);
+      }
       link(task, run);
       return {taskId:task.taskId,runId:run.runId};
     }).value;
@@ -2755,7 +2759,7 @@ export class TaskLedger {
       const programs = status && typeof status === "object" && !Array.isArray(status) ? status.programs : undefined;
       if (!Array.isArray(programs) || !programs.some(entry => {
         const parsed = ProgramCatalog.safeParse(entry);
-        return parsed.success && parsed.data.nodeId === node.nodeId && parsed.data.programId === program.programId && parsed.data.version === program.version;
+        return parsed.success && parsed.data.nodeId === node.nodeId && parsed.data.programId === program.programId && parsed.data.version === program.version && (!parsed.data.workspaceIds || parsed.data.workspaceIds.includes(route.workspaceId ?? ""));
       })) fail("UNSUPPORTED", "Program version not advertised by executor");
     } else if(!options.skipModel) {
     const positive=this.executionModels.view(route.nodeId).catalog.positiveSnapshot;
