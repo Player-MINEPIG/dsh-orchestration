@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
 import {generateKeyPairSync} from 'node:crypto';
 import {join} from 'node:path';
+import {mkdirSync} from 'node:fs';
 import {SessionId} from '@deepseek-ai/dsh-session';
 import {ToolCallId} from '@deepseek-ai/dsh-llm';
 import {createNativeHarness} from './native-harness.mjs';
@@ -22,6 +23,37 @@ function models(ledger,nodeId) {
   const request=ledger.executionModels.request(`catalog-${++sequence}`,{nodeId}).catalog.request;
   ledger.completeExecutionModels(`catalog-result-${++sequence}`,{nodeId,requestId:request.requestId,generation:request.generation,result:{state:'success',complete:true,observedAt:Date.now(),models:[{provider:'test-offline',model:'script'}]}});
 }
+
+test('real ordinary sessions in different directories bind a managed project without moving themselves or the PM',async t=>{
+  const h=await createNativeHarness({config:{centralMode:'host',executionEnabled:false,projectAgentOptions:{provider:'test-offline',model:'script'}}});
+  t.after(()=>h.dispose());
+  const projects=h.ctx.taskSystem.projects,root=join(h.dir,'default-projects');
+  projects.saveSettings({root,expectedRevision:0});
+  const {projectId}=await projects.create({commandId:'managed-project',title:'Shared project',goal:'Coordinate existing sessions'});
+  const pm=await projects.conversation(projectId),sessions=[],drafts=[];
+  for(const name of ['materials-one','materials-two']) {
+    const cwd=join(h.dir,name);mkdirSync(cwd);
+    const handle=await h.ctx.agents.create({sessionId:SessionId(name),meta:{cwd},agentOptions:{provider:'test-offline',model:'script'}});
+    sessions.push(handle);t.after(()=>handle.dispose());
+    await call(h,handle.agent,'project_bind_session',{projectId});
+    const binding=h.ctx.taskSystem.sessionCollaboration.binding(handle.agent);
+    assert.equal(binding.projectId,projectId);assert.equal(binding.cwd,cwd);
+    assert.equal(handle.agent.session.header.cwd,cwd);
+    const draft=await call(h,handle.agent,'task_create',{commandId:'draft',title:name});
+    assert.equal((await call(h,handle.agent,'task_query',{})).tasks.some(task=>task.taskId===draft.value.taskId),true);
+    if(drafts.length) {
+      const rejected=await h.ctx.tools.execute({name:'task_bind_dispatcher',arguments:{commandId:'other-draft',taskId:drafts[0]},callId:ToolCallId('other-draft'),agent:handle.agent,signal:new AbortController().signal});
+      assert.equal(rejected.isError,true);assert.match(JSON.stringify(rejected.error),/Only the session that created this draft/);
+    }
+    await call(h,handle.agent,'task_bind_dispatcher',{commandId:'own-draft',taskId:draft.value.taskId});
+    drafts.push(draft.value.taskId);
+  }
+  assert.notEqual(sessions[0].agent.session.header.cwd,sessions[1].agent.session.header.cwd);
+  assert.notEqual(h.ledger.dispatcherForSession('local','materials-one').runId,h.ledger.dispatcherForSession('local','materials-two').runId);
+  assert.equal((await projects.conversation(projectId)).workspace,pm.workspace);
+  assert.ok(pm.workspace.startsWith(root+'/project-'));
+  assert.equal(h.adapter.requests.length,0);
+});
 
 test('deployment separates central hosting and execution, preserves explicit legacy grants and never defaults to both',()=>{
   assert.deepEqual(deploymentPolicy({centralMode:'host'}),{centralMode:'host',executionEnabled:false});
