@@ -9,6 +9,7 @@ import { deploymentPolicy, ledgerRole, type DeploymentPolicy } from "./deploymen
 import { mountDispatcherTools } from "./dispatcher-tools.js";
 import { initializeTaskSessionTitle, taskSessionTitle } from "./session-titles.js";
 import { ProjectSessionService } from "./project-session-service.js";
+import { StewardRuntime } from "./steward-runtime.js";
 import { ExpectedExecutionMs } from "./execution-expectation.js";
 import { TaskReturnDelivery } from "./task-returns.js";
 import { returnFailure } from "./task-return-failure.js";
@@ -2135,6 +2136,7 @@ export class TaskSystemService extends Service {
   registerOriginContinuation(adapter:import("./task-returns.js").OriginContinuationAdapter) {return this.taskReturns.register(adapter);}
   readonly taskReturns: TaskReturnDelivery;
   readonly sessionPortal: ProjectSessionService;
+  readonly steward: StewardRuntime;
   withDispatchOrigin<T>(agent: Agent | undefined, operation: () => T): T {
     const selected = agent?.session.requestHeader()?.config;
     const provider=selected?.provider ?? agent?.options.provider;
@@ -2204,6 +2206,7 @@ export class TaskSystemService extends Service {
     });
     this.sessionCollaboration = new SessionCollaboration(ledger, config.nodeId, (nodeId, commandId, input) => collaborationAuthority(config.centralMode, ledger, this.ctx.get("remoteExecution"))(nodeId, commandId, input), agent => Boolean(this.native?.scopeFor(agent)));
     this.sessionPortal = new ProjectSessionService(this, ctx);
+    this.steward = new StewardRuntime(this, ctx);
     this.executionDirectories = new ExecutionDirectories(ledger.managementDatabase());
     ledger.executionDirectoryReady=()=>{try{return !!this.executionDirectories.validatedRoot();}catch{return false;}};
     const inventory=new ExecutionModelInventory({llm:()=>this.ctx.get("llm"),nativeReady:()=>!!this.native,officialBackends:()=>this.config.officialBackends,officialAvailable:backend=>!!this.ctx.get("subagents")?.getProvider(backend),temporaryWorkspaceReady:()=>ledger.executionDirectoryReady?.()===true});
@@ -2234,7 +2237,7 @@ export class TaskSystemService extends Service {
   }
   beginConfigurationEdit(): () => void {
     if (
-      this.configurationPaused || this.returnJob ||
+      this.configurationPaused || this.returnJob || this.steward.active ||
       [...this.providers].some((provider) => provider.activeCount > 0)
     )
       throw new TaskError("CONFIGURATION_BUSY", "Native execution is active");
@@ -2255,6 +2258,10 @@ export class TaskSystemService extends Service {
     if (!this.config.executionEnabled)
       throw new Error("planner role cannot execute native workloads");
   }
+  assertConversationAdmission(): void {
+    if (this.configurationPaused || !this.accepting)
+      throw new TaskError("CONFIGURATION_BUSY", "Conversation admission is paused while the host configuration changes");
+  }
   attach(provider: NativeExecutionProvider): void {
     this.providers.add(provider);
     this.native = provider;
@@ -2269,7 +2276,7 @@ export class TaskSystemService extends Service {
   close(): Promise<void> {
     if (this.shutdown) return this.shutdown;
     this.accepting = false;
-    const portal = this.sessionPortal.close();
+    const portal = this.steward.close().then(() => this.sessionPortal.close());
     return this.shutdown = Promise.resolve().then(() => this.closeOwned(portal));
   }
   private async closeOwned(portal: Promise<void>): Promise<void> {
@@ -2687,8 +2694,9 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
       scriptCtx.effect(() => registerWorkflowScripts(service.programs, scriptCtx.subprocess, config.scriptExecutionWorkspaces));
     });
   }
-  ctx.inject(["agents","agentLoop","sessions","sessionPersistence","tools","systemPrompt"],returnCtx=>{
+  ctx.inject(["agents","agentLoop","sessions","sessionPersistence","sessionProjections","tools","systemPrompt","llm"],returnCtx=>{
     service.taskReturns.bindContext(returnCtx);
+    service.steward.bindContext(returnCtx);
     service.sessionPortal.bindContext(returnCtx);
   });
   ctx.inject(["agents", "sessions", "sessionPersistence", "tools", "systemPrompt", "sessionController", "typert", "workspaceRegistry", "remoteAccess", "commands", "fileUploads", "attachments", "fs"], nativeCtx => {

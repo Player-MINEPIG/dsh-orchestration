@@ -72,7 +72,9 @@
     "packages/task-system/test/demand-ledger-read-index.test.mjs",
     "packages/task-system/test/demand-products.test.mjs",
     "packages/task-system/test/executor-demand-reads.test.mjs",
-    "packages/task-system/test/session-demand-reads.test.mjs"
+    "packages/task-system/test/session-demand-reads.test.mjs",
+    "packages/task-system/test/steward-conversations.test.mjs",
+    "packages/task-system/test/steward-routing.test.mjs"
   ],
   "native": [
     "packages/task-system/test/project-native-client.test.mjs",
@@ -111,7 +113,10 @@
     "packages/task-system/test/project-session-native-owner.test.mjs",
     "packages/task-system/test/project-session-service.test.mjs",
     "packages/task-system/test/project-session-remote.test.mjs",
-    "tests/dsh/task-checkins-native.test.mjs"
+    "tests/dsh/task-checkins-native.test.mjs",
+    "tests/dsh/steward-conversation.test.mjs",
+    "tests/dsh/steward-memory-native.test.mjs",
+    "tests/dsh/steward-observation.test.mjs"
   ],
   "ui": [
     "packages/task-system/test/executor-alerts.test.mjs",
