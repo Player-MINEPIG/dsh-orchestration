@@ -4,21 +4,31 @@ import {mkdirSync,readFileSync,writeFileSync} from 'node:fs';
 import {join,resolve} from 'node:path';
 import {createNativeHarness} from './native-harness.mjs';
 import {ScriptedModel} from './scripted-model.mjs';
+import {attachLiveProvider,readLiveProviderRoute,attachOfficialCompaction} from './steward-live-provider.mjs';
+import {mountStewardMemory,stewardMemoryAvailable} from './fixtures/steward-memory-host.mjs';
 
-const root=resolve(process.env.DSH_STEWARD_DEMO_ROOT ?? '.runtime/steward-demo');
+const liveMode=process.env.DSH_STEWARD_DEMO_MODE==='live';
+const withMemory=process.env.DSH_STEWARD_DEMO_MEMORY==='1'||liveMode;
+const route=liveMode?await readLiveProviderRoute():{provider:'test-offline',model:'script'};
+const root=resolve(process.env.DSH_STEWARD_DEMO_ROOT ?? (liveMode?'.runtime/steward-demo-live':withMemory?'.runtime/steward-demo-memory':'.runtime/steward-demo'));
 mkdirSync(root,{recursive:true});
-const h=await createNativeHarness({dir:root,executionRoot:true,config:{role:'both',schedulerEnabled:false,autoExecute:false,projectAgentOptions:{provider:'test-offline',model:'script'},localNode:{models:[{provider:'test-offline',model:'script',reasoningEfforts:[]}],capabilities:[],workspaceIds:[],enabled:true}}});
+const h=await createNativeHarness({dir:root,executionRoot:true,config:{role:'both',schedulerEnabled:false,autoExecute:false,projectAgentOptions:route,localNode:{models:route?[{provider:route.provider,model:route.model,reasoningEfforts:[]}]:[],capabilities:[],workspaceIds:[],enabled:true}}});
 const task=h.ctx.taskSystem, projects=task.projects, service=task.steward;
+const live=liveMode?await attachLiveProvider(h.ctx,{isolatedRoot:root,maxOutputTokens:512,maxRequests:120}):null;
+let memoryStatus=withMemory?'pinned-sources-unavailable':'not-mounted',compactionStatus='not-mounted';
+if(withMemory&&stewardMemoryAvailable){await mountStewardMemory(h);memoryStatus='mounted-not-delegated';}
+if(live?.configured){await attachOfficialCompaction(h.ctx,{config:{auto:true,headroomTokens:1024,retainTokens:4096,maxTokens:512}});compactionStatus='official-auto';}
 if(!projects.settings().root) projects.saveSettings({root:join(root,'projects'),expectedRevision:projects.settings().revision});
-for(const [id,title,goal] of [['demo-a','A 项目','A_ONLY_GOAL'],['demo-b','B 项目','B_ONLY_GOAL']]) await projects.create({commandId:id,title,goal});
-const token=randomUUID(),states={mode:'scripted-offline',runtime:'actual DSH Loader / AgentLoop / SessionPersistence',root};
+if(!liveMode||live?.configured)for(const [id,title,goal] of [['demo-a','A 项目','A_ONLY_GOAL'],['demo-b','B 项目','B_ONLY_GOAL']]) await projects.create({commandId:id,title,goal});
+const token=randomUUID(),states={mode:liveMode?'live-provider':'scripted-offline',runtime:'actual DSH Loader / AgentLoop / SessionPersistence',root,memory:memoryStatus,compaction:compactionStatus,provider:live?.metadata??null,diagnostic:liveMode&&!live?.configured?live?.reason:null};
+const demoLabel=liveMode?`隔离本机演示 · ${live?.configured?`真实模型 ${live.metadata.providerId} / ${live.metadata.model} · 每次最多512输出token，最多120次模型请求`:`真实模型未配置：${live?.reason}`} · 仅内存复用既有配置，不修改生产档案`:'隔离本机演示 · 离线脚本模型 · 真实 DSH 会话与 SQLite 路由 · 未接入生产凭据';
 const echo=options=>{
   const latest=[...options.messages].reverse().find(message=>message.role==='user'&&message.source?.kind!=='runtime-context');
-  const text=latest?.content.filter(part=>part.type==='text').map(part=>part.text).join('\n')??'';
+  const text=(latest?.content.filter(part=>part.type==='text').map(part=>part.text).join('\n')??'').split('\n[用户明确分享的一段历史原文')[0].trim();
   return `离线脚本回复：${text}\n\n此回复由测试模型产生；原生会话、路由与任务记录由真实 DSH 处理。`;
 };
 // Resolve each fixture response from its actual request, never from an enqueue on HTTP retry.
-let localJob=null, mutation=false;
+let localJob=null, mutation=false, dropNextSend=process.env.DSH_STEWARD_DEMO_DROP_FIRST_SEND==='1';
 h.adapter.stream=async function* (options) {
   this.requests.push(options);
   const text=JSON.stringify(options.messages);
@@ -55,9 +65,10 @@ const assets={
   '/react-dom.js':readFileSync(new URL('../../node_modules/react-dom/umd/react-dom.development.js',import.meta.url)),
   '/steward-client.js':readFileSync(new URL('../../packages/task-system/src/steward-client.js',import.meta.url)),
 };
-const page=`<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>管家 · 隔离本机演示</title><style>html,body,#root{height:100%;margin:0}body{background:#181b20;color:#ddd}button,select,textarea{color-scheme:dark}</style><div style="position:fixed;right:16px;top:10px;z-index:5;font:12px system-ui"><button id="local-task">本机任务链验证</button> <a style="color:#9fd7ca" href="/evidence?token=${token}" target="_blank">查看隔离证据</a><span id="local-task-status"></span></div><div id="root"></div><script src="/react.js?token=${token}"></script><script src="/react-dom.js?token=${token}"></script><script src="/steward-client.js?token=${token}"></script><script>const invoke=async(method,input)=>{const response=await fetch('/api/'+method+'?token=${token}',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(input)});const value=await response.json();if(!response.ok)throw Object.assign(Error(value.error),{code:value.code});return value;};document.getElementById('local-task').onclick=async()=>{const button=document.getElementById('local-task');button.disabled=true;try{const result=await invoke('demoLocalTask',{});document.getElementById('local-task-status').textContent=' '+result.state+' · '+result.taskId;}catch(error){document.getElementById('local-task-status').textContent=error.message;}finally{button.disabled=false;}};const {StewardPanel}=createStewardClient(React);ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(StewardPanel,{invoke,demoLabel:'隔离本机演示 · 离线脚本模型 · 真实 DSH 会话与 SQLite 路由 · 未接入生产凭据',openSession:id=>alert('真实原生会话 ID：'+id)}));</script></html>`;
+const page=`<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>管家 · 隔离本机演示</title><style>html,body,#root{height:100%;margin:0}body{background:#181b20;color:#ddd}button,select,textarea{color-scheme:dark}</style><div style="position:fixed;right:16px;top:10px;z-index:5;font:12px system-ui"><button id="local-task" ${liveMode?'disabled title="此按钮仅验证离线任务夹具；真实模型通过聊天使用实际工具"':''}>本机任务链验证</button> <a style="color:#9fd7ca" href="/evidence?token=${token}" target="_blank">查看隔离证据</a><span id="local-task-status"></span></div><div id="root"></div><script src="/react.js?token=${token}"></script><script src="/react-dom.js?token=${token}"></script><script src="/steward-client.js?token=${token}"></script><script>const invoke=async(method,input)=>{const response=await fetch('/api/'+method+'?token=${token}',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(input)});const value=await response.json();if(!response.ok)throw Object.assign(Error(value.error),{code:value.code,details:value.details});return value;};document.getElementById('local-task').onclick=async()=>{const button=document.getElementById('local-task');button.disabled=true;try{const result=await invoke('demoLocalTask',{});document.getElementById('local-task-status').textContent=' '+result.state+' · '+result.taskId;}catch(error){document.getElementById('local-task-status').textContent=error.message;}finally{button.disabled=false;}};const {StewardPanel}=createStewardClient(React);ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(StewardPanel,{invoke,demoLabel:${JSON.stringify(demoLabel).replace(/</g,'\\u003c')},openSession:id=>alert('真实原生会话 ID：'+id)}));</script></html>`;
 const server=createServer(async(req,res)=>{
   res.setHeader('Cache-Control','no-store');
+  let rpcPath='',rpcInput;
   try {
     const url=new URL(req.url,'http://127.0.0.1');
     const supplied=Buffer.from(url.searchParams.get('token')??''),expected=Buffer.from(token);
@@ -65,18 +76,28 @@ const server=createServer(async(req,res)=>{
     if(req.headers.origin&&new URL(req.headers.origin).host!==req.headers.host)throw Error('Cross-origin request refused');
     if(req.method==='GET'&&url.pathname==='/'){res.setHeader('content-type','text/html; charset=utf-8');res.end(page);return;}
     if(req.method==='GET'&&assets[url.pathname]){res.setHeader('content-type','text/javascript; charset=utf-8');res.end(assets[url.pathname]);return;}
-    if(req.method==='GET'&&url.pathname==='/evidence'){res.setHeader('content-type','application/json');res.end(JSON.stringify({...states,requests:h.adapter.requests.map(request=>({sessionId:request.sessionId,messages:request.messages})),tasks:h.ledger.snapshot().tasks},null,2));return;}
+    if(req.method==='GET'&&url.pathname==='/evidence'){res.setHeader('content-type','application/json');res.end(JSON.stringify({...states,liveStats:live?.stats??null,requestObservations:service.snapshot({conversationId:'main'}).requests,requests:liveMode?undefined:h.adapter.requests.map(request=>({sessionId:request.sessionId,messages:request.messages})),tasks:h.ledger.snapshot().tasks},null,2));return;}
     if(req.method!=='POST')throw Error('Unknown demo route');
     let body='';for await(const chunk of req){body+=chunk;if(body.length>100000)throw Error('Request too large');}
-    const input=JSON.parse(body||'{}');let value;
+    const input=JSON.parse(body||'{}');rpcPath=url.pathname;rpcInput=input;let value;
     if(url.pathname==='/api/stewardSnapshot')value=await service.snapshot(input);
     else if(url.pathname==='/api/stewardReconcile')value=await service.reconcile(input);
     else if(url.pathname==='/api/stewardResolve')value=await service.resolve(input);
+    else if(url.pathname==='/api/stewardMemoryRead')value=await service.memoryConfiguration(input);
+    else if(url.pathname==='/api/stewardMemoryConfigure')value=await service.configureMemory(input);
+    else if(url.pathname==='/api/stewardGateRead')value=service.gateRead(input);
+    else if(url.pathname==='/api/stewardGateArm')value=service.gateArm(input);
+    else if(url.pathname==='/api/stewardGateDecide')value=service.gateDecide(input);
+    else if(url.pathname==='/api/stewardGateAmend')value=service.gateAmend(input);
+    else if(url.pathname==='/api/stewardGateContinue')value=await service.gateContinue(input);
+    else if(url.pathname==='/api/stewardGateAcceptContinue')value=await service.gateAcceptContinue(input);
+    else if(url.pathname==='/api/stewardGateIndependent')value=await service.gateIndependent(input);
     else if(url.pathname==='/api/stewardSend'){
       if(mutation)throw Error('Demo mutation is busy; this request was not admitted');
-      mutation=true;try{await service.send(input);value=await waitCommand(input.commandId);}finally{mutation=false;}
+      mutation=true;try{await service.send(input);value=await waitCommand(input.commandId);if(dropNextSend){dropNextSend=false;res.writeHead(503,{'content-type':'application/json'});res.end(JSON.stringify({error:'Synthetic gateway lost the original application acknowledgement'}));return;}}finally{mutation=false;}
     }
     else if(url.pathname==='/api/demoLocalTask'){
+      if(liveMode)throw Object.assign(Error('This deterministic task-chain button is available only in the explicitly offline fixture'),{code:'DEMO_OFFLINE_ONLY'});
       if(mutation)throw Error('Demo mutation is busy; this request was not admitted');
       mutation=true;try{
       const command=randomUUID(),title=`本机原生执行验证 ${command.slice(0,8)}`;
@@ -106,11 +127,17 @@ const server=createServer(async(req,res)=>{
       }finally{localJob=null;mutation=false;}
     } else throw Error('Unknown demo RPC');
     res.setHeader('content-type','application/json');res.end(JSON.stringify(value));
-  }catch(error){res.writeHead(400,{'content-type':'application/json'});res.end(JSON.stringify({error:error.message,code:error.code}));}
+  }catch(error){
+    const details={reason:error.code,detail:error.message};
+    if(rpcPath==='/api/stewardSend'&&rpcInput?.conversationId&&rpcInput?.commandId)details.admission=service.commandStatus(rpcInput.conversationId,rpcInput.commandId);
+    const kinds={stewardGateArm:'simple',stewardGateDecide:'simple',stewardGateAmend:'simple',stewardGateContinue:'continue',stewardGateAcceptContinue:'accept-continue',stewardGateIndependent:'independent'};
+    const kind=kinds[rpcPath.slice(5)];if(kind&&rpcInput?.commandId)details.actionOutcome=service.humanActionApplied(rpcInput.commandId,kind)?'may-have-applied':'not-applied';
+    res.writeHead(400,{'content-type':'application/json'});res.end(JSON.stringify({error:error.message,code:error.code,details}));
+  }
 });
 await new Promise(done=>server.listen(Number(process.env.DSH_STEWARD_DEMO_PORT??0),'127.0.0.1',done));
 const url=`http://127.0.0.1:${server.address().port}/?token=${token}`;
 writeFileSync(join(root,'demo.json'),JSON.stringify({...states,url,evidenceUrl:url.replace('/?','/evidence?')},null,2));
 process.stdout.write(JSON.stringify({...states,url,evidenceUrl:url.replace('/?','/evidence?')})+'\n');
-async function stop(){server.closeAllConnections();await new Promise(done=>server.close(done));await h.dispose();}
+async function stop(){await live?.dispose();server.closeAllConnections();await new Promise(done=>server.close(done));await h.dispose();}
 process.once('SIGINT',()=>void stop().then(()=>process.exit()));process.once('SIGTERM',()=>void stop().then(()=>process.exit()));

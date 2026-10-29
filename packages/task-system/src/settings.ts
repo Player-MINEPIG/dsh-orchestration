@@ -1,4 +1,5 @@
-import { stewardRead, stewardSend, stewardResolve } from "./steward-contracts.js";
+import { stewardRead, stewardSend, stewardResolve, stewardGateRead, stewardGateArm, stewardGateDecide, stewardGateAmend, stewardGateContinue, stewardGateAcceptContinue, stewardGateIndependent } from "./steward-contracts.js";
+import { stewardMemoryRead, stewardMemoryConfigure } from "./steward-memory.js";
 import { ProtocolError } from "./remote/protocol.js";
 import { ExpectedExecutionMs } from "./execution-expectation.js";
 import { CentralTaskControl } from "./central-control.js";
@@ -45,6 +46,7 @@ declare module "@deepseek-ai/dsh-typert-protocol" {
   interface RemoteErrorDetailsMap {
     "task/startup": { readonly reason: string };
     "task/project": { readonly reason: string };
+    "task/steward": { readonly reason: string; readonly detail: string; readonly admission?: "stored" | "in-flight" | "not-admitted"; readonly actionOutcome?: "not-applied" | "may-have-applied" };
   }
 }
 import { z } from "zod";
@@ -361,6 +363,9 @@ const projectInputs = {
   stewardSend,
   stewardReconcile: stewardRead,
   stewardResolve,
+  stewardMemoryRead,
+  stewardMemoryConfigure,
+  stewardGateRead, stewardGateArm, stewardGateDecide, stewardGateAmend, stewardGateContinue, stewardGateAcceptContinue, stewardGateIndependent,
   nodeModelSettings:z.object({nodeId:z.string().min(1).max(128)}).strict(),
   refreshNodeModels:z.object({nodeId:z.string().min(1).max(128)}).strict(),
   saveNodeModelDefault:z.object({nodeId:z.string().min(1).max(128),expectedRevision:z.number().int().nonnegative(),expectedCatalogRevision:z.string().min(1),choice:ExecutionModelChoice}).strict(),
@@ -537,10 +542,46 @@ export class TaskPluginSettings extends TypertRemoteService {
       throw new RemoteError("task/project", "Steward conversation requires a local planner", { reason: "PLANNER_REQUIRED" });
     return task.steward;
   }
-  async stewardSnapshot(input: unknown) { return this.projectOperation(() => this.stewardService().snapshot(stewardRead.parse(input))); }
-  async stewardSend(input: unknown) { return this.projectOperation(() => this.stewardService().send(stewardSend.parse(input))); }
-  async stewardReconcile(input: unknown) { return this.projectOperation(() => this.stewardService().reconcile(stewardRead.parse(input))); }
-  async stewardResolve(input: unknown) { return this.projectOperation(() => this.stewardService().resolve(stewardResolve.parse(input))); }
+  private async stewardOperation<T>(operation: () => T | Promise<T>): Promise<T> {
+    try { return await operation(); }
+    catch (error) {
+      if (error instanceof TaskError || error instanceof ProtocolError) throw new RemoteError("task/steward", "Steward operation rejected", { reason: error.code, detail: error.message.slice(0,2000) });
+      throw error;
+    }
+  }
+  private async stewardHumanOperation<T>(commandId: string, kind: "simple" | "continue" | "accept-continue" | "independent", operation: () => T | Promise<T>): Promise<T> {
+    try { return await operation(); }
+    catch (error) {
+      if (error instanceof TaskError || error instanceof ProtocolError) throw new RemoteError("task/steward", "Steward action rejected", {
+        reason: error.code, detail: error.message.slice(0,2000), actionOutcome: this.stewardService().humanActionApplied(commandId,kind) ? "may-have-applied" : "not-applied",
+      });
+      throw error;
+    }
+  }
+  async stewardSnapshot(input: unknown) { return this.stewardOperation(() => this.stewardService().snapshot(stewardRead.parse(input))); }
+  async stewardSend(input: unknown) {
+    return this.stewardOperation(async () => {
+      const service = this.stewardService(), request = stewardSend.parse(input);
+      try { return await service.send(request); }
+      catch (error) {
+        if (error instanceof TaskError || error instanceof ProtocolError) throw new RemoteError("task/steward", "Steward send rejected", {
+          reason: error.code, detail: error.message.slice(0,2000), admission: service.commandStatus(request.conversationId, request.commandId),
+        });
+        throw error;
+      }
+    });
+  }
+  async stewardReconcile(input: unknown) { return this.stewardOperation(() => this.stewardService().reconcile(stewardRead.parse(input))); }
+  async stewardResolve(input: unknown) { return this.stewardOperation(() => this.stewardService().resolve(stewardResolve.parse(input))); }
+  async stewardMemoryRead(input: unknown) { return this.stewardOperation(() => this.stewardService().memoryConfiguration(stewardMemoryRead.parse(input))); }
+  async stewardMemoryConfigure(input: unknown) { return this.stewardOperation(() => this.stewardService().configureMemory(stewardMemoryConfigure.parse(input))); }
+  async stewardGateRead(input: unknown) { return this.stewardOperation(() => this.stewardService().gateRead(stewardGateRead.parse(input))); }
+  async stewardGateArm(input: unknown) { const request=stewardGateArm.parse(input);return this.stewardHumanOperation(request.commandId,"simple",()=>this.stewardService().gateArm(request)); }
+  async stewardGateDecide(input: unknown) { const request=stewardGateDecide.parse(input);return this.stewardHumanOperation(request.commandId,"simple",()=>this.stewardService().gateDecide(request)); }
+  async stewardGateAmend(input: unknown) { const request=stewardGateAmend.parse(input);return this.stewardHumanOperation(request.commandId,"simple",()=>this.stewardService().gateAmend(request)); }
+  async stewardGateContinue(input: unknown) { const request=stewardGateContinue.parse(input);return this.stewardHumanOperation(request.commandId,"continue",()=>this.stewardService().gateContinue(request)); }
+  async stewardGateAcceptContinue(input: unknown) { const request=stewardGateAcceptContinue.parse(input);return this.stewardHumanOperation(request.commandId,"accept-continue",()=>this.stewardService().gateAcceptContinue(request)); }
+  async stewardGateIndependent(input: unknown) { const request=stewardGateIndependent.parse(input);return this.stewardHumanOperation(request.commandId,"independent",()=>this.stewardService().gateIndependent(request)); }
   private workflowService() {
     const service = this.ctx.get("taskSystem");
     if (!service || deploymentPolicy(service.config).centralMode === "remote") throw new RemoteError("task/project", "Workflow center requires a planner", {reason:"PLANNER_REQUIRED"});
