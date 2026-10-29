@@ -90,6 +90,9 @@ test('public Manager1.0 and Assembler1.1.3 compose persona and authority project
     assert.match(text(beta), /B_PRIVATE_GOAL_MEMORY/); assert.match(text(beta), /B_PRIVATE_TASK_MEMORY/);
     assert.doesNotMatch(text(beta), /A_PRIVATE|INPUT_personal-memory/);
     assert.equal(new Set(h.adapter.requests.map(request => request.sessionId)).size, 3);
+    const recorded = service.snapshot({ conversationId: 'main' }).requests;
+    assert.equal(recorded.length, 3);
+    assert.ok(recorded.every(request => request.assemblerObserved && /^[a-f0-9]{64}$/.test(request.assemblyHash)), 'Durable Host receipt retains public Assembler observation/hash');
     const source = manager.adapters.get(sourceId);
     assert.deepEqual(source.list({ scope: {} }), [], 'No global resource content catalog');
     const bound = source.listBound({ scope: { sessionId: alpha.sessionId, projectId: b.projectId } });
@@ -116,7 +119,7 @@ test('public Manager1.0 and Assembler1.1.3 compose persona and authority project
       checkedAt: new Date().toISOString(), host: 'official @deepseek-ai/* 0.2.1-rc.2',
       manager: { version: '1.0.0', source: 'd8fe9cfea344f972d34fd9a7e8eb2fd28acf8831', entrySha256: createHash('sha256').update(readFileSync(join(managerRoot, 'src/index.js'))).digest('hex') },
       assembler: { version: '1.1.3', source: '374ab6107e4c98ce99fc69eeefcf3714314a73b7', entrySha256: createHash('sha256').update(readFileSync(join(assemblerRoot, 'src/plugin.js'))).digest('hex') },
-      actualRequests: h.adapter.requests.map(request => ({ sessionId: request.sessionId, messages: request.messages })), applied,
+      actualRequests: h.adapter.requests.map(request => ({ sessionId: request.sessionId, messages: request.messages })), recordedRequests: recorded, applied,
       assertions: ['native full-request observation', 'one persona', 'personal/A/B isolation', 'authoritative task facts', 'forged project ignored', 'foreign read denied', 'generation lease revoked'],
       limits: 'Offline ScriptedModel is the model boundary. No remote owner, paid provider delivery, semantic memory or advanced history replacement acceptance.'
     }, null, 2));
