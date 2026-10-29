@@ -41,6 +41,7 @@
     "packages/task-system/test/workflow-runtime.test.mjs",
     "packages/task-system/test/workspace-catalog.test.mjs",
     "packages/task-system/test/workspaces.test.mjs",
+    "packages/task-system/test/remote/admission-lanes.test.mjs",
     "packages/task-system/test/remote/admission-repair.test.mjs",
     "packages/task-system/test/remote/approval.test.mjs",
     "packages/task-system/test/remote/bounds-collaboration.test.mjs",

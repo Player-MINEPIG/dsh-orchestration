@@ -72,6 +72,17 @@ export type Role = 'planner' | 'executor' | 'both'
 export const EXECUTOR_OPERATIONS = ['claim', 'renew', 'submit', 'cancel', 'receipt', 'bindSession', 'markRunning', 'getRun', 'executionDisposition', 'getAttempt', 'acknowledgeCancellation', 'listWork', 'observe', 'delegate', 'taskHistory', 'taskWait', 'taskNote', 'taskReport', 'heartbeat', 'nodeStatus', 'retryBeforeEffects', 'offerApproval', 'approvalStatus', 'cancelApproval', 'executorIdentity', 'sessionContext', 'selectTaskSession', 'sessionMessages', 'sessionMessageReply', 'projectSnapshot', 'projectCollaborate', 'executionModelRequests', 'completeExecutionModels', 'executionModelView', 'reportAdmission'] as const
 export type Operation = typeof EXECUTOR_OPERATIONS[number]
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json }
+export const COMMAND_LANES = ['default', 'project-owner', 'project-application'] as const
+export type CommandLane = typeof COMMAND_LANES[number]
+export function commandLane(operation: Operation, payload: Record<string, Json>): CommandLane {
+  if (operation !== 'projectCollaborate' || !isRecord(payload.input)) return 'default'
+  const input = payload.input
+  if (input.action !== 'project-session' || !isRecord(input.request)) return 'default'
+  const request = input.request
+  if (request.kind === 'exchange' || request.kind === 'decision') return 'project-owner'
+  if (request.kind === 'application' && isRecord(request.input)) return request.input.kind === 'authorize-owner' ? 'project-owner' : 'project-application'
+  return 'default'
+}
 export const DEFAULT_MAX_BODY_BYTES = 64 * 1024
 export const DEFAULT_MAX_RESPONSE_BYTES = 128 * 1024
 export const MAX_WIRE_BYTES = 16 * 1024 * 1024

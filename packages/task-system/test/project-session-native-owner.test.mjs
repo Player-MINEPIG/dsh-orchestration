@@ -439,13 +439,23 @@ test("gzip frame parts retain overflow successors and preserve the full single-f
   } finally { h.ctx.sessionController.follow = original; await h.dispose(); }
 });
 
-test("gzip actual SDK follow frames equal the durable public journal in order", async () => {
+test("gzip actual SDK follow frames equal the durable public journal in order", async t => {
   const h = await createOwner();
+  const follow = h.ctx.sessionController.follow;
+  t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
+  h.ctx.sessionController.follow = (...args) => (async function* () {
+    for await (const frame of follow.apply(h.ctx.sessionController, args)) {
+      t.mock.timers.tick(5);
+      yield frame;
+    }
+  })();
   try {
     const opened = await invoke(h, { kind: "stream-polls", codec: "gzip", polls: [{ stream: "session-follow", request: { assistantStream: true } }] });
     let cursor = opened.polls[0].result.cursor, compressed = 0;
     const frames = [];
-    await invoke(h, { kind: "session-prompt", requestId: "gzip-sdk-turn", mode: "queue", content: [{ type: "text", text: "Read this complete message. ".repeat(550) }] });
+    const prompt = { kind: "session-prompt", requestId: "gzip-sdk-turn", mode: "queue", content: [{ type: "text", text: "Read this complete message. ".repeat(1500) }] };
+    assert.ok(Buffer.byteLength(JSON.stringify({ binding: h.binding, operation: prompt })) < 48 * 1024);
+    await invoke(h, prompt);
     const { agent } = await h.ctx.sessionController.resolveAgent(h.binding.sessionId);
     await agent.whenIdle();
     let partial = [];
@@ -478,7 +488,7 @@ test("gzip actual SDK follow frames equal the durable public journal in order", 
     const page = await h.ctx.sessionController.page({ address: { kind: "session", sessionId: h.binding.sessionId }, throughSeq: seqs.at(-1), maxMessages: 500 }, new AbortController().signal);
     assert.deepEqual(events, JSON.parse(JSON.stringify(page.records.filter(record => seqs.includes(record.event.seq)).map(record => record.event))));
     assert.equal(h.model.requests.length, 1);
-  } finally { await h.dispose(); }
+  } finally { h.ctx.sessionController.follow = follow; await h.dispose(); }
 });
 async function pollUntil(h, stream, initial, predicate) {
   let value = initial;
