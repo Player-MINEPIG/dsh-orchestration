@@ -65,7 +65,7 @@ test('configuration editing blocks active result delivery and pauses a discovery
   const release=await inbox.beginConfigurationEdit();await inbox.poll();release();await inbox.dispose();
 });
 
-test('host managed projects retain their explicitly selected local workspace association',async t=>{
+test('project workspace defaults do not restrict ordinary session registration or replace its identity',async t=>{
  const f=fixture(t),wb=new Workbench(f.ledger),db=f.ledger.managementDatabase();
  wb.manage('managed','create_project',{projectId:'managed',title:'Managed',goal:'Preserve selected workspace',state:'active'});
  db.exec('CREATE TABLE pr_projects(id TEXT PRIMARY KEY,cwd TEXT);CREATE TABLE pr_project_workspaces(project TEXT PRIMARY KEY,workspace TEXT)');
@@ -73,7 +73,19 @@ test('host managed projects retain their explicitly selected local workspace ass
  db.prepare('INSERT INTO pr_project_workspaces VALUES(?,?)').run('managed',JSON.stringify({nodeId:'central',path:'/central/selected'}));
  const selected=await f.authority.projectCollaborate('central','selected',{action:'activate',sessionId:'managed-origin',cwd:'/central/selected',projectId:'managed'});
  assert.equal(selected.projectId,'managed');
- await assert.rejects(f.authority.projectCollaborate('central','wrong',{action:'activate',sessionId:'wrong',cwd:'/central/unrelated',projectId:'managed'}),{code:'FORBIDDEN'});
+ const ordinary={action:'activate',sessionId:'ordinary',cwd:'/central/other-materials',projectId:'managed'};
+ const attached=await f.authority.projectCollaborate('central','ordinary',ordinary);
+ assert.equal(attached.projectId,'managed');assert.equal(attached.binding.cwd,ordinary.cwd);
+ db.prepare('UPDATE pr_projects SET cwd=? WHERE id=?').run('/central/next-pm','managed');
+ db.prepare('UPDATE pr_project_workspaces SET workspace=? WHERE project=?').run(JSON.stringify({nodeId:'central',path:'/central/next-pm'}),'managed');
+ assert.equal((await f.authority.projectCollaborate('central','after-pm-move',{...ordinary,action:'status'})).binding.cwd,ordinary.cwd);
+ const another=await f.authority.projectCollaborate('central','another',{...ordinary,sessionId:'another',cwd:'/central/third-materials'});
+ assert.equal(another.projectId,'managed');
+ await assert.rejects(f.authority.projectCollaborate('central','changed-cwd',{...ordinary,cwd:'/central/next-pm'}),{code:'CONFLICT'});
+ await assert.rejects(f.authority.projectCollaborate('unknown','unregistered',ordinary),{code:'FORBIDDEN'});
+ await assert.rejects(f.authority.projectCollaborate('central','missing-project',{...ordinary,sessionId:'missing',projectId:'missing'}),{code:'FORBIDDEN'});
+ assert.equal(db.prepare('SELECT cwd FROM pr_projects WHERE id=?').get('managed').cwd,'/central/next-pm');
+ assert.equal(JSON.parse(db.prepare('SELECT workspace FROM pr_project_workspaces WHERE project=?').get('managed').workspace).path,'/central/next-pm');
 });
 
 

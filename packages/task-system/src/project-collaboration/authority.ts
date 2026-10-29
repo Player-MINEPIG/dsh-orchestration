@@ -136,20 +136,6 @@ export class ProjectCollaborationAuthority {
       if (!binding) {
         const project = input.projectId ? this.wb.snapshot().projects.find(p => p.projectId === input.projectId && p.state !== "archived") : undefined;
         if (input.projectId && !project) fail("FORBIDDEN", "Central project is not available");
-        if (project && nodeId === this.ledger.nodeId && this.db.prepare("SELECT 1 FROM sqlite_master WHERE name='pr_projects'").get()) {
-          const managed = this.db.prepare("SELECT cwd FROM pr_projects WHERE id=?").get(project.projectId);
-          if (managed) {
-            let permitted = managed.cwd === input.cwd;
-            if (this.db.prepare("SELECT 1 FROM sqlite_master WHERE name='pr_project_workspaces'").get()) {
-              const row = this.db.prepare("SELECT workspace FROM pr_project_workspaces WHERE project=?").get(project.projectId);
-              if (row) {
-                const workspace = JSON.parse(String(row.workspace));
-                if (workspace.nodeId === nodeId && workspace.path === input.cwd) permitted = true;
-              }
-            }
-            if (!permitted) fail("FORBIDDEN", "Open this project's authorized local workspace before binding");
-          }
-        }
         const existingBacklog = project ? this.wb.snapshot().backlogs.find(b => b.projectId === project.projectId) : undefined;
         const existing = project ? {projectId:project.projectId, backlogId:existingBacklog?.backlogId ?? `session-backlog-${hash(project.projectId)}`, ownerNodeId:nodeId, sessionId:input.sessionId, cwd:input.cwd, title:project.title, goal:project.goal, summary:"", state:"active" as const, updatedAt:this.ledger.managementNow()} : undefined;
         binding = existing ? { ...existing, sessionId: input.sessionId } : {
