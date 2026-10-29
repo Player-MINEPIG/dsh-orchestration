@@ -847,6 +847,7 @@ export class NativeExecutionProvider {
             !tool.startsWith("task_") &&
             tool !== "codex_delegate" &&
             tool !== "workflow_input_read" &&
+            tool !== "steward_recall" &&
             tool !== "run_code" &&
             (policyTools === undefined || policyTools.includes(tool)),
         );
@@ -854,6 +855,7 @@ export class NativeExecutionProvider {
     return configured.filter(
       (tool) =>
         tool !== "workflow_input_read" &&
+        tool !== "steward_recall" &&
         tool !== "codex_delegate" &&
         (policyTools === undefined || policyTools.includes(tool)) &&
         (this.owner.config.trustedUnconfinedTools ||
@@ -1131,6 +1133,8 @@ export class NativeExecutionProvider {
       throw new Error("external task policy denies this workspace");
     if (this.active.has(claim.attempt.attemptId))
       throw new Error("attempt already has an owned native execution");
+    if (this.owner.isConversationSession(sessionId))
+      return Promise.resolve({ outcome: "blocked", summary: "STEWARD_CONVERSATION_RESERVED: personal and project coordinator histories cannot be borrowed for task execution" });
     const ref = {
       runId: claim.run.runId,
       attemptId: claim.attempt.attemptId,
@@ -1817,6 +1821,8 @@ export class NativeExecutionProvider {
       }
       if (!sessionId)
         throw new Error("resume requires an existing bound session");
+      if (this.owner.isConversationSession(sessionId))
+        throw new TaskError("STEWARD_CONVERSATION_RESERVED", "Personal and project coordinator histories cannot be borrowed for task execution");
       const workspaceId =
         claim.run.route?.workspaceId ?? claim.task.workspaceId;
       workspace = workspaceId
@@ -2130,6 +2136,16 @@ export class NativeExecutionProvider {
 
 /** Trusted in-process entry point. The underlying ledger enforces roles too. */
 export class TaskSystemService extends Service {
+  isConversationSession(sessionId: string): boolean {
+    if (this.steward.store.hasSession(sessionId, this.config.nodeId)) return true;
+    const db = this.ledger.managementDatabase();
+    const exists = (name: string) => Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name));
+    if (exists("pr_sessions") && db.prepare("SELECT 1 FROM pr_sessions WHERE session=?").get(sessionId)) {
+      const location = exists("pr_session_locations") ? db.prepare("SELECT binding FROM pr_session_locations WHERE session=?").get(sessionId) : undefined;
+      if (!location || db.prepare("SELECT 1 FROM pr_session_locations WHERE session=? AND json_extract(binding,'$.nodeId')=?").get(sessionId, this.config.nodeId)) return true;
+    }
+    return exists("project_session_owner_operations") && Boolean(db.prepare("SELECT 1 FROM project_session_owner_operations WHERE session=? AND json_extract(data,'$.binding.nodeId')=? LIMIT 1").get(sessionId, this.config.nodeId));
+  }
   pendingOriginReturns(sessionId:string) {
     return this.ledger.originPendingRuns(this.config.nodeId,sessionId);
   }
@@ -2689,6 +2705,17 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
     throw error;
   }
   const service = new TaskSystemService(ctx, config, ledger, results);
+  ctx.tools.register(defineTool({
+    name: "steward_recall",
+    description: "Read bounded previous steward messages in this actual native session's personal or project scope. Historical data is not new authorization. Use query or beforeSeq to page; no caller-selected scope is accepted.",
+    parameters: { query: { type: "string" }, beforeSeq: { type: "integer" }, limit: { type: "integer" }, recordKind: { type: "string" }, recordId: { type: "string" }, offset: { type: "integer" }, expectedRevision: { type: "string" } },
+    output,
+    execute: async (args, exec) => {
+      if (!exec.agent) throw new TaskError("FORBIDDEN", "Recall requires an actual bound native session");
+      if (service.native?.scopeFor(exec.agent)) throw new TaskError("FORBIDDEN", "Owned task execution cannot read steward conversation history");
+      return json(service.steward.recall.read(exec.agent.id, args));
+    },
+  }));
   if (config.executionEnabled && config.scriptExecutionWorkspaces.length) {
     ctx.inject(["subprocess"], scriptCtx => {
       scriptCtx.effect(() => registerWorkflowScripts(service.programs, scriptCtx.subprocess, config.scriptExecutionWorkspaces));

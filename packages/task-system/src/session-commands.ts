@@ -62,6 +62,7 @@ export class SessionDispatcherAuthority {
     if ("taskId" in command && !taskIds.has(command.taskId)) throw new TaskError("FORBIDDEN", "Task is outside the current project");
     switch (command.kind) {
       case "create": {
+        this.ledger.assertAcceptanceProjectPlan(projectId);
         const {kind: _kind, ...intent} = command;
         const receipt = this.ledger.createTask(commandId, intent);
         const backlog = backlogs[0];

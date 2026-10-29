@@ -137,6 +137,7 @@ export class TaskPlanner {
     };
   }
   async plan(input: PlanningInput, options: { signal?: AbortSignal } = {}) {
+    this.ledger.assertAcceptancePlanning(input);
     if (input.expectedExecutionMs !== undefined)
       input = { ...input, expectedExecutionMs: ExpectedExecutionMs.parse(input.expectedExecutionMs) };
     const projectId = input.projectId ?? (input.taskId ? this.ledger.projectForTask(input.taskId) : this.ledger.dispatchProjectId());
