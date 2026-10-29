@@ -1401,7 +1401,7 @@ export class ProjectRuntime {
       combined.addEventListener("abort", cancel, { once: true });
       handle.agent.followup(
         createUserMessage({
-          source: { kind: "user" },
+          source: { kind: "user", rpcId: command },
           content: [{ type: "text", text: message }],
         }),
       );

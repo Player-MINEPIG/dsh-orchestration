@@ -214,7 +214,7 @@ test("browser companion registers the shared persistent task settings surface an
       $host: { isLoopback: true },
       $mount: async (contribution) => {
         assert.equal(new Set(contribution.descriptors.map(d => d.method)).size, contribution.descriptors.length);
-        for (const method of ["sessionTasks", "scheduleOptions", "createScheduledPlan", "controlScheduledPlan", "workflowSnapshot", "workflowPage", "saveWorkflow", "startWorkflow", "retryWorkflowStep", "cancelWorkflow"])
+        for (const method of ["sessionTasks", "scheduleOptions", "createScheduledPlan", "controlScheduledPlan", "workflowSnapshot", "workflowPage", "saveWorkflow", "startWorkflow", "retryWorkflowStep", "cancelWorkflow", "stewardSnapshot", "stewardSend", "stewardReconcile"])
           assert.ok(contribution.descriptors.some(descriptor => descriptor.method === method));
         return () => {};
       },
@@ -245,7 +245,9 @@ test("browser companion registers the shared persistent task settings surface an
     },
   };
   await ui.apply(ctx);
-  assert.equal(registrations.length, 6);
+  assert.equal(registrations.length, 8);
+  assert.ok(registrations.some(r => r.options.key === "dsh-steward"));
+  assert.ok(registrations.some(r => r.options.id === "dsh-steward"));
   assert.ok(!registrations.some(r => r.options.id === "dsh-task-workflows"));
   assert.ok(registrations.some(r => r.options.name === "conversation.view" && r.options.id === "dsh-session-tasks"));
   assert.ok(listeners.has("command/executed"));
@@ -259,14 +261,14 @@ test("browser companion registers the shared persistent task settings surface an
   assert.equal((await portal.options.inject().read()).nodeId, "fixture");
   assert.equal(registrations.filter(r => r.options.name === "settings.section" || r.options.name === "plugins.row.config").length, 0);
   for (const cleanup of effects.splice(0).reverse()) cleanup?.();
-  assert.equal(disposed.length, 6);
+  assert.equal(disposed.length, registrations.length);
   assert.equal(listeners.size, 0);
   registrations.length = 0;
   ctx.configForms.whileServed = () => () => {};
   await ui.apply(ctx);
   assert.equal(
     registrations.length,
-    4,
+    6,
     "hide the surface and portal while the Host does not serve task-system settings",
   );
   for (const cleanup of effects.splice(0).reverse()) cleanup?.();

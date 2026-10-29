@@ -30,7 +30,11 @@ export async function createNativeHarness({ config = {}, script = [], dir, prese
   ].map(([id, name, config]) => ({ id, name, config })));
   await ctx.loader.await();
   assert.ok(ctx.taskSystem, 'real Loader must provide the task service');
-  if (executionRoot && ctx.taskSystem.config.executionEnabled) ctx.taskSystem.executionDirectories.save({ root: dir, expectedRevision: 0 });
+  if (executionRoot && ctx.taskSystem.config.executionEnabled) {
+    const settings = ctx.taskSystem.executionDirectories.settings();
+    if (!settings.root) ctx.taskSystem.executionDirectories.save({ root: dir, expectedRevision: settings.revision });
+    else assert.equal(settings.root, dir, 'persistent fixture must retain its isolated execution root');
+  }
   if (!ctx.taskSystem.config.executionEnabled) assert.equal(ctx.taskSystem.native, undefined, 'planner must not mount native workload execution');
   else assert.ok(ctx.taskSystem.native, 'real Loader must provide native execution');
   const adapter = new ScriptedModel(script);

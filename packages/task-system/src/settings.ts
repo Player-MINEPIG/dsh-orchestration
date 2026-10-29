@@ -1,3 +1,4 @@
+import { stewardRead, stewardSend, stewardResolve } from "./steward-contracts.js";
 import { ProtocolError } from "./remote/protocol.js";
 import { ExpectedExecutionMs } from "./execution-expectation.js";
 import { CentralTaskControl } from "./central-control.js";
@@ -356,6 +357,10 @@ export function hasTaskConfigOverride(patches: readonly unknown[]): boolean {
 }
 
 const projectInputs = {
+  stewardSnapshot: stewardRead,
+  stewardSend,
+  stewardReconcile: stewardRead,
+  stewardResolve,
   nodeModelSettings:z.object({nodeId:z.string().min(1).max(128)}).strict(),
   refreshNodeModels:z.object({nodeId:z.string().min(1).max(128)}).strict(),
   saveNodeModelDefault:z.object({nodeId:z.string().min(1).max(128),expectedRevision:z.number().int().nonnegative(),expectedCatalogRevision:z.string().min(1),choice:ExecutionModelChoice}).strict(),
@@ -526,6 +531,16 @@ export class TaskPluginSettings extends TypertRemoteService {
   constructor(ctx: Context) {
     super(ctx, "taskPluginSettings");
   }
+  private stewardService() {
+    const task = this.ctx.get("taskSystem");
+    if (!task?.steward || deploymentPolicy(task.config).centralMode !== "host")
+      throw new RemoteError("task/project", "Steward conversation requires a local planner", { reason: "PLANNER_REQUIRED" });
+    return task.steward;
+  }
+  async stewardSnapshot(input: unknown) { return this.projectOperation(() => this.stewardService().snapshot(stewardRead.parse(input))); }
+  async stewardSend(input: unknown) { return this.projectOperation(() => this.stewardService().send(stewardSend.parse(input))); }
+  async stewardReconcile(input: unknown) { return this.projectOperation(() => this.stewardService().reconcile(stewardRead.parse(input))); }
+  async stewardResolve(input: unknown) { return this.projectOperation(() => this.stewardService().resolve(stewardResolve.parse(input))); }
   private workflowService() {
     const service = this.ctx.get("taskSystem");
     if (!service || deploymentPolicy(service.config).centralMode === "remote") throw new RemoteError("task/project", "Workflow center requires a planner", {reason:"PLANNER_REQUIRED"});
@@ -577,7 +592,7 @@ export class TaskPluginSettings extends TypertRemoteService {
       if (error instanceof TaskError || error instanceof ProtocolError)
         throw new RemoteError("task/project", "Project operation rejected", {
           reason: error.code,
-          ...(["WORKFLOW_SCOPE","WORKFLOW_UNBOUND"].includes(error.code) ? {detail:error.message} : {}),
+          ...(["WORKFLOW_SCOPE","WORKFLOW_UNBOUND","CLARIFICATION"].includes(error.code) ? {detail:error.message} : {}),
         });
       throw error;
     }

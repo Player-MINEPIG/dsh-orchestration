@@ -67,7 +67,9 @@
     "packages/task-system/test/session-duty-authority.test.mjs",
     "packages/task-system/test/project-sessions.test.mjs",
     "packages/task-system/test/project-session-carrier.test.mjs",
-    "packages/task-system/test/task-checkins.test.mjs"
+    "packages/task-system/test/task-checkins.test.mjs",
+    "packages/task-system/test/steward-conversations.test.mjs",
+    "packages/task-system/test/steward-routing.test.mjs"
   ],
   "native": [
     "packages/task-system/test/project-native-client.test.mjs",
@@ -106,7 +108,10 @@
     "packages/task-system/test/project-session-native-owner.test.mjs",
     "packages/task-system/test/project-session-service.test.mjs",
     "packages/task-system/test/project-session-remote.test.mjs",
-    "tests/dsh/task-checkins-native.test.mjs"
+    "tests/dsh/task-checkins-native.test.mjs",
+    "tests/dsh/steward-conversation.test.mjs",
+    "tests/dsh/steward-memory-native.test.mjs",
+    "tests/dsh/steward-observation.test.mjs"
   ],
   "ui": [
     "packages/task-system/test/executor-alerts.test.mjs",
