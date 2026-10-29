@@ -116,15 +116,31 @@ test('a recreated host restores the canonical log without replay and old project
     const restored=await h.ctx.taskSystem.steward.reconcile({conversationId:'main'});
     assert.deepEqual(restored.messages.map(message=>message.id),original.messages.map(message=>message.id));
     await h.ctx.taskSystem.steward.send(input);assert.equal(h.adapter.requests.length,0,'Restart does not replay an admitted message');
+    const taskIds=[];
+    for(let i=0;i<120;i++) {
+      const task=h.ledger.createTask(`large-continuation-task-${i}`,{title:`Existing original task ${i}`,description:'PRIVATE_TASK_DESCRIPTION_'.repeat(300)}).value;
+      taskIds.push(task.taskId);h.ctx.taskSystem.projects.linkTask(reply.source.sessionId,task.taskId);
+      h.ledger.appendReport(`large-continuation-report-${i}`,{taskId:task.taskId,title:`Prior result ${i}`,body:'PRIVATE_FULL_REPORT_BODY_'.repeat(500)});
+    }
     await h.ctx.taskSystem.projects.handoff(projectId);
+    const binding=h.ctx.taskSystem.projects.placementProject(projectId);
+    const summary=String(h.ledger.managementDatabase().prepare('SELECT summary FROM pr_sessions WHERE session=?').get(binding.session).summary);
+    assert.ok(summary.length<=24000,'A large project continuation has a hard serialized-character budget');
+    assert.match(summary,/"taskCount":120/);assert.match(summary,/"tasksTruncated":true/);
+    assert.doesNotMatch(summary,/PRIVATE_FULL_REPORT_BODY_/,'Continuation carries bounded authority references instead of full reports');
     h.adapter.script.push('After rotation response');
-    await h.ctx.taskSystem.steward.send({conversationId:'main',commandId:'after-rotation',text:'AFTER_ROTATION_MARKER',replyTo:reply.id});
+    const admission=await h.ctx.taskSystem.steward.send({conversationId:'main',commandId:'after-rotation',text:'AFTER_ROTATION_MARKER',replyTo:reply.id});
+    assert.equal(admission.commandMessage?.text,'AFTER_ROTATION_MARKER','Send response includes its direct receipt independently of the paginated notification tail');
     const rotated=await waitFor(h.ctx.taskSystem.steward,s=>s.messages.some(message=>message.text==='After rotation response'));
-    const user=rotated.messages.find(message=>message.text==='AFTER_ROTATION_MARKER');
+    const user=(await h.ctx.taskSystem.steward.snapshot({conversationId:'main',commandId:'after-rotation'})).commandMessage;
+    assert.ok(user,'Direct command receipt remains available even when a report burst moved it outside the tail page');
     assert.equal(user.source.generation,2);assert.notEqual(user.source.sessionId,reply.source.sessionId);
     assert.deepEqual(user.scope,{kind:'project',projectId});assert.equal(rotated.persona.id,original.persona.id);
     assert.equal(h.adapter.requests.length,1);assert.match(requestText(h.adapter.requests[0]),/BEFORE_RESTART_MARKER/);
     assert.match(requestText(h.adapter.requests[0]),/AFTER_ROTATION_MARKER/);
+    assert.doesNotMatch(requestText(h.adapter.requests[0]),/PRIVATE_FULL_REPORT_BODY_/);
+    assert.equal((requestText(h.adapter.requests[0]).match(/\[persona dsh-steward@1\]/g)??[]).length,1);
+    assert.deepEqual(taskIds.map(id=>h.ledger.getTask(id).taskId),taskIds,'Rotation reuses every original task identity');
   }finally{await h.dispose();rmSync(dir,{recursive:true,force:true});}
 });
 
@@ -198,4 +214,35 @@ test('human recovery closes only an uncertain wait after restart, without replay
     await waitFor(service,s=>s.messages.some(message=>message.text==='New independent response'));
     assert.equal(h.adapter.requests.length,1);assert.doesNotMatch(requestText(h.adapter.requests[0]),/NEVER_ADMITTED_MARKER/);
   }finally{await h.dispose();rmSync(dir,{recursive:true,force:true});}
+});
+
+test('explicit quotation shares only the selected historical A excerpt to the current B generation, with immutable provenance', {timeout:15000}, async()=>{
+  const h=await createNativeHarness({config:{role:'both',schedulerEnabled:false,projectAgentOptions:{provider:'test-offline',model:'script'}}});
+  try {
+    const projects=h.ctx.taskSystem.projects,service=h.ctx.taskSystem.steward;
+    projects.saveSettings({root:join(h.dir,'projects'),expectedRevision:0});
+    const a=await projects.create({commandId:'quote-a',title:'Quote A',goal:'A_UNSHARED_PROJECT_GOAL'}),b=await projects.create({commandId:'quote-b',title:'Quote B',goal:'B_PROJECT_GOAL'});
+    h.adapter.script.push('原句 QUOTE_ALLOWED_EXCERPT 后面是 A_UNSHARED_REMAINDER');
+    await service.send({conversationId:'main',commandId:'quote-source',text:'A_UNSHARED_INPUT',target:{kind:'project',projectId:a.projectId}});
+    const initial=await waitFor(service,s=>s.messages.some(message=>message.text.includes('QUOTE_ALLOWED_EXCERPT')&&message.role==='assistant'));
+    const source=initial.messages.find(message=>message.role==='assistant');
+    await projects.handoff(a.projectId);await projects.handoff(b.projectId);
+    const input={conversationId:'main',commandId:'quote-to-b',text:'请把引用作为资料核对。',target:{kind:'project',projectId:b.projectId},quote:{messageId:source.id,expectedRevision:source.revision,excerpt:'QUOTE_ALLOWED_EXCERPT'}};
+    h.adapter.script.push('B received explicit excerpt');await service.send(input);
+    const snapshot=await waitFor(service,s=>s.messages.some(message=>message.text==='B received explicit excerpt'));
+    const shared=snapshot.messages.find(message=>message.commandId===input.commandId);
+    assert.equal(shared.source.generation,2);assert.equal(shared.quote.source.generation,1);
+    assert.equal(shared.quote.messageId,source.id);assert.equal(shared.quote.revision,source.revision);
+    assert.match(shared.quote.sourceContentHash,/^[a-f0-9]{64}$/);assert.match(shared.quote.excerptHash,/^[a-f0-9]{64}$/);
+    assert.match(requestText(h.adapter.requests.at(-1)),/QUOTE_ALLOWED_EXCERPT/);
+    assert.doesNotMatch(requestText(h.adapter.requests.at(-1)),/A_UNSHARED_INPUT|A_UNSHARED_REMAINDER|A_UNSHARED_PROJECT_GOAL/);
+    const requests=h.adapter.requests.length;await service.send(input);assert.equal(h.adapter.requests.length,requests);
+    await assert.rejects(async()=>service.send({...input,quote:{...input.quote,excerpt:'changed'}}),{code:'CONFLICT'});
+    for(const [commandId,quote] of [['quote-stale',{...input.quote,expectedRevision:99}],['quote-forged',{...input.quote,excerpt:'not original text'}]])
+      await assert.rejects(service.send({...input,commandId,quote}),/changed|exact contiguous/);
+    await assert.rejects(service.send({...input,commandId:'quote-other-conversation',conversationId:'other'}),{code:'FORBIDDEN'});
+    h.ledger.managementDatabase().prepare("UPDATE pr_projects SET state='handoff' WHERE id=?").run(a.projectId);
+    await assert.rejects(service.send({...input,commandId:'quote-revoked'}),{code:'FORBIDDEN'});
+    assert.equal(h.adapter.requests.length,requests,'Rejected or replayed quotations do not dispatch a destination native turn');
+  }finally{await h.dispose();}
 });

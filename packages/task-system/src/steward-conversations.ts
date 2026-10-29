@@ -1,9 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import { canonical, TaskError, type TaskLedger } from "./ledger.js";
-import { stewardBinding, stewardMessage, stewardScope, stewardState, stewardSourceStatus, stewardResolve, stewardRequestObservation, STEWARD_PERSONA,
+import { stewardBinding, stewardMessage, stewardMessageUpdate, stewardAttention, stewardScope, stewardState, stewardSourceStatus, stewardResolve, stewardRequestObservation, STEWARD_PERSONA,
   type StewardRequestObservation,
-  type StewardBinding, type StewardMessage, type StewardScope, type StewardSend } from "./steward-contracts.js";
+  type StewardBinding, type StewardMessage, type StewardScope, type StewardSend, type StewardQuote, stewardRead } from "./steward-contracts.js";
 
 const digest = (value: unknown) => createHash("sha256").update(canonical(value)).digest("hex");
 export const stewardBindingKey = (binding: StewardBinding) => digest(binding);
@@ -25,6 +25,10 @@ export class StewardConversations {
       CREATE TABLE IF NOT EXISTS steward_resolutions(command TEXT PRIMARY KEY,digest TEXT NOT NULL,message TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS steward_requests(id TEXT PRIMARY KEY,conversation TEXT NOT NULL,data TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS steward_request_conversation ON steward_requests(conversation);`);
+    this.db.exec(`CREATE INDEX IF NOT EXISTS steward_pending_source ON steward_messages(conversation,json_extract(data,'$.source'))
+      WHERE json_extract(data,'$.role')='user' AND json_extract(data,'$.state.kind') NOT IN ('completed','rejected','stopped','released');
+      CREATE INDEX IF NOT EXISTS steward_scope_latest ON steward_messages(conversation,json_extract(data,'$.scope.kind'),json_extract(data,'$.scope.projectId'),seq);
+      CREATE INDEX IF NOT EXISTS steward_native_source ON steward_sources(json_extract(data,'$.binding.sessionId'),json_extract(data,'$.binding.nodeId'));`);
   }
   observeRequest(input: StewardRequestObservation) {
     const value = stewardRequestObservation.parse(input);
@@ -42,9 +46,71 @@ export class StewardConversations {
   conversationIds(): string[] {
     return this.db.prepare("SELECT id FROM steward_conversations").all().map(row => String(row.id));
   }
+  conversationBatch(afterId: string, limit = 8): string[] {
+    return this.db.prepare("SELECT id FROM steward_conversations WHERE id>? ORDER BY id LIMIT ?").all(afterId, limit).map(row => String(row.id));
+  }
+  sourcesForSession(sessionId: string, nodeId: string) {
+    const rows = this.db.prepare("SELECT conversation,data FROM steward_sources WHERE json_extract(data,'$.binding.sessionId')=? AND json_extract(data,'$.binding.nodeId')=? LIMIT 101").all(sessionId, nodeId);
+    if (rows.length > 100) throw new TaskError("LIMIT", "One native session is linked to too many visible conversations");
+    return rows.map(row => ({ conversationId: String(row.conversation), binding: cursor.parse(JSON.parse(String(row.data))).binding }));
+  }
+  hasSession(sessionId: string, nodeId: string): boolean {
+    return !!this.db.prepare("SELECT 1 FROM steward_sources WHERE json_extract(data,'$.binding.sessionId')=? AND json_extract(data,'$.binding.nodeId')=? LIMIT 1").get(sessionId, nodeId);
+  }
+  cursorBatch(conversationId: string, afterKey: string, limit = 16) {
+    return this.db.prepare("SELECT session,data FROM steward_sources WHERE conversation=? AND session>? ORDER BY session LIMIT ?").all(conversationId, afterKey, limit)
+      .map(row => ({ key: String(row.session), value: cursor.parse(JSON.parse(String(row.data))) }));
+  }
   messages(conversationId: string, afterSeq = 0): StewardMessage[] {
     return this.db.prepare("SELECT data FROM steward_messages WHERE conversation=? AND seq>? ORDER BY seq")
       .all(conversationId, afterSeq).map(row => stewardMessage.parse(JSON.parse(String(row.data))));
+  }
+  page(input: z.infer<typeof stewardRead>) {
+    const { conversationId, limit, afterSeq, beforeSeq } = input;
+    const first = this.db.prepare("SELECT seq FROM steward_messages WHERE conversation=? ORDER BY seq LIMIT 1").get(conversationId);
+    const last = this.db.prepare("SELECT seq FROM steward_messages WHERE conversation=? ORDER BY seq DESC LIMIT 1").get(conversationId);
+    const rows = afterSeq !== undefined
+      ? this.db.prepare("SELECT data FROM steward_messages WHERE conversation=? AND seq>? ORDER BY seq LIMIT ?").all(conversationId, afterSeq, limit)
+      : beforeSeq !== undefined
+        ? this.db.prepare("SELECT data FROM steward_messages WHERE conversation=? AND seq<? ORDER BY seq DESC LIMIT ?").all(conversationId, beforeSeq, limit).reverse()
+        : this.db.prepare("SELECT data FROM steward_messages WHERE conversation=? ORDER BY seq DESC LIMIT ?").all(conversationId, limit).reverse();
+    const messages = rows.map(row => stewardMessage.parse(JSON.parse(String(row.data))));
+    const firstSeq = messages.at(0)?.seq ?? null, lastSeq = messages.at(-1)?.seq ?? null;
+    const firstStoredSeq = first ? Number(first.seq) : null, lastStoredSeq = Number(last?.seq ?? 0);
+    const ids = [...new Set(input.knownIds)];
+    const updateRows = ids.length ? this.db.prepare(`SELECT id,json_extract(data,'$.revision') AS revision,json_extract(data,'$.state') AS state,json_extract(data,'$.resolution') AS resolution,json_extract(data,'$.replyTo') AS parent FROM steward_messages WHERE conversation=? AND id IN (${ids.map(() => "?").join(",")}) ORDER BY seq`).all(conversationId, ...ids) : [];
+    const updates = updateRows.map(row => stewardMessageUpdate.parse({ id: row.id, revision: row.revision ?? 0,
+      state: JSON.parse(String(row.state)), resolution: row.resolution === null ? null : JSON.parse(String(row.resolution)) }));
+    const parents = [...new Set([...messages.map(message => message.replyTo), ...updateRows.map(row => typeof row.parent === "string" ? row.parent : null)].filter((id): id is string => id !== null))].slice(0,100);
+    const references = parents.length ? this.db.prepare(`SELECT id,json_extract(data,'$.scope') AS scope,substr(json_extract(data,'$.text'),1,160) AS preview FROM steward_messages WHERE conversation=? AND id IN (${parents.map(() => "?").join(",")})`).all(conversationId,...parents)
+      .map(row => ({ id: String(row.id), scope: stewardScope.parse(JSON.parse(String(row.scope))), preview: String(row.preview) })) : [];
+    return { messages, updates, references, page: { firstStoredSeq, lastStoredSeq, firstSeq, lastSeq,
+      hasOlder: firstSeq !== null && firstStoredSeq !== null && firstSeq > firstStoredSeq,
+      hasNewer: lastSeq !== null && lastSeq < lastStoredSeq, limit } };
+  }
+  attention(conversationId: string) {
+    const rows = this.db.prepare("SELECT id,seq,json_extract(data,'$.scope') AS scope,json_extract(data,'$.state') AS state,COALESCE(json_extract(data,'$.revision'),0) AS revision,substr(json_extract(data,'$.text'),1,160) AS preview FROM steward_messages WHERE conversation=? AND json_extract(data,'$.role')='user' AND json_extract(data,'$.state.kind') NOT IN ('completed','rejected','stopped','released') ORDER BY seq LIMIT 21").all(conversationId);
+    return { items: rows.slice(0,20).map(row => stewardAttention.parse({ ...row, scope: JSON.parse(String(row.scope)), state: JSON.parse(String(row.state)) })), hasMore: rows.length > 20 };
+  }
+  nativeRequest(conversationId: string, rpcId: string | undefined, binding?: StewardBinding): StewardMessage | undefined {
+    if (!rpcId?.startsWith("steward-")) return undefined;
+    const row = this.db.prepare("SELECT data FROM steward_messages WHERE id=? AND conversation=?").get(rpcId.slice(8), conversationId);
+    if (!row) return undefined;
+    const message = stewardMessage.parse(JSON.parse(String(row.data)));
+    return message.role === "user" && (!binding || stewardBindingKey(message.source) === stewardBindingKey(binding)) ? message : undefined;
+  }
+  commandMessage(conversationId: string, commandId: string): StewardMessage | null {
+    const row = this.db.prepare("SELECT m.data FROM steward_commands c JOIN steward_messages m ON m.id=c.message WHERE c.id=? AND m.conversation=?").get(commandId, conversationId);
+    return row ? stewardMessage.parse(JSON.parse(String(row.data))) : null;
+  }
+  activeMessage(conversationId: string, binding: StewardBinding): StewardMessage | undefined {
+    const row = this.db.prepare("SELECT data FROM steward_messages WHERE conversation=? AND json_extract(data,'$.source')=? AND json_extract(data,'$.role')='user' AND json_extract(data,'$.state.kind') NOT IN ('completed','rejected','stopped','released') ORDER BY seq LIMIT 1")
+      .get(conversationId, canonical(binding));
+    return row ? stewardMessage.parse(JSON.parse(String(row.data))) : undefined;
+  }
+  projectSubscription(conversationId: string, projectId: string): StewardMessage | undefined {
+    const row = this.db.prepare("SELECT data FROM steward_messages WHERE conversation=? AND json_extract(data,'$.scope.kind')='project' AND json_extract(data,'$.scope.projectId')=? ORDER BY seq DESC LIMIT 1").get(conversationId, projectId);
+    return row ? stewardMessage.parse(JSON.parse(String(row.data))) : undefined;
   }
   message(id: string): StewardMessage {
     const row = this.db.prepare("SELECT data FROM steward_messages WHERE id=?").get(id);
@@ -72,19 +138,18 @@ export class StewardConversations {
     return this.message(String(row.message));
   }
   requestId(messageId: string): string { return `steward-${messageId}`; }
-  accept(request: StewardSend, scope: StewardScope, binding: StewardBinding, afterSeq: number): StewardMessage {
+  accept(request: StewardSend, scope: StewardScope, binding: StewardBinding, afterSeq: number, quote: StewardQuote | null = null): StewardMessage {
     this.db.exec("BEGIN IMMEDIATE");
     try {
       const previous = this.replay(request);
       if (previous) { this.db.exec("COMMIT"); return previous; }
-      const active = this.messages(request.conversationId).find(message => message.role === "user" &&
-        stewardBindingKey(message.source) === stewardBindingKey(binding) && !["completed", "rejected", "stopped", "released"].includes(message.state.kind));
+      const active = this.activeMessage(request.conversationId, binding);
       if (active) throw new TaskError("BUSY", "This scope has an unfinished message; reconcile it before sending another");
       const value = this.insert({ conversationId: request.conversationId, role: "user", text: request.text, commandId: request.commandId,
         scope, replyTo: request.replyTo ?? null, createdAt: new Date().toISOString(), source: binding,
-        nativeSeq: null, provenance: null, state: { kind: "accepted" }, revision: 0, resolution: null,
+        nativeSeq: null, provenance: null, state: { kind: "accepted" }, revision: 0, resolution: null, quote,
         manifest: { persona: STEWARD_PERSONA, scope, history: "scope-native-session", evidence: "selection-only",
-          resources: [{ id: STEWARD_PERSONA.id, version: STEWARD_PERSONA.version }] } });
+          resources: [{ id: STEWARD_PERSONA.id, version: STEWARD_PERSONA.version }, ...(quote ? [{ id: `quote:${quote.messageId}`, version: `${quote.revision}:${quote.excerptHash}` }] : [])] } });
       this.db.prepare("INSERT INTO steward_commands VALUES(?,?,?)").run(request.commandId, digest(request), value.id);
       this.db.prepare("UPDATE steward_conversations SET scope=? WHERE id=?").run(canonical(scope), request.conversationId);
       this.db.prepare("INSERT OR IGNORE INTO steward_sources VALUES(?,?,?)")
@@ -106,7 +171,7 @@ export class StewardConversations {
     this.db.prepare("UPDATE steward_messages SET data=? WHERE id=?").run(canonical({ ...message, state, revision: message.revision + 1 }), id);
   }
   cursors(conversationId: string): StewardCursor[] {
-    return this.db.prepare("SELECT data FROM steward_sources WHERE conversation=?").all(conversationId)
+    return this.db.prepare("SELECT data FROM steward_sources WHERE conversation=? ORDER BY rowid DESC LIMIT 100").all(conversationId)
       .map(row => cursor.parse(JSON.parse(String(row.data))));
   }
   saveCursor(conversationId: string, value: StewardCursor) {
