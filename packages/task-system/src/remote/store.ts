@@ -11,6 +11,8 @@ import {
 } from "../receipt-retention.js";
 import {
   byteLimit,
+  commandLane,
+  COMMAND_LANES,
   canonical,
   DEFAULT_MAX_RESPONSE_BYTES,
   EXECUTOR_OPERATIONS,
@@ -97,12 +99,25 @@ export class RecoveryStore {
     insist(version === 0 || version === 1, "UNSUPPORTED_STORE_VERSION");
     this.db
       .exec(`CREATE TABLE IF NOT EXISTS peer_sequences (node TEXT PRIMARY KEY, sequence INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS admission_sequences (node TEXT NOT NULL,lane TEXT NOT NULL,sequence INTEGER NOT NULL,PRIMARY KEY(node,lane));
       CREATE TABLE IF NOT EXISTS nonces (node TEXT NOT NULL, nonce TEXT NOT NULL, expires INTEGER NOT NULL, PRIMARY KEY(node,nonce));
       CREATE TABLE IF NOT EXISTS commands (node TEXT NOT NULL, id TEXT NOT NULL, digest TEXT NOT NULL, state TEXT NOT NULL, result TEXT, PRIMARY KEY(node,id));
       CREATE TABLE IF NOT EXISTS dispatches (id TEXT PRIMARY KEY, data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS outbound (id TEXT PRIMARY KEY, data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
       PRAGMA user_version=1;`);
+    this.transaction(() => {
+      const rows = this.db.prepare(
+        "SELECT p.node,p.sequence,MAX(a.sequence) AS laneMax FROM peer_sequences p LEFT JOIN admission_sequences a ON a.node=p.node GROUP BY p.node",
+      ).all();
+      const seed = this.db.prepare(
+        "INSERT INTO admission_sequences(node,lane,sequence) VALUES(?,?,?) ON CONFLICT(node,lane) DO UPDATE SET sequence=MAX(admission_sequences.sequence,excluded.sequence)",
+      );
+      for (const row of rows) {
+        if (row.laneMax !== null && Number(row.sequence) <= Number(row.laneMax)) continue;
+        for (const lane of COMMAND_LANES) seed.run(String(row.node), lane, Number(row.sequence));
+      }
+    });
     // Existing receipts have unknown provenance and remain durable. Only new,
     // explicitly classified observations receive an expiry.
     this.transaction(() => {
@@ -374,11 +389,15 @@ export class RecoveryStore {
         "REPLAY",
         409,
       );
+      const lane = commandLane(envelope.operation, envelope.payload);
+      const baseline = Number(this.db.prepare("SELECT sequence FROM peer_sequences WHERE node=?").get(node)?.sequence ?? 0);
+      const seed = this.db.prepare("INSERT OR IGNORE INTO admission_sequences(node,lane,sequence) VALUES(?,?,?)");
+      for (const candidate of COMMAND_LANES) seed.run(node, candidate, baseline);
       const priorSequence = this.db
-        .prepare("SELECT sequence FROM peer_sequences WHERE node=?")
-        .get(node);
+        .prepare("SELECT sequence FROM admission_sequences WHERE node=? AND lane=?")
+        .get(node, lane);
       insist(
-        !priorSequence || sequence > Number(priorSequence.sequence),
+        sequence > Number(priorSequence?.sequence ?? 0),
         "OUT_OF_ORDER",
         409,
       );
@@ -395,9 +414,10 @@ export class RecoveryStore {
       this.db
         .prepare("INSERT INTO nonces(node,nonce,expires) VALUES(?,?,?)")
         .run(node, nonce, envelope.expiresAt);
+      this.db.prepare("UPDATE admission_sequences SET sequence=? WHERE node=? AND lane=?").run(sequence, node, lane);
       this.db
         .prepare(
-          "INSERT INTO peer_sequences(node,sequence) VALUES(?,?) ON CONFLICT(node) DO UPDATE SET sequence=excluded.sequence",
+          "INSERT INTO peer_sequences(node,sequence) VALUES(?,?) ON CONFLICT(node) DO UPDATE SET sequence=MAX(peer_sequences.sequence,excluded.sequence)",
         )
         .run(node, sequence);
       if (existing) {

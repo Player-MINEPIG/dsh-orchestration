@@ -14,6 +14,7 @@ import type { KeyObject } from "node:crypto";
 import { assertEndpoint } from "./http.js";
 import {
   byteLimit,
+  commandLane,
   DEFAULT_MAX_BODY_BYTES,
   DEFAULT_MAX_RESPONSE_BYTES,
   digest,
@@ -204,7 +205,7 @@ export class RemoteClient {
       ...(options?.signal ? [options.signal] : []),
     ]);
     this.queued++;
-    const lane = this.sendLane(operation, payload);
+    const lane = commandLane(operation, payload);
     const tail = lane === "default" ? this.tail : this.projectTails.get(lane) ?? Promise.resolve();
     const request = tail
       .then(() =>
@@ -223,14 +224,6 @@ export class RemoteClient {
     if (lane === "default") this.tail = request.catch(() => undefined);
     else this.projectTails.set(lane, request.catch(() => undefined));
     return request;
-  }
-  private sendLane(operation: Operation, payload: Record<string, Json>): string {
-    const input = payload.input;
-    if (operation !== "projectCollaborate" || !isRecord(input) || input.action !== "project-session" || !isRecord(input.request)) return "default";
-    const request = input.request;
-    if (request.kind === "exchange" || request.kind === "decision") return "project-owner";
-    if (request.kind === "application" && isRecord(request.input)) return request.input.kind === "authorize-owner" ? "project-owner" : "project-application";
-    return "default";
   }
   private async sendOwned(
     operation: Operation,
