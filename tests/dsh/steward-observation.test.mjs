@@ -4,6 +4,7 @@ import {createHash} from 'node:crypto';
 import {join} from 'node:path';
 import {createNativeHarness} from './native-harness.mjs';
 import {canonical} from '../../packages/task-system/dist/ledger.js';
+import {createUserMessage} from '@deepseek-ai/dsh-llm';
 
 test('steward records exact native request hashes with bounded provenance, without storing a second raw transcript', {timeout:15000}, async()=>{
   const h=await createNativeHarness({config:{role:'both',schedulerEnabled:false,projectAgentOptions:{provider:'test-offline',model:'script'}}});
@@ -45,5 +46,14 @@ test('steward records exact native request hashes with bounded provenance, witho
     await service.send({conversationId:'main',commandId:'audit-personal',text:'AUDIT_PERSONAL_ONLY',target:{kind:'personal'}});
     assert.deepEqual(service.snapshot({conversationId:'main'}).requests.map(request=>request.id),before);
     assert.equal(h.adapter.requests.length,2,'Receipt replay does not manufacture request evidence');
+    const personal=h.ctx.agents.get(snapshot.requests[0].source.sessionId);
+    h.adapter.script.push('Manual native response');
+    personal.followup(createUserMessage({source:{kind:'user'},content:[{type:'text',text:'MANUAL_NATIVE_INPUT'}]}));
+    await personal.whenIdle();
+    const manual=service.snapshot({conversationId:'main'}).requests.at(-1);
+    assert.equal(manual.source.sessionId,personal.id);
+    assert.deepEqual(manual.selectedResources,[],'A later manual native turn must not inherit an old canonical selection');
+    assert.equal(manual.personaObserved,true,'Actual presence remains independently observable');
+    assert.equal(manual.messageHash,createHash('sha256').update(canonical(h.adapter.requests.at(-1).messages)).digest('hex'));
   }finally{await h.dispose();}
 });

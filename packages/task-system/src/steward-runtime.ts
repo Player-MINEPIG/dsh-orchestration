@@ -104,8 +104,13 @@ export class StewardRuntime {
     if (!options.sessionId || !Object.isFrozen(options)) return;
     const session = this.ctx.agents.get(options.sessionId)?.session;
     if (!session || canonical(options.messages) !== canonical(session.deriveMessages())) return;
-    const step = session.snapshotEvents().findLast(event => event.type === "step/start");
+    const events = session.snapshotEvents();
+    const step = events.findLast(event => event.type === "step/start");
     if (!step) return;
+    const turn = events.findLast(event => event.type === "turn/start");
+    const user = events.findLast(event => event.type === "user/message" && event.seq > (turn?.seq ?? step.seq) &&
+      userData.safeParse(event.data).data?.source.kind === "user");
+    const nativeRequestId = user ? userData.parse(user.data).source.rpcId : undefined;
     const sources = this.store.conversationIds().flatMap(conversationId => this.store.cursors(conversationId)
       .filter(cursor => cursor.binding.nodeId === this.task.config.nodeId && cursor.binding.sessionId === options.sessionId)
       .map(cursor => ({ conversationId, binding: cursor.binding })));
@@ -118,7 +123,8 @@ export class StewardRuntime {
     const personaObserved = options.messages.some(message => message.role === "system" &&
       message.content.some(part => part.type === "text" && part.text.includes(STEWARD_PERSONA_TEXT)));
     for (const { conversationId, binding } of sources) {
-      const original = this.store.messages(conversationId).findLast(message => message.role === "user" && stewardBindingKey(message.source) === stewardBindingKey(binding));
+      const original = nativeRequestId ? this.store.messages(conversationId).find(message => message.role === "user" &&
+        this.store.requestId(message.id) === nativeRequestId && stewardBindingKey(message.source) === stewardBindingKey(binding)) : undefined;
       this.store.observeRequest({ id: hash(`${conversationId}:${stewardBindingKey(binding)}:${step.seq}:${requestHash}`), conversationId,
         source: binding, stepSeq: step.seq, observedAt: new Date().toISOString(), requestHash, messageHash,
         selectedResources: original?.manifest.resources ?? [], personaObserved, assemblerObserved: !!assembly,
