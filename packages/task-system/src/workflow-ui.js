@@ -54,6 +54,7 @@
   };
   const requests = new Map(),
     commandIds = new Map();
+  function nodeDisplayName(nodeId) { return state.snapshot.nodes.find(node=>node.nodeId===nodeId)?.displayName || nodeId; }
   function id() {
     if (crypto.randomUUID) return crypto.randomUUID();
     return Array.from(crypto.getRandomValues(new Uint8Array(16)), (x) =>
@@ -449,7 +450,7 @@
             : views.some((view) => view.state === "running")
               ? "running"
               : "pending";
-        return `<article class="graph-card ${box.id === (isStep ? state.stepId : state.stageId) ? "active" : ""}" data-card="${esc(box.id)}" style="left:${box.x}px;top:${box.y}px;width:${box.w}px;height:${box.h}px"><button type="button" class="card-main" ${isStep ? `data-step="${esc(row.stepId)}"` : `data-stage="${esc(row.stageId)}"`}><span class="card-kind">${isStep ? kindName(row.execution.kind) : "设备阶段"}</span><strong>${esc(row.title)}</strong>${isStep ? "" : `<span class="muted">设备 ${esc(row.nodeId)} · ${steps.length} 个内部步骤</span><span class="stage-steps">${steps.map(step => `<span class="stage-step"><span>${esc(step.title)}</span><small>${esc(kindName(step.execution.kind))}</small></span>`).join("")}</span>`}${run() ? badge(result) : ""}</button>${!isStep ? `<span class="availability">当前设备 ${badge(nodeStatus(row.nodeId).state)}</span>` : ""}${!run() ? `<button type="button" class="port in" data-port="in" data-endpoint="${esc(box.id)}" aria-label="连接到 ${esc(row.title)}">●</button><button type="button" class="port out" data-port="out" data-endpoint="${esc(box.id)}" aria-label="从 ${esc(row.title)} 调用">●</button>` : ""}</article>`;
+        return `<article class="graph-card ${box.id === (isStep ? state.stepId : state.stageId) ? "active" : ""}" data-card="${esc(box.id)}" style="left:${box.x}px;top:${box.y}px;width:${box.w}px;height:${box.h}px"><button type="button" class="card-main" ${isStep ? `data-step="${esc(row.stepId)}"` : `data-stage="${esc(row.stageId)}"`}><span class="card-kind">${isStep ? kindName(row.execution.kind) : "设备阶段"}</span><strong>${esc(row.title === row.nodeId ? nodeDisplayName(row.nodeId) : row.title)}</strong>${isStep ? "" : `<span class="muted">设备 ${esc(nodeDisplayName(row.nodeId))} · ${steps.length} 个内部步骤</span><span class="stage-steps">${steps.map(step => `<span class="stage-step"><span>${esc(step.title)}</span><small>${esc(kindName(step.execution.kind))}</small></span>`).join("")}</span>`}${run() ? badge(result) : ""}</button>${!isStep ? `<span class="availability">当前设备 ${badge(nodeStatus(row.nodeId).state)}</span>` : ""}${!run() ? `<button type="button" class="port in" data-port="in" data-endpoint="${esc(box.id)}" aria-label="连接到 ${esc(row.title)}">●</button><button type="button" class="port out" data-port="out" data-endpoint="${esc(box.id)}" aria-label="从 ${esc(row.title)} 调用">●</button>` : ""}</article>`;
       })
       .join("");
     const terminals = graphTerminals(boxes);
@@ -479,7 +480,7 @@
         .map((row) =>
           option(
             row.nodeId,
-            `${row.nodeId} · ${statusNames[row.state] || row.state}`,
+            `${nodeDisplayName(row.nodeId)} · ${statusNames[row.state] || row.state}`,
             "",
           ),
         )
@@ -512,7 +513,7 @@
       return `<button type="button" class="step ${step.stepId === state.stepId ? "active" : ""}" data-step="${esc(step.stepId)}"><span class="step-title"><strong>${esc(step.title || "未命名步骤")}</strong><span class="badge">${kindName(step.execution.kind)}</span></span><span class="muted">${upstream ? `← ${esc(upstream)}` : "起始步骤"}</span>${view ? badge(view.state) : ""}</button>`;
     }).join("");
     $("step-list").innerHTML = `<section class="node-overview" aria-labelledby="node-overview-heading"><h3 id="node-overview-heading" class="detail-section-title">节点概览</h3>${stage
-      ? `<button type="button" class="step ${!state.stepId ? "active" : ""}" data-stage-detail="${esc(stage.stageId)}"><strong>${esc(stage.title)}</strong><span class="muted">设备 ${esc(stage.nodeId)} · ${steps.length} 个步骤</span></button>`
+      ? `<button type="button" class="step ${!state.stepId ? "active" : ""}" data-stage-detail="${esc(stage.stageId)}"><strong>${esc(stage.title)}</strong><span class="muted">设备 ${esc(nodeDisplayName(stage.nodeId))} · ${steps.length} 个步骤</span></button>`
       : '<p class="muted">选择一个设备阶段查看节点信息。</p>'}</section><section class="internal-steps" aria-labelledby="internal-steps-heading"><h3 id="internal-steps-heading" class="detail-section-title">内部步骤 <span class="badge">${steps.length}</span></h3><div class="steps">${items || '<p class="muted">此节点还没有步骤。</p>'}</div></section>`;
   }
   function renderBindings(step) {
@@ -568,8 +569,8 @@
     const source = connection ? def.steps.filter(step => step.stageId === connection.fromStageId) : [];
     const destination = connection ? def.steps.filter(step => step.stageId === connection.toStageId) : [];
     $("step-detail").innerHTML = `<h3 class="detail-section-title">节点信息</h3>${readOnly
-      ? `<p>执行设备 ${esc(stage.nodeId)} · ${steps.length} 个内部步骤</p><p class="hint">本次执行固定使用版本 ${esc(run().definitionRevision)}。阶段与连线只读，选择左侧步骤查看本次结果。</p>`
-      : `<div class="fields"><label>阶段名称<input id="stage-title" value="${esc(stage.title)}"></label><label>执行设备<select id="stage-node">${state.snapshot.nodes.map(row => option(row.nodeId, row.nodeId, stage.nodeId)).join("")}${!state.snapshot.nodes.some(row => row.nodeId === stage.nodeId) ? option(stage.nodeId, stage.nodeId, stage.nodeId) : ""}</select></label></div><p class="muted">选择左侧步骤可设置执行方式、前序调用和输入映射。</p>`}
+      ? `<p>执行设备 ${esc(nodeDisplayName(stage.nodeId))} · ${steps.length} 个内部步骤</p><p class="hint">本次执行固定使用版本 ${esc(run().definitionRevision)}。阶段与连线只读，选择左侧步骤查看本次结果。</p>`
+      : `<div class="fields"><label>阶段名称<input id="stage-title" value="${esc(stage.title)}"></label><label>执行设备<select id="stage-node">${state.snapshot.nodes.map(row => option(row.nodeId, nodeDisplayName(row.nodeId), stage.nodeId)).join("")}${!state.snapshot.nodes.some(row => row.nodeId === stage.nodeId) ? option(stage.nodeId, stage.nodeId, stage.nodeId) : ""}</select></label></div><p class="muted">选择左侧步骤可设置执行方式、前序调用和输入映射。</p>`}
       <div class="row">${!state.focusStage ? '<button type="button" id="enter-stage">查看内部步骤图</button>' : ''}${!readOnly ? '<button type="button" id="remove-stage" class="danger">删除阶段</button>' : ''}</div>
       ${connection && !readOnly ? `<section class="node-connection"><h3>连接这两个阶段的步骤</h3><label>调用出口<select id="call-from">${source.map(step => option(step.stepId, step.title, "")).join("")}</select></label><label>调用入口<select id="call-to">${destination.map(step => option(step.stepId, step.title, "")).join("")}</select></label><button type="button" id="add-call"${source.length && destination.length ? "" : " disabled"}>添加调用</button><p class="muted">连线决定先后顺序。传递数据时，在步骤详情中设置输入映射。</p></section>` : ''}
       <h3 style="margin-top:20px">此阶段的调用</h3>${calls.map(call => `<div class="call-row"><span>${esc(title(call.fromStepId))} → ${esc(title(call.toStepId))}</span>${!readOnly ? `<button type="button" data-remove-call="${def.calls.indexOf(call)}" aria-label="删除调用连线">删除</button>` : ''}</div>`).join("") || '<p class="muted">暂无调用。选择步骤可设置前序调用。</p>'}`;
@@ -596,7 +597,7 @@
           .steps.filter((row) => row.stepId !== step.stepId)
           .map(
             (row) =>
-              `<label class="dependency"><input type="checkbox" data-dependency="${esc(row.stepId)}"${step.dependsOn.includes(row.stepId) ? " checked" : ""}>${esc(row.nodeId)} / ${esc(row.title)}</label>`,
+              `<label class="dependency"><input type="checkbox" data-dependency="${esc(row.stepId)}"${step.dependsOn.includes(row.stepId) ? " checked" : ""}>${esc(nodeDisplayName(row.nodeId))} / ${esc(row.title)}</label>`,
           )
           .join("") || '<p class="muted">添加其他步骤后可以连线。</p>'
       }</div>${renderBindings(step)}<div style="margin-top:24px"><button type="button" id="remove-step" class="danger">删除此步骤</button></div>`;

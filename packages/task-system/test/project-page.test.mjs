@@ -419,7 +419,7 @@ test('report retry settings save once with task revision and remain read-only on
 
 test('needs-attention filter is visible and distinct from review',async()=>{
  const p=page();await p.answer({value:{...snapshot,tasks:[{id:'error',title:'Broken daily',project:'unassigned',status:'error'},{id:'review',title:'Review daily',project:'unassigned',status:'review'}]}});
- assert.match(p.content(),/data-id="error" data-status="error"[^>]*><span>执行异常<\/span><b>1<\/b>/);
+ assert.match(p.content(),/data-id="error" data-status="error"[^>]*><span>需处理<\/span><b>1<\/b>/);
  await p.action('filter','error');assert.match(p.content(),/Broken daily/);assert.doesNotMatch(p.content(),/Review daily/);
 });
 test('mobile hub retains the actual outer scroll container across heartbeat, errors and back navigation',async()=>{
@@ -446,7 +446,7 @@ test('accepted partial results have their own section and filter while retaining
  const p=page(),task={id:'accepted-daily',project:'unassigned',title:'Accepted daily',status:'accepted',stateLabel:'已验收',reviewStatus:'accepted',runState:'partial',runId:'accepted-run',reportId:'accepted-report',report:'Partial delivery; PC_AU source unavailable'};
  await p.answer({value:{...snapshot,tasks:[task],runs:[{id:'accepted-run',taskId:task.id,state:'partial',reviewStatus:'accepted'}],reports:[{id:'accepted-report',taskId:task.id,runId:'accepted-run',kind:'result',body:task.report}]}});
  assert.match(p.content(),/data-status="accepted"><span>已验收<\/span><span>1<\/span>/);
- assert.match(p.content(),/data-id="error" data-status="error"[^>]*><span>执行异常<\/span><b>0<\/b>/);
+ assert.match(p.content(),/data-id="error" data-status="error"[^>]*><span>需处理<\/span><b>0<\/b>/);
  await p.action('filter','accepted');assert.match(p.content(),/Accepted daily/);assert.doesNotMatch(p.content(),/data-status="error"><span>需处理/);
  await p.action('task',task.id);assert.match(p.overlay(),/部分交付 · 已验收/);assert.match(p.overlay(),/PC_AU source unavailable/);
  assert.doesNotMatch(p.overlay(),/>审核通过<|>审核不通过<|>标记已处理</);
@@ -562,8 +562,10 @@ test('coordinator defaults to root deliveries, preserves exact child attention a
 
 
 test('workflow transport projects unused historical output without changing selected-run evidence or role scope',async()=>{
- const output={body:'x'.repeat(600000)},makeRun=id=>({workflowRunId:id,runId:'root-'+id,taskId:'task-'+id,definitionRevision:3,definition:{steps:[{stepId:'step',title:'Historical'}]},input:{source:output},dispatches:[{stepId:'step',runId:'child-'+id,taskId:'child-task-'+id}],steps:[{stepId:'step',state:'succeeded',runId:'child-'+id,taskId:'child-task-'+id,reportId:'report-'+id,output,summary:'s'.repeat(800)}]}),snapshot={definitions:[],runs:[makeRun('old'),makeRun('new')],nodes:[],workspaces:[],models:[],programs:[],taskBindings:[]},api=service({config:{role:'planner'},workflows:{snapshot:()=>snapshot,getRunView:id=>{if(id==='outside-window')return makeRun('outside-window');throw new TaskError('NOT_FOUND','Workflow execution not found');}}});
+ const output={body:'x'.repeat(600000)},makeRun=id=>({workflowRunId:id,runId:'root-'+id,taskId:'task-'+id,definitionRevision:3,definition:{steps:[{stepId:'step',title:'Historical'}]},input:{source:output},dispatches:[{stepId:'step',runId:'child-'+id,taskId:'child-task-'+id}],steps:[{stepId:'step',state:'succeeded',runId:'child-'+id,taskId:'child-task-'+id,reportId:'report-'+id,output,summary:'s'.repeat(800)}]}),snapshot={definitions:[],runs:[makeRun('old'),makeRun('new')],nodes:[{nodeId:'local',state:'online'},{nodeId:'peer',state:'online'}],workspaces:[],models:[],programs:[],taskBindings:[]},api=service({config:{role:'planner',nodeId:'local',nodeDisplayName:'aws-vps'},workflows:{snapshot:()=>snapshot,getRunView:id=>{if(id==='outside-window')return makeRun('outside-window');throw new TaskError('NOT_FOUND','Workflow execution not found');}}});
  const summary=await api.workflowView({workflowRunId:null}),full=await api.workflowView({workflowRunId:'root-old'});
+ assert.equal(summary.nodes[0].nodeId,'local');assert.equal(summary.nodes[0].displayName,'aws-vps');assert.equal(full.nodes[0].displayName,'aws-vps');assert.equal(full.nodes[1].displayName,'peer');
+ assert.equal((await api.workflowSnapshot()).nodes[0].displayName,'aws-vps');
  assert.equal('output' in summary.runs[0].steps[0],false);assert.deepEqual(summary.runs[0].input,{});assert.deepEqual(summary.runs[0].dispatches,[]);assert.equal(summary.runs[0].steps[0].summary.length,400);assert.equal(summary.runs[0].steps[0].reportId,'report-old');assert.deepEqual(full.runs[0],snapshot.runs[0]);assert.equal('output' in full.runs[1].steps[0],false);await assert.rejects(api.workflowView({workflowRunId:'not-visible'}),error=>error.details.reason==='NOT_FOUND');const outside=await api.workflowView({workflowRunId:'outside-window'});assert.equal(outside.runs.length,3);assert.equal(outside.runs[2].steps[0].output.body.length,600000);assert.equal('output' in snapshot.runs[0].steps[0],true);
  const before=Buffer.byteLength(JSON.stringify(snapshot)),after=Buffer.byteLength(JSON.stringify(summary));assert.ok(before>2000000);assert.ok(after<2000);assert.ok(Buffer.byteLength(JSON.stringify(full))>1000000,'selected output remains complete');
  await assert.rejects(service({config:{role:'executor'},workflows:{snapshot:()=>{throw Error('must not query');}}}).workflowView({workflowRunId:'old'}),error=>error.details.reason==='PLANNER_REQUIRED');
@@ -777,4 +779,18 @@ test('project scope, full panel and task navigation restore both dimensions and 
  for(const [field,value]of [['filter','done'],['responsibilityFilter','resolved'],['unreadOnly',true],['scope','p']])assert.equal(vm.runInContext('state.'+field,p.context),value);
  await p.action('project','p');await p.action('home');
  assert.equal(vm.runInContext('state.responsibilityFilter',p.context),'resolved');assert.equal(vm.runInContext('state.unreadOnly',p.context),true);
+});
+
+
+test('partial cards preserve attention while distinguishing execution failure and resolve display names without changing node IDs',async()=>{
+ const p=page(),partial={id:'partial-card',project:'unassigned',title:'Partial daily',status:'error',runState:'partial',stateLabel:'部分完成 · 报告已生成',runId:'partial-run',reportId:'partial-report'};
+ await p.answer({value:{...snapshot,nodes:[{nodeId:'local',displayName:'aws-vps',state:'online'}],tasks:[partial,{id:'failed-card',project:'unassigned',title:'Failed work',status:'error',runState:'failed',stateLabel:'执行失败',runId:'failed-run'}],runs:[{id:'partial-run',taskId:partial.id,node:'local',state:'partial'},{id:'failed-run',taskId:'failed-card',node:'unknown-node',state:'failed'}]}});
+ assert.match(p.content(),/aria-label="需处理"/);assert.match(p.content(),/部分完成 · 报告已生成/);assert.match(p.content(),/执行失败/);assert.doesNotMatch(p.content(),/执行异常/);
+ assert.equal(vm.runInContext("cardDeviceLabel(state.tasks[0])",p.context),'aws-vps');
+ assert.equal(vm.runInContext("state.records.runs[0].node",p.context),'local');
+ assert.equal(vm.runInContext("cardDeviceLabel(state.tasks[1])",p.context),'unknown-node');
+ assert.equal(vm.runInContext("nodeDisplayName('local')",p.context),'aws-vps');
+ assert.equal(vm.runInContext("nodeDisplayName('<unregistered>')",p.context),'<unregistered>');
+ vm.runInContext("state.records.nodes[0].displayName='';",p.context);
+ assert.equal(vm.runInContext("nodeDisplayName('local')",p.context),'local');
 });

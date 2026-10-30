@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { ProjectRuntime } from "../dist/project-runtime.js";
 import { ScheduledPlans } from "../dist/scheduled-plans.js";
 import { Workbench } from "../dist/workbench.js";
 import { TaskLedger } from "../dist/ledger.js";
@@ -266,6 +267,24 @@ test("programs use existing worker with no Agent session and route outputs acros
     f.runtime.tick();
     assert.equal(calls, 2);
     assert.equal(view(f, run).state, "partial");
+    const hostConfig={nodeDisplayName:'aws-vps'};
+    const projects=new ProjectRuntime({get:key=>key==='taskSystem'?{workflows:f.runtime,config:hostConfig}:undefined},f.ledger,'vps','both');
+    const snapshot=projects.snapshot(),card=snapshot.tasks.find(task=>task.runId===run.runId);
+    assert.equal(card.status,'error','partial still requires attention');
+    assert.equal(card.runState,'partial');
+    assert.equal(card.stateLabel,'部分完成 · 报告已生成');
+    assert.ok(card.reportId);
+    assert.equal(snapshot.nodes.find(node=>node.nodeId==='vps').displayName,'aws-vps');
+    assert.equal(snapshot.nodes.find(node=>node.nodeId==='mbp').displayName,'mbp');
+    hostConfig.nodeDisplayName='  ';
+    assert.equal(projects.snapshot().nodes.find(node=>node.nodeId==='vps').displayName,'vps');
+    const noReport=start(f);
+    f.ledger.updateWorkflowRoot(noReport.runId,'partial');
+    const withoutReport=projects.snapshot().tasks.find(task=>task.runId===noReport.runId);
+    assert.equal(withoutReport.stateLabel,'部分完成');
+    assert.equal(withoutReport.reportId,null);
+    assert.equal(f.ledger.getRun(noReport.runId).state,'partial');
+
     assert.ok(
       f.ledger.snapshot().runs.every((run) => run.sessionIds.length === 0),
     );
