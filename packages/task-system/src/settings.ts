@@ -540,13 +540,16 @@ export class TaskPluginSettings extends TypertRemoteService {
     return this.projectOperation(()=>{
       const service=this.workflowService(),snapshot=service.snapshot();
       const runs=workflowRunId&&!snapshot.runs.some(run=>run.workflowRunId===workflowRunId||run.runId===workflowRunId)?[...snapshot.runs,service.getRunView(workflowRunId)]:snapshot.runs;
-      return {...snapshot,runs:runs.map(run=>{
+      return {...snapshot,nodes:snapshot.nodes.map(node=>({...node,displayName:node.nodeId===this.ctx.get("taskSystem")?.config.nodeId?this.ctx.get("taskSystem")?.config.nodeDisplayName?.trim()||node.nodeId:node.nodeId})),runs:runs.map(run=>{
         if(workflowRunId&&(run.workflowRunId===workflowRunId||run.runId===workflowRunId))return run;
         return {...run,input:{},dispatches:[],steps:run.steps.map(({output,summary,...step})=>({...step,...(typeof summary==="string"?{summary:summary.slice(0,400)}:{})}))};
       })};
     });
   }
-  async workflowSnapshot() { return this.projectOperation(() => this.workflowService().snapshot()); }
+  async workflowSnapshot() { return this.projectOperation(() => {
+    const snapshot=this.workflowService().snapshot(),task=this.ctx.get("taskSystem");
+    return {...snapshot,nodes:snapshot.nodes.map(node=>({...node,displayName:node.nodeId===task?.config.nodeId?task.config.nodeDisplayName?.trim()||node.nodeId:node.nodeId}))};
+  }); }
   async saveWorkflow(input: unknown) { return this.projectOperation(() => this.workflowService().save(input)); }
   async startWorkflow(input: unknown) { return this.projectOperation(() => this.workflowService().start(input)); }
   async retryWorkflowStep(input: unknown) { return this.projectOperation(() => this.workflowService().retry(input)); }
@@ -670,7 +673,7 @@ export class TaskPluginSettings extends TypertRemoteService {
       return {...row,alert:task.ledger.executorAlerts.alert(recordId,fingerprint,["failed","blocked","partial"].includes(row.state) && !["leased","running"].includes(row.authorityDisposition?.attemptState??""))};
     }),...(observed?.records??[])]);
     return {...snapshot,viewCapabilities:{planner:true,executor:true},
-      viewContext:{role:"executor",scope:"local",nodeId,observedAt:snapshot.sampledAt,queueObservedAt:observed?.queueObservedAt??null,
+      viewContext:{role:"executor",scope:"local",nodeId,displayName:task.config.nodeDisplayName?.trim()||nodeId,observedAt:snapshot.sampledAt,queueObservedAt:observed?.queueObservedAt??null,
         pollState:observed?.pollState??"never",connection:observed?.connection??null,heartbeat:observed?.heartbeat??null,
         unresolvedClaims:observed?.unresolvedClaims??[],truncated:ownRuns.length>200 || observed?.truncated===true}};
   }

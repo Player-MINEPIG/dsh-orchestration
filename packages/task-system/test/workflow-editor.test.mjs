@@ -720,3 +720,13 @@ test('script editor saves fixed argv and blocks malformed argument JSON without 
   e.listeners.change({target:{id:'step-args',value:'[broken',dataset:{}}});
   assert.throws(()=>e.validate(e.state.draft),/JSON 参数数组/);
 });
+
+
+test('device display aliases label workflow stages without rewriting their node identity',()=>{
+ const e=editor();e.state.snapshot.nodes[0].displayName='aws-vps';
+ e.state.draft.stages[0].title='vps';e.fullRender();
+ assert.match(e.element('device-graph').innerHTML,/aws-vps/);
+ assert.match(e.element('step-list').innerHTML,/aws-vps/);
+ assert.equal(e.state.draft.stages[0].nodeId,'vps');
+ assert.equal(e.state.draft.steps[0].nodeId,'vps');
+});

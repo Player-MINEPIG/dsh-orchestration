@@ -1911,7 +1911,8 @@ export class ProjectRuntime {
         }[]
       ).map((r) => [r.task, r]),
     );
-    const workflowSnapshot=(this.ctx.get("taskSystem") as TaskSystemService | undefined)?.workflows.snapshot();
+    const taskSystem=this.ctx.get("taskSystem") as TaskSystemService | undefined;
+    const workflowSnapshot=taskSystem?.workflows.snapshot();
     const workflowDefinitionView=(definition:NonNullable<typeof workflowSnapshot>["definitions"][number])=>({workflowId:definition.workflowId,projectId:definition.projectId??null,title:definition.title,description:definition.description,revision:definition.revision,resultStepIds:definition.resultStepIds??null,stages:definition.stages??[],calls:definition.calls??[],steps:definition.steps.map(step=>({stepId:step.stepId,stageId:step.stageId??null,nodeId:step.nodeId,title:step.title,position:step.position??null,dependsOn:step.dependsOn,kind:step.execution.kind}))});
     const workflowBindings=workflowSnapshot?.taskBindings??[];
     const tasks = data.tasks.map((t) => {
@@ -2133,6 +2134,13 @@ export class ProjectRuntime {
                     ? "需处理"
                     : run?.dispatchIssue?.kind === "waiting"
                       ? "等待执行端目录"
+                    : status === "error" && run?.reviewStatus === "rejected"
+                      ? "审核未通过"
+                    : status === "error" && run?.state === "partial" && !run.dispatchIssue
+                      ? report ? "部分完成 · 报告已生成" : "部分完成"
+                    : status === "error" && run?.state === "failed" ? "执行失败"
+                    : status === "error" && run?.state === "blocked" ? "执行受阻"
+                    : status === "error" && run?.state === "uncertain" ? "结果待核实"
                     : run?.state === "queued"
                     ? "待领取"
                     : null,
@@ -2233,6 +2241,7 @@ export class ProjectRuntime {
       tasks:tasks.map(task=>({...task,childAttention:attentionByRoot.get(task.id)??[]})),
       nodes: this.ledger.nodeStatuses().map((n) => ({
         nodeId: n.nodeId,
+        displayName: n.nodeId === this.nodeId ? taskSystem?.config.nodeDisplayName?.trim() || n.nodeId : n.nodeId,
         state: n.state,
         availableSlots: n.availableSlots ?? null,
       })),
