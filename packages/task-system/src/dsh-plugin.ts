@@ -188,7 +188,7 @@ const PlainConfig: z<Config> = z.object({
     .default(null),
   databasePath: z.string().default(".dsh-task/tasks.sqlite"),
   nodeId: z.string().default(""),
-  nodeDisplayName: z.string().max(100).default("").description("本机设备显示名称。留空使用节点 ID，不改变任务路由或设备身份。"),
+  nodeDisplayName: z.string().default("").description("本机设备显示名称。留空使用节点 ID，不改变任务路由或设备身份。"),
   role: z
     .union([z.const("planner"), z.const("executor"), z.const("both")])
     .required(false),
