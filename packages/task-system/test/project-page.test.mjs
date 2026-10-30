@@ -778,3 +778,15 @@ test('project scope, full panel and task navigation restore both dimensions and 
  await p.action('project','p');await p.action('home');
  assert.equal(vm.runInContext('state.responsibilityFilter',p.context),'resolved');assert.equal(vm.runInContext('state.unreadOnly',p.context),true);
 });
+
+
+test('partial cards preserve attention while distinguishing execution failure and resolve display names without changing node IDs',async()=>{
+ const p=page(),partial={id:'partial-card',project:'unassigned',title:'Partial daily',status:'error',runState:'partial',stateLabel:'部分完成 · 报告已生成',runId:'partial-run',reportId:'partial-report'};
+ await p.answer({value:{...snapshot,nodes:[{nodeId:'local',displayName:'aws-vps',state:'online'}],tasks:[partial,{id:'failed-card',project:'unassigned',title:'Failed work',status:'error',runState:'failed',stateLabel:'执行失败',runId:'failed-run'}],runs:[{id:'partial-run',taskId:partial.id,node:'local',state:'partial'},{id:'failed-run',taskId:'failed-card',node:'unknown-node',state:'failed'}]}});
+ assert.match(p.content(),/aria-label="需处理"/);assert.match(p.content(),/部分完成 · 报告已生成/);assert.match(p.content(),/执行失败/);assert.doesNotMatch(p.content(),/执行异常/);
+ assert.equal(vm.runInContext("cardDeviceLabel(state.tasks[0])",p.context),'aws-vps');
+ assert.equal(vm.runInContext("state.records.runs[0].node",p.context),'local');
+ assert.equal(vm.runInContext("cardDeviceLabel(state.tasks[1])",p.context),'unknown-node');
+ assert.equal(vm.runInContext("nodeDisplayName('local')",p.context),'aws-vps');
+ assert.equal(vm.runInContext("nodeDisplayName('<unregistered>')",p.context),'<unregistered>');
+});
