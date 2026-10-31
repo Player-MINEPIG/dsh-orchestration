@@ -39,6 +39,27 @@ test('old unfinished A remains directly actionable after 350 B notices, without 
   }finally{await h.dispose();}
 });
 
+test('an unqueued unknown behind a valid managed turn still blocks only its binding before canonical admission',{timeout:20000},async()=>{
+  const h=await fixture();try{
+    const source=h.service.store.commandMessage('main','subscribe-a'),requests=h.adapter.requests.length;
+    h.adapter.script.push('hang');
+    await h.service.send({conversationId:'main',commandId:'known-running-a',text:'KNOWN_A_RUNNING',target:source.scope});
+    const deadline=Date.now()+3000;while(h.adapter.requests.length===requests&&Date.now()<deadline)await new Promise(done=>setTimeout(done,10));
+    assert.equal(h.adapter.requests.length,requests+1);
+    const unknown=h.service.store.accept({conversationId:'main',commandId:'orphan-behind-running-a',text:'ORPHAN_A_NOT_IN_QUEUE',target:source.scope},source.scope,source.source,-1);
+    h.service.store.setState(unknown.id,{kind:'needs-reconciliation',reason:'Host stopped after canonical admission and before durable queue admission'});
+    assert.equal(h.ledger.managementDatabase().prepare('SELECT 1 FROM pr_turns WHERE command=?').get(h.service.store.requestId(unknown.id)),undefined);
+    await assert.rejects(h.service.send({conversationId:'main',commandId:'blocked-behind-orphan',text:'MUST_NOT_RUN',target:source.scope}),{code:'BUSY'});
+    assert.equal(h.service.commandStatus('main','blocked-behind-orphan'),'not-admitted');
+    assert.equal(h.adapter.requests.length,requests+1);
+    h.adapter.script.push('B remains independent');
+    await h.service.send({conversationId:'main',commandId:'b-after-orphan-a',text:'B_ONLY_AFTER_ORPHAN',target:{kind:'project',projectId:h.b.projectId}});
+    await settled(h.service,'b-after-orphan-a');
+    assert.equal(h.adapter.requests.length,requests+2);
+    assert.doesNotMatch(JSON.stringify(h.adapter.requests.at(-1).messages),/ORPHAN_A_NOT_IN_QUEUE|MUST_NOT_RUN/);
+  }finally{await h.dispose();}
+});
+
 test('eleven gates keep the oldest pending candidate reachable and independent work uses the complete revision snapshot',{timeout:20000},async()=>{
   const h=await fixture();try{
     const session=h.projects.placementProject(h.a.projectId).session;
