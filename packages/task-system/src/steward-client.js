@@ -3,7 +3,7 @@ function createStewardClient(React) {
   const scopeKey = scope => scope?.kind === "project" ? `project:${scope.projectId}` : "personal";
   const fromKey = key => key.startsWith("project:") ? { kind: "project", projectId: key.slice(8) } : { kind: "personal" };
   const stateKind = state => typeof state === "string" ? state : state?.kind ?? "unknown";
-  const stateLabels = { accepted: "已登记", admitted: "会话已接收", completed: "本轮已回复", stopped: "本轮已中断", released: "已结束等待 · 原结果未知", unknown: "未核实", "needs-reconciliation": "发送结果待核实", rejected: "未接收", failed: "处理失败", pending: "等待回复" };
+  const stateLabels = { queued: "已排队", accepted: "已登记", admitted: "会话已接收", completed: "本轮已回复", stopped: "本轮已中断", released: "已结束等待 · 原结果未知", unknown: "未核实", "needs-reconciliation": "发送结果待核实", rejected: "未接收", failed: "处理失败", pending: "等待回复" };
   const failureText = failure => failure.details?.detail ?? failure.message ?? String(failure);
   function MemoryControls({ invoke, conversationId, scope }) {
     const [config,setConfig] = React.useState(null), [error,setError] = React.useState(""), [working,setWorking] = React.useState(false);
@@ -79,17 +79,42 @@ function createStewardClient(React) {
     const [selected, setSelected] = React.useState("personal"), [reply, setReply] = React.useState(null);
     const [busy, setBusy] = React.useState(false), [error, setError] = React.useState("");
     const [refreshError, setRefreshError] = React.useState("");
-    const [pending, setPending] = React.useState(null);
+    const [pending, setPending] = React.useState([]);
+    const pendingRequests = React.useRef([]), inFlight = React.useRef(new Set()), activeConversation = React.useRef(conversationId);
+    activeConversation.current = conversationId;
     const [recovery, setRecovery] = React.useState(null);
     const [gateProject,setGateProject] = React.useState(null), [gateNotice,setGateNotice] = React.useState(null);
     const [quote, setQuote] = React.useState(null), [loadingOlder, setLoadingOlder] = React.useState(false);
     const initialized = React.useRef(false), alive = React.useRef(true), log = React.useRef(null), follow = React.useRef(true);
     const current = React.useRef(null), appendCursor = React.useRef(0), anchor = React.useRef(null), sentFocus = React.useRef(null);
     const pendingKey = snapshot?.authorityId ? `dsh-steward-pending:${encodeURIComponent(snapshot.authorityId)}:${conversationId}` : null;
-    const savePending = value => { setPending(value); try { if (pendingKey) { if (value) localStorage.setItem(pendingKey, JSON.stringify(value)); else localStorage.removeItem(pendingKey); } } catch {} };
+    const savePending = update => {
+      const value = update(pendingRequests.current);
+      pendingRequests.current = value; setPending(value);
+      try { if (pendingKey) { if (value.length) localStorage.setItem(pendingKey, JSON.stringify(value)); else localStorage.removeItem(pendingKey); } } catch {}
+    };
+    const updatePending = (request, status, reason = "") => savePending(items => {
+      const entry = { request, status, reason };
+      return items.some(item => item.request.commandId === request.commandId)
+        ? items.map(item => item.request.commandId === request.commandId ? entry : item) : [...items, entry];
+    });
+    const removePending = commandId => savePending(items => items.filter(item => item.request.commandId !== commandId));
+    const sameAuthority = (request, authorityId, value) => alive.current && activeConversation.current === request.conversationId &&
+      current.current?.authorityId === authorityId && (!value || value.authorityId === authorityId);
+    const sourceAvailable = request => (!request.replyTo || snapshot?.messages.some(message => message.id === request.replyTo)) &&
+      (!request.quote || snapshot?.messages.some(message => message.id === request.quote.messageId));
+    function restorePending(request) {
+      if (!sourceAvailable(request)) return;
+      setText(request.text);
+      if (request.target) setSelected(scopeKey(request.target)); else setSelected("auto");
+      setReply(request.replyTo ? snapshot.messages.find(message => message.id === request.replyTo) : null);
+      setQuote(request.quote ? { ...request.quote, scope: snapshot.messages.find(message => message.id === request.quote.messageId).scope } : null);
+      removePending(request.commandId);
+    }
     const accept = (value, mode = "latest") => {
       if (!alive.current) return;
       const previous = current.current;
+      if (previous && previous.authorityId !== value.authorityId) mode = "latest";
       const merged = new Map((mode === "latest" ? [] : previous?.messages ?? []).map(message => [message.id, message]));
       if (value.commandMessage && !value.messages?.some(message=>message.id===value.commandMessage.id)) {
         sentFocus.current=value.commandMessage.id;follow.current=false;
@@ -129,7 +154,14 @@ function createStewardClient(React) {
     }, [conversationId, invoke]);
     React.useEffect(() => {
       if (!pendingKey) return;
-      try { const stored = JSON.parse(localStorage.getItem(pendingKey) ?? "null"); if (stored?.conversationId === conversationId && typeof stored.commandId === "string" && typeof stored.text === "string") setPending(stored); } catch {}
+      let restored = [];
+      try {
+        const stored = JSON.parse(localStorage.getItem(pendingKey) ?? "null");
+        const entries = Array.isArray(stored) ? stored : stored ? [{ request: stored }] : [];
+        restored = entries.filter(item => item.request?.conversationId === conversationId && typeof item.request.commandId === "string" && typeof item.request.text === "string")
+          .map(item => item.status === "not-admitted" ? item : { request: item.request, status: "unknown", reason: "本机保存的原请求；服务器是否已登记仍需核实。" });
+      } catch {}
+      pendingRequests.current = restored; setPending(restored);
     }, [pendingKey]);
     React.useLayoutEffect(() => {
       if (!log.current) return;
@@ -165,29 +197,39 @@ function createStewardClient(React) {
       catch (failure) { setError(failure.message ?? String(failure)); }
     }
     async function transmit(request) {
-      setBusy(true); setError(""); savePending(request);
+      if (inFlight.current.has(request.commandId)) return;
+      const authorityId = current.current?.authorityId;
+      inFlight.current.add(request.commandId);
+      updatePending(request, "sending", "请求正在发送或分流，尚未确认服务器登记。不会自动重发。");
       try {
         const value = await invoke("stewardSend", request);
-        if (!alive.current) return;
-        follow.current = true; accept(value); savePending(null); setText(""); setReply(null); setQuote(null);
-      } catch (failure) { if (alive.current) {
-        if (failure.details?.admission === "not-admitted" || (failure.details?.reason ?? failure.code) === "CLARIFICATION") { savePending(null); setError(`本条未发送：${failureText(failure)}。可修改后重新发送。`); }
-        else setError(`尚未确认发送结果：${failure.message ?? String(failure)}。可以核实，或重试原请求。`);
+        if (!sameAuthority(request, authorityId, value)) return;
+        accept(value, "append"); removePending(request.commandId);
+      } catch (failure) { if (sameAuthority(request, authorityId)) {
+        const rejected = failure.details?.admission === "not-admitted" || (failure.details?.reason ?? failure.code) === "CLARIFICATION";
+        updatePending(request, rejected ? "not-admitted" : "unknown", rejected
+          ? `本条未发送：${failureText(failure)}。可恢复原文后修改，或重试原请求。`
+          : `尚未确认发送结果：${failureText(failure)}。可核实或重试原请求，不会自动重发。`);
       } }
-      finally { if (alive.current) setBusy(false); }
+      finally { inFlight.current.delete(request.commandId); }
     }
-    async function reconcilePending() {
-      setBusy(true);
+    async function reconcilePending(request) {
+      if (inFlight.current.has(request.commandId)) return;
+      const authorityId = current.current?.authorityId;
+      inFlight.current.add(request.commandId); updatePending(request, "checking", "正在核实原请求。");
       try {
-        const value = await invoke("stewardReconcile", { conversationId, commandId: pending?.commandId }); accept(value, "append");
-        if (value.commandMessage || value.messages?.some(message => message.commandId === pending?.commandId)) savePending(null);
-      } catch (failure) { setError(failure.message ?? String(failure)); }
-      finally { setBusy(false); }
+        const value = await invoke("stewardReconcile", { conversationId: request.conversationId, commandId: request.commandId });
+        if (!sameAuthority(request, authorityId, value)) return;
+        accept(value, "append");
+        if (value.commandMessage || value.messages?.some(message => message.commandId === request.commandId)) removePending(request.commandId);
+        else updatePending(request, "unknown", "尚未查到服务器登记；原请求仍可能在发送或分流中，不会自动重发。");
+      } catch (failure) { if (sameAuthority(request, authorityId)) updatePending(request, "unknown", failureText(failure)); }
+      finally { inFlight.current.delete(request.commandId); }
     }
     async function resolveWaiting() {
       if (!recovery) return;
       setBusy(true); setError("");
-      try { const value = await invoke("stewardResolve", recovery); accept(value); setRecovery(null); if (pending?.commandId === value.messages?.find(message => message.id === recovery.messageId)?.commandId) savePending(null); }
+      try { const value = await invoke("stewardResolve", recovery); accept(value); setRecovery(null); const commandId = value.messages?.find(message => message.id === recovery.messageId)?.commandId; if (commandId) removePending(commandId); }
       catch (failure) { setError(`结束等待尚未确认：${failure.details?.detail ?? failure.message ?? String(failure)}。刷新核实后，可重试同一操作。`); }
       finally { setBusy(false); }
     }
@@ -206,7 +248,12 @@ function createStewardClient(React) {
       snapshot?.sources?.some(item => item.status?.kind === "unavailable") && h("div", { className: "steward-alert", role: "status" }, "部分原会话暂不可读取。已保存的消息仍可查看；当前列表可能尚未包含最新回复。"),
       error && h("div", { className: "steward-alert", role: "alert" }, error),
       refreshError && h("div", { className: "steward-alert", role: "alert" }, refreshError),
-      pending && h("div", { className: "steward-alert", role: "status" }, h("p", null, "有一条发送结果尚未确认的原请求。不会自动重发。"), h("p", null, pending.text), h("button", { disabled: busy, onClick: reconcilePending }, "核实原请求"), " ", h("button", { disabled: busy, onClick: () => transmit(pending) }, "重试原请求")),
+      pending.map(item => h("div", { key: item.request.commandId, className: "steward-alert", role: "status", "data-pending-command": item.request.commandId },
+        h("p", null, item.reason), h("small", null, `本机待核实请求 ${item.request.commandId} · ${item.request.target ? label(item.request.target) : item.request.replyTo ? "回复原消息" : "自动分流"}`), h("p", null, item.request.text),
+        h("button", { disabled: ["sending", "checking"].includes(item.status), onClick: () => reconcilePending(item.request) }, "核实原请求"), " ",
+        h("button", { disabled: ["sending", "checking"].includes(item.status), onClick: () => transmit(item.request) }, "重试原请求"), " ",
+        item.status === "not-admitted" && h("button", { disabled: busy || !!text.trim() || !sourceAvailable(item.request), onClick: () => restorePending(item.request) }, "恢复原文到输入框"),
+        item.status === "not-admitted" && !sourceAvailable(item.request) && h("small", null, "原回复或引用消息不在当前页。载入原消息后可恢复编辑；仍可核实或重试原请求。"))),
       recovery && h("div", { className: "steward-alert", role: "status" }, h("p", null, "原发送结果仍未知。此操作只结束等待，以便继续对话；不会重发消息、取消任务或认定任务完成。服务器会先核实原会话已空闲。"), h("button", { disabled: busy, onClick: resolveWaiting }, "确认结束等待"), " ", h("button", { disabled: busy, onClick: () => setRecovery(null) }, "继续等待")),
       snapshot?.attention?.items?.some(item => !snapshot.messages.some(message => message.id === item.id)) && h("details", { open: true, className: "steward-alert" }, h("summary", null, "较早的消息仍需核实"),
         snapshot.attention.items.filter(item => !snapshot.messages.some(message => message.id === item.id)).map(item => h("p", { key: item.id }, `${label(item.scope)} · ${stateLabels[item.state.kind] ?? "未核实"} · ${item.preview}`, " ", h("button", { disabled: busy || !!recovery, onClick: () => setRecovery({ conversationId, messageId: item.id, commandId: crypto.randomUUID(), expectedRevision: item.revision, expectedState: item.state.kind, confirm: true }) }, "结束此条等待"))),
@@ -224,18 +271,18 @@ function createStewardClient(React) {
             message.state?.reason && h("p", { className: "muted" }, message.state.reason),
             message.resolution && h("p", { className: "muted" }, "你曾结束对此条消息的等待；后续原生证据仍会继续核实。"),
             message.gate&&message.scope.kind==="project"&&h("button",{onClick:()=>{setGateProject(message.scope.projectId);setGateNotice(message.gate);}},"打开这次验收候选"),
-            h("div", { className: "steward-meta" }, h("button", { disabled: busy || !!pending, onClick: () => { setReply(message); setQuote(null); setError(""); } }, "回复"),
-              h("button", { disabled: busy || !!pending, onClick: () => { setQuote({ messageId: message.id, expectedRevision: message.revision, excerpt: message.text.slice(0, 2000), scope: message.scope }); setReply(null); setSelected(""); setError(""); } }, "引用到…"),
+            h("div", { className: "steward-meta" }, h("button", { disabled: busy, onClick: () => { setReply(message); setQuote(null); setError(""); } }, "回复"),
+              h("button", { disabled: busy, onClick: () => { setQuote({ messageId: message.id, expectedRevision: message.revision, excerpt: message.text.slice(0, 2000), scope: message.scope }); setReply(null); setSelected(""); setError(""); } }, "引用到…"),
               message.role === "user" && ["accepted", "admitted", "needs-reconciliation"].includes(state) && h("button", { disabled: busy || !!recovery, onClick: () => setRecovery({ conversationId, messageId: message.id, commandId: crypto.randomUUID(), expectedRevision: message.revision, expectedState: state, confirm: true }) }, "结束等待并继续"),
               h("details", null, h("summary", null, "本条依据"), h("p", null, `范围：${label(message.scope)}`), h("p", null, `消息：${message.id}`), message.replyTo && h("p", null, `被回复消息：${message.replyTo}`), message.source && h("p", null, `原会话：${message.source.nodeId ?? "local"} / ${message.source.sessionId} · 第 ${message.source.generation ?? 0} 代`), message.source?.sessionId && h("button", { onClick: () => openSession(message.source.sessionId) }, "打开原会话"), message.quote && h("pre", null, JSON.stringify(message.quote, null, 2)), message.manifest && h("pre", null, JSON.stringify(message.manifest, null, 2)))));
         })),
       hasUnseen && h("button", { onClick: latest }, "有较新消息 · 返回最新"),
-      h("form", { onSubmit: event => { event.preventDefault(); if (busy || pending || !text.trim() || (quote && (!selected || selected === "auto" || !quote.excerpt.trim()))) return; void transmit({ conversationId, commandId: crypto.randomUUID(), text: text.trim(), ...(reply ? { replyTo: reply.id } : selected === "auto" ? { routingMode: "auto" } : { target: fromKey(selected) }), ...(quote ? { quote: { messageId: quote.messageId, expectedRevision: quote.expectedRevision, excerpt: quote.excerpt } } : {}) }); } },
+      h("form", { onSubmit: event => { event.preventDefault(); if (busy || !text.trim() || (quote && (!selected || selected === "auto" || !quote.excerpt.trim()))) return; const request = { conversationId, commandId: crypto.randomUUID(), text: text.trim(), ...(reply ? { replyTo: reply.id } : selected === "auto" ? { routingMode: "auto" } : { target: fromKey(selected) }), ...(quote ? { quote: { messageId: quote.messageId, expectedRevision: quote.expectedRevision, excerpt: quote.excerpt } } : {}) }; setText(""); setReply(null); setQuote(null); setError(""); void transmit(request); } },
         replyMessage && h("div", { className: "steward-alert" }, `回复 ${label(replyMessage.scope)}：「${replyMessage.text.slice(0, 90)}」`, " ", h("button", { type: "button", onClick: () => setReply(null) }, "取消回复")),
-        quote && h("div", { className: "steward-alert" }, h("p", null, `分享一段 ${label(quote.scope)} 原文到明确选择的目标。只分享下面的连续原文片段，不转移其他历史。`), h("textarea", { "aria-label": "引用原文片段", value: quote.excerpt, maxLength: 2000, disabled: busy || !!pending, onChange: event => setQuote({ ...quote, excerpt: event.target.value }) }), h("small", null, `来源 ${quote.messageId} · 版本 ${quote.expectedRevision} · 最多 2000 字；可删选连续片段，不可改写原文。`), " ", h("button", { type: "button", onClick: () => setQuote(null) }, "取消引用")),
-        h("label", null, "本条对话对象 ", h("select", { "aria-label": "本条对话对象", value: replyMessage ? scopeKey(replyMessage.scope) : selected, disabled: busy || !!pending || !!reply, onChange: event => setSelected(event.target.value) }, quote && h("option", { value: "" }, "请选择引用目标"), snapshot?.routing?.auto && !quote && h("option", { value: "auto" }, "自动判断 · 不明确时询问"), h("option", { value: "personal" }, "闲聊"), ...projects.map(project => h("option", { key: project.projectId, value: `project:${project.projectId}` }, project.title)))),
-        h("textarea", { "aria-label": "消息", value: text, disabled: busy || !!pending, placeholder: "发送消息…", onChange: event => setText(event.target.value), onKeyDown: event => { if ((event.metaKey || event.ctrlKey) && event.key === "Enter") event.currentTarget.form?.requestSubmit(); } }),
-        h("div", { className: "steward-controls" }, h("small", null, reply ? "按被回复消息的范围发送；不会切换其他项目。" : quote ? "确认后将选定原文明确分享至本条对话对象。" : "每个项目保留自己的历史。后台通知不会改变当前对话对象。"), h("button", { type: "submit", disabled: busy || !!pending || !snapshot || !text.trim() || (quote && (!selected || selected === "auto" || !quote.excerpt.trim())) }, busy ? "正在登记…" : quote ? "分享引用并发送" : "发送"))));
+        quote && h("div", { className: "steward-alert" }, h("p", null, `分享一段 ${label(quote.scope)} 原文到明确选择的目标。只分享下面的连续原文片段，不转移其他历史。`), h("textarea", { "aria-label": "引用原文片段", value: quote.excerpt, maxLength: 2000, disabled: busy, onChange: event => setQuote({ ...quote, excerpt: event.target.value }) }), h("small", null, `来源 ${quote.messageId} · 版本 ${quote.expectedRevision} · 最多 2000 字；可删选连续片段，不可改写原文。`), " ", h("button", { type: "button", onClick: () => setQuote(null) }, "取消引用")),
+        h("label", null, "本条对话对象 ", h("select", { "aria-label": "本条对话对象", value: replyMessage ? scopeKey(replyMessage.scope) : selected, disabled: busy || !!reply, onChange: event => setSelected(event.target.value) }, quote && h("option", { value: "" }, "请选择引用目标"), snapshot?.routing?.auto && !quote && h("option", { value: "auto" }, "自动判断 · 不明确时询问"), h("option", { value: "personal" }, "闲聊"), ...projects.map(project => h("option", { key: project.projectId, value: `project:${project.projectId}` }, project.title)))),
+        h("textarea", { "aria-label": "消息", value: text, disabled: busy, placeholder: "发送消息…", onChange: event => setText(event.target.value), onKeyDown: event => { if ((event.metaKey || event.ctrlKey) && event.key === "Enter") event.currentTarget.form?.requestSubmit(); } }),
+        h("div", { className: "steward-controls" }, h("small", null, reply ? "按被回复消息的范围发送；不会切换其他项目。" : quote ? "确认后将选定原文明确分享至本条对话对象。" : "每个项目保留自己的历史。后台通知不会改变当前对话对象。"), h("button", { type: "submit", disabled: busy || !snapshot || !text.trim() || (quote && (!selected || selected === "auto" || !quote.excerpt.trim())) }, busy ? "正在登记…" : quote ? "分享引用并发送" : "发送"))));
   }
   return { StewardPanel };
 }
