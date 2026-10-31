@@ -44,7 +44,8 @@ async function settingsAndUi(browser,index,phase="baseline"){
    if(gates.has(marker))await gates.get(marker).promise;
    yield*new ScriptedModel([classifier?JSON.stringify({kind:'route',target:{kind:'project',projectId:a.projectId}}):'reply:'+marker]).stream(options);
   };
-  const settings=Object.assign(Object.create(TaskPluginSettings.prototype),{ctx:h.ctx});
+  const Settings=after?TaskPluginSettings:(await import(pathToFileURL(join(baselineRoot,"packages/task-system/dist/settings.js")).href)).TaskPluginSettings;
+  const settings=Object.assign(Object.create(Settings.prototype),{ctx:h.ctx});
   const assets=new Map([['/react.js',readFileSync(new URL('../../node_modules/react/umd/react.production.min.js',import.meta.url))],['/react-dom.js',readFileSync(new URL('../../node_modules/react-dom/umd/react-dom.production.min.js',import.meta.url))],['/steward.js',readFileSync(join(uiRoot,'packages/task-system/src/steward-client.js'))]]);
   server.on('request',async(req,res)=>{try{
    if(assets.has(req.url)){res.setHeader('content-type','text/javascript; charset=utf-8');res.end(assets.get(req.url));return;}
