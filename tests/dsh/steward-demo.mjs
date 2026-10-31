@@ -28,7 +28,16 @@ const echo=options=>{
   return `离线脚本回复：${text}\n\n此回复由测试模型产生；原生会话、路由与任务记录由真实 DSH 处理。`;
 };
 // Resolve each fixture response from its actual request, never from an enqueue on HTTP retry.
-let localJob=null, mutation=false, dropNextSend=process.env.DSH_STEWARD_DEMO_DROP_FIRST_SEND==='1';
+let localJob=null, recallJob=null, mutation=false, dropNextSend=process.env.DSH_STEWARD_DEMO_DROP_FIRST_SEND==='1';
+h.ctx.on('tools/result',(exec,result)=>{
+  if(recallJob&&exec.name==='steward_recall'&&exec.agent?.id===recallJob.sessionId){
+    if(result.isError)recallJob.error=JSON.stringify(result.content);
+    else {
+      recallJob.last=JSON.parse(result.content.filter(part=>part.type==='text').map(part=>part.text).join('\n'));
+      if(recallJob.last.kind==='steward-scoped-message')recallJob.pages.push(recallJob.last);
+    }
+  }
+});
 h.adapter.stream=async function* (options) {
   this.requests.push(options);
   const text=JSON.stringify(options.messages);
@@ -37,6 +46,15 @@ h.adapter.stream=async function* (options) {
     const route=JSON.parse(options.messages[0].content.find(part=>part.type==='text').text);
     const matches=route.projects.filter(project=>route.text.includes(project.title));
     response=JSON.stringify(/闲聊|散心|聊点别的/.test(route.text)?{kind:'route',target:{kind:'personal'}}:matches.length===1?{kind:'route',target:{kind:'project',projectId:matches[0].projectId}}:{kind:'clarification',question:'离线分流脚本未识别明确对象，请选择闲聊或项目。'});
+  }
+  else if(recallJob&&options.sessionId===recallJob.sessionId&&text.includes(recallJob.marker)){
+    if(recallJob.error)throw Error(recallJob.error);
+    const result=recallJob.last;
+    const pointer=!result?null:result.kind==='steward-scoped-history'?result.items.find(item=>item.messageId===recallJob.messageId)?.lookup:result.next;
+    if(!result)response={name:'steward_recall',args:{query:recallJob.marker,limit:3}};
+    else if(pointer){const {tool:_tool,...args}=pointer;response={name:'steward_recall',args};}
+    else if(result.kind==='steward-scoped-message')response=`离线续读验证：已沿真实工具指针读取 ${recallJob.pages.length} 页，尾部为 ${recallJob.pages.at(-1).content.slice(-60)}。此结果验证接口，不证明真实模型记忆能力。`;
+    else throw Error('Scoped history did not return the seeded message');
   }
   else if(options.tools?.some(tool=>tool.name==='task_submit_result')) response={name:'task_submit_result',args:{outcome:'success',summary:'离线模型完成本机原生执行链',reportTitle:'本机原生执行证据',reportBody:'真实 TaskLedger claim → native AgentLoop → task_submit_result；业务内容为离线脚本，不证明真实模型质量。'}};
   else if(localJob&&text.includes(localJob.marker)) {
@@ -65,7 +83,7 @@ const assets={
   '/react-dom.js':readFileSync(new URL('../../node_modules/react-dom/umd/react-dom.development.js',import.meta.url)),
   '/steward-client.js':readFileSync(new URL('../../packages/task-system/src/steward-client.js',import.meta.url)),
 };
-const page=`<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>管家 · 隔离本机演示</title><style>html,body,#root{height:100%;margin:0}body{background:#181b20;color:#ddd}button,select,textarea{color-scheme:dark}</style><div style="position:fixed;right:16px;top:10px;z-index:5;font:12px system-ui"><button id="local-task" ${liveMode?'disabled title="此按钮仅验证离线任务夹具；真实模型通过聊天使用实际工具"':''}>本机任务链验证</button> <a style="color:#9fd7ca" href="/evidence?token=${token}" target="_blank">查看隔离证据</a><span id="local-task-status"></span></div><div id="root"></div><script src="/react.js?token=${token}"></script><script src="/react-dom.js?token=${token}"></script><script src="/steward-client.js?token=${token}"></script><script>const invoke=async(method,input)=>{const response=await fetch('/api/'+method+'?token=${token}',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(input)});const value=await response.json();if(!response.ok)throw Object.assign(Error(value.error),{code:value.code,details:value.details});return value;};document.getElementById('local-task').onclick=async()=>{const button=document.getElementById('local-task');button.disabled=true;try{const result=await invoke('demoLocalTask',{});document.getElementById('local-task-status').textContent=' '+result.state+' · '+result.taskId;}catch(error){document.getElementById('local-task-status').textContent=error.message;}finally{button.disabled=false;}};const {StewardPanel}=createStewardClient(React);ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(StewardPanel,{invoke,demoLabel:${JSON.stringify(demoLabel).replace(/</g,'\\u003c')},openSession:id=>alert('真实原生会话 ID：'+id)}));</script></html>`;
+const page=`<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>管家 · 隔离本机演示</title><style>html,body,#root{height:100%;margin:0}body{background:#181b20;color:#ddd}button,select,textarea{color-scheme:dark}</style><div style="position:fixed;right:16px;top:10px;z-index:5;font:12px system-ui"><button id="local-task" ${liveMode?'disabled title="此按钮仅验证离线任务夹具；真实模型通过聊天使用实际工具"':''}>本机任务链验证</button> <button id="recall-proof" ${liveMode?'disabled':''}>长消息续读验证</button> <a style="color:#9fd7ca" href="/evidence?token=${token}" target="_blank">查看隔离证据</a><span id="local-task-status"></span></div><div id="root"></div><script src="/react.js?token=${token}"></script><script src="/react-dom.js?token=${token}"></script><script src="/steward-client.js?token=${token}"></script><script>const invoke=async(method,input)=>{const response=await fetch('/api/'+method+'?token=${token}',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(input)});const value=await response.json();if(!response.ok)throw Object.assign(Error(value.error),{code:value.code,details:value.details});return value;};document.getElementById('local-task').onclick=async()=>{const button=document.getElementById('local-task');button.disabled=true;try{const result=await invoke('demoLocalTask',{});document.getElementById('local-task-status').textContent=' '+result.state+' · '+result.taskId;}catch(error){document.getElementById('local-task-status').textContent=error.message;}finally{button.disabled=false;}};document.getElementById('recall-proof').onclick=async()=>{const button=document.getElementById('recall-proof');button.disabled=true;try{const result=await invoke('demoRecall',{});document.getElementById('local-task-status').textContent=' 全文一致 · '+result.pages.length+' 页 · '+result.totalBytes+' UTF-8字节';}catch(error){document.getElementById('local-task-status').textContent=error.message;}finally{button.disabled=false;}};const {StewardPanel}=createStewardClient(React);ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(StewardPanel,{invoke,demoLabel:${JSON.stringify(demoLabel).replace(/</g,'\\u003c')},openSession:id=>alert('真实原生会话 ID：'+id)}));</script></html>`;
 const server=createServer(async(req,res)=>{
   res.setHeader('Cache-Control','no-store');
   let rpcPath='',rpcInput;
@@ -95,6 +113,26 @@ const server=createServer(async(req,res)=>{
     else if(url.pathname==='/api/stewardSend'){
       if(mutation)throw Error('Demo mutation is busy; this request was not admitted');
       mutation=true;try{await service.send(input);value=await waitCommand(input.commandId);if(dropNextSend){dropNextSend=false;res.writeHead(503,{'content-type':'application/json'});res.end(JSON.stringify({error:'Synthetic gateway lost the original application acknowledgement'}));return;}}finally{mutation=false;}
+    }
+    else if(url.pathname==='/api/demoRecall'){
+      if(liveMode)throw Object.assign(Error('Recall proof uses the explicitly offline fixture'),{code:'DEMO_OFFLINE_ONLY'});
+      if(mutation)throw Error('Demo mutation is busy; this request was not admitted');
+      mutation=true;try{
+        const command=randomUUID(),marker=`DEMO_SPILL_${command}`,tail=`EXACT_TAIL_${command}`;
+        const original=`${marker}\n${'中文😀'.repeat(1800)}\0${tail}`;
+        await service.send({conversationId:'main',commandId:`recall-seed-${command}`,text:original,target:{kind:'personal'}});
+        const seeded=await waitCommand(`recall-seed-${command}`),user=seeded.messages.find(message=>message.commandId===`recall-seed-${command}`);
+        recallJob={marker,sessionId:user.source.sessionId,messageId:user.id,pages:[],last:null};
+        await service.send({conversationId:'main',commandId:`recall-proof-${command}`,text:`验证此前长消息的完整尾部。 ${marker}`,target:{kind:'personal'}});
+        await waitCommand(`recall-proof-${command}`);
+        const recovered=recallJob.pages.map(page=>page.content).join('');
+        value={mode:'scripted-offline',runtime:states.runtime,messageId:user.id,sessionId:user.source.sessionId,
+          exactMatch:recovered===original,tailPresent:recovered.endsWith(tail),tail,totalBytes:Buffer.byteLength(original),
+          coordinate:'utf-8-bytes',pages:recallJob.pages.map(page=>({offset:page.offset,nextOffset:page.nextOffset,bytes:Buffer.byteLength(page.content),revision:page.source.revision})),
+          modelQualityVerified:false};
+        if(!value.exactMatch||!value.tailPresent)throw Error('Native recall pages did not reconstruct the exact seeded text');
+        states.recall=value;writeFileSync(join(root,'recall-evidence.json'),JSON.stringify(value,null,2));
+      }finally{recallJob=null;mutation=false;}
     }
     else if(url.pathname==='/api/demoLocalTask'){
       if(liveMode)throw Object.assign(Error('This deterministic task-chain button is available only in the explicitly offline fixture'),{code:'DEMO_OFFLINE_ONLY'});
