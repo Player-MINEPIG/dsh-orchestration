@@ -66,12 +66,12 @@ export class ProjectCollaborationAuthority {
   private wb;
   private sessions;
   private queue: Promise<unknown> = Promise.resolve();
-  constructor(private ledger: TaskLedger, private options: { projectSession?: (nodeId:string,commandId:string,input:ProjectSessionAction)=>Promise<Json>; control?: (commandId:string,input:TaskControl)=>unknown | Promise<unknown>; planner?: Pick<TaskPlanner, "plan" | "apply"> | (() => Pick<TaskPlanner, "plan" | "apply"> | undefined) } = {}) {
+  constructor(private ledger: TaskLedger, private options: { authorizeMessageSession?: (nodeId: string, sessionId: string, cwd: string, projectId: string) => void; projectSession?: (nodeId:string,commandId:string,input:ProjectSessionAction)=>Promise<Json>; control?: (commandId:string,input:TaskControl)=>unknown | Promise<unknown>; planner?: Pick<TaskPlanner, "plan" | "apply"> | (() => Pick<TaskPlanner, "plan" | "apply"> | undefined) } = {}) {
     ledger.assertManagementWritable();
     this.db = ledger.managementDatabase();
     this.wb = new Workbench(ledger);
     this.wb.prepareRegistration();
-    this.sessions = new SessionDispatcherAuthority(ledger);
+    this.sessions = new SessionDispatcherAuthority(ledger, options.authorizeMessageSession);
     this.db.exec(`CREATE TABLE IF NOT EXISTS collaboration_bindings (binding_id TEXT PRIMARY KEY, project_id TEXT NOT NULL, owner_node_id TEXT NOT NULL, session_id TEXT NOT NULL, cwd TEXT NOT NULL, data TEXT NOT NULL, UNIQUE(owner_node_id, session_id, cwd));
       CREATE TABLE IF NOT EXISTS collaboration_commands (command_id TEXT PRIMARY KEY, digest TEXT NOT NULL, result TEXT);`);
   }
@@ -105,6 +105,8 @@ export class ProjectCollaborationAuthority {
     const node = this.ledger.nodeStatuses().map(n => this.ledger.getNode(n.nodeId)).find(n => n.nodeId === nodeId);
     if (!node?.enabled && nodeId !== this.ledger.nodeId) fail("FORBIDDEN", "An enabled registered node is required");
     if (input.action !== "control") input = { ...input, cwd: normalize(input.cwd) };
+    if (input.action === "session" && input.command?.kind === "sessionMessage")
+      this.options.authorizeMessageSession?.(nodeId, input.sessionId, input.cwd, input.projectId ?? "");
     const key = `collaboration:${hash([nodeId, commandId])}`;
     const digest = hash(input);
     const old = this.db.prepare("SELECT digest,result FROM collaboration_commands WHERE command_id=?").get(key);

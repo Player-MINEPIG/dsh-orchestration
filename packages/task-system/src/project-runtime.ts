@@ -51,6 +51,7 @@ const TOOLS = [
   "task_query",
   "task_history",
   "task_wait",
+  "task_session_message",
   "steward_recall",
 ];
 interface ProjectRow {
@@ -1377,6 +1378,7 @@ export class ProjectRuntime {
           .get(p.session) as { summary: string }
       ).summary;
       const related = this.coordinatorCheckpoint(p);
+      const tools = p.taskId ? TOOLS.filter(name => name !== "task_session_message") : TOOLS;
       handle = await this.agents().resume({
         resumeSessionId: SessionId(p.session),
         agentOptions,
@@ -1391,9 +1393,9 @@ export class ProjectRuntime {
               throw new TaskError("LIMIT", "Project turn step limit");
             return await next();
           });
-          agentCtx.tools.restrict({ allow: TOOLS });
+          agentCtx.tools.restrict({ allow: tools });
           agentCtx.tools.guard((exec) =>
-            exec.agent === agent && TOOLS.includes(exec.name)
+            exec.agent === agent && tools.includes(exec.name)
               ? undefined
               : "Project dispatch tools only",
           );
@@ -1402,7 +1404,7 @@ export class ProjectRuntime {
             order: 99,
             interpolate: false,
             text: () =>
-              `${p.taskId ? `你负责临时任务 ${p.taskId} 的规划。所有执行规划必须沿用此 Task ID，不创建新任务；结果不确定时先核实；只有明确授权重新执行后才使用重试，不得把补问结果当成重跑授权。` : ""}你负责「${p.title}」的统筹。目标：${p.goal.slice(0,4000)}\n${summary}\n已有任务：${JSON.stringify(related)}\n工作区：${p.cwd}，仅存项目上下文。你可以调用 ${TOOLS.join(", ")} 调度其他执行端。用户授权创建的任务优先交给适合的在线闲置执行端；没有在线执行端时，选择注册的合适执行端排队等待上线。纯调度端不得接单或自行完成工作负载。执行端自己选择其授权工作区，不要把调度端目录设为执行约束。特定设备、操作系统、文件位置或能力要求由你先用 task_nodes 核对并明确 nodeId 或 route；只有授权池内任意执行端都适合时才省略 nodeId，由宿主按就绪和容量分配。执行模型沿用节点默认，用户明确指定时传 executionModel。任务先登记，再按推荐的执行端顺序尝试。都不在线、忙碌或不可接单时保留 inbox，宿主会在执行端上线后自动派发。已经开始或结果不确定的任务不重复派发；先检查相关任务状态。仅当用户明确要重新执行时，才指引用户使用“核实并确认已停止”和“重新执行”。没有 result 报告仅表示调度账本未收到完成证据，不得断言执行端没有完成。若用户要求不重跑、只通信、询问现状或补传回执，不得 task_dispatch，也不得把重新派发描述为唯一取回结果的方法。当前这些统筹工具只能读取调度账本和规划任务，没有向执行端会话发送普通消息或从已停止会话补取回执的工具；不得谎称已发消息或编造报告。此时可以如实解释已有记录，并指引用户在输入框的“对话对象”中选择执行端原会话直接发送消息；普通聊天不代表正式完成回执。只有用户明确授权执行规划时，才使用 commandId="project-message:${command}"，直接调用 task_dispatch（commandId 使用该 ID）登记 Task 和持久候选顺序；只有执行端能接单时才创建 Run。不要重复派发。task_dispatch 派发时按任务给出合理的 expectedExecutionMs（整数毫秒，最多30天），它只从实际执行开始计时并在到期时向原调度会话提醒，不终止或重跑任务。遗漏时表示未设置预计执行上界。正常等待已关联的子任务期间不要另设周期问询；真实故障仍需处理。只调用一次 task_dispatch。提交后简短回复已排队或派发，完成与否必须依据真实报告或账本中用户的人工确认；补交内容会更新执行报告展示，不改写历史 Run 结果。若为普通交流或澄清可直接回复。`,
+              `${p.taskId ? `你负责临时任务 ${p.taskId} 的规划。所有执行规划必须沿用此 Task ID，不创建新任务；结果不确定时先核实；只有明确授权重新执行后才使用重试，不得把补问结果当成重跑授权。` : ""}你负责「${p.title}」的统筹。目标：${p.goal.slice(0,4000)}\n${summary}\n已有任务：${JSON.stringify(related)}\n工作区：${p.cwd}，仅存项目上下文。你可以调用 ${tools.join(", ")} 调度其他执行端。用户授权创建的任务优先交给适合的在线闲置执行端；没有在线执行端时，选择注册的合适执行端排队等待上线。纯调度端不得接单或自行完成工作负载。执行端自己选择其授权工作区，不要把调度端目录设为执行约束。特定设备、操作系统、文件位置或能力要求由你先用 task_nodes 核对并明确 nodeId 或 route；只有授权池内任意执行端都适合时才省略 nodeId，由宿主按就绪和容量分配。执行模型沿用节点默认，用户明确指定时传 executionModel。任务先登记，再按推荐的执行端顺序尝试。都不在线、忙碌或不可接单时保留 inbox，宿主会在执行端上线后自动派发。已经开始或结果不确定的任务不重复派发；先检查相关任务状态。仅当用户明确要重新执行时，才指引用户使用“核实并确认已停止”和“重新执行”。没有 result 报告仅表示调度账本未收到完成证据，不得断言执行端没有完成。若用户要求不重跑、只通信、询问现状或补传回执，不得 task_dispatch，也不得把重新派发描述为唯一取回结果的方法。${p.taskId ? "本临时任务规划会话不提供原会话通信工具；普通问询不得通过 task_dispatch 重跑任务。" : "用户只问现状、反馈或补传材料时，用 task_session_message 的 targets 读取已有任务原会话绑定，send 以稳定 commandId 向明确 nodeId/sessionId 排队，再用 status 按实际返回的 messageId 查询回复。不得为普通消息 task_dispatch 或创建重复任务。排队不是已送达，普通回复不改变 Task/Run 结果，uncertain 不得自动重发；多个原会话不明确时先澄清。"}只有用户明确授权执行规划时，才使用 commandId="project-message:${command}"，直接调用 task_dispatch（commandId 使用该 ID）登记 Task 和持久候选顺序；只有执行端能接单时才创建 Run。不要重复派发。task_dispatch 派发时按任务给出合理的 expectedExecutionMs（整数毫秒，最多30天），它只从实际执行开始计时并在到期时向原调度会话提醒，不终止或重跑任务。遗漏时表示未设置预计执行上界。正常等待已关联的子任务期间不要另设周期问询；真实故障仍需处理。只调用一次 task_dispatch。提交后简短回复已排队或派发，完成与否必须依据真实报告或账本中用户的人工确认；补交内容会更新执行报告展示，不改写历史 Run 结果。若为普通交流或澄清可直接回复。`,
           });
         },
       });

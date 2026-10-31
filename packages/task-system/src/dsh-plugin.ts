@@ -363,7 +363,7 @@ const READ_TOOLS = [
   "task_nodes",
 ];
 const PLANNING_TOOLS = [
-  "project_start", "project_list", "project_bind_session", "task_bind_dispatcher", "task_submit_result", "task_retry_return",
+  "project_start", "project_list", "project_bind_session", "task_bind_dispatcher", "task_submit_result", "task_retry_return", "task_session_message",
   ...READ_TOOLS,
   "task_create",
   "task_checkin",
@@ -2749,7 +2749,7 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
       config.role,
       config.projectAgentOptions,
     );
-    const collaboration = new ProjectCollaborationAuthority(ledger, { projectSession: async (nodeId, commandId, request) => json(await service.sessionPortal.centralAction(nodeId, commandId, request)), planner: () => service.projects?.planner, control:(commandId,input)=>service.projects!.actOnTask({...input,commandId}) });
+    const collaboration = new ProjectCollaborationAuthority(ledger, { authorizeMessageSession: (nodeId, sessionId, cwd, projectId) => service.sessionPortal.authorizeMessageSession(nodeId, sessionId, cwd, projectId), projectSession: async (nodeId, commandId, request) => json(await service.sessionPortal.centralAction(nodeId, commandId, request)), planner: () => service.projects?.planner, control:(commandId,input)=>service.projects!.actOnTask({...input,commandId}) });
     service.projects.collaboration = collaboration;
     ledger.projectCollaborate = collaboration.projectCollaborate.bind(collaboration);
     ctx.inject(["workspaceRegistry"], async () => {

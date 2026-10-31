@@ -318,6 +318,13 @@ export class ProjectSessionService {
     if (this.task.config.centralMode !== "host") return this.central({ kind: "application", input: { kind: "send-executor-message", input: request } }, request.commandId);
     return this.projects().sendExecutorMessage(request);
   }
+  authorizeMessageSession(nodeId: string, sessionId: string, cwd: string, projectId: string) {
+    const managedProject = this.projects().projectForSession(sessionId);
+    if (!managedProject) return;
+    const current = this.reference(managedProject);
+    if (this.projects().placementProject(managedProject).state !== "ready" || managedProject !== projectId || current.nodeId !== nodeId || current.sessionId !== sessionId || current.cwd !== cwd)
+      throw new TaskError("FORBIDDEN", "Only the current project coordinator session may message its executors");
+  }
   async handoff(projectId: string, commandId = `handoff-${randomUUID()}`): Promise<unknown> {
     this.assertOpen();
     if (this.task.config.centralMode !== "host") return this.central({ kind: "application", input: { kind: "handoff", projectId, commandId } }, commandId);

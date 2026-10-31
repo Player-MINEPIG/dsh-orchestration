@@ -120,7 +120,8 @@
     "tests/dsh/steward-recall-executor-native.test.mjs",
     "tests/dsh/steward-compaction-native.test.mjs",
     "tests/dsh/acceptance-gates-native.test.mjs",
-    "tests/dsh/steward-recovery-gates.test.mjs"
+    "tests/dsh/steward-recovery-gates.test.mjs",
+    "tests/dsh/pm-session-message-native.test.mjs"
   ],
   "ui": [
     "packages/task-system/test/executor-alerts.test.mjs",
