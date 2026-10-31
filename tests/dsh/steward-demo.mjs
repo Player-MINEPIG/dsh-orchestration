@@ -29,6 +29,7 @@ const echo=options=>{
 };
 // Resolve each fixture response from its actual request, never from an enqueue on HTTP retry.
 let localJob=null, recallJob=null, mutation=false, sends=0, dropNextSend=process.env.DSH_STEWARD_DEMO_DROP_FIRST_SEND==='1';
+const fixtureBusy=()=>mutation||sends||service.active||h.ctx.agents.list().some(agent=>agent.status!=='idle'||agent.inbox.nextTurn.length||agent.inbox.nextStep.length)||!!h.ledger.managementDatabase().prepare("SELECT 1 FROM pr_turns WHERE state IN ('queued','running') LIMIT 1").get();
 h.ctx.on('tools/result',(exec,result)=>{
   if(recallJob&&exec.name==='steward_recall'&&exec.agent?.id===recallJob.sessionId){
     if(result.isError)recallJob.error=JSON.stringify(result.content);
@@ -116,7 +117,7 @@ const server=createServer(async(req,res)=>{
     }
     else if(url.pathname==='/api/demoRecall'){
       if(liveMode)throw Object.assign(Error('Recall proof uses the explicitly offline fixture'),{code:'DEMO_OFFLINE_ONLY'});
-      if(mutation||sends||service.active)throw Error('Demo mutation is busy; this request was not admitted');
+      if(fixtureBusy())throw Error('Demo mutation is busy; this request was not admitted');
       mutation=true;try{
         const command=randomUUID(),marker=`DEMO_SPILL_${command}`,tail=`EXACT_TAIL_${command}`;
         const original=`${marker}\n${'中文😀'.repeat(1800)}\0${tail}`;
@@ -136,7 +137,7 @@ const server=createServer(async(req,res)=>{
     }
     else if(url.pathname==='/api/demoLocalTask'){
       if(liveMode)throw Object.assign(Error('This deterministic task-chain button is available only in the explicitly offline fixture'),{code:'DEMO_OFFLINE_ONLY'});
-      if(mutation||sends||service.active)throw Error('Demo mutation is busy; this request was not admitted');
+      if(fixtureBusy())throw Error('Demo mutation is busy; this request was not admitted');
       mutation=true;try{
       const command=randomUUID(),title=`本机原生执行验证 ${command.slice(0,8)}`;
       h.ledger.registerNode(`demo-node-${command}`,{nodeId:'local',roles:['both'],models:[{provider:'test-offline',model:'script',reasoningEfforts:[]}],capabilities:[],workspaceIds:[],enabled:true});
