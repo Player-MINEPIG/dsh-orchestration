@@ -144,7 +144,17 @@ export class StewardConversations {
       const previous = this.replay(request);
       if (previous) { this.db.exec("COMMIT"); return previous; }
       const active = this.activeMessage(request.conversationId, binding);
-      if (active && binding.kind !== "managed") throw new TaskError("BUSY", "This scope has an unfinished message; reconcile it before sending another");
+      if (active) {
+        if (binding.kind !== "managed" || !this.db.prepare("SELECT 1 FROM sqlite_master WHERE name='pr_turns'").get())
+          throw new TaskError("BUSY", "This scope has an unfinished message; reconcile it before sending another");
+        const unqueued = this.db.prepare(`SELECT m.id FROM steward_messages m WHERE m.conversation=?
+          AND json_extract(m.data,'$.source')=? AND json_extract(m.data,'$.role')='user'
+          AND json_extract(m.data,'$.state.kind') NOT IN ('completed','rejected','stopped','released')
+          AND NOT EXISTS(SELECT 1 FROM pr_turns t WHERE t.command='steward-'||m.id AND t.owner=? AND t.session=?
+            AND (t.state IN ('queued','running','interrupted','completed') OR t.state='failed' AND t.native_admission='not-started'))
+          LIMIT 1`).get(request.conversationId, canonical(binding), binding.projectId, binding.sessionId);
+        if (unqueued) throw new TaskError("BUSY", "An earlier message has unconfirmed admission outside the managed queue; reconcile it before sending another");
+      }
       const value = this.insert({ conversationId: request.conversationId, role: "user", text: request.text, commandId: request.commandId,
         scope, replyTo: request.replyTo ?? null, createdAt: new Date().toISOString(), source: binding,
         nativeSeq: null, provenance: null, state: { kind: "accepted" }, revision: 0, resolution: null, quote,
