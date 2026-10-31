@@ -177,6 +177,7 @@ export class WorkflowRuntime {
     adopting = false,
   ): WorkflowTaskBinding {
     this.project(command.projectId);
+    this.ledger.assertAcceptanceProjectPlan(command.projectId, command.taskId, command.workflowId);
     const definition =
       this.definitions().find(
         (item) => item.workflowId === command.workflowId,
@@ -643,6 +644,7 @@ export class WorkflowRuntime {
         this.project(command.definition.projectId);
         if (old?.projectId && old.projectId !== command.definition.projectId)
           fail("WORKFLOW_PROJECT", "Workflow cannot change Project");
+        this.ledger.assertAcceptanceProjectPlan(command.definition.projectId, undefined, command.definition.workflowId);
         if (command.definition.schedule?.enabled)
           fail("WORKFLOW_SCHEDULE", "Configure triggers on the Task schedule");
         const compiled = compileWorkflow(command.definition);
@@ -733,6 +735,7 @@ export class WorkflowRuntime {
             fail("NOT_FOUND", "Workflow step not found");
         if (run.state === "cancelled")
           fail("CONFLICT", "Cancelled workflow cannot resume");
+        if (step.taskId) this.ledger.assertAcceptanceWorkflowRetry(step.taskId);
         if (
           !step.runId ||
           !["failed", "cancelled", "blocked"].includes(
@@ -1083,6 +1086,7 @@ export class WorkflowRuntime {
           this.ledger.workflowAdmission(
             `workflow-admit:${run.workflowRunId}:${step.stepId}:${step.attemptCount}`,
             {
+              step: {workflowId: run.workflowId, definitionRevision: run.definitionRevision, stepId: step.stepId},
               ...(!step.taskId ? { task } : {}),
               ...(definition.execution.kind === "script" ? { script: definition.execution } : {}),
               run: {

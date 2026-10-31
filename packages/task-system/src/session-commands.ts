@@ -9,6 +9,11 @@ import type { Json } from "./contracts.js";
 
 const Policy = z.object({allowedNodeIds:z.array(z.string()).optional(),allowedWorkspaceIds:z.array(z.string()).optional(),allowedTools:z.array(z.string()).optional(),allowedBackends:z.array(z.string()).optional(),maxDepth:z.number().int().nonnegative().optional(),maxChildren:z.number().int().nonnegative().optional(),maxDescendants:z.number().int().nonnegative().optional(),settlementQuietMs:z.number().int().min(0).max(30000).optional()}).strict();
 const text = z.string().min(1).max(200);
+export const SessionMessageRequest = z.discriminatedUnion("action", [
+  z.strictObject({ action: z.literal("targets"), taskId: text }),
+  z.strictObject({ action: z.literal("send"), taskId: text, nodeId: text, sessionId: text, commandId: text, text: z.string().trim().min(1).max(8000) }),
+  z.strictObject({ action: z.literal("status"), taskId: text, messageId: text }),
+]);
 export const SessionCommand = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("projects") }).strict(),
   z.object({ kind: z.literal("checkin"), input: CheckinCommand }).strict(),
@@ -21,6 +26,7 @@ export const SessionCommand = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("wait"), taskId: text, quietMs: z.number().int().min(0).max(30000) }).strict(),
   z.object({ kind: z.literal("result"), outcome: z.enum(["success", "partial", "failure", "blocked", "unknown"]), summary: z.string().min(1).max(5000), report: z.object({ title: z.string().min(1).max(1000), body: z.string().max(20000), data: z.json().optional(), artifactIds: z.array(text).max(32).optional() }).strict().optional() }).strict(),
   z.object({ kind: z.literal("retryReturn"), messageId: text }).strict(),
+  z.strictObject({ kind: z.literal("sessionMessage"), input: SessionMessageRequest }),
 ]);
 export type SessionCommand = z.infer<typeof SessionCommand>;
 const json = (value: unknown): Json => JSON.parse(JSON.stringify(value));
@@ -29,7 +35,7 @@ const json = (value: unknown): Json => JSON.parse(JSON.stringify(value));
 export class SessionDispatcherAuthority {
   private db;
   private wb;
-  constructor(private ledger: TaskLedger) {
+  constructor(private ledger: TaskLedger, private authorizeMessageSession?: (nodeId: string, sessionId: string, cwd: string, projectId: string) => void) {
     this.db = ledger.managementDatabase();
     this.wb = new Workbench(ledger);
     this.db.exec("CREATE TABLE IF NOT EXISTS dispatcher_projects(node TEXT NOT NULL,session TEXT NOT NULL,project TEXT NOT NULL,cwd TEXT NOT NULL,PRIMARY KEY(node,session))");
@@ -61,7 +67,31 @@ export class SessionDispatcherAuthority {
     }
     if ("taskId" in command && !taskIds.has(command.taskId)) throw new TaskError("FORBIDDEN", "Task is outside the current project");
     switch (command.kind) {
+      case "sessionMessage": {
+        this.authorizeMessageSession?.(nodeId, input.sessionId, input.cwd, projectId);
+        const request = command.input;
+        if (!taskIds.has(request.taskId)) throw new TaskError("FORBIDDEN", "Task is outside the current project");
+        if (request.action === "targets") {
+          const targets = this.ledger.sessionMessageTargets(request.taskId);
+          return json({ taskId: request.taskId, targets: targets.slice(0, 64).map(target => ({
+            taskId: target.taskId, nodeId: target.nodeId, sessionId: target.sessionId, workspaceId: target.workspaceId,
+          })), truncated: targets.length > 64 });
+        }
+        if (request.action === "send") {
+          this.ledger.assertAcceptanceProjectPlan(projectId, request.taskId);
+          return json(this.ledger.queueSessionMessage(commandId, {
+            taskId: request.taskId, nodeId: request.nodeId, sessionId: request.sessionId, text: request.text,
+          }));
+        }
+        const message = this.ledger.getSessionMessage(request.messageId);
+        if (message.taskId !== request.taskId || message.completion || message.checkIn)
+          throw new TaskError("FORBIDDEN", "Message is outside this task's direct conversation");
+        return json({ messageId: message.messageId, taskId: message.taskId, nodeId: message.nodeId,
+          sessionId: message.sessionId, state: message.state, createdAt: message.createdAt, updatedAt: message.updatedAt,
+          reply: message.reply ?? null, notice: "Ordinary session communication; queue admission and replies do not settle a Task or Run." });
+      }
       case "create": {
+        this.ledger.assertAcceptanceProjectPlan(projectId);
         const {kind: _kind, ...intent} = command;
         const receipt = this.ledger.createTask(commandId, intent);
         const backlog = backlogs[0];

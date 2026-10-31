@@ -155,7 +155,7 @@ export class SessionCollaboration {
     const effort = selected?.reasoningEffort ?? agent!.options.reasoningEffort;
     const preset = agent!.ctx.get("agentPresets")?.composedPreset(agent!.ctx) ?? agent!.session.header.agentPreset;
     const composition = provider && model ? {provider,model,...(effort?{reasoningEffort:String(effort)}:{}),tools:agent!.ctx.tools.schemas(agent).map(tool=>tool.name),...(preset?{preset}:{})} : undefined;
-    const response = await this.send(`session-${hash(`${identity.sessionId}:${command.kind}:${requestId}`)}`, {action:"session", ...identity, command, ...(binding?.projectId?{projectId:binding.projectId}:{}), ...(composition?{composition}:{})});
+    const response = await this.send(`session-${hash(`${identity.sessionId}:${command.kind}:${requestId}`)}`, {action:"session", ...identity, command, ...(binding?.projectId?{projectId:binding.projectId}:{}), ...(composition && command.kind !== "sessionMessage" ? {composition} : {})});
     if (!response || response.confirmed !== true || !("result" in response)) throw new TaskError("COLLABORATION_PENDING", "Central session command has no confirmed receipt");
     return response.result;
   }

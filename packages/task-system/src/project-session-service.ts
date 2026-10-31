@@ -223,6 +223,15 @@ export class ProjectSessionService {
     if (!row) throw new TaskError("NOT_FOUND", "Project session generation does not exist");
     return this.projects().nativeSession(String(row.session)) ?? { kind: "managed", projectId, generation: Number(row.generation), nodeId: this.task.config.nodeId, sessionId: String(row.session), cwd: project.cwd };
   }
+  /** Host-authorized current or historical binding metadata, without loading its transcript. */
+  async bindingForRead(projectId: string, generation?: number): Promise<ProjectSessionReference> {
+    this.assertOpen();
+    if (this.task.config.centralMode !== "host") throw new TaskError("UNAVAILABLE", "Read project bindings on the authority host");
+    const binding = this.reference(projectId, generation);
+    if (binding.kind !== "managed") return binding;
+    const header = await this.ctx.sessionPersistence.stat(SessionId(binding.sessionId));
+    return { ...binding, cwd: header?.header.cwd ?? binding.cwd };
+  }
   private async authorizeOwner(binding: ProjectSessionReference, access: "read" | "write" | "freeze") {
     if (this.task.config.centralMode !== "host") { await this.central({ kind: "application", input: { kind: "authorize-owner", binding, access } }, `authorize-${randomUUID()}`); return; }
     const actual = this.reference(binding.projectId, binding.generation);
@@ -308,6 +317,13 @@ export class ProjectSessionService {
     const request = executorInput.parse(input);
     if (this.task.config.centralMode !== "host") return this.central({ kind: "application", input: { kind: "send-executor-message", input: request } }, request.commandId);
     return this.projects().sendExecutorMessage(request);
+  }
+  authorizeMessageSession(nodeId: string, sessionId: string, cwd: string, projectId: string) {
+    const managedProject = this.projects().projectForSession(sessionId);
+    if (!managedProject) return;
+    const current = this.reference(managedProject);
+    if (this.projects().placementProject(managedProject).state !== "ready" || managedProject !== projectId || current.nodeId !== nodeId || current.sessionId !== sessionId || current.cwd !== cwd)
+      throw new TaskError("FORBIDDEN", "Only the current project coordinator session may message its executors");
   }
   async handoff(projectId: string, commandId = `handoff-${randomUUID()}`): Promise<unknown> {
     this.assertOpen();
