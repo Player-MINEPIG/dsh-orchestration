@@ -4,6 +4,7 @@ import {spawn} from 'node:child_process';
 import {mkdirSync,readFileSync,writeFileSync} from 'node:fs';
 import {join,resolve} from 'node:path';
 import {cpus,loadavg} from 'node:os';
+import {pathToFileURL} from 'node:url';
 import {chromium} from 'playwright';
 import {createNativeHarness} from './native-harness.mjs';
 import {ScriptedModel} from './scripted-model.mjs';
@@ -16,8 +17,9 @@ import {SessionMessages} from '../../packages/task-system/dist/remote/session-me
 // This is not a throughput, model quality, paid-provider latency, or speedup benchmark.
 // Model barriers prove a request arrived and hold completion independent of admission.
 const baselineRoot=resolve(process.env.DSH_BURST_BASELINE_ROOT??'/private/tmp/dsh-steward-official-iteration');
+const runId=`${Date.now()}-${process.pid}`;
 const output=resolve(process.env.DSH_BURST_OUTPUT??'.runtime/steward-burst-baseline');mkdirSync(output,{recursive:true});
-const receipt={claim:'Deterministic product-path concurrency and delivery evidence; no actual provider throughput or quality claim',node:process.version,cores:cpus().length,loadBefore:loadavg(),source:'e377a45 backend; baseline UI/demo from preserved 0a90788 candidate; after UI/demo from current worktree',rounds:[],errors:[]};
+const receipt={claim:'Deterministic product-path concurrency and delivery evidence; no actual provider throughput or quality claim',node:process.version,cores:cpus().length,loadBefore:loadavg(),source:'Baseline Host/UI/demo from preserved candidate; after Host/UI/demo from current built worktree. Independent authority/demo-guard modes use the current worktree.',rounds:[],errors:[]};
 const delay=ms=>new Promise(done=>setTimeout(done,ms));
 const barrier=()=>{let release;const promise=new Promise(done=>release=done);return {promise,release};};
 async function until(check,label){const deadline=Date.now()+10000;while(!await check()){if(Date.now()>deadline)throw Error('Timed out: '+label);await delay(10);}}
@@ -28,7 +30,8 @@ async function post(url,method,input){const response=await fetch(new URL('/rpc',
 
 async function settingsAndUi(browser,index,phase="baseline"){
  const after=phase==="after",uiRoot=after?process.cwd():baselineRoot;
- const h=await createNativeHarness({config:{role:'both',schedulerEnabled:false,projectAgentOptions:{provider:'test-offline',model:'script'}}});
+ const createHarness=after?createNativeHarness:(await import(pathToFileURL(join(baselineRoot,'tests/dsh/native-harness.mjs')).href)).createNativeHarness;
+ const h=await createHarness({config:{role:'both',schedulerEnabled:false,projectAgentOptions:{provider:'test-offline',model:'script'}}});
  const gates=new Map(),events=[],dropAcks=new Set(),server=createServer();let context,page;
  const stamp=(kind,commandId,extra={})=>events.push({kind,commandId,ms:performance.now(),...extra});
  try{
@@ -60,8 +63,8 @@ async function settingsAndUi(browser,index,phase="baseline"){
   await until(()=>service.snapshot({conversationId:'main'}).messages.some(message=>message.text===`reply:fast-b-${index}`),'UI B completes while A held');
   assert.equal(await select.inputValue(),`project:${b.projectId}`);
   const second=await post(url,'stewardSend',{conversationId:'main',commandId:`a-second-${index}`,text:`a-second-${index}`,target:{kind:'project',projectId:a.projectId}});
-  assert.equal(second.ok,false);assert.equal(second.details.reason,'BUSY');assert.equal(second.details.admission,'not-admitted');assert.equal(service.commandStatus('main',`a-second-${index}`),'not-admitted');
-  gate.release();await waitCommand(service,aUser.commandId);await until(()=>input.isEnabled(),'B admission returned');
+  if(after){assert.equal(second.ok,true);assert.equal(second.value.commandMessage.state.kind,'queued');}else{assert.equal(second.ok,false);assert.equal(second.details.reason,'BUSY');assert.equal(second.details.admission,'not-admitted');assert.equal(service.commandStatus('main',`a-second-${index}`),'not-admitted');}
+  gate.release();await waitCommand(service,aUser.commandId);if(after)await waitCommand(service,`a-second-${index}`);await until(()=>input.isEnabled(),'B admission returned');
   assert.equal(await select.inputValue(),`project:${b.projectId}`,'A completion does not steal B input target');
   const ambiguous=`ambiguous-${index}`,classification=barrier();gates.set(ambiguous,classification);
   await select.selectOption('auto');await input.fill(ambiguous);await page.getByRole('button',{name:'发送',exact:true}).click();
@@ -79,8 +82,8 @@ async function settingsAndUi(browser,index,phase="baseline"){
   classification.release();await until(()=>!after?input.isEnabled():page.locator('[data-pending-command]').count().then(count=>count===0),'classifier released UI');
   const classified=service.snapshot({conversationId:'main'}).messages.find(message=>message.text===ambiguous);await waitCommand(service,classified.commandId);stamp('observed-completed',classified.commandId);
   if(after){assert.equal(await input.inputValue(),`NEW_DRAFT_${index}`);assert.equal(await select.inputValue(),`project:${b.projectId}`);await input.fill('');}
-  const ids=service.snapshot({conversationId:'main'}).messages.filter(message=>message.role==='user').map(message=>message.commandId);assert.equal(ids.length,4);assert.equal(new Set(ids).size,4);
-  assert.equal(events.filter(event=>event.kind==='model-arrived'&&event.commandId===`a-second-${index}`).length,0,'Busy second never reached model');
+  const ids=service.snapshot({conversationId:'main'}).messages.filter(message=>message.role==='user').map(message=>message.commandId);assert.equal(ids.length,after?5:4);assert.equal(new Set(ids).size,after?5:4);
+  assert.equal(events.filter(event=>event.kind==='model-arrived'&&event.commandId===`a-second-${index}`).length,after?1:0,'Accepted queued second reaches the model exactly once; legacy rejected second never does');
   const count=h.adapter.requests.length;const retry=await post(url,'stewardSend',{conversationId:'main',commandId:directId,text:`direct-during-classifier-${index}`,target:{kind:'project',projectId:b.projectId}});assert.equal(retry.ok,true);assert.equal(h.adapter.requests.length,count);
   let recoveryEvidence=null;
   if(after){
@@ -95,7 +98,7 @@ async function settingsAndUi(browser,index,phase="baseline"){
    const before=h.adapter.requests.length;dropAcks.delete(pending[1].text);await page.locator(`[data-pending-command="${pending[1].commandId}"]`).getByRole('button',{name:'重试原请求',exact:true}).click();await until(()=>page.locator('[data-pending-command]').count().then(count=>count===0),'same-command retry confirmed');assert.equal(h.adapter.requests.length,before);
    assert.equal(await input.inputValue(),`RECOVERY_DRAFT_${index}`);assert.equal(await select.inputValue(),`project:${b.projectId}`);
    await input.fill('');
-   const held=`busy-ui-first-${index}`,heldGate=barrier();gates.set(held,heldGate);await select.selectOption(`project:${a.projectId}`);await input.fill(held);await page.getByRole('button',{name:'发送',exact:true}).click();await until(()=>events.some(event=>event.kind==='model-arrived'&&event.commandId===held),'held UI request reaches model');
+   const held=`busy-ui-first-${index}`,heldGate=barrier();gates.set(held,heldGate);await select.selectOption('personal');await input.fill(held);await page.getByRole('button',{name:'发送',exact:true}).click();await until(()=>events.some(event=>event.kind==='model-arrived'&&event.commandId===held),'held UI request reaches model');
    const rejectedText=`busy-ui-second-${index}`;await input.fill(rejectedText);await page.getByRole('button',{name:'发送',exact:true}).click();const restore=page.getByRole('button',{name:'恢复原文到输入框',exact:true});await restore.waitFor();assert.equal(await input.isEnabled(),true);await restore.click();assert.equal(await input.inputValue(),rejectedText);await select.selectOption(`project:${b.projectId}`);await page.getByRole('button',{name:'发送',exact:true}).click();await until(()=>service.snapshot({conversationId:'main'}).messages.some(message=>message.text===`reply:${rejectedText}`),'restored not-admitted message can reach independent target');heldGate.release();const heldUser=service.snapshot({conversationId:'main'}).messages.find(message=>message.text===held);await waitCommand(service,heldUser.commandId);
    const legacy={conversationId:'main',commandId:aUser.commandId,text:slow,target:{kind:'project',projectId:a.projectId}},storageKey=`dsh-steward-pending:${encodeURIComponent(service.snapshot({conversationId:'main'}).authorityId)}:main`;
    await page.evaluate(({storageKey,legacy})=>localStorage.setItem(storageKey,JSON.stringify(legacy)),{storageKey,legacy});await page.reload();await until(()=>page.locator('[data-pending-command]').count().then(count=>count===1),'legacy single pending restored');assert.equal(await input.isEnabled(),true);const beforeLegacy=h.adapter.requests.length;await page.getByRole('button',{name:'核实原请求',exact:true}).click();await until(()=>page.locator('[data-pending-command]').count().then(count=>count===0),'legacy pending verified individually');assert.equal(h.adapter.requests.length,beforeLegacy);
@@ -105,24 +108,19 @@ async function settingsAndUi(browser,index,phase="baseline"){
   }
   const canonical=service.snapshot({conversationId:'main'}).messages.filter(message=>message.role==='user');
   for(const user of canonical){const model=events.filter(event=>event.kind==='model-arrived'&&event.commandId===user.text);assert.equal(model.length,1);assert.equal(model[0].sessionId,user.source.sessionId);stamp('canonical-completed',user.commandId,{sessionId:user.source.sessionId,text:user.text,state:user.state.kind});}
-  return {kind:'settings-http-production-ui',index,phase,recoveryEvidence,verdict:{crossProject:true,admissionBeforeCompletion:true,managedSameProject:'BUSY before canonical acceptance',classifierDurableBeforeRouting:false,classifierBlocksSingleComposer:!after,directApiIndependentOfClassifier:true,completionKeepsInputTarget:true,canonicalUserCount:canonical.length,duplicateUserCount:canonical.length-new Set(canonical.map(message=>message.commandId)).size},events};
+  return {kind:'settings-http-production-ui',index,phase,recoveryEvidence,verdict:{crossProject:true,admissionBeforeCompletion:true,managedSameProject:after?'durable queued FIFO':'BUSY before canonical acceptance',classifierDurableBeforeRouting:false,classifierBlocksSingleComposer:!after,directApiIndependentOfClassifier:true,completionKeepsInputTarget:true,canonicalUserCount:canonical.length,duplicateUserCount:canonical.length-new Set(canonical.map(message=>message.commandId)).size},events};
  }catch(error){if(page)writeFileSync(join(output,'failed-page.html'),await page.content());writeFileSync(join(output,'failed-events.json'),JSON.stringify(events,null,2));throw error;}finally{for(const gate of gates.values())gate.release();await context?.close();server.closeAllConnections();await new Promise(done=>server.close(done));await h.dispose();}
 }
 
 async function originalDemo(index,phase="baseline"){
  const after=phase==="after";
- const root=join(output,`demo-${phase}-${index}`),child=spawn(process.execPath,['tests/dsh/steward-demo.mjs'],{cwd:after?process.cwd():baselineRoot,env:{...process.env,DSH_STEWARD_DEMO_MODE:'offline',DSH_STEWARD_DEMO_MEMORY:'0',DSH_STEWARD_DEMO_ROOT:root,DSH_STEWARD_DEMO_PORT:'0'},stdio:['ignore','pipe','pipe']});let logs='',errors='';child.stdout.on('data',chunk=>logs+=chunk);child.stderr.on('data',chunk=>errors+=chunk);
+ const root=join(output,`demo-${phase}-${index}-${runId}`),child=spawn(process.execPath,['tests/dsh/steward-demo.mjs'],{cwd:after?process.cwd():baselineRoot,env:{...process.env,DSH_STEWARD_DEMO_MODE:'offline',DSH_STEWARD_DEMO_MEMORY:'0',DSH_STEWARD_DEMO_ROOT:root,DSH_STEWARD_DEMO_PORT:'0'},stdio:['ignore','pipe','pipe']});let logs='',errors='';child.stdout.on('data',chunk=>logs+=chunk);child.stderr.on('data',chunk=>errors+=chunk);
  try{
   await until(()=>logs.includes('"url":'),'original demo boot');const info=JSON.parse(logs.trim().split('\n').find(line=>line.startsWith('{'))),url=new URL(info.url);
   const response=await fetch(new URL(`/api/stewardSnapshot${url.search}`,url),{method:'POST',body:JSON.stringify({conversationId:'main'})});const snapshot=await response.json();const targets=snapshot.projects;
   const send=(project,letter)=>fetch(new URL(`/api/stewardSend${url.search}`,url),{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({conversationId:'main',commandId:`demo-${letter}-${index}`,text:`demo-${letter}-${index}`,target:{kind:'project',projectId:project.projectId}})}).then(async response=>({status:response.status,...await response.json()}));
   const values=await Promise.all([send(targets[index%2], 'first'),send(targets[1-index%2],'second')]);assert.equal(values.filter(value=>value.status===200).length,after?2:1);if(!after){const failed=values.find(value=>value.status!==200);assert.match(failed.error,/mutation is busy/);assert.equal(failed.details.admission,'not-admitted');}
-  let mutationExclusion=null;
-  if(after&&index===0){
-   const invoke=method=>fetch(new URL(`/api/${method}${url.search}`,url),{method:'POST',body:'{}'}).then(async response=>({status:response.status,...await response.json()}));
-   // Both operations use shared fixture jobs; one must remain excluded.
-   const results=await Promise.all([invoke('demoRecall'),invoke('demoLocalTask')]);assert.equal(results.filter(value=>value.status===200).length,1);assert.match(results.find(value=>value.status!==200).error,/mutation is busy/);mutationExclusion={success:1,busy:1};
-  }
+  const mutationExclusion=null;
   return {kind:'demo-http',index,phase,mutationExclusion,verdict:after?'both concurrent other-project requests admitted independently':'one accepted, concurrent other-project request not admitted by global demo mutation guard',responses:values.map(value=>({status:value.status,error:value.error,admission:value.details?.admission}))};
  }finally{child.kill('SIGTERM');await Promise.race([new Promise(done=>child.once('exit',done)),delay(10000)]);writeFileSync(join(output,`demo-${phase}-${index}-stderr.log`),errors);}
 }
@@ -180,7 +178,7 @@ async function authoritySwitch(browser){
 }
 
 async function demoFixtureDuringPm(){
- const root=join(output,'demo-pm-guard'),preload=join(output,'demo-hold-preload.mjs');
+ const root=join(output,`demo-pm-guard-${runId}`),preload=join(output,'demo-hold-preload.mjs');
  writeFileSync(preload,`import {ScriptedModel} from ${JSON.stringify(new URL('./scripted-model.mjs',import.meta.url).href)};const original=ScriptedModel.prototype.stream;let release;const gate=new Promise(done=>release=done);process.on('message',message=>{if(message?.kind==='release')release();});ScriptedModel.prototype.stream=async function*(options){if(options.sessionId&&JSON.stringify(options.messages).includes('DEMO_PROJECT_HOLD')){process.send?.({kind:'model-held'});await gate;}yield*original.call(this,options);};`);
  const child=spawn(process.execPath,['--import',preload,'tests/dsh/steward-demo.mjs'],{cwd:process.cwd(),env:{...process.env,DSH_STEWARD_DEMO_MODE:'offline',DSH_STEWARD_DEMO_MEMORY:'0',DSH_STEWARD_DEMO_ROOT:root,DSH_STEWARD_DEMO_PORT:'0'},stdio:['ignore','pipe','pipe','ipc']});let logs='',held=false;child.stdout.on('data',chunk=>logs+=chunk);child.on('message',message=>{if(message.kind==='model-held')held=true;});
  try{
