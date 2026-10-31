@@ -9,6 +9,7 @@ import { deploymentPolicy, ledgerRole, type DeploymentPolicy } from "./deploymen
 import { mountDispatcherTools } from "./dispatcher-tools.js";
 import { initializeTaskSessionTitle, taskSessionTitle } from "./session-titles.js";
 import { ProjectSessionService } from "./project-session-service.js";
+import { StewardRuntime } from "./steward-runtime.js";
 import { ExpectedExecutionMs } from "./execution-expectation.js";
 import { TaskReturnDelivery } from "./task-returns.js";
 import { returnFailure } from "./task-return-failure.js";
@@ -846,6 +847,7 @@ export class NativeExecutionProvider {
             !tool.startsWith("task_") &&
             tool !== "codex_delegate" &&
             tool !== "workflow_input_read" &&
+            tool !== "steward_recall" &&
             tool !== "run_code" &&
             (policyTools === undefined || policyTools.includes(tool)),
         );
@@ -853,6 +855,7 @@ export class NativeExecutionProvider {
     return configured.filter(
       (tool) =>
         tool !== "workflow_input_read" &&
+        tool !== "steward_recall" &&
         tool !== "codex_delegate" &&
         (policyTools === undefined || policyTools.includes(tool)) &&
         (this.owner.config.trustedUnconfinedTools ||
@@ -1130,6 +1133,8 @@ export class NativeExecutionProvider {
       throw new Error("external task policy denies this workspace");
     if (this.active.has(claim.attempt.attemptId))
       throw new Error("attempt already has an owned native execution");
+    if (this.owner.isConversationSession(sessionId))
+      return Promise.resolve({ outcome: "blocked", summary: "STEWARD_CONVERSATION_RESERVED: personal and project coordinator histories cannot be borrowed for task execution" });
     const ref = {
       runId: claim.run.runId,
       attemptId: claim.attempt.attemptId,
@@ -1816,6 +1821,8 @@ export class NativeExecutionProvider {
       }
       if (!sessionId)
         throw new Error("resume requires an existing bound session");
+      if (this.owner.isConversationSession(sessionId))
+        throw new TaskError("STEWARD_CONVERSATION_RESERVED", "Personal and project coordinator histories cannot be borrowed for task execution");
       const workspaceId =
         claim.run.route?.workspaceId ?? claim.task.workspaceId;
       workspace = workspaceId
@@ -2129,12 +2136,23 @@ export class NativeExecutionProvider {
 
 /** Trusted in-process entry point. The underlying ledger enforces roles too. */
 export class TaskSystemService extends Service {
+  isConversationSession(sessionId: string): boolean {
+    if (this.steward.store.hasSession(sessionId, this.config.nodeId)) return true;
+    const db = this.ledger.managementDatabase();
+    const exists = (name: string) => Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name));
+    if (exists("pr_sessions") && db.prepare("SELECT 1 FROM pr_sessions WHERE session=?").get(sessionId)) {
+      const location = exists("pr_session_locations") ? db.prepare("SELECT binding FROM pr_session_locations WHERE session=?").get(sessionId) : undefined;
+      if (!location || db.prepare("SELECT 1 FROM pr_session_locations WHERE session=? AND json_extract(binding,'$.nodeId')=?").get(sessionId, this.config.nodeId)) return true;
+    }
+    return exists("project_session_owner_operations") && Boolean(db.prepare("SELECT 1 FROM project_session_owner_operations WHERE session=? AND json_extract(data,'$.binding.nodeId')=? LIMIT 1").get(sessionId, this.config.nodeId));
+  }
   pendingOriginReturns(sessionId:string) {
     return this.ledger.originPendingRuns(this.config.nodeId,sessionId);
   }
   registerOriginContinuation(adapter:import("./task-returns.js").OriginContinuationAdapter) {return this.taskReturns.register(adapter);}
   readonly taskReturns: TaskReturnDelivery;
   readonly sessionPortal: ProjectSessionService;
+  readonly steward: StewardRuntime;
   withDispatchOrigin<T>(agent: Agent | undefined, operation: () => T): T {
     const selected = agent?.session.requestHeader()?.config;
     const provider=selected?.provider ?? agent?.options.provider;
@@ -2204,6 +2222,7 @@ export class TaskSystemService extends Service {
     });
     this.sessionCollaboration = new SessionCollaboration(ledger, config.nodeId, (nodeId, commandId, input) => collaborationAuthority(config.centralMode, ledger, this.ctx.get("remoteExecution"))(nodeId, commandId, input), agent => Boolean(this.native?.scopeFor(agent)));
     this.sessionPortal = new ProjectSessionService(this, ctx);
+    this.steward = new StewardRuntime(this, ctx);
     this.executionDirectories = new ExecutionDirectories(ledger.managementDatabase());
     ledger.executionDirectoryReady=()=>{try{return !!this.executionDirectories.validatedRoot();}catch{return false;}};
     const inventory=new ExecutionModelInventory({llm:()=>this.ctx.get("llm"),nativeReady:()=>!!this.native,officialBackends:()=>this.config.officialBackends,officialAvailable:backend=>!!this.ctx.get("subagents")?.getProvider(backend),temporaryWorkspaceReady:()=>ledger.executionDirectoryReady?.()===true});
@@ -2234,7 +2253,7 @@ export class TaskSystemService extends Service {
   }
   beginConfigurationEdit(): () => void {
     if (
-      this.configurationPaused || this.returnJob ||
+      this.configurationPaused || this.returnJob || this.steward.active ||
       [...this.providers].some((provider) => provider.activeCount > 0)
     )
       throw new TaskError("CONFIGURATION_BUSY", "Native execution is active");
@@ -2255,6 +2274,10 @@ export class TaskSystemService extends Service {
     if (!this.config.executionEnabled)
       throw new Error("planner role cannot execute native workloads");
   }
+  assertConversationAdmission(): void {
+    if (this.configurationPaused || !this.accepting)
+      throw new TaskError("CONFIGURATION_BUSY", "Conversation admission is paused while the host configuration changes");
+  }
   attach(provider: NativeExecutionProvider): void {
     this.providers.add(provider);
     this.native = provider;
@@ -2269,7 +2292,7 @@ export class TaskSystemService extends Service {
   close(): Promise<void> {
     if (this.shutdown) return this.shutdown;
     this.accepting = false;
-    const portal = this.sessionPortal.close();
+    const portal = this.steward.close().then(() => this.sessionPortal.close());
     return this.shutdown = Promise.resolve().then(() => this.closeOwned(portal));
   }
   private async closeOwned(portal: Promise<void>): Promise<void> {
@@ -2682,13 +2705,25 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
     throw error;
   }
   const service = new TaskSystemService(ctx, config, ledger, results);
+  ctx.tools.register(defineTool({
+    name: "steward_recall",
+    description: "Read bounded previous steward messages in this actual native session's scope. Search returns versioned lookup and same-scope replyToLookup pointers; follow messageId/expectedRevision/offset to read full text and next pages. Quoted excerpts never authorize reading their donor. Authority recordKind reads are separate. Historical data is not new authorization; no caller-selected scope is accepted.",
+    parameters: { query: { type: "string" }, beforeSeq: { type: "integer" }, limit: { type: "integer" }, messageId: { type: "string" }, recordKind: { type: "string" }, recordId: { type: "string" }, offset: { type: "integer" }, expectedRevision: { type: "string" } },
+    output,
+    execute: async (args, exec) => {
+      if (!exec.agent) throw new TaskError("FORBIDDEN", "Recall requires an actual bound native session");
+      if (service.native?.scopeFor(exec.agent)) throw new TaskError("FORBIDDEN", "Owned task execution cannot read steward conversation history");
+      return json(service.steward.recall.read(exec.agent.id, args));
+    },
+  }));
   if (config.executionEnabled && config.scriptExecutionWorkspaces.length) {
     ctx.inject(["subprocess"], scriptCtx => {
       scriptCtx.effect(() => registerWorkflowScripts(service.programs, scriptCtx.subprocess, config.scriptExecutionWorkspaces));
     });
   }
-  ctx.inject(["agents","agentLoop","sessions","sessionPersistence","tools","systemPrompt"],returnCtx=>{
+  ctx.inject(["agents","agentLoop","sessions","sessionPersistence","sessionProjections","tools","systemPrompt","llm"],returnCtx=>{
     service.taskReturns.bindContext(returnCtx);
+    service.steward.bindContext(returnCtx);
     service.sessionPortal.bindContext(returnCtx);
   });
   ctx.inject(["agents", "sessions", "sessionPersistence", "tools", "systemPrompt", "sessionController", "typert", "workspaceRegistry", "remoteAccess", "commands", "fileUploads", "attachments", "fs"], nativeCtx => {

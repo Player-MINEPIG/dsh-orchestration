@@ -24,7 +24,7 @@ function fixture(t) {
   const taskRow={options:{id:'task-system',name:'@dsh-task/task-system/plugin',config:raw}},remoteRow={options:{id:'task-remote-execution',name:'@dsh-task/task-system/remote',config:remoteRaw}}
   const rows=[taskRow,remoteRow],writes=[]
   const host={entries:()=>rows,edit:async(entry,change)=>{await host.before?.();const next=change(structuredClone(entry.options.config),{});if(host.fail) throw Error('Configuration for task-system is overridden by a home patch or command-line overlay');entry.options.config=next;if(entry===taskRow) Object.assign(task.config,next);writes.push(next)}}
-  const task={ledger,config:{...raw},applyLiveNodeCapacities(){return TaskSystemService.prototype.applyLiveNodeCapacities.call(this)},providers:new Set(),configurationPaused:false,beginConfigurationEdit(){return TaskSystemService.prototype.beginConfigurationEdit.call(this)}}
+  const task={ledger,config:{...raw},steward:{active:false},applyLiveNodeCapacities(){return TaskSystemService.prototype.applyLiveNodeCapacities.call(this)},providers:new Set(),configurationPaused:false,beginConfigurationEdit(){return TaskSystemService.prototype.beginConfigurationEdit.call(this)}}
   const store=new RecoveryStore(':memory:');t.after(()=>store.close())
   const remoteCtx=new Context();remoteCtx.provide('taskSystem',task)
   const remote=new RemoteExecutionService(remoteCtx,remoteRaw,ledger,store)
