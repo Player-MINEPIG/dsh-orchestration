@@ -4,6 +4,7 @@ import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {TaskLedger} from '../dist/ledger.js';
+import {ProjectRuntime} from '../dist/project-runtime.js';
 
 const owner=(sessionId='owner')=>({kind:'session',nodeId:'central',sessionId,cwd:'/fixture',composition:{provider:'offline',model:'script',tools:['task_checkin','task_submit_result']}});
 function fixture(t){
@@ -43,6 +44,24 @@ test('check-in maintenance and status read Runs once per operation and observe t
  db.prepare("INSERT INTO entities(kind,id,data) VALUES('run',?,?)").run(latest.runId,JSON.stringify(latest));
  runReads=0;assert.equal(f.l.checkins.view(tasks[0].task.taskId).category,'waiting_execution','a later read must see the latest Run even if legacy parent/state columns are null');assert.equal(runReads,1);
  f.l.checkins.tick();assert.equal(f.l.checkins.view(tasks[0].task.taskId).category,'waiting_execution');
+});
+
+test('the complete project snapshot shares Task, Run and action reads across its historical task list',t=>{
+ const f=fixture(t),r=route(f),runtime=new ProjectRuntime({get:()=>undefined},f.l,'central','both');
+ for(let i=0;i<20;i++){const task=f.task('snapshot-history-'+i);f.l.createRun('snapshot-run-'+i,{taskId:task.taskId,route:r});}
+ const db=f.l.managementDatabase();
+ db.prepare("UPDATE entities SET state='completed',data=json_set(data,'$.state','completed') WHERE kind='task'").run();
+ db.prepare("UPDATE entities SET state='succeeded',data=json_set(data,'$.state','succeeded') WHERE kind='run'").run();
+ let runReads=0,taskReads=0,actionReads=0;const prepare=db.prepare.bind(db);
+ db.prepare=sql=>{const statement=prepare(sql),all=statement.all.bind(statement);statement.all=(...args)=>{if(sql==='SELECT data FROM entities WHERE kind=? ORDER BY rowid'){if(args[0]==='run')runReads++;if(args[0]==='task')taskReads++;}if(sql==='SELECT data FROM entities WHERE kind=? AND parent=? ORDER BY rowid'&&args[0]==='report')actionReads++;return all(...args);};return statement;};
+ const snapshot=runtime.snapshot();assert.equal(snapshot.tasks.length,20);assert.equal(snapshot.runs.length,20);assert.ok(snapshot.tasks.every(task=>task.status==='done'));
+ assert.equal(runReads,2,'one ledger snapshot read plus one shared check-in read for the entire task list');
+ assert.equal(taskReads,3,'ledger, decision catalog and check-in scope each read Task facts once');assert.equal(actionReads,20,'each task action is evaluated once');
+ runReads=0;taskReads=0;actionReads=0;
+ const first=snapshot.tasks[0],before=first.actionVersion;
+ db.prepare("UPDATE entities SET state='cancelled',data=json_set(data,'$.state','cancelled') WHERE kind='task' AND id=?").run(first.id);
+ const next=runtime.snapshot();assert.equal(next.tasks.length,20);assert.equal(next.tasks.find(task=>task.id===first.id).status,'cancelled');assert.notEqual(next.tasks.find(task=>task.id===first.id).actionVersion,before);
+ assert.equal(runReads,2,'the next request must use a fresh read scope');assert.equal(taskReads,3);assert.equal(actionReads,20);
 });
 
 test('execution bound starts only on the fenced actual start, survives renew and restart, and fires once under a valid lease',t=>{

@@ -4365,7 +4365,24 @@ export class TaskLedger {
     return run;
   }
   /** Operator attention is separate from execution outcome; a new lifecycle invalidates it. */
+  private taskActionRead: Map<string, ReturnType<TaskLedger["readTaskActionState"]>> | undefined;
+  withTaskActionRead<T>(operation: () => T): T {
+    const previous = this.taskActionRead;
+    this.taskActionRead = previous ?? new Map();
+    try {
+      return operation();
+    } finally {
+      this.taskActionRead = previous;
+    }
+  }
   taskActionState(taskId: string) {
+    const previous = this.taskActionRead?.get(taskId);
+    if (previous) return previous;
+    const state = this.readTaskActionState(taskId);
+    this.taskActionRead?.set(taskId, state);
+    return state;
+  }
+  private readTaskActionState(taskId: string) {
     const task = this.getTask(taskId),
       runs = this.list<Run>("run", taskId),
       run = runs.at(-1);
