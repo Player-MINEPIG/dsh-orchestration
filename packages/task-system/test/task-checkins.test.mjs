@@ -25,6 +25,26 @@ function expectedRun(f,key='bounded',expectedExecutionMs=2000){
  return {task,run,start(){const claim=f.l.claim(key+'-claim',{runId:run.runId,nodeId:'worker',ttlMs:60000}).value;const ref={runId:run.runId,attemptId:claim.attempt.attemptId,nodeId:'worker',fence:claim.attempt.fence,executionId:key+'-execution'};f.l.markRunning(key+'-running',ref);return ref;}};
 }
 
+test('check-in maintenance and status read Runs once per operation and observe the next operation changes',t=>{
+ const f=fixture(t),r=route(f),tasks=[];
+ for(let i=0;i<20;i++){
+  const task=f.task('history-'+i),run=f.l.createRun('run-'+i,{taskId:task.taskId,route:r}).value;
+  tasks.push({task,run});
+ }
+ const db=f.l.managementDatabase();
+ db.prepare("UPDATE entities SET state='completed',data=json_set(data,'$.state','completed') WHERE kind='task'").run();
+ db.prepare("UPDATE entities SET state='succeeded',data=json_set(data,'$.state','succeeded') WHERE kind='run'").run();
+ let runReads=0;const prepare=db.prepare.bind(db);
+ db.prepare=sql=>{const statement=prepare(sql),all=statement.all.bind(statement);statement.all=(...args)=>{if(sql==='SELECT data FROM entities WHERE kind=? ORDER BY rowid'&&args[0]==='run')runReads++;return all(...args);};return statement;};
+ f.l.checkins.tick();assert.equal(runReads,1,'one maintenance operation must not re-read all Run payloads for every historical task');
+ runReads=0;assert.equal(f.l.checkins.view(tasks[0].task.taskId).category,'closed');assert.equal(runReads,1);
+ const latest={...tasks[0].run,runId:'legacy-unindexed-latest',state:'queued'};
+ db.prepare("UPDATE entities SET state='ready',data=json_set(data,'$.state','ready') WHERE kind='task' AND id=?").run(tasks[0].task.taskId);
+ db.prepare("INSERT INTO entities(kind,id,data) VALUES('run',?,?)").run(latest.runId,JSON.stringify(latest));
+ runReads=0;assert.equal(f.l.checkins.view(tasks[0].task.taskId).category,'waiting_execution','a later read must see the latest Run even if legacy parent/state columns are null');assert.equal(runReads,1);
+ f.l.checkins.tick();assert.equal(f.l.checkins.view(tasks[0].task.taskId).category,'waiting_execution');
+});
+
 test('execution bound starts only on the fenced actual start, survives renew and restart, and fires once under a valid lease',t=>{
  const f=fixture(t),{task,run,start}=expectedRun(f);f.advance(10000);f.l.checkins.tick();assert.equal(f.messages().length,0);assert.equal(f.l.checkins.executionView(task.taskId).phase,'pending_start');
  const ref=start();f.advance(10000);f.l.checkins.tick();assert.equal(f.messages().length,0,'markRunning is preparation, not actual execution');

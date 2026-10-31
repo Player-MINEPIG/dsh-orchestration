@@ -174,6 +174,21 @@ export class TaskCheckins {
       .all(kind)
       .map((row) => JSON.parse(String(row.data)));
   }
+  private runRead: { rows?: Run[] } | undefined;
+  private withRunRead<T>(operation: () => T): T {
+    const previous = this.runRead;
+    this.runRead = previous ?? {};
+    try {
+      return operation();
+    } finally {
+      this.runRead = previous;
+    }
+  }
+  private runs(): Run[] {
+    const rows = this.runRead?.rows ?? this.rows<Run>("run");
+    if (this.runRead) this.runRead.rows = rows;
+    return rows;
+  }
   private write(
     kind: string,
     id: string,
@@ -208,7 +223,7 @@ export class TaskCheckins {
       : undefined;
   }
   private latestRun(taskId:string) {
-    return this.rows<Run>("run").findLast(run=>run.taskId===taskId && !run.historyOnly && !run.observationOnly);
+    return this.runs().findLast(run=>run.taskId===taskId && !run.historyOnly && !run.observationOnly);
   }
   private executionOpen(run:Run) {
     const task=this.ledger.getTask(run.taskId);
@@ -231,7 +246,7 @@ export class TaskCheckins {
     return `任务超过派发时设置的预计执行上界。请核对中央 task_query/task_history/task_wait 的当前进度、已有报告及正在等待的子任务，记录下一步或说明需要人工处理。此问询不授予取消、重跑、新建Run或扩大权限的授权；不要因超出预计时间就终止真实工作。同一Run的这次到期只提醒一次，完成事件仍照常返回。\n${JSON.stringify({taskId:run.taskId,runId:run.runId,expectedExecutionMs:expectation.expectedExecutionMs,startedAt:expectation.startedAt,dueAt:executionDueAt(expectation)})}`;
   }
   private enqueueExecutions() {
-    for(const run of this.rows<Run>("run")) {
+    for(const run of this.runs()) {
       const expectation=run.executionExpectation;
       if(expectation?.phase!=="started" || executionDueAt(expectation)>this.now() || !this.executionOpen(run))continue;
       const messageId=executionCheckId(run.runId);
@@ -305,7 +320,7 @@ export class TaskCheckins {
   }
   private responsibilityScope(taskId: string) {
     const ids = this.responsibilityTaskIds(taskId);
-    const runs = this.rows<Run>("run").filter(
+    const runs = this.runs().filter(
       (run) => !run.historyOnly && !run.observationOnly,
     );
     const scope = new Set(
@@ -362,7 +377,7 @@ export class TaskCheckins {
     return record?.attention === "delivery_unavailable" && !this.communicationState(record.taskId).deliveryBlocked ? undefined : record?.attention;
   }
   private category(task: Task): CheckinCategory {
-    const runs = this.rows<Run>("run").filter(
+    const runs = this.runs().filter(
       (run) => !run.historyOnly && !run.observationOnly,
     );
     const own = runs.filter((run) => run.taskId === task.taskId),
@@ -476,6 +491,9 @@ export class TaskCheckins {
     );
   }
   view(taskId: string): CheckinView {
+    return this.withRunRead(() => this.readView(taskId));
+  }
+  private readView(taskId: string): CheckinView {
     const task = this.ledger.getTask(taskId),
       record = this.record(taskId),
       category = this.category(task);
@@ -743,6 +761,9 @@ export class TaskCheckins {
     return `任务进度检查。你是这些任务已记录的负责会话，可自行完成或按既有授权派发子任务。请先用 task_checkin(action=status) 核对当前检查计划，再读取 task_history/task_query/task_wait 的当前记录和已有报告，核对实际进度。不要把回信ACK、空闲或工具文字当成任务完成，也不要重复已完成的外部操作。在聊天中接手处理时，请先用 task_checkin(action=status) 读取 responsibilityVersion，再用 action=responsibility、expectedVersion、state=coordinator、summary 明确由你跟进。只有需要用户决定、授权或你无法修复的阻碍时才用 needs_user，summary 写清具体卡点和所需决定；你已核实本轮异常处理完毕时用 resolved 并说明处理结果，这只关闭本轮跟进，不替代正式提交或人工验收。新执行、报告或审核变化会使声明失效。若工作已完成，请用现有 task_submit_result 等正式工具收尾；草稿可按现有项目和 creator 权限先 task_bind_dispatcher。若仍需继续、等待子任务/外部条件或人工处理，请用 task_checkin(action=update,taskId,commandId,observation,summary,plan) 记录进度和下一次检查时间，或暂停并说明原因。若现有工具/权限不允许收尾，明确记录限制，不能扩大权限。此检查不授予审批、执行租约或重跑结果不确定操作的权限。若当前任务已结束，不再执行。\n${JSON.stringify(records.map((record) => ({ taskId: record.taskId, title: this.ledger.getTask(record.taskId).title, category: this.category(this.ledger.getTask(record.taskId)), previousObservation: record.observation ?? null })))}\n如果原会话能力中没有 task_checkin，使用已有正式任务工具完成可做的工作，并说明无法设置检查时间；不要自行安装或扩大工具权限。`;
   }
   tick() {
+    this.withRunRead(() => this.tickWithRunRead());
+  }
+  private tickWithRunRead() {
     this.ledger.workflowAtomic(() => {
       this.enqueueExecutions();
       for (const message of this.rows<SessionMessage>("sessionMessage")) {
