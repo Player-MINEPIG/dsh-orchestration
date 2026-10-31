@@ -114,7 +114,12 @@ function createStewardClient(React) {
     const accept = (value, mode = "latest") => {
       if (!alive.current) return;
       const previous = current.current;
-      if (previous && previous.authorityId !== value.authorityId) mode = "latest";
+      if (previous && previous.authorityId !== value.authorityId) {
+        current.current = null; appendCursor.current = 0; anchor.current = null; sentFocus.current = null;
+        initialized.current = false; pendingRequests.current = []; setPending([]);
+        setSnapshot(null); setReply(null); setQuote(null); setRecovery(null); setGateProject(null); setGateNotice(null);
+        return;
+      }
       const merged = new Map((mode === "latest" ? [] : previous?.messages ?? []).map(message => [message.id, message]));
       if (value.commandMessage && !value.messages?.some(message=>message.id===value.commandMessage.id)) {
         sentFocus.current=value.commandMessage.id;follow.current=false;
