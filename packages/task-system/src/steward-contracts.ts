@@ -67,6 +67,7 @@ export const stewardQuote = z.strictObject({
 export type StewardQuote = z.infer<typeof stewardQuote>;
 export const stewardState = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("accepted") }),
+  z.strictObject({ kind: z.literal("queued"), requestId: key }),
   z.strictObject({ kind: z.literal("admitted"), requestId: key }),
   z.strictObject({ kind: z.literal("completed") }),
   z.strictObject({ kind: z.literal("needs-reconciliation"), reason: z.string() }),
