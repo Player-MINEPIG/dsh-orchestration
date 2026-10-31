@@ -40,7 +40,7 @@ test('actual PM tool queues an existing worker conversation and reads its exact 
         const agent=h.ctx.agents.get(SessionId(options.sessionId));
         const denied=await call(h,agent,{action:'targets',taskId:'does-not-matter'});
         assert.equal(denied.isError,true);ownedDenied=true;
-        response={name:'task_submit_result',args:{outcome:'success',summary:'Existing task completed before ordinary messages'}};
+        response={name:'task_submit_result',args:{outcome:'success',summary:'Existing task completed before ordinary messages',reportTitle:'Existing result',reportBody:'Actual native result retained before asking for feedback'}};
       }else{
         assert.ok(options.tools.some(tool=>tool.name==='task_session_message'));
         stage++;
@@ -71,6 +71,13 @@ test('actual PM tool queues an existing worker conversation and reads its exact 
     assert.equal(decode(await call(h,pmHandle.agent,retry)).value.messageId,queuedId);
     assert.equal((await call(h,pmHandle.agent,{...retry,text:'Changed retry'})).isError,true);
     assert.equal(ledger.sessionMessages(task.taskId).filter(message=>!message.completion).length,1);
+    const gate={gateId:'message-human-gate',projectId:a.projectId,workstreamTaskId:task.taskId,upstreamTaskIds:[task.taskId],instructionRef:'Explicit human pause before further work'};
+    ledger.withAcceptanceHumanAction({action:'arm',reference:gate.instructionRef},()=>ledger.armAcceptanceGate('message-arm',gate));
+    assert.equal(ledger.acceptanceGateView(gate.gateId).state,'awaiting-acceptance');
+    assert.equal((await call(h,pmHandle.agent,{...retry,commandId:'message-after-pause',text:'Do more work in the original worker'})).isError,true);
+    assert.equal(ledger.sessionMessages(task.taskId).filter(message=>!message.completion).length,1);
+    assert.equal((await call(h,pmHandle.agent,{action:'targets',taskId:task.taskId})).isError,false);
+    assert.equal(decode(await call(h,pmHandle.agent,{action:'status',taskId:task.taskId,messageId:queuedId})).state,'completed');
     for(const input of [{action:'targets',taskId:foreign.taskId},{action:'status',taskId:foreign.taskId,messageId:queuedId},{action:'send',taskId:task.taskId,nodeId:'local',sessionId:other.session,commandId:'wrong-original',text:'wrong'},{action:'send',taskId:task.taskId,nodeId:'other',sessionId:session.sessionId,commandId:'wrong-node',text:'wrong'}])assert.equal((await call(h,pmHandle.agent,input)).isError,true);
     assert.equal((await call(h,undefined,{action:'targets',taskId:task.taskId})).isError,true);
     ledger.registerNode('message-outsider',{nodeId:'outsider',roles:['planner'],models:[],capabilities:[],workspaceIds:[],enabled:true});

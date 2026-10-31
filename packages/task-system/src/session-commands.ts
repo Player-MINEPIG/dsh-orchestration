@@ -77,9 +77,12 @@ export class SessionDispatcherAuthority {
             taskId: target.taskId, nodeId: target.nodeId, sessionId: target.sessionId, workspaceId: target.workspaceId,
           })), truncated: targets.length > 64 });
         }
-        if (request.action === "send") return json(this.ledger.queueSessionMessage(commandId, {
-          taskId: request.taskId, nodeId: request.nodeId, sessionId: request.sessionId, text: request.text,
-        }));
+        if (request.action === "send") {
+          this.ledger.assertAcceptanceProjectPlan(projectId, request.taskId);
+          return json(this.ledger.queueSessionMessage(commandId, {
+            taskId: request.taskId, nodeId: request.nodeId, sessionId: request.sessionId, text: request.text,
+          }));
+        }
         const message = this.ledger.getSessionMessage(request.messageId);
         if (message.taskId !== request.taskId || message.completion || message.checkIn)
           throw new TaskError("FORBIDDEN", "Message is outside this task's direct conversation");
