@@ -144,7 +144,7 @@ export class StewardConversations {
       const previous = this.replay(request);
       if (previous) { this.db.exec("COMMIT"); return previous; }
       const active = this.activeMessage(request.conversationId, binding);
-      if (active) throw new TaskError("BUSY", "This scope has an unfinished message; reconcile it before sending another");
+      if (active && binding.kind !== "managed") throw new TaskError("BUSY", "This scope has an unfinished message; reconcile it before sending another");
       const value = this.insert({ conversationId: request.conversationId, role: "user", text: request.text, commandId: request.commandId,
         scope, replyTo: request.replyTo ?? null, createdAt: new Date().toISOString(), source: binding,
         nativeSeq: null, provenance: null, state: { kind: "accepted" }, revision: 0, resolution: null, quote,
@@ -211,7 +211,7 @@ export class StewardConversations {
     if (row.digest !== digest(input)) throw new TaskError("CONFLICT", "Resolution retry changed its contents");
     return this.message(String(row.message));
   }
-  release(input: z.infer<typeof stewardResolve>): StewardMessage {
+  release(input: z.infer<typeof stewardResolve>, onRelease?: () => void): StewardMessage {
     this.db.exec("BEGIN IMMEDIATE");
     try {
       const prior = this.resolutionReplay(input);
@@ -226,6 +226,7 @@ export class StewardConversations {
         resolution: { commandId: input.commandId, at: new Date().toISOString(), priorState: input.expectedState } });
       this.db.prepare("UPDATE steward_messages SET data=? WHERE id=?").run(canonical(next), message.id);
       this.db.prepare("INSERT INTO steward_resolutions VALUES(?,?,?)").run(input.commandId, digest(input), message.id);
+      onRelease?.();
       this.db.exec("COMMIT"); return next;
     } catch (error) { this.db.exec("ROLLBACK"); throw error; }
   }

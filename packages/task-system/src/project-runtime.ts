@@ -2,6 +2,7 @@ import { nativeProjectSession, type NativeProjectSession } from "./project-sessi
 import type { ProjectSessionMove } from "./project-sessions.js";
 import { temporaryTaskDirectory,temporaryTaskMetadata } from "./remote/project-workspace.js";
 import type { TaskSystemService } from "./dsh-plugin.js";
+import type { Agent } from "@deepseek-ai/dsh-agent";
 import type {} from "@deepseek-ai/dsh-session-persistence-jsonl";
 import { Context } from "@deepseek-ai/cordis";
 import {
@@ -97,7 +98,7 @@ export class ProjectRuntime {
   private readonly workbench: Workbench;
   private readonly jobs = new Map<
     string,
-    { done: Promise<void>; abort: AbortController }
+    { done: Promise<void>; abort: AbortController; owner: string; session: string }
   >();
   private accepting = true;
   private readonly placementHandles = new Set<Awaited<ReturnType<Context["agents"]["resume"]>>>();
@@ -138,6 +139,8 @@ export class ProjectRuntime {
       CREATE TABLE IF NOT EXISTS pr_dispatch(task TEXT PRIMARY KEY,decision TEXT NOT NULL,candidates TEXT NOT NULL,state TEXT NOT NULL,run TEXT,generation INTEGER NOT NULL,attempted TEXT NOT NULL,updated TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS pr_turn_owner_created ON pr_turns(owner,created);`);
     if(!(this.db.prepare("PRAGMA table_info(pr_task_routes)").all() as {name:string}[]).some(column=>column.name==="expected_execution_ms"))this.db.exec("ALTER TABLE pr_task_routes ADD COLUMN expected_execution_ms INTEGER");
+    if (!this.db.prepare("PRAGMA table_info(pr_turns)").all().some(column => column.name === "native_admission"))
+      this.db.exec("ALTER TABLE pr_turns ADD COLUMN native_admission TEXT NOT NULL DEFAULT 'unknown'");
     // Existing project sessions keep their IDs; the column now names the
     // conversation owner, which can be a real project or a temporary task.
     for (const table of ["pr_sessions", "pr_turns"]) {
@@ -151,7 +154,7 @@ export class ProjectRuntime {
     }
     this.db
       .prepare(
-        "UPDATE pr_turns SET state='interrupted',error='HOST_RESTART' WHERE state IN ('queued','running')",
+        "UPDATE pr_turns SET state='interrupted',error='HOST_RESTART' WHERE state='running'",
       )
       .run();
     this.db
@@ -1098,6 +1101,7 @@ export class ProjectRuntime {
   /** Persisted inbox admission; only pre-claim unavailability may move to the next candidate. */
   tick() {
     if (!this.accepting) return;
+    this.resumeConversationQueue();
     if(this.planner)for(const run of this.ledger.resultRetryCandidates()){
       if(!run.resultValidationFailure||this.resultRetries.has(run.runId))continue;
       const info=this.ledger.resultRetryInfo(run.runId);
@@ -1317,7 +1321,7 @@ export class ProjectRuntime {
     if (this.nativeSession(p.session)) throw new TaskError("FORBIDDEN", "Use the native owner conversation for this project session");
     const message = text(contents, 20000),
       command = text(commandId, 200);
-    const agentOptions = this.options(p.id);
+    this.options(p.id);
     if (p.state !== "ready")
       throw new TaskError("CONFLICT", "Project is not ready");
     const hash = digest(
@@ -1333,29 +1337,60 @@ export class ProjectRuntime {
         throw new TaskError("CONFLICT", "Message command reused");
       return { commandId: command, state: existing.state };
     }
-    if (
-      this.db
-        .prepare(
-          "SELECT command FROM pr_turns WHERE owner=? AND state IN ('queued','running')",
-        )
-        .get(p.id)
-    )
-      throw new TaskError("BUSY", "Project conversation is responding");
     this.db
-      .prepare("INSERT INTO pr_turns VALUES(?,?,?,?,?,?,NULL,?)")
+      .prepare("INSERT INTO pr_turns(command,digest,owner,session,text,state,error,created,native_admission) VALUES(?,?,?,?,?,?,NULL,?,'not-started')")
       .run(command, hash, p.id, p.session, message, "queued", now());
+    this.drainConversation(p);
+    return { commandId: command, state: "queued" };
+  }
+  resumeConversationQueue() {
+    if (!this.accepting) return;
+    for (const row of this.db.prepare(`SELECT t.owner FROM pr_turns t JOIN (
+      SELECT id,session,state FROM pr_projects UNION ALL SELECT id,session,state FROM pr_adhoc
+      ) p ON p.id=t.owner WHERE t.state='queued' AND p.state='ready'
+      AND (t.session<>p.session OR NOT EXISTS(SELECT 1 FROM pr_turns active WHERE active.owner=p.id AND active.session=p.session AND active.state IN ('running','interrupted')))
+      GROUP BY t.owner ORDER BY MIN(t.rowid) LIMIT 64`).all()) {
+      const owner = String(row.owner), adhoc = this.db.prepare("SELECT task FROM pr_adhoc WHERE id=?").get(owner);
+      let p: ProjectRow;
+      try { p = adhoc ? this.adhoc(String(adhoc.task)) : this.project(owner); }
+      catch { continue; }
+      this.drainConversation(p);
+    }
+  }
+  private drainConversation(p: ProjectRow) {
+    this.db.prepare("UPDATE pr_turns SET state='interrupted',error='OLD_GENERATION' WHERE owner=? AND session<>? AND state='queued'").run(p.id, p.session);
+    if (p.state !== "ready" || this.nativeSession(p.session) || [...this.jobs.values()].some(job => job.owner === p.id && job.session === p.session) || this.db.prepare("SELECT 1 FROM pr_turns WHERE owner=? AND session=? AND state IN ('running','interrupted') LIMIT 1").get(p.id, p.session)) return;
+    const agents = this.ctx.get("agents"), live = agents?.get(SessionId(p.session));
+    if (!agents || live && (live.status !== "idle" || live.inbox.nextTurn.length || live.inbox.nextStep.length)) return;
+    const row = this.db.prepare("SELECT command,text FROM pr_turns WHERE owner=? AND session=? AND state='queued' ORDER BY rowid LIMIT 1").get(p.id, p.session);
+    if (!row) return;
+    let agentOptions: ReturnType<ProjectRuntime["options"]>;
+    try { agentOptions = this.options(p.id); }
+    catch { return; }
+    if (!this.ctx.get("llm")?.listProviders().some(provider => provider.id === agentOptions.provider)) return;
+    const command = String(row.command), message = String(row.text);
+    const admitted = this.db.prepare("UPDATE pr_turns SET state='running' WHERE command=? AND state='queued' AND NOT EXISTS(SELECT 1 FROM pr_turns WHERE owner=? AND session=? AND state IN ('running','interrupted'))").run(command, p.id, p.session);
+    if (!admitted.changes) return;
     const abort = new AbortController();
     const done = this.respond(p, command, message, abort.signal, agentOptions)
       .catch(() => {
         this.db
           .prepare(
-            "UPDATE pr_turns SET state='failed',error='CONVERSATION_FAILED' WHERE command=?",
+            "UPDATE pr_turns SET state='interrupted',error='CONVERSATION_FAILED' WHERE command=? AND state='running'",
           )
           .run(command);
       })
-      .finally(() => this.jobs.delete(command));
-    this.jobs.set(command, { done, abort });
-    return { commandId: command, state: "queued" };
+      .finally(() => { this.jobs.delete(command); this.resumeConversationQueue(); });
+    this.jobs.set(command, { done, abort, owner: p.id, session: p.session });
+  }
+  confirmConversationCompletion(commandId: string, sessionId: string) {
+    this.db.prepare("UPDATE pr_turns SET state='completed',error=NULL,native_admission='confirmed' WHERE command=? AND session=? AND state='interrupted'").run(commandId, sessionId);
+  }
+  releaseConversationWait(commandId: string, sessionId: string) {
+    const live = this.ctx.get("agents")?.get(SessionId(sessionId));
+    if (live && (live.status !== "idle" || live.inbox.nextTurn.length || live.inbox.nextStep.length) || this.db.prepare("SELECT 1 FROM pr_turns WHERE session=? AND state='running'").get(sessionId))
+      throw new TaskError("BUSY", "The managed project turn is still active");
+    this.db.prepare("UPDATE pr_turns SET state='failed',error='WAIT_ENDED_OUTCOME_UNCONFIRMED' WHERE command=? AND session=? AND state='interrupted'").run(commandId, sessionId);
   }
   private async respond(
     p: ProjectRow,
@@ -1365,13 +1400,13 @@ export class ProjectRuntime {
     agentOptions: ReturnType<ProjectRuntime["options"]>,
   ) {
     let terminalError = false;
+    let agent: Agent | undefined;
+    let binding: ReturnType<Context["plugin"]> | undefined;
+    let nativeAdmitted = false;
     let handle: Awaited<ReturnType<Context["agents"]["resume"]>> | undefined;
     const timeout = AbortSignal.timeout(120000),
       combined = AbortSignal.any([signal, timeout]);
     try {
-      this.db
-        .prepare("UPDATE pr_turns SET state='running' WHERE command=?")
-        .run(command);
       const summary = (
         this.db
           .prepare("SELECT summary FROM pr_sessions WHERE session=?")
@@ -1379,11 +1414,7 @@ export class ProjectRuntime {
       ).summary;
       const related = this.coordinatorCheckpoint(p);
       const tools = p.taskId ? TOOLS.filter(name => name !== "task_session_message") : TOOLS;
-      handle = await this.agents().resume({
-        resumeSessionId: SessionId(p.session),
-        agentOptions,
-        signal: combined,
-        setup: (agentCtx, agent) => {
+      const setup = (agentCtx: Context, agent: Agent) => {
           agentCtx.on("agent/error", () => {
             terminalError = true;
           });
@@ -1406,19 +1437,34 @@ export class ProjectRuntime {
             text: () =>
               `${p.taskId ? `你负责临时任务 ${p.taskId} 的规划。所有执行规划必须沿用此 Task ID，不创建新任务；结果不确定时先核实；只有明确授权重新执行后才使用重试，不得把补问结果当成重跑授权。` : ""}你负责「${p.title}」的统筹。目标：${p.goal.slice(0,4000)}\n${summary}\n已有任务：${JSON.stringify(related)}\n工作区：${p.cwd}，仅存项目上下文。你可以调用 ${tools.join(", ")} 调度其他执行端。用户授权创建的任务优先交给适合的在线闲置执行端；没有在线执行端时，选择注册的合适执行端排队等待上线。纯调度端不得接单或自行完成工作负载。执行端自己选择其授权工作区，不要把调度端目录设为执行约束。特定设备、操作系统、文件位置或能力要求由你先用 task_nodes 核对并明确 nodeId 或 route；只有授权池内任意执行端都适合时才省略 nodeId，由宿主按就绪和容量分配。执行模型沿用节点默认，用户明确指定时传 executionModel。任务先登记，再按推荐的执行端顺序尝试。都不在线、忙碌或不可接单时保留 inbox，宿主会在执行端上线后自动派发。已经开始或结果不确定的任务不重复派发；先检查相关任务状态。仅当用户明确要重新执行时，才指引用户使用“核实并确认已停止”和“重新执行”。没有 result 报告仅表示调度账本未收到完成证据，不得断言执行端没有完成。若用户要求不重跑、只通信、询问现状或补传回执，不得 task_dispatch，也不得把重新派发描述为唯一取回结果的方法。${p.taskId ? "本临时任务规划会话不提供原会话通信工具；普通问询不得通过 task_dispatch 重跑任务。" : "用户只问现状、反馈或补传材料时，用 task_session_message 的 targets 读取已有任务原会话绑定，send 以稳定 commandId 向明确 nodeId/sessionId 排队，再用 status 按实际返回的 messageId 查询回复。不得为普通消息 task_dispatch 或创建重复任务。排队不是已送达，普通回复不改变 Task/Run 结果，uncertain 不得自动重发；多个原会话不明确时先澄清。"}只有用户明确授权执行规划时，才使用 commandId="project-message:${command}"，直接调用 task_dispatch（commandId 使用该 ID）登记 Task 和持久候选顺序；只有执行端能接单时才创建 Run。不要重复派发。task_dispatch 派发时按任务给出合理的 expectedExecutionMs（整数毫秒，最多30天），它只从实际执行开始计时并在到期时向原调度会话提醒，不终止或重跑任务。遗漏时表示未设置预计执行上界。正常等待已关联的子任务期间不要另设周期问询；真实故障仍需处理。只调用一次 task_dispatch。提交后简短回复已排队或派发，完成与否必须依据真实报告或账本中用户的人工确认；补交内容会更新执行报告展示，不改写历史 Run 结果。若为普通交流或澄清可直接回复。`,
           });
-        },
-      });
+      };
+      const live = this.agents().get(SessionId(p.session));
+      if (live) {
+        agent = live;
+        if (live.session.header.cwd !== p.cwd) throw new TaskError("FORBIDDEN", "Coordinator workspace changed");
+        await live.runMaintenance(async () => {
+          combined.throwIfAborted();
+          if (live.inbox.nextTurn.length || live.inbox.nextStep.length) throw new TaskError("BUSY", "Coordinator has pending native input");
+          binding = live.ctx.plugin({ name: "managed-project-turn", inject: ["tools", "systemPrompt"], apply: scope => setup(scope, live) });
+          await binding;
+        });
+      } else {
+        handle = await this.agents().resume({ resumeSessionId: SessionId(p.session), agentOptions, signal: combined, setup });
+        agent = handle.agent;
+      }
       const cancel = () =>
-        handle?.agent.cancel({ kind: "hook", reason: "Project turn stopped" });
+        agent?.cancel({ kind: "hook", reason: "Project turn stopped" });
       combined.addEventListener("abort", cancel, { once: true });
-      handle.agent.followup(
+      nativeAdmitted = true;
+      this.db.prepare("UPDATE pr_turns SET native_admission='started' WHERE command=? AND state='running'").run(command);
+      agent.followup(
         createUserMessage({
           source: { kind: "user", rpcId: command },
           content: [{ type: "text", text: message }],
         }),
       );
       try {
-        await handle.agent.whenIdle();
+        await agent.whenIdle();
       } finally {
         combined.removeEventListener("abort", cancel);
       }
@@ -1429,17 +1475,18 @@ export class ProjectRuntime {
           "Native conversation failed",
         );
       await (this.ctx.get("sessions") as Context["sessions"]).flush(
-        handle.agent.session,
+        agent.session,
       );
       this.db
         .prepare(
-          "UPDATE pr_turns SET state='completed',error=NULL WHERE command=?",
+          "UPDATE pr_turns SET state='completed',error=NULL,native_admission='confirmed' WHERE command=?",
         )
         .run(command);
     } catch (error) {
       this.db
-        .prepare("UPDATE pr_turns SET state='failed',error=? WHERE command=?")
+        .prepare("UPDATE pr_turns SET state=?,error=? WHERE command=?")
         .run(
+          nativeAdmitted ? "interrupted" : "failed",
           signal.aborted
             ? "HOST_STOPPED"
             : timeout.aborted
@@ -1448,13 +1495,14 @@ export class ProjectRuntime {
           command,
         );
     } finally {
-      if (handle) {
+      if (agent) {
         try {
           await (this.ctx.get("sessions") as Context["sessions"]).flush(
-            handle.agent.session,
+            agent.session,
           );
         } finally {
-          await handle.dispose();
+          await binding?.dispose();
+          await handle?.dispose();
         }
       }
     }

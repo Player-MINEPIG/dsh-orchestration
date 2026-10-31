@@ -333,10 +333,11 @@ export class StewardRuntime {
       const custody = db.prepare("SELECT data FROM project_session_owner_custody WHERE session=?").get(binding.sessionId);
       if (custody && z.array(z.unknown()).parse(JSON.parse(String(custody.data))).length)
         throw new TaskError("BUSY", "The native owner still holds pending input");
-      if (db.prepare("SELECT command FROM pr_turns WHERE session=? AND state IN ('queued','running')").get(binding.sessionId))
+      if (db.prepare("SELECT command FROM pr_turns WHERE session=? AND state='running'").get(binding.sessionId))
         throw new TaskError("BUSY", "The managed project turn is still active");
     }
-    this.store.release(request);
+    this.store.release(request, binding.kind === "managed" ? () => this.task.projects!.releaseConversationWait(this.store.requestId(message.id), binding.sessionId) : undefined);
+    if (binding.kind === "managed") this.task.projects!.resumeConversationQueue();
     return this.snapshot({ conversationId: request.conversationId });
   }
   private async resolveBinding(scope: StewardScope, conversationId: string): Promise<StewardBinding> {
@@ -397,7 +398,7 @@ export class StewardRuntime {
             requestId: this.store.requestId(message.id), mode: "queue", content: [{ type: "text", text: this.promptText(message) }] } });
       }
       if (this.store.message(message.id).state.kind !== "completed")
-        this.store.setState(message.id, { kind: "admitted", requestId: this.store.requestId(message.id) });
+        this.store.setState(message.id, { kind: binding.kind === "managed" ? "queued" : "admitted", requestId: this.store.requestId(message.id) });
     } catch (error) {
       // An ambiguous transport/runtime failure must never cause a fresh native prompt.
       if (error instanceof TaskError && ["CONFLICT", "FORBIDDEN", "CONFIGURATION", "BUSY"].includes(error.code))
@@ -528,6 +529,17 @@ export class StewardRuntime {
       this.store.saveCursor(conversationId, cursor);
     }
     this.notifications(conversationId);
+    const pending = this.task.ledger.managementDatabase().prepare(`SELECT m.id,t.state,t.native_admission FROM steward_messages m JOIN pr_turns t ON t.command='steward-'||m.id
+      WHERE m.conversation=? AND json_extract(m.data,'$.source.kind')='managed' AND t.state IN ('queued','interrupted','failed')
+      AND json_extract(m.data,'$.state.kind') NOT IN ('completed','released','rejected')
+      AND json_extract(m.data,'$.state.kind')<>CASE WHEN t.state='queued' THEN 'queued' WHEN t.state='failed' AND t.native_admission='not-started' THEN 'rejected' ELSE 'needs-reconciliation' END
+      ORDER BY m.seq LIMIT 100`).all(conversationId);
+    for (const row of pending) this.store.setState(String(row.id), row.state === "queued"
+      ? { kind: "queued", requestId: this.store.requestId(String(row.id)) }
+      : row.state === "failed" && row.native_admission === "not-started"
+        ? { kind: "rejected", reason: "Native preparation failed before this message was sent. The original command was not executed." }
+        : { kind: "needs-reconciliation", reason: "Managed native admission or completion is unconfirmed. Later queued messages in this session wait for reconciliation; the original request is not resent." });
+    this.task.projects?.resumeConversationQueue();
   }
   private observe(conversationId: string, cursor: StewardCursor, event: ObservedEvent) {
     if (event.seq <= cursor.afterSeq) return;
@@ -548,8 +560,10 @@ export class StewardRuntime {
         state: { kind: "completed" }, manifest: own.manifest }, `native:${stewardBindingKey(cursor.binding)}:${event.seq}`);
     } else if (event.type === "turn/end") {
       const reason = endData.parse(event.data).reason.kind;
-      for (const id of cursor.pendingUsers)
+      for (const id of cursor.pendingUsers) {
         this.store.setState(id, reason === "completed" ? { kind: "completed" } : { kind: "stopped", reason: `Native turn ended: ${reason}` });
+        if (reason === "completed" && cursor.binding.kind === "managed") this.task.projects?.confirmConversationCompletion(this.store.requestId(id), cursor.binding.sessionId);
+      }
       cursor.pendingUsers = [];
       cursor.currentUser = null;
     }
