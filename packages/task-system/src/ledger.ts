@@ -1,5 +1,6 @@
 import { CheckinRefs } from "./remote/ports.js";
 import { TaskCheckins } from "./task-checkins.js";
+import { ArmAcceptanceGate, DecideAcceptanceGate, AmendAcceptanceGate, CreateAcceptanceIndependentTask, AcceptancePlanningIntent, type AcceptanceGate, type AcceptanceGateView, type AcceptanceOperation, type AcceptanceInvocation, type AcceptanceMember, type AcceptanceStep } from "./acceptance-gates.js";
 import { ExpectedExecutionMs } from "./execution-expectation.js";
 import { ReturnFailure, rateLimited, returnRetryAt } from "./task-return-failure.js";
 import { taskRead, type TaskReadOptions } from "./task-reads.js";
@@ -7,6 +8,7 @@ import { nodeRead, type NodeReadOptions } from "./node-reads.js";
 import { ExecutorAlertStore } from "./executor-alerts.js";
 import { ProjectExecutionSettingsStore } from "./project-execution-settings.js";
 import { z } from "zod";
+import type { WorkflowRunView } from "./workflow-contracts.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { ExecutionModels, ExecutionModelChoice, sameExecutionModel } from "./execution-models.js";
 import type { CompleteExecutionModels } from "./execution-models.js";
@@ -352,6 +354,317 @@ export class TaskLedger {
   readonly nodeId: string;
   private readonly clock: () => number;
   private readonly dispatchOrigins = new AsyncLocalStorage<DispatchOrigin>();
+  private readonly acceptanceOperations = new AsyncLocalStorage<AcceptanceOperation>();
+  private readonly acceptanceIndependentOperations = new AsyncLocalStorage<string>();
+  private readonly acceptanceSteps = new AsyncLocalStorage<AcceptanceStep>();
+  private readonly acceptanceHumans = new AsyncLocalStorage<
+    {action: "arm"; reference: string} |
+    {action: "amend"; reference: string; gateId: string; expectedRevision: number} |
+    {action: "independent"; reference: string; projectId: string} |
+    {action: "decide"; reference: string; gateId: string; expectedRevision: number; candidateDigest: string}
+  >();
+  /** Trusted interactive host only. Never derive this proof from model tool arguments or injected messages. */
+  withAcceptanceHumanAction<T>(proof: NonNullable<ReturnType<typeof this.acceptanceHumans.getStore>>, operation: () => T): T {
+    return this.acceptanceHumans.run(structuredClone(proof), operation);
+  }
+  /** Host admission only. A grant is not native delivery; caller retains its existing durable send receipt. */
+  withAcceptanceOperation<T>(binding: AcceptanceOperation, operation: () => T): T {
+    this.planner();
+    id(binding.invocationId, "invocation ID");
+    if (!/^[a-f0-9]{64}$/.test(binding.requestDigest) || !/^[a-f0-9]{64}$/.test(binding.candidateDigest) || !Number.isInteger(binding.expectedRevision) || binding.expectedRevision < 1) fail("INVALID", "Bind invocation to the complete host request and displayed candidate");
+    if (binding.operation !== "downstream") fail("INVALID", "Unknown acceptance operation");
+    const grant = this.command(`acceptance-invocation:${hash(binding.invocationId)}`, "acceptance.invoke", binding, () => {
+      const gate = this.acceptanceGateView(binding.gateId);
+      if (gate.state !== "released") fail("ACCEPTANCE_REQUIRED", "Human acceptance is required before starting the downstream operation");
+      if (gate.revision !== binding.expectedRevision || gate.candidate.digest !== binding.candidateDigest) fail("CONFLICT", "The displayed accepted result changed before invocation admission");
+      const invocation: AcceptanceInvocation = {...binding, gateRevision: gate.revision, candidateDigest: gate.candidate.digest, admittedAt: this.now()};
+      this.put("acceptanceInvocation", hash(binding.invocationId), invocation, gate.gateId);
+      this.event("acceptance.operation_admitted", {gateId: gate.gateId, invocationId: binding.invocationId, candidateDigest: invocation.candidateDigest, gateRevision: gate.revision}, gate.workstreamTaskId);
+      return invocation;
+    }).value;
+    const gate = this.acceptanceGateView(binding.gateId);
+    if (gate.state !== "released") fail("ACCEPTANCE_REQUIRED", "Human acceptance is required before continuing the downstream operation");
+    if (gate.revision !== grant.gateRevision || gate.candidate.digest !== grant.candidateDigest) fail("CONFLICT", "This invocation belongs to an earlier acceptance; use a new invocation after the current result is accepted");
+    return this.acceptanceOperations.run(structuredClone(binding), operation);
+  }
+  /** Host-selected existing independent operation; a model-supplied parent is insufficient. */
+  withAcceptanceIndependentTask<T>(taskId: string, operation: () => T): T {
+    if (!this.list<{taskId: string}>("acceptanceIndependent").some(member => member.taskId === taskId)) fail("FORBIDDEN", "Select a durable independent operation that predates this gate");
+    return this.acceptanceIndependentOperations.run(taskId, operation);
+  }
+  createAcceptanceIndependentTask(commandId: string, input: unknown) {
+    this.planner();
+    const command = CreateAcceptanceIndependentTask.parse(input), proof = this.acceptanceHumans.getStore();
+    if (proof?.action !== "independent" || proof.reference !== command.instructionRef || this.projectSettingsId(proof.projectId) !== this.projectSettingsId(command.projectId)) fail("FORBIDDEN", "A new independent workstream requires a trusted explicit human action");
+    return this.command(commandId, "acceptance.independent", command, () => {
+      const projectId = this.projectSettingsId(command.projectId);
+      const gates = this.acceptanceGates().filter(gate => gate.projectId === projectId);
+      if (new Set(command.expectedGates.map(gate => gate.gateId)).size !== command.expectedGates.length || gates.length !== command.expectedGates.length || gates.some(gate => !command.expectedGates.some(expected => expected.gateId === gate.gateId && expected.revision === gate.revision))) fail("CONFLICT", "Project gates changed; inspect current gates before creating independent work");
+      const wb = new Workbench(this), backlog = wb.getBacklog(command.backlogId);
+      if (this.projectSettingsId(backlog.projectId) !== projectId) fail("FORBIDDEN", "Select a backlog in the independent work's Project");
+      if (this.get("task", command.taskId)) fail("CONFLICT", "Independent Task ID already exists");
+      const task = this.acceptanceOperations.exit(() => this.acceptanceIndependentOperations.exit(() => this.dispatchOrigins.run({kind: "system", nodeId: this.nodeId}, () => this.newTask({taskId: command.taskId, title: command.title, ...(command.description !== undefined ? {description: command.description} : {})}))));
+      this.put("acceptanceIndependentProject", task.taskId, {projectId, taskId: task.taskId, instructionRef: command.instructionRef});
+      for (const gate of gates) this.put("acceptanceIndependent", hash([gate.gateId, task.taskId]), {gateId: gate.gateId, taskId: task.taskId});
+      this.acceptanceIndependentOperations.run(task.taskId, () => wb.linkDispatcherTask(command.backlogId, task.taskId));
+      this.event("acceptance.independent_created", {taskId: task.taskId, projectId, instructionRef: command.instructionRef}, task.taskId);
+      return this.getTask(task.taskId);
+    });
+  }
+  private acceptanceIndependentAllows(gateId: string, taskId: string): boolean {
+    const bound = this.acceptanceIndependentOperations.getStore();
+    return !!bound && !!this.get("acceptanceIndependent", hash([gateId, bound])) && (bound === taskId || this.descendants(bound).some(task => task.taskId === taskId));
+  }
+  private acceptanceGates(): AcceptanceGate[] { return this.list<AcceptanceGate>("acceptanceGate"); }
+  acceptanceInvocationRecord(invocationId: string): AcceptanceInvocation | undefined { return this.get<AcceptanceInvocation>("acceptanceInvocation", hash(invocationId)); }
+  acceptanceIndependentReference(taskId: string): {projectId: string; taskId: string; instructionRef: string} | undefined { return this.get<{projectId: string; taskId: string; instructionRef: string}>("acceptanceIndependentProject", taskId); }
+  private acceptanceTaskMember(taskId: string): AcceptanceMember | undefined { return this.get<AcceptanceMember>("acceptanceMember", taskId); }
+  private acceptanceTaskGate(taskId: string): AcceptanceGate | undefined {
+    const pinned = this.get<{gateId: string}>("acceptanceScope", taskId);
+    if (pinned) return this.need<AcceptanceGate>("acceptanceGate", pinned.gateId);
+    let task: Task | undefined = this.getTask(taskId);
+    const roots = new Map(this.acceptanceGates().map(gate => [gate.workstreamTaskId, gate]));
+    const seen = new Set<string>();
+    while (task && !seen.has(task.taskId)) {
+      seen.add(task.taskId);
+      const gate = roots.get(task.taskId);
+      if (gate) return gate;
+      task = task.parentTaskId ? this.getTask(task.parentTaskId) : undefined;
+    }
+    return undefined;
+  }
+  private acceptanceCandidate(gate: AcceptanceGate) {
+    const members = this.list<AcceptanceMember & {taskId: string}>("acceptanceMember").filter(member => member.gateId === gate.gateId && member.operation === "upstream");
+    const currentStepTasks = gate.upstreamSteps.flatMap(step => {
+      const member = members.filter(item => {
+        const source = this.get<AcceptanceStep>("acceptanceStep", item.taskId);
+        return source && canonical(source) === canonical(step);
+      }).at(-1);
+      return member ? [member.taskId] : [];
+    });
+    const taskIds = [...new Set([...gate.upstreamTaskIds, ...currentStepTasks])].sort();
+    const allRuns = this.list<Run>("run"), allReports = this.list<Report>("report");
+    const runs = taskIds.flatMap(taskId => allRuns.filter(run => run.taskId === taskId && !run.historyOnly && !run.observationOnly));
+    const latest = taskIds.map(taskId => runs.filter(run => run.taskId === taskId).at(-1));
+    const reports = allReports.filter(report => taskIds.includes(report.taskId) && report.kind === "result");
+    const stepReady = gate.upstreamSteps.every(step => members.some(member => {
+      const source = this.get<AcceptanceStep>("acceptanceStep", member.taskId);
+      return source?.workflowId === step.workflowId && source.definitionRevision === step.definitionRevision && source.stepId === step.stepId;
+    }));
+    const pending = allRuns.some(run => members.some(member => member.taskId === run.taskId) && !run.historyOnly && !run.observationOnly && ["queued", "running", "uncertain"].includes(run.state));
+    const ready = !pending && stepReady && taskIds.length > 0 && latest.every(run => run && ["succeeded", "partial"].includes(run.state) && run.intentSnapshot?.intentRevision === this.getTask(run.taskId).intentRevision && reports.some(report => report.runId === run.runId));
+    const tasks = taskIds.map(taskId => {
+      const task = this.getTask(taskId);
+      return {taskId, intentRevision: task.intentRevision, title: task.title, description: task.description, goal: task.goal, acceptanceCriteria: task.acceptanceCriteria};
+    });
+    const evidence = {gateId: gate.gateId, taskIds, tasks, runs: runs.map(run => ({runId: run.runId, taskId: run.taskId, state: run.state, configuration: run.configuration})), reports, artifacts: this.list<Artifact>("artifact").filter(artifact => reports.some(report => report.artifactIds.includes(artifact.artifactId)))};
+    return {digest: hash(evidence), ready, taskIds, runCount: runs.length, reportCount: reports.length, runs: runs.slice(-64).map(run => ({runId: run.runId, taskId: run.taskId, state: run.state})), reports: reports.slice(-16).map(report => ({reportId: report.reportId, revision: report.revision, title: report.title, body: report.body.slice(0, 12000)}))};
+  }
+  acceptanceGateView(gateId: string): AcceptanceGateView {
+    const gate = this.need<AcceptanceGate>("acceptanceGate", gateId), candidate = this.acceptanceCandidate(gate);
+    const invocations = this.list<AcceptanceInvocation>("acceptanceInvocation", gateId);
+    const downstreamIds = new Set(this.list<AcceptanceMember & {taskId: string}>("acceptanceMember").filter(member => member.gateId === gateId && member.operation === "downstream").map(member => member.taskId));
+    const downstreamRuns = this.list<Run>("run").filter(run => downstreamIds.has(run.taskId)).map(run => ({runId: run.runId, taskId: run.taskId, state: run.state, attemptId: run.currentAttemptId ?? null}));
+    return {...gate, candidate, invocationCount: invocations.length, invocations: invocations.slice(-32), downstreamRunCount: downstreamRuns.length, downstreamRuns: downstreamRuns.slice(-64), state: gate.acceptance?.candidateDigest === candidate.digest && candidate.ready ? "released" : candidate.ready ? "awaiting-acceptance" : "repairing"};
+  }
+  acceptanceGateViews(projectId?: string): AcceptanceGateView[] {
+    return this.acceptanceGates().filter(gate => !projectId || gate.projectId === this.projectSettingsId(projectId)).map(gate => this.acceptanceGateView(gate.gateId));
+  }
+  acceptanceGateSummaries(projectId: string, limit = 8) {
+    projectId = this.projectSettingsId(projectId);
+    if (!Number.isInteger(limit) || limit < 1 || limit > 16) fail("INVALID", "Gate summary limit must be between 1 and 16");
+    const total = Number(this.db.prepare("SELECT COUNT(*) AS count FROM entities WHERE kind='acceptanceGate' AND json_extract(data,'$.projectId')=?").get(projectId)?.count ?? 0);
+    const rows = this.db.prepare("SELECT id FROM entities WHERE kind='acceptanceGate' AND json_extract(data,'$.projectId')=? ORDER BY rowid DESC LIMIT ?").all(projectId, limit);
+    const gates = rows.map(row => {
+      const view = this.acceptanceGateView(String(row.id));
+      return {gateId: view.gateId, revision: view.revision, state: view.state,
+        upstream: {taskIds: view.upstreamTaskIds.slice(0, 8), taskCount: view.upstreamTaskIds.length, steps: view.upstreamSteps.slice(0, 8), stepCount: view.upstreamSteps.length},
+        downstream: {taskIds: view.downstreamTaskIds.slice(0, 8), taskCount: view.downstreamTaskIds.length, steps: view.downstreamSteps.slice(0, 8), stepCount: view.downstreamSteps.length},
+        candidate: {digest: view.candidate.digest, ready: view.candidate.ready, runIds: view.candidate.runs.slice(-8).map(run => run.runId), runCount: view.candidate.runCount, reportRefs: view.candidate.reports.slice(-8).map(report => ({reportId: report.reportId, revision: report.revision})), reportCount: view.candidate.reportCount},
+        granted: {invocationCount: view.invocationCount, downstreamRunCount: view.downstreamRunCount, runRefs: view.downstreamRuns.slice(-4)}};
+    });
+    return {projectId, total, truncated: total > gates.length, gates};
+  }
+  armAcceptanceGate(commandId: string, input: unknown) {
+    this.planner();
+    const command = ArmAcceptanceGate.parse(input), proof = this.acceptanceHumans.getStore();
+    if (proof?.action !== "arm" || proof.reference !== command.instructionRef) fail("FORBIDDEN", "Arming requires a trusted interactive human action");
+    return this.command(commandId, "acceptance.arm", command, () => {
+      if (this.get("acceptanceGate", command.gateId)) fail("CONFLICT", "Acceptance gate already exists");
+      const root = this.getTask(command.workstreamTaskId);
+      const projectId = this.projectForTask(root.taskId) ?? fail("AMBIGUOUS_PROJECT", "Select an existing workstream in the authority Project");
+      if (projectId !== this.projectSettingsId(command.projectId)) fail("AMBIGUOUS_PROJECT", "Select an existing workstream in the authority Project");
+      if (this.acceptanceTaskGate(root.taskId) || this.descendants(root.taskId).some(task => this.acceptanceTaskGate(task.taskId))) fail("CONFLICT", "Workstream already has an acceptance gate");
+      const covered = [root, ...this.descendants(root.taskId)], ids = new Set(covered.map(task => task.taskId));
+      if (command.upstreamTaskIds.some(taskId => command.downstreamTaskIds.includes(taskId))) fail("INVALID", "A Task cannot be both repair and downstream work");
+      for (const taskId of [...command.upstreamTaskIds, ...command.downstreamTaskIds]) if (!ids.has(taskId)) fail("FORBIDDEN", "Gate members must belong to the selected workstream");
+      for (const step of [...command.upstreamSteps, ...command.downstreamSteps]) {
+        const row = this.db.prepare("SELECT data FROM workflow_definitions WHERE id=?").get(step.workflowId);
+        const definition = row ? JSON.parse(String(row.data)) as {revision: number; projectId: string; steps: {stepId: string}[]} : undefined;
+        if (!definition || definition.projectId !== command.projectId || definition.revision !== step.definitionRevision || !definition.steps.some(item => item.stepId === step.stepId)) fail("CONFLICT", "Select a current workflow definition step in this Project");
+        if (command.upstreamSteps.some(up => command.downstreamSteps.some(down => canonical(up) === canonical(down)))) fail("INVALID", "A workflow step cannot have two operations");
+      }
+      const stepMembers: {taskId: string; operation: AcceptanceMember["operation"]; step: AcceptanceStep}[] = [];
+      if (command.upstreamSteps.length || command.downstreamSteps.length) for (const row of this.db.prepare("SELECT data FROM workflow_runs ORDER BY rowid").all()) {
+        const flow = JSON.parse(String(row.data)) as WorkflowRunView;
+        if (flow.taskId !== root.taskId || this.projectSettingsId(flow.projectId ?? "") !== projectId) continue;
+        for (const [operation, steps] of [["upstream", command.upstreamSteps], ["downstream", command.downstreamSteps]] as const) for (const step of steps) {
+          if (flow.workflowId !== step.workflowId || flow.definitionRevision !== step.definitionRevision) continue;
+          for (const dispatch of flow.dispatches.filter(dispatch => dispatch.stepId === step.stepId)) {
+            if (!ids.has(dispatch.taskId) || this.getRun(dispatch.runId).taskId !== dispatch.taskId) fail("CONFLICT", "Workflow dispatch no longer belongs to this workstream");
+            if ((operation === "upstream" ? command.downstreamTaskIds : command.upstreamTaskIds).includes(dispatch.taskId)) fail("INVALID", "Task and workflow operation memberships disagree");
+            stepMembers.push({taskId: dispatch.taskId, operation, step});
+          }
+        }
+      }
+      const upstreamIds = new Set([...command.upstreamTaskIds, ...stepMembers.filter(member => member.operation === "upstream").map(member => member.taskId)]);
+      const downstream = this.list<Run>("run").filter(run => ids.has(run.taskId) && !upstreamIds.has(run.taskId) && (run.currentAttemptId || run.state !== "queued") && !(run.taskId === root.taskId && !run.route && !run.currentAttemptId && this.isWorkflowInvocation(run) && this.acceptanceWorkflowContainer(root.taskId, run.configuration, command)));
+      if (downstream.length) fail("ACCEPTANCE_ALREADY_GRANTED", `Downstream execution was already admitted: ${downstream.map(run => `${run.runId}:${run.state}:${run.currentAttemptId ?? "invocation"}`).join(", ")}`);
+      const gate: AcceptanceGate = {...command, projectId, revision: 1, createdAt: this.now(), acceptance: null, lastDecision: null};
+      this.put("acceptanceGate", gate.gateId, gate, root.taskId);
+      for (const task of covered) this.put("acceptanceScope", task.taskId, {gateId: gate.gateId, projectId}, root.taskId);
+      for (const task of this.list<Task>("task")) if (!ids.has(task.taskId) && this.projectForTask(task.taskId) === projectId) this.put("acceptanceIndependent", hash([gate.gateId, task.taskId]), {gateId: gate.gateId, taskId: task.taskId});
+      for (const [operation, taskIds] of [["upstream", command.upstreamTaskIds], ["downstream", command.downstreamTaskIds]] as const)
+        for (const taskId of taskIds) this.put("acceptanceMember", taskId, {gateId: gate.gateId, operation, taskId}, root.taskId);
+      for (const {taskId, operation, step} of stepMembers) {
+        this.put("acceptanceMember", taskId, {gateId: gate.gateId, operation, taskId}, root.taskId);
+        this.put("acceptanceStep", taskId, step, root.taskId);
+      }
+      this.event("acceptance.armed", {gateId: gate.gateId}, root.taskId);
+      return this.acceptanceGateView(gate.gateId);
+    });
+  }
+  decideAcceptanceGate(commandId: string, input: unknown) {
+    this.planner();
+    const command = DecideAcceptanceGate.parse(input), proof = this.acceptanceHumans.getStore();
+    if (proof?.action !== "decide" || proof.reference !== command.humanDecisionRef || proof.gateId !== command.gateId || proof.expectedRevision !== command.expectedRevision || proof.candidateDigest !== command.candidateDigest) fail("FORBIDDEN", "Acceptance requires a trusted human action bound to the displayed candidate");
+    return this.command(commandId, "acceptance.decide", command, () => {
+      const gate = this.need<AcceptanceGate>("acceptanceGate", command.gateId), candidate = this.acceptanceCandidate(gate);
+      if (gate.revision !== command.expectedRevision || candidate.digest !== command.candidateDigest) fail("CONFLICT", "Repair evidence or gate revision changed; inspect the current result");
+      if (!candidate.ready) fail("ACCEPTANCE_NOT_READY", "Repair has no complete current result to accept");
+      gate.revision++;
+      gate.lastDecision = {decision: command.decision, humanDecisionRef: command.humanDecisionRef, at: this.now()};
+      gate.acceptance = command.decision === "accept" ? {candidateDigest: candidate.digest, humanDecisionRef: command.humanDecisionRef, at: this.now()} : null;
+      this.put("acceptanceGate", gate.gateId, gate, gate.workstreamTaskId);
+      this.event("acceptance.decided", {gateId: gate.gateId, decision: command.decision, candidateDigest: candidate.digest}, gate.workstreamTaskId);
+      return this.acceptanceGateView(gate.gateId);
+    });
+  }
+  amendAcceptanceGate(commandId: string, input: unknown) {
+    this.planner();
+    const command = AmendAcceptanceGate.parse(input), proof = this.acceptanceHumans.getStore();
+    if (proof?.action !== "amend" || proof.reference !== command.instructionRef || proof.gateId !== command.gateId || proof.expectedRevision !== command.expectedRevision) fail("FORBIDDEN", "Repair amendments require a trusted interactive action bound to the gate revision");
+    return this.command(commandId, "acceptance.amend", command, () => {
+      const gate = this.need<AcceptanceGate>("acceptanceGate", command.gateId);
+      if (gate.revision !== command.expectedRevision) fail("CONFLICT", "Acceptance gate changed");
+      const next = new Set(command.upstreamTaskIds), added = new Set(command.newRepairTasks.map(task => task.taskId));
+      if (next.size !== command.upstreamTaskIds.length || [...added].some(taskId => !next.has(taskId)) || next.size + gate.upstreamSteps.length === 0) fail("INVALID", "Select unique repair members and include every new repair Task");
+      for (const taskId of gate.upstreamTaskIds.filter(taskId => !next.has(taskId))) {
+        if (this.list<Run>("run", taskId).some(run => ["queued", "running", "uncertain"].includes(run.state))) fail("ACCEPTANCE_ACTIVE_REPAIR", "Finish or explicitly stop existing repair before removing its membership");
+      }
+      for (const taskId of next) {
+        if (added.has(taskId)) continue;
+        if (!gate.upstreamTaskIds.includes(taskId)) fail("FORBIDDEN", "Amendments may retain declared repair Tasks or explicitly create new repair Tasks");
+      }
+      for (const edit of command.repairEdits) {
+        if (!next.has(edit.taskId) || added.has(edit.taskId)) fail("FORBIDDEN", "Intent edits require a retained repair member");
+        if (this.list<Run>("run", edit.taskId).some(run => ["queued", "running", "uncertain"].includes(run.state))) fail("ACCEPTANCE_ACTIVE_REPAIR", "Repair intent cannot change during execution");
+        const task = this.getTask(edit.taskId), {taskId: _taskId, ...intent} = edit;
+        Object.assign(task, intent, {intentRevision: (task.intentRevision ?? 1) + 1, revision: (task.revision ?? 1) + 1, updatedAt: this.now()});
+        this.saveTask(task);
+      }
+      for (const taskId of gate.upstreamTaskIds.filter(taskId => !next.has(taskId))) this.db.prepare("DELETE FROM entities WHERE kind='acceptanceMember' AND id=?").run(taskId);
+      gate.upstreamTaskIds = [...next];
+      gate.revision++;
+      gate.acceptance = null;
+      gate.instructionRef = command.instructionRef;
+      this.put("acceptanceGate", gate.gateId, gate, gate.workstreamTaskId);
+      for (const task of command.newRepairTasks) {
+        if (this.get("task", task.taskId)) fail("CONFLICT", "New repair Task ID already exists");
+        this.put("acceptanceMember", task.taskId, {gateId: gate.gateId, operation: "upstream", taskId: task.taskId}, gate.workstreamTaskId);
+        this.newTask({...task, parentTaskId: gate.workstreamTaskId});
+      }
+      this.event("acceptance.amended", {gateId: gate.gateId, revision: gate.revision, instructionRef: command.instructionRef}, gate.workstreamTaskId);
+      return this.acceptanceGateView(gate.gateId);
+    });
+  }
+  private acceptanceWorkflowContainer(taskId: string, configuration: Json | undefined, gate: Pick<AcceptanceGate, "workstreamTaskId" | "upstreamSteps" | "downstreamSteps">): boolean {
+    if (taskId !== gate.workstreamTaskId || !configuration || typeof configuration !== "object" || Array.isArray(configuration)) return false;
+    const invocation = configuration.workflowInvocation;
+    if (!invocation || typeof invocation !== "object" || Array.isArray(invocation) || typeof invocation.workflowId !== "string" || !this.hasWorkflowBinding(taskId)) return false;
+    const row = this.db.prepare("SELECT data FROM workflow_task_bindings WHERE task_id=?").get(taskId);
+    return !!row && JSON.parse(String(row.data)).workflowId === invocation.workflowId && [...gate.upstreamSteps, ...gate.downstreamSteps].some(step => step.workflowId === invocation.workflowId);
+  }
+  private assertAcceptanceTask(taskId: string, action: "plan" | "run" | "claim") {
+    const gate = this.acceptanceTaskGate(taskId);
+    if (!gate) return;
+    const member = this.acceptanceTaskMember(taskId);
+    if (member?.operation === "upstream" && action !== "plan") return;
+    if (member?.operation === "downstream" && this.acceptanceGateView(gate.gateId).state === "released") return;
+    fail("ACCEPTANCE_REQUIRED", `${action} is blocked by acceptance gate ${gate.gateId}; only declared repair members may continue`);
+  }
+  assertAcceptanceWorkflowRetry(taskId: string) { this.assertAcceptanceTask(taskId, "run"); }
+  assertAcceptancePlanning(input: {projectId?: string; taskId?: string; title: string; description: string}, proposal?: Json) {
+    const originProject = this.dispatchProjectId();
+    const taskProject = input.taskId ? this.projectForTask(input.taskId) : undefined;
+    const declaredProject = input.projectId ? this.projectSettingsId(input.projectId) : undefined;
+    const projectId = originProject ?? taskProject ?? declaredProject;
+    if (projectId && declaredProject && projectId !== declaredProject) fail("AMBIGUOUS_PROJECT", "Planning input differs from its host-owned Project");
+    if (input.taskId && this.acceptanceTaskGate(input.taskId)) {
+      this.assertAcceptanceTask(input.taskId, "run");
+      const task = this.getTask(input.taskId), member = this.acceptanceTaskMember(input.taskId);
+      if (member?.operation === "upstream") {
+        if (input.title !== task.title || input.description !== task.description) fail("ACCEPTANCE_REQUIRED", "Repair planning must preserve the declared Task intent; use a trusted amendment to change scope");
+        if (proposal && typeof proposal === "object" && !Array.isArray(proposal) && proposal.kind === "proposal" && (proposal.persistence !== "attach" || proposal.attachTaskId !== task.taskId)) fail("ACCEPTANCE_REQUIRED", "Repair proposals must attach to the existing declared Task");
+      }
+      return;
+    }
+    if (projectId) this.assertAcceptanceProjectPlan(projectId, input.taskId);
+  }
+  /** Called inside the existing plan transaction, including direct Workbench callers. */
+  assertAcceptanceProjectPlan(projectId: string, taskId?: string, workflowId?: string) {
+    taskId ??= this.acceptanceIndependentOperations.getStore();
+    const gates = this.acceptanceGates().filter(gate => gate.projectId === this.projectSettingsId(projectId));
+    for (const gate of gates) {
+      if (taskId) {
+        if (this.acceptanceTaskGate(taskId)?.gateId === gate.gateId) { this.assertAcceptanceTask(taskId, "plan"); continue; }
+        if (this.acceptanceIndependentAllows(gate.gateId, taskId)) continue;
+      }
+      if (workflowId && ![...gate.upstreamSteps, ...gate.downstreamSteps].some(step => step.workflowId === workflowId)) {
+        const bound = this.acceptanceIndependentOperations.getStore();
+        const row = bound && this.db.prepare("SELECT 1 FROM sqlite_master WHERE name='workflow_task_bindings'").get() ? this.db.prepare("SELECT data FROM workflow_task_bindings WHERE task_id=?").get(bound) : undefined;
+        if (bound && this.acceptanceIndependentAllows(gate.gateId, bound) && row && JSON.parse(String(row.data)).workflowId === workflowId) continue;
+      }
+      const invocation = this.acceptanceOperations.getStore();
+      if (invocation?.gateId === gate.gateId && this.acceptanceGateView(gate.gateId).state === "released") continue;
+      fail("ACCEPTANCE_REQUIRED", `Unclassified plan mutation is blocked by acceptance gate ${gate.gateId}`);
+    }
+  }
+  private acceptanceNewTask(taskId: string, parentTaskId?: string): AcceptanceMember | undefined {
+    const step = this.acceptanceSteps.getStore();
+    const parentProjectId = parentTaskId ? this.projectForTask(parentTaskId) : undefined;
+    const parentGate = parentTaskId ? this.acceptanceTaskGate(parentTaskId) : undefined;
+    const gate = parentGate;
+    if (gate) {
+      const invocation = this.acceptanceOperations.getStore();
+      const inherited = parentTaskId ? this.acceptanceTaskMember(parentTaskId) : undefined;
+      const amendment = this.acceptanceHumans.getStore();
+      const upstream = (step && gate.upstreamSteps.some(member => canonical(member) === canonical(step))) || (amendment?.action === "amend" && amendment.gateId === gate.gateId && this.acceptanceTaskMember(taskId)?.operation === "upstream");
+      const downstream = (step && gate.downstreamSteps.some(member => canonical(member) === canonical(step))) || inherited?.operation === "downstream" || invocation?.gateId === gate.gateId;
+      if (!upstream && (!downstream || this.acceptanceGateView(gate.gateId).state !== "released")) fail("ACCEPTANCE_REQUIRED", `New Task is not a declared repair member; acceptance gate ${gate.gateId} blocks decomposition`);
+      const member = {gateId: gate.gateId, operation: upstream ? "upstream" : "downstream", taskId} satisfies AcceptanceMember & {taskId: string};
+      this.put("acceptanceScope", taskId, {gateId: gate.gateId, projectId: gate.projectId}, gate.workstreamTaskId);
+      this.put("acceptanceMember", taskId, member, gate.workstreamTaskId);
+      if (step) this.put("acceptanceStep", taskId, step, gate.workstreamTaskId);
+      return member;
+    }
+    const projectId = this.dispatchProjectId() ?? parentProjectId;
+    if (projectId) for (const active of this.acceptanceGates().filter(item => item.projectId === projectId)) {
+      if (!parentTaskId || !this.acceptanceIndependentAllows(active.gateId, parentTaskId)) fail("ACCEPTANCE_REQUIRED", `New project Tasks require a trusted bound operation while gate ${active.gateId} is active`);
+      this.put("acceptanceIndependent", hash([active.gateId, taskId]), {gateId: active.gateId, taskId});
+    }
+    return undefined;
+  }
   withDispatchOrigin<T>(origin: DispatchOrigin, operation: () => T): T {
     return this.dispatchOrigins.run(structuredClone(origin), operation);
   }
@@ -591,9 +904,9 @@ export class TaskLedger {
     this.assertManagementWritable();
     return this.command(commandId, `workflow.${operation}`, input, fn).value;
   }
-  workflowAdmission(commandId: string, input: {task?: TaskInput; run: RunInput; script?: ScriptExecution}, link: (task: Task, run: Run) => void) {
+  workflowAdmission(commandId: string, input: {task?: TaskInput; run: RunInput; script?: ScriptExecution; step?: AcceptanceStep}, link: (task: Task, run: Run) => void) {
     this.assertManagementWritable();
-    return this.command(commandId, "workflow.admit", input, () => {
+    const admit = () => this.command(commandId, "workflow.admit", input, () => {
       const task = input.task ? this.newTask(input.task) : this.getTask(input.run.taskId);
       const run = this.newRun({...input.run, taskId:task.taskId});
       if (input.script) {
@@ -603,6 +916,7 @@ export class TaskLedger {
       link(task, run);
       return {taskId:task.taskId,runId:run.runId};
     }).value;
+    return input.step ? this.acceptanceSteps.run(structuredClone(input.step), admit) : admit();
   }
   registeredNodes(): NodeCapability[] { return this.list<NodeCapability>("node"); }
   managementNow() {
@@ -1619,8 +1933,13 @@ export class TaskLedger {
     const caller=this.dispatchOrigins.getStore();
     const coordinator=caller?.kind==="session" ? this.dispatcherForSession(caller.nodeId,caller.sessionId) : undefined;
     if(coordinator && !input.parentTaskId)input={...input,parentTaskId:coordinator.taskId,parentRunId:coordinator.runId};
+    const acceptanceOperation = this.acceptanceOperations.getStore();
+    if (acceptanceOperation && !input.parentTaskId) input = {...input, parentTaskId: this.need<AcceptanceGate>("acceptanceGate", acceptanceOperation.gateId).workstreamTaskId};
+    const independentTaskId = this.acceptanceIndependentOperations.getStore();
+    if (independentTaskId && !input.parentTaskId) input = {...input, parentTaskId: independentTaskId};
     const key = id(input.taskId ?? randomUUID());
     if (this.get("task", key)) fail("CONFLICT", "Task ID already exists");
+    this.acceptanceNewTask(key, input.parentTaskId);
     const parent = input.parentTaskId
       ? this.getTask(input.parentTaskId)
       : undefined;
@@ -1852,6 +2171,7 @@ export class TaskLedger {
     this.planner();
     return this.command(commandId, "updateTask", input, () => {
       const t = this.getTask(input.taskId);
+      if (["title", "description", "goal", "acceptanceCriteria", "tags"].some(field => Object.hasOwn(input, field))) this.assertAcceptanceTask(t.taskId, "plan");
       if (
         (t.revision !== undefined || input.expectedRevision !== undefined) &&
         input.expectedRevision !== (t.revision ?? 1)
@@ -2174,9 +2494,11 @@ export class TaskLedger {
     const add = (projectId: string | undefined) => { if (projectId) projects.add(this.projectSettingsId(projectId)); };
     const hasWorkbench = this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='wb_projects'").get();
     let task: Task | undefined = this.getTask(taskId);
+    add(this.acceptanceTaskGate(taskId)?.projectId);
     if (parentRunId) add(this.getRun(parentRunId).projectContext?.project?.projectId);
     while (task && !visited.has(task.taskId)) {
       visited.add(task.taskId);
+      add(this.get<{projectId: string}>("acceptanceIndependentProject", task.taskId)?.projectId);
       if (hasWorkbench) for (const row of this.db.prepare("SELECT DISTINCT p.project_id FROM wb_projects p JOIN wb_backlogs b ON b.project_id=p.project_id JOIN wb_backlog_tasks t ON t.backlog_id=b.backlog_id WHERE t.task_id=?").all(task.taskId)) add(String(row.project_id));
       if (task.parentRunId) add(this.getRun(task.parentRunId).projectContext?.project?.projectId);
       task = task.parentTaskId ? this.getTask(task.parentTaskId) : undefined;
@@ -2188,11 +2510,21 @@ export class TaskLedger {
   dispatchProjectId(): string | undefined {
     const caller = this.dispatchOrigins.getStore();
     if (caller?.kind !== "session" || caller.parentLease) return undefined;
+    let managed: string | undefined;
+    if (this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='pr_sessions'").get()) {
+      const session = this.db.prepare("SELECT s.owner,s.generation,p.session AS current_session,p.generation AS current_generation,p.state AS project_state FROM pr_sessions s JOIN pr_projects p ON p.id=s.owner WHERE s.session=?").get(caller.sessionId);
+      if (session) {
+        if (caller.nodeId !== this.nodeId) fail("FORBIDDEN", "A peer cannot claim a local managed project session");
+        if (String(session.current_session) !== caller.sessionId || Number(session.generation) !== Number(session.current_generation) || session.project_state !== "ready") fail("STALE_PROJECT_SESSION", "This managed project session is retired or changing owner; use the current ready generation");
+        managed = this.projectSettingsId(String(session.owner));
+      }
+    }
     const bound = this.dispatcherForSession(caller.nodeId, caller.sessionId)?.projectId;
     const row = this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='dispatcher_projects'").get()
       ? this.db.prepare("SELECT project FROM dispatcher_projects WHERE node=? AND session=?").get(caller.nodeId, caller.sessionId) : undefined;
-    if (bound && row && this.projectSettingsId(bound) !== this.projectSettingsId(String(row.project))) fail("AMBIGUOUS_PROJECT", "Current coordinator bindings disagree");
-    return bound ? this.projectSettingsId(bound) : row ? this.projectSettingsId(String(row.project)) : undefined;
+    const scopes = new Set([managed, bound ? this.projectSettingsId(bound) : undefined, row ? this.projectSettingsId(String(row.project)) : undefined].filter((value): value is string => !!value));
+    if (scopes.size > 1) fail("AMBIGUOUS_PROJECT", "Current coordinator bindings disagree");
+    return scopes.values().next().value;
   }
   projectExecutionPolicy(projectId: string, nodeId?: string) {
     const settings = this.projectExecutionSettings.read(this.projectSettingsId(projectId));
@@ -2267,6 +2599,12 @@ export class TaskLedger {
     const selectedProject = inherited?.projectId ? this.projectSettingsId(inherited.projectId) : undefined;
     if (relatedProject && selectedProject && relatedProject !== selectedProject) fail("AMBIGUOUS_PROJECT", "Recorded planning scope differs from Task project");
     const projectId = relatedProject ?? selectedProject;
+    if (projectId && !this.acceptanceTaskGate(task.taskId)) for (const gate of this.acceptanceGates().filter(item => item.projectId === projectId)) {
+      if (!this.get("acceptanceIndependent", hash([gate.gateId, task.taskId]))) fail("ACCEPTANCE_REQUIRED", "Unclassified Project Run cannot bypass its acceptance gate");
+    }
+    const acceptanceGate = this.acceptanceTaskGate(task.taskId);
+    const isGatedWorkflowContainer = acceptanceGate && !input.route && this.acceptanceWorkflowContainer(task.taskId, input.configuration, acceptanceGate);
+    if (!isGatedWorkflowContainer) this.assertAcceptanceTask(task.taskId, "run");
     const projectPolicy = projectId ? this.projectExecutionPolicy(projectId, input.route?.nodeId) : undefined;
     if (projectPolicy?.allowedNodeIds?.length === 0 && !inherited?.coordinatorSession) fail("PROJECT_NODE_NOT_ALLOWED", "Project settings disable new execution dispatches");
     const projectWorkspace = projectPolicy?.workspaceId;
@@ -2436,6 +2774,11 @@ export class TaskLedger {
     run.dispatchOrigin = structuredClone(origin);
     this.db.prepare("DELETE FROM entities WHERE kind='pendingDispatchOrigin' AND id=?").run(task.taskId);
     this.saveRun(run);
+    const acceptanceMember = this.acceptanceTaskMember(task.taskId);
+    if (acceptanceMember) {
+      const gate = this.acceptanceGateView(acceptanceMember.gateId);
+      this.put("acceptanceRun", run.runId, {...acceptanceMember, runId: run.runId, gateRevision: gate.revision, candidateDigest: gate.acceptance?.candidateDigest ?? null}, task.taskId);
+    }
     if(input.executionModel)this.refreshDispatchEligibility(run.runId);
     if (this.isWorkflowInvocation(run)) {
       const admit = this.workflowRunAdmission ?? fail('UNAVAILABLE', 'Workflow runtime is unavailable');
@@ -2814,6 +3157,7 @@ export class TaskLedger {
       let run = this.getRun(input.runId);
       if (this.isWorkflowInvocation(run)) fail("FORBIDDEN", "Workflow roots cannot be claimed");
       if (run.state !== "queued") fail("CONFLICT", "Run is not queued");
+      this.assertAcceptanceTask(run.taskId, "claim");
       if (run.retry && Date.parse(run.retry.notBefore) > this.clock())
         fail("NOT_DUE", "Safe retry delay has not elapsed");
       if (!run.route || run.route.nodeId !== input.nodeId)
@@ -5232,6 +5576,9 @@ export class TaskLedger {
   ) {
     this.planner();
     return this.command(commandId, "recordDecision", input, () => {
+      const planning = AcceptancePlanningIntent.safeParse(input.input);
+      if (planning.success) this.assertAcceptancePlanning(planning.data, input.proposal);
+      else { const projectId = this.dispatchProjectId(); if (projectId) this.assertAcceptanceProjectPlan(projectId); }
       id(input.decisionId);
       if (this.get("decision", input.decisionId))
         fail("CONFLICT", "Decision receipt is immutable");
@@ -5266,6 +5613,9 @@ export class TaskLedger {
       const decision =
         this.getDecision(input.decisionId) ??
         fail("NOT_FOUND", "Decision not found");
+      const planning = AcceptancePlanningIntent.safeParse(decision.input);
+      if (planning.success) this.assertAcceptancePlanning(planning.data, decision.proposal);
+      else { const projectId = this.dispatchProjectId(); if (projectId) this.assertAcceptanceProjectPlan(projectId); }
       if (
         decision.stateHash !== input.currentStateHash ||
         decision.validUntil <= this.clock()
