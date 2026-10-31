@@ -174,12 +174,12 @@ export class TaskCheckins {
       .all(kind)
       .map((row) => JSON.parse(String(row.data)));
   }
-  private runRead: { rows?: Run[] } | undefined;
+  private runRead: { rows?: Run[]; tasks?: Task[] } | undefined;
   withReadScope<T>(operation: () => T): T {
     const previous = this.runRead;
     this.runRead = previous ?? {};
     try {
-      return operation();
+      return this.ledger.withTaskActionRead(operation);
     } finally {
       this.runRead = previous;
     }
@@ -187,6 +187,11 @@ export class TaskCheckins {
   private runs(): Run[] {
     const rows = this.runRead?.rows ?? this.rows<Run>("run");
     if (this.runRead) this.runRead.rows = rows;
+    return rows;
+  }
+  private tasks(): Task[] {
+    const rows = this.runRead?.tasks ?? this.rows<Task>("task");
+    if (this.runRead) this.runRead.tasks = rows;
     return rows;
   }
   private write(
@@ -302,7 +307,7 @@ export class TaskCheckins {
     };
   }
   private responsibilityTaskIds(taskId: string) {
-    const tasks = this.rows<Task>("task"),
+    const tasks = this.tasks(),
       ids = new Set([taskId]);
     for (let changed = true; changed; ) {
       changed = false;
