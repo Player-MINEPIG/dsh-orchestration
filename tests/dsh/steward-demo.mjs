@@ -28,7 +28,7 @@ const echo=options=>{
   return `离线脚本回复：${text}\n\n此回复由测试模型产生；原生会话、路由与任务记录由真实 DSH 处理。`;
 };
 // Resolve each fixture response from its actual request, never from an enqueue on HTTP retry.
-let localJob=null, recallJob=null, mutation=false, dropNextSend=process.env.DSH_STEWARD_DEMO_DROP_FIRST_SEND==='1';
+let localJob=null, recallJob=null, mutation=false, sends=0, dropNextSend=process.env.DSH_STEWARD_DEMO_DROP_FIRST_SEND==='1';
 h.ctx.on('tools/result',(exec,result)=>{
   if(recallJob&&exec.name==='steward_recall'&&exec.agent?.id===recallJob.sessionId){
     if(result.isError)recallJob.error=JSON.stringify(result.content);
@@ -112,11 +112,11 @@ const server=createServer(async(req,res)=>{
     else if(url.pathname==='/api/stewardGateIndependent')value=await service.gateIndependent(input);
     else if(url.pathname==='/api/stewardSend'){
       if(mutation)throw Error('Demo mutation is busy; this request was not admitted');
-      mutation=true;try{await service.send(input);value=await waitCommand(input.commandId);if(dropNextSend){dropNextSend=false;res.writeHead(503,{'content-type':'application/json'});res.end(JSON.stringify({error:'Synthetic gateway lost the original application acknowledgement'}));return;}}finally{mutation=false;}
+      sends++;try{value=await service.send(input);if(dropNextSend){dropNextSend=false;res.writeHead(503,{'content-type':'application/json'});res.end(JSON.stringify({error:'Synthetic gateway lost the original application acknowledgement'}));return;}}finally{sends--;}
     }
     else if(url.pathname==='/api/demoRecall'){
       if(liveMode)throw Object.assign(Error('Recall proof uses the explicitly offline fixture'),{code:'DEMO_OFFLINE_ONLY'});
-      if(mutation)throw Error('Demo mutation is busy; this request was not admitted');
+      if(mutation||sends||service.active)throw Error('Demo mutation is busy; this request was not admitted');
       mutation=true;try{
         const command=randomUUID(),marker=`DEMO_SPILL_${command}`,tail=`EXACT_TAIL_${command}`;
         const original=`${marker}\n${'中文😀'.repeat(1800)}\0${tail}`;
@@ -136,7 +136,7 @@ const server=createServer(async(req,res)=>{
     }
     else if(url.pathname==='/api/demoLocalTask'){
       if(liveMode)throw Object.assign(Error('This deterministic task-chain button is available only in the explicitly offline fixture'),{code:'DEMO_OFFLINE_ONLY'});
-      if(mutation)throw Error('Demo mutation is busy; this request was not admitted');
+      if(mutation||sends||service.active)throw Error('Demo mutation is busy; this request was not admitted');
       mutation=true;try{
       const command=randomUUID(),title=`本机原生执行验证 ${command.slice(0,8)}`;
       h.ledger.registerNode(`demo-node-${command}`,{nodeId:'local',roles:['both'],models:[{provider:'test-offline',model:'script',reasoningEfforts:[]}],capabilities:[],workspaceIds:[],enabled:true});
