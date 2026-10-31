@@ -1833,6 +1833,9 @@ export class ProjectRuntime {
     return receipt;
   }
   snapshot() {
+    return this.ledger.checkins.withReadScope(() => this.snapshotWithCheckins());
+  }
+  private snapshotWithCheckins() {
     const wb = this.workbench.snapshot(),
       data = this.ledger.snapshot();
     const presentation=new Map(this.db.prepare("SELECT task,visibility FROM pr_task_presentation").all().map(row=>[String(row.task),String(row.visibility)]));
