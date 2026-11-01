@@ -1,3 +1,5 @@
+import markdownit from 'markdown-it';
+import {demandPageBridge} from './demand-page-fixture.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
@@ -18,14 +20,14 @@ test('project RPC distinguishes executor role, unavailable planner service and b
 });
 
 function page() {
-  const html=readFileSync(new URL('../dist/project-page.html',import.meta.url),'utf8');
+  const html=readFileSync(new URL('../src/project-page.html',import.meta.url),'utf8');
   const source=html.match(/<script>([\s\S]*?)<\/script>/)[1];
   const elements=new Map(),requests=[],events={},documentEvents={},root={dataset:{}}; let sequence=0;
-  const parent={postMessage:request=>{if(request.id)requests.push(request);}};
-  const context=vm.createContext({atob,structuredClone,console,Date,Map,Set,URL,innerWidth:1200,MutationObserver:class{observe(){}disconnect(){}},matchMedia:()=>({matches:false,addEventListener(){},removeEventListener(){}}),crypto:{randomUUID:()=>String(++sequence)},parent,window:{addEventListener:(name,listener)=>events[name]=listener},document:{documentElement:root,title:'',activeElement:{tagName:'BODY'},querySelector:()=>null,querySelectorAll:()=>[],addEventListener:(name,listener)=>documentEvents[name]=listener,getElementById(id){if(!elements.has(id))elements.set(id,{innerHTML:'',hidden:true,dataset:{},setAttribute(){},removeAttribute(){},focus(){}});return elements.get(id);}},setTimeout:()=>1,clearTimeout:()=>{},setInterval:()=>1});
-  vm.runInContext(source,context);
+  let demand;const parent={postMessage:request=>{if(demand)demand.send(request);else if(request.id)requests.push(request);}};
+  const context=vm.createContext({markdownit,atob,structuredClone,console,Date,Map,Set,URL,innerWidth:1200,MutationObserver:class{observe(){}disconnect(){}},matchMedia:()=>({matches:false,addEventListener(){},removeEventListener(){}}),crypto:{randomUUID:()=>String(++sequence)},parent,window:{addEventListener:(name,listener)=>events[name]=((previous)=>event=>{previous?.(event);listener(event);})(events[name])},document:{documentElement:root,title:'',activeElement:{tagName:'BODY'},querySelector:()=>null,querySelectorAll:()=>[],addEventListener:(name,listener)=>documentEvents[name]=((previous)=>event=>{previous?.(event);listener(event);})(documentEvents[name]),getElementById(id){if(!elements.has(id))elements.set(id,{innerHTML:'',hidden:true,dataset:{},setAttribute(){},removeAttribute(){},focus(){}});return elements.get(id);}},setTimeout:()=>1,clearTimeout:()=>{},clearInterval:()=>{},setInterval:()=>1});
+  vm.runInContext(source,context);demand=demandPageBridge(requests,data=>events.message({source:parent,data:{channel:'dsh-project-runtime',...data}}));events.message({source:parent,data:{channel:'dsh-project-runtime',method:'active',input:{active:true,generation:1}}});
   vm.runInContext('patchHtml = (root, html) => { root.innerHTML = html; };',context);
-  return {requests,context,elements,documentEvents,action:(a,id)=>vm.runInContext('actions('+JSON.stringify(a)+','+JSON.stringify(id)+')',context),overlay:()=>elements.get('overlays').innerHTML,theme:(source,input)=>events.message({source:source==='parent'?parent:{},data:{channel:'dsh-project-runtime',method:'theme',input}}),root,content:()=>elements.get('app').innerHTML,async answer(response){const request=requests.shift();assert.ok(request);events.message({source:parent,data:{channel:'dsh-project-runtime',id:request.id,...response}});await new Promise(resolve=>setImmediate(resolve));},async retry(){await vm.runInContext("actions('reload')",context);},startRetry(){return vm.runInContext("actions('reload')",context);},startPoll(){return vm.runInContext('poll()',context);}};
+  return {requests,context,elements,documentEvents,seed:value=>demand.seed(value),action:(a,id)=>demand.action(a,()=>vm.runInContext('actions('+JSON.stringify(a)+','+JSON.stringify(id)+')',context)),overlay:()=>elements.get('overlays').innerHTML,theme:(source,input)=>events.message({source:source==='parent'?parent:{},data:{channel:'dsh-project-runtime',method:'theme',input}}),root,content:()=>elements.get('app').innerHTML,async answer(response){await demand.answer(response);},async retry(){await vm.runInContext("actions('reload')",context);},startRetry(){return demand.manual(()=>vm.runInContext("actions('reload')",context));},startPoll(){return demand.manual(()=>vm.runInContext('poll()',context));}};
 }
 const snapshot={projects:[],tasks:[],settings:{root:null,revision:0},nodes:[]};
 test('offline page offers local activity without false zero task counts or repeated role requests', async () => {
@@ -66,7 +68,7 @@ test('legacy task detail exposes temporary conversation and visible disabled ret
  await p.answer({value:{taskId:task.id,projectId:null,workspace:'/planner/temporary-tasks/task-1',generation:1,messages:[],turns:[],sessions:[]}});await open;
  assert.match(p.content(),/临时任务规划/);assert.match(p.content(),/返回上一位置/);assert.doesNotMatch(p.content(),/整理并继续/);
  await p.action('home');assert.equal(vm.runInContext('state.filter',p.context),'error');assert.equal(vm.runInContext('state.view',p.context),'hub');
- vm.runInContext("state.tasks[0].canRetry=false;state.tasks[0].retryDisabledReason='执行结果不确定，请先核实执行端'",p.context);await p.action('task',task.id);
+ p.seed({...snapshot,tasks:[{...task,canRetry:false,retryDisabledReason:'执行结果不确定，请先核实执行端'}]});await p.action('task',task.id);
  assert.match(p.overlay(),/重新执行/);assert.match(p.overlay(),/disabled aria-disabled="true"/);assert.match(p.overlay(),/执行结果不确定/);
 });
 
@@ -97,7 +99,7 @@ test('temporary creation form submits once and opens the created task; failure r
  let pending=p.action('create-temporary-confirm');const input={...p.requests[0].input};assert.equal(p.requests[0].method,'createTemporaryTask');assert.equal(input.description,task.description);assert.match(p.overlay(),/正在创建并规划/);
  await p.action('create-temporary-confirm');assert.equal(p.requests.length,1);
  await p.answer({error:'Connection failed'});await pending;assert.equal(p.elements.get('temporary-title').value,task.title);assert.equal(p.elements.get('temporary-description').value,task.description);
- pending=p.action('create-temporary-confirm');assert.equal(p.requests[0].input.commandId,input.commandId);await p.answer({value:{taskId:task.id,dispatchState:'queued'}});assert.equal(p.requests[0].method,'projectSnapshot');await p.answer({value:{...snapshot,settings:{root:'/projects',revision:1},tasks:[task]}});await pending;
+ pending=p.action('create-temporary-confirm');assert.equal(p.requests[0].input.commandId,input.commandId);await p.answer({value:{taskId:task.id,dispatchState:'queued'}});assert.equal(p.requests[0].method,'taskPage');await p.answer({value:{...snapshot,settings:{root:'/projects',revision:1},tasks:[task]}});await pending;
  assert.match(p.overlay(),/New task/);assert.equal(vm.runInContext('state.overlay.id',p.context),task.id);
 });
 
@@ -229,7 +231,7 @@ test('execution report renders Markdown safely and updates in place when supplem
  const next={...task,report:markdown,reportId:'supplement',reportSource:'supplement',materialsStatus:'received',reportHistory:[{reportId:'old',title:'Original',body:'Old **report**',recordedAt:'earlier'}]};
  const pending=p.startPoll();await p.answer({value:{...snapshot,tasks:[next]}});await pending;
  const html=p.overlay();assert.doesNotMatch(html,/<\/section>}<\/div>/,'no template delimiter leaks after the report');assert.equal((html.match(/<h3>执行报告<\/h3>/g)||[]).length,1);assert.doesNotMatch(html,/<h3>补交材料/);assert.doesNotMatch(html,/尚未收到执行报告/);
- for(const tag of ['<h1>Result</h1>','<strong>完成</strong>','<table>','<blockquote>','<ul>','<pre><code class="language-sh"','<details class="report-history">'])assert.ok(html.includes(tag),tag);
+ for(const tag of ['<h1>Result</h1>','<strong>完成</strong>','<table>','<blockquote>','<ul>','<pre><code class="language-sh"'])assert.ok(html.includes(tag),tag);
  assert.match(html,/已收到执行端补交/);assert.match(html,/target="_blank" rel="noopener noreferrer"/);assert.match(html,/&lt;script&gt;/);assert.doesNotMatch(html,/<script>|<img|href="javascript:/);
 });
 
@@ -402,7 +404,7 @@ test('related execution cards combine task and run with consistent project, stat
 test('diagnostic materials remain visibly unaccepted and never replace a validated run report',async()=>{
  const p=page(),t={id:'d',title:'Daily',project:'unassigned',status:'error',runId:'r',runState:'uncertain'};
  await p.answer({value:{...snapshot,tasks:[t],runs:[{id:'r',taskId:'d',state:'uncertain',diagnosticReport:{id:'diag',body:'Saved 24 summaries; child rejected'},settlementSummary:'Native result rejected: SCHEMA_VALIDATION'}]}});await p.action('task','d');assert.match(p.overlay(),/结果提交未通过校验/);assert.doesNotMatch(p.overlay(),/Saved 24 summaries/);await p.action('schedule-run','r');assert.match(p.overlay(),/Saved 24 summaries/);
- vm.runInContext("state.records.reports=[{id:'good',kind:'result',runId:'r',body:'Accepted report'}]",p.context);await p.action('schedule-run','r');assert.match(p.overlay(),/Accepted report/);assert.doesNotMatch(p.overlay().split('data-detail-group="process"')[0],/Saved 24 summaries/);
+ p.seed({...snapshot,tasks:[t],runs:[{id:'r',taskId:'d',state:'uncertain'}],reports:[{id:'good',taskId:'d',kind:'result',runId:'r',body:'Accepted report'}]});await p.action('schedule-run','r');assert.match(p.overlay(),/Accepted report/);assert.doesNotMatch(p.overlay().split('data-detail-group="process"')[0],/Saved 24 summaries/);
 });
 
 test('report retry settings save once with task revision and remain read-only on executors',async()=>{
@@ -472,7 +474,7 @@ test('schedule choices cascade by executor, model and effort; refresh keeps draf
 test('new project exposes real model choices without a default, preserves draft through directory browsing and failure, and submits selection once',async()=>{
  const p=page();await p.answer({value:{...snapshot,settings:{root:'/projects',revision:1}}});
  const catalog={defaultSelection:null,providers:[{id:'live',name:'Live',models:[{id:'real',name:'Real model',reasoningEfforts:['low','high']}]}]};
- let pending=p.action('create');assert.equal(p.requests[0].method,'conversationModels');await p.answer({value:catalog});await pending;
+ let pending=p.action('create');await new Promise(resolve=>setImmediate(resolve));assert.equal(p.requests[0].method,'conversationModels');await p.answer({value:catalog});await pending;
  assert.match(p.overlay(),/尚未配置默认统筹模型/);assert.match(p.overlay(),/项目工作区/);assert.match(p.overlay(),/创建项目<\/button>/);
  const form=p.overlay().match(/<form id="create-form">([\s\S]*?)<\/form>/)[1];for(const button of form.matchAll(/<button\b[^>]*>/g))assert.match(button[0],/type="button"/,'setup buttons must not implicitly submit project creation');
  vm.runInContext("document.getElementById('new-title');document.getElementById('new-goal');",p.context);p.elements.get('new-title').value='Saved name';p.elements.get('new-goal').value='Saved goal';
@@ -491,7 +493,7 @@ test('new project exposes real model choices without a default, preserves draft 
 });
 
 test('new project opens with no directory and remains actionable after a model catalog read error',async()=>{
- const p=page();await p.answer({value:snapshot});const pending=p.action('create');await p.answer({error:'目录暂不可用'});await pending;
+ const p=page();await p.answer({value:snapshot});const pending=p.action('create');await new Promise(resolve=>setImmediate(resolve));await p.answer({error:'目录暂不可用'});await pending;
  assert.match(p.overlay(),/项目工作区/);assert.match(p.overlay(),/刷新模型目录/);assert.match(p.overlay(),/目录暂不可用/);assert.match(p.overlay(),/模型设置/);
 });
 
@@ -524,7 +526,7 @@ test('project relationship graph stays expanded through updates and is independe
 test('relationship graph offers reachable first and last nodes for a large task history',async()=>{
  const p=page(),project={id:'p',title:'Large project',goal:'Goal',session:1,messages:[]};
  await p.answer({value:{...snapshot,projects:[project],tasks:Array.from({length:150},(_,i)=>({id:'t'+i,project:'p',title:'Task '+i,status:'done',node:'VPS',artifact:'Result '+i}))}});
- await p.action('project','p');assert.match(p.content(),/data-action="graph-scroll" data-id="end"/);assert.match(p.content(),/aria-label="产物：Result 149"/);
+ await p.action('project','p');assert.doesNotMatch(p.content(),/aria-label="产物：Result 149"/);await p.action('graph-more','p');assert.match(p.content(),/剩余 100/);await p.action('graph-more','p');await p.action('graph-more','p');assert.match(p.content(),/data-action="graph-scroll" data-id="end"/);assert.match(p.content(),/aria-label="产物：Result 149"/);
  const stage={scrollWidth:1180,scrollHeight:23800,scrollLeft:0,scrollTop:0,focus(){this.focused=true;}};
  vm.runInContext('document.querySelector',p.context);p.context.graphTestStage=stage;vm.runInContext("document.querySelector=selector=>selector==='.graph-stage'?graphTestStage:null",p.context);
  await p.action('graph-scroll','end');assert.equal(stage.scrollTop,23800);assert.equal(stage.scrollLeft,1180);assert.equal(stage.focused,true);
@@ -552,7 +554,7 @@ test('only a visible rendered report records its exact version; hidden history a
 test('coordinator defaults to root deliveries, preserves exact child attention and full records, and supports reversible presentation exceptions',async()=>{
  const p=page(),child={id:'child-delivery',parentTaskId:'root',project:'unassigned',title:'Child delivery',status:'review',runId:'child-run',showInCoordinator:false,unreadResultCount:1},root={id:'root',project:'unassigned',title:'User delivery',status:'done',showInCoordinator:true,unreadResultCount:1,childAttention:[{taskId:child.id,runId:'child-run',parentRunId:'old-parent',parentCreatedAt:'2026-10-14T23:00:00Z',state:'partial',node:'PC_AU',summary:'来源缺口'}]},internal={id:'tiny',parentTaskId:'root',project:'unassigned',title:'Internal step',delegationDisplay:'step',status:'done',showInCoordinator:false};
  const data={...snapshot,tasks:[root,child,internal],runs:[{id:'child-run',taskId:child.id,parentRunId:'old-parent',state:'partial',reviewStatus:'pending_user',createdAt:'2026-10-14T23:00:10Z'}]};
- await p.answer({value:data});assert.match(p.content(),/User delivery/);assert.doesNotMatch(p.content(),/data-action="task" data-id="child-delivery"/);assert.match(p.content(),/历史执行中有 1 项/);assert.match(p.content(),/已完成未读 <span>1/);
+ await p.answer({value:data});assert.match(p.content(),/User delivery/);assert.doesNotMatch(p.content(),/data-action="task" data-id="child-delivery"/);assert.match(p.content(),/相关执行中有 1 项/);assert.match(p.content(),/已完成未读 <span>1/);
  await p.action('task','root');assert.match(p.overlay(),/历史执行待核对/);await p.action('attention-open','root');assert.ok(p.overlay().includes(new Date(root.childAttention[0].parentCreatedAt).toLocaleString('zh-CN')));assert.match(p.overlay(),/data-action="schedule-run" data-id="old-parent"/);assert.doesNotMatch(p.overlay(),/data-id="child-run"/);
  await p.action('fullpanel');await p.action('panel-tab','tasks');assert.match(p.content(),/Child delivery/);assert.match(p.content(),/Internal step/);
  await p.action('task',child.id);assert.match(p.overlay(),/在主列表显示/);const pending=p.action('task-presentation',child.id);assert.equal(p.requests[0].method,'setTaskPresentation');assert.equal(p.requests[0].input.visibility,'primary');await p.answer({value:{}});await p.answer({value:{...data,tasks:[root,{...child,showInCoordinator:true},internal]}});await pending;
@@ -588,7 +590,7 @@ test('card hierarchy has project first, compact units, short type and actual dev
  await p.answer({value:{...snapshot,projects:[{id:'p',title:'Project first',messages:[]}],tasks:[t],runs:[{id:'root-run',taskId:t.id,executionDriver:'workflow'},{id:'child-a',taskId:'a',parentRunId:'root-run',node:'VPS'},{id:'child-b',taskId:'b',parentRunId:'root-run',node:'MBP'}]}});
  const html=vm.runInContext('boardCard(state.tasks[0])',p.context);assert.ok(html.indexOf('Project first')<html.indexOf('Task title'));assert.match(html,/2 d 06:33:07/);assert.doesNotMatch(html,/7秒|每次触发|按流程阶段执行/);assert.match(html,/周期任务/);assert.match(html,/>多个执行端</);assert.match(html,/board-card-unread/);
  assert.equal(vm.runInContext("elapsedText('2026-10-18T00:00:00Z','2026-10-18T00:00:59Z')",p.context),'0 d 00:00:59');assert.equal(vm.runInContext("elapsedText('2026-10-18T00:00:00Z','2026-10-18T01:00:00Z')",p.context),'0 d 01:00:00');assert.match(vm.runInContext("elapsedText('2026-10-18T00:00:00Z','2026-10-18T00:00:07Z')",p.context),/0 d 00:00:07/);
- vm.runInContext("state.records.runs=state.records.runs.filter(r=>r.id!=='child-b')",p.context);assert.equal(vm.runInContext('cardDeviceLabel(state.tasks[0])',p.context),'VPS');vm.runInContext('state.records.runs=[]',p.context);assert.equal(vm.runInContext('cardDeviceLabel(state.tasks[0])',p.context),'未记录');assert.equal(vm.runInContext("cardDeviceLabel({node:'VPS',runId:null})",p.context),'未记录','planned/candidate device is not execution evidence');
+ assert.equal(vm.runInContext("cardDeviceLabel({deviceLabel:'VPS',runId:'current'})",p.context),'VPS');assert.equal(vm.runInContext("cardDeviceLabel({deviceLabel:'未记录',node:'VPS',runId:null})",p.context),'未记录','planned/candidate device is not execution evidence');
 });
 
 test('card task types distinguish project tasks from temporary tasks and preserve specific types',()=>{
@@ -615,10 +617,10 @@ test('HTML preview is lazy, sandboxed and records reading only after the exact v
 
 test('project artifact nodes retain the exact report and Run when the Task latest changes',async()=>{
  const p=page(),task={id:'task',title:'Root',project:'p',status:'done',runId:'old-run',reportId:'old-report',report:'Old text',artifact:'Exact old report'},old={id:'old-report',taskId:'task',runId:'old-run',kind:'result',body:'Old text',hasHtmlPresentation:true,contentVersion:'b'.repeat(64),unread:true};
- await p.answer({value:{...snapshot,projects:[{id:'p',title:'Project',messages:[]}],tasks:[task],runs:[{id:'old-run',taskId:'task',state:'succeeded'},{id:'new-run',taskId:'task',state:'succeeded'}],reports:[old,{id:'new-report',taskId:'task',runId:'new-run',kind:'result',body:'New unrelated report'}]}});await p.action('project','p');assert.match(p.content(),/data-action="report" data-id="\{&quot;taskId&quot;:&quot;task&quot;,&quot;runId&quot;:&quot;old-run&quot;,&quot;reportId&quot;:&quot;old-report&quot;\}"/);
- const target=JSON.stringify({taskId:'task',runId:'old-run',reportId:'old-report'});vm.runInContext("Object.assign(state.tasks[0],{runId:'new-run',reportId:'new-report',report:'New unrelated report'})",p.context);await p.action('report',target);assert.match(p.overlay(),/data-action="report-preview" data-id="old-report"/);assert.doesNotMatch(p.overlay(),/New unrelated report/);
+ await p.answer({value:{...snapshot,projects:[{id:'p',title:'Project',messages:[]}],tasks:[task],runs:[{id:'old-run',taskId:'task',state:'succeeded'},{id:'new-run',taskId:'task',state:'succeeded'}],reports:[old,{id:'new-report',taskId:'task',runId:'new-run',kind:'result',body:'New unrelated report'}]}});await p.action('project','p');await p.action('graph-more','p');assert.match(p.content(),/data-action="report" data-id="\{&quot;taskId&quot;:&quot;task&quot;,&quot;runId&quot;:&quot;old-run&quot;,&quot;reportId&quot;:&quot;old-report&quot;\}"/);
+ const target=JSON.stringify({taskId:'task',runId:'old-run',reportId:'old-report'});p.seed({...snapshot,projects:[{id:'p',title:'Project',messages:[]}],tasks:[{...task,runId:'new-run',reportId:'new-report',report:'New unrelated report'}],runs:[{id:'old-run',taskId:'task',state:'succeeded'},{id:'new-run',taskId:'task',state:'succeeded'}],reports:[old,{id:'new-report',taskId:'task',runId:'new-run',kind:'result',body:'New unrelated report'}]});await p.action('report',target);assert.match(p.overlay(),/data-action="report-preview" data-id="old-report"/);assert.doesNotMatch(p.overlay(),/New unrelated report/);
  const pending=p.action('report-preview','old-report');assert.equal(p.requests[0].input.reportId,'old-report');await p.answer({value:{reportId:'old-report',taskId:'task',runId:'old-run',contentVersion:old.contentVersion,presentation:{mediaType:'text/html',body:'<h1>Original artifact</h1>'}}});await pending;assert.match(p.overlay(),/Original artifact/);assert.doesNotMatch(p.overlay(),/New unrelated report/);
- vm.runInContext("state.records.reports.push({id:'supplement',taskId:'task',runId:'old-run',kind:'note',body:'Exact retained material'})",p.context);await p.action('report',JSON.stringify({taskId:'task',runId:'old-run',reportId:'supplement'}));assert.match(p.overlay(),/执行材料/);assert.match(p.overlay(),/Exact retained material/);assert.doesNotMatch(p.overlay(),/New unrelated report/);
+ p.seed({...snapshot,tasks:[task],runs:[{id:'old-run',taskId:'task',state:'succeeded'}],reports:[old,{id:'supplement',taskId:'task',runId:'old-run',kind:'note',body:'Exact retained material'}]});await p.action('report',JSON.stringify({taskId:'task',runId:'old-run',reportId:'supplement'}));assert.match(p.overlay(),/执行材料/);assert.match(p.overlay(),/Exact retained material/);assert.doesNotMatch(p.overlay(),/New unrelated report/);
 });
 
 
@@ -641,8 +643,8 @@ test('project results show at most five exact delivery reports before process an
  const p=page(),project={id:'p',title:'Project',goal:'Project objective',next:'Continue',messages:[]},root={id:'root',project:'p',title:'Delivery',status:'done',runId:'r6'},internal={id:'internal',project:'p',parentTaskId:'root',title:'Internal child',showInCoordinator:false,status:'done'},promoted={id:'promoted',project:'p',parentTaskId:'root',title:'Independent delivery',showInCoordinator:true,status:'done'};
  const runs=Array.from({length:7},(_,i)=>({id:'r'+i,taskId:'root',state:'succeeded',createdAt:'2026-10-'+String(10+i).padStart(2,'0')+'T00:00:00Z'}));runs.push({id:'internal-run',taskId:internal.id,state:'succeeded',createdAt:'2026-10-18T00:00:00Z'},{id:'promoted-run',taskId:promoted.id,state:'succeeded',createdAt:'2026-10-17T00:00:00Z'});
  const reports=runs.map((r,i)=>({id:'report'+i,taskId:r.taskId,runId:r.id,kind:'result',title:'Report '+i,body:'Summary '+i,hasHtmlPresentation:true,unread:true,contentVersion:'d'.repeat(64)}));reports.push({id:'note',taskId:'root',runId:'r6',kind:'note',body:'Supplemental only'});
- await p.answer({value:{...snapshot,projects:[project],tasks:[root,internal,promoted],runs,reports}});await p.action('project','p');const html=p.content(),results=html.split('data-detail-group="result"')[1].split('data-detail-group="process"')[0];assert.match(html,/项目概览/);assert.ok(html.indexOf('Project objective')<html.indexOf('data-detail-group="result"'));assert.equal((results.match(/data-action="report"/g)||[]).length,5);assert.match(results,/Independent delivery/);assert.doesNotMatch(results,/Internal child|Supplemental only|<iframe|data-readable-report/);assert.match(results,/&quot;runId&quot;:&quot;r6&quot;,&quot;reportId&quot;:&quot;report6&quot;/);assert.equal(p.requests.length,0);
- vm.runInContext("state.tasks[0].runId='different-latest'",p.context);await p.action('report',JSON.stringify({taskId:'root',runId:'r6',reportId:'report6'}));assert.match(p.overlay(),/Summary 6/);assert.doesNotMatch(p.overlay(),/Summary 0/);assert.equal(p.requests.length,0);
+ await p.answer({value:{...snapshot,projects:[project],tasks:[root,internal,promoted],runs,reports}});await p.action('project','p');const html=p.content(),results=html.split('data-detail-group="result"')[1].split('data-detail-group="process"')[0];assert.match(html,/项目概览/);assert.ok(html.indexOf('Project objective')<html.indexOf('data-detail-group="result"'));assert.equal((results.match(/data-action="report"/g)||[]).length,5);assert.match(results,/Report 8/);assert.doesNotMatch(results,/Internal child|Supplemental only|<iframe|data-readable-report/);assert.match(results,/&quot;runId&quot;:&quot;r6&quot;,&quot;reportId&quot;:&quot;report6&quot;/);assert.equal(p.requests.length,0);
+ p.seed({...snapshot,projects:[project],tasks:[{...root,runId:'different-latest'},internal,promoted],runs,reports});await p.action('report',JSON.stringify({taskId:'root',runId:'r6',reportId:'report6'}));assert.match(p.overlay(),/Summary 6/);assert.doesNotMatch(p.overlay(),/Summary 0/);assert.equal(p.requests.length,0);
  const empty=page();await empty.answer({value:{...snapshot,projects:[project],tasks:[internal],runs:[runs[7]],reports:[reports[7]]}});await empty.action('project','p');assert.match(empty.content(),/尚无交付结果/);
 });
 
@@ -687,12 +689,12 @@ test('executor view stays local while disconnected and cannot select an absent s
  assert.match(p.content(),/data-id="planner"[^>]*disabled/);assert.match(p.content(),/data-id="executor" aria-pressed="true"/);
  assert.match(p.content(),/本机没有记录不能证明调度端没有任务/);assert.match(p.content(),/领取记录提醒/);assert.match(p.content(),/心跳已确认/);
  await p.action('task-view','planner');assert.equal(p.requests.length,0);
- const poll=p.startPoll();assert.deepEqual(JSON.parse(JSON.stringify(p.requests[0].input)),{view:'executor'});await p.answer({value:executorSnapshot});await poll;
+ const poll=p.startPoll();assert.equal(p.requests[0].input.view,'executor');assert.equal(p.requests[0].input.presentation,'all');await p.answer({value:executorSnapshot});await poll;
  assert.match(p.content(),/data-id="executor" aria-pressed="true"/);
 });
 test('both identities switch read views without settings writes and retain selection on refresh',async()=>{
  const p=page();await p.answer({value:{...snapshot,viewContext:{role:'planner'},viewCapabilities:{planner:true,executor:true}}});
- const switching=p.action('task-view','executor');assert.equal(p.requests[0].method,'projectSnapshot');assert.equal(p.requests[0].input.view,'executor');
+ const switching=p.action('task-view','executor');assert.equal(p.requests[0].method,'taskBoard');assert.equal(p.requests[0].input.view,'executor');
  await p.answer({value:{...executorSnapshot,viewCapabilities:{planner:true,executor:true}}});await switching;
  assert.match(p.content(),/data-id="executor" aria-pressed="true"/);assert.doesNotMatch(p.content(),/data-id="planner"[^>]*disabled/);
  const poll=p.startPoll();assert.equal(p.requests[0].input.view,'executor');await p.answer({error:'local read failure'});await poll;
@@ -742,7 +744,7 @@ test('task details expose original owner and actual execution sessions with node
 test('executor activity offers read-only navigation to proven native sessions in the local snapshot',async()=>{
  const p=page(),task={id:'local-task',title:'Local T19',project:'unassigned',status:'error',runId:'local-run',source:'local-recovery',report:'TIMEOUT'};
  await p.answer({value:{...snapshot,viewContext:{nodeId:'MBP',role:'executor',scope:'local'},viewCapabilities:{planner:true,executor:true},tasks:[task],runs:[{id:'local-run',taskId:task.id,node:'MBP',executionDriver:'dsh',sessionIds:['actual-session'],state:'failed',status:'error'}]}});
- assert.match(p.content(),/本机执行会话/);assert.match(p.content(),/打开原生会话/);
+ await p.action('task',task.id);assert.match(p.overlay(),/执行会话/);assert.match(p.overlay(),/打开原生会话/);
  const open=p.action('task-session-open',JSON.stringify({view:'executor',taskId:task.id,nodeId:'MBP',sessionId:'actual-session'}));
  assert.equal(p.requests[0].method,'projectOpenTaskSession');assert.equal(p.requests[0].input.view,'executor');await p.answer({value:{opened:true}});await open;
 });
@@ -787,7 +789,7 @@ test('partial cards preserve attention while distinguishing execution failure an
  await p.answer({value:{...snapshot,nodes:[{nodeId:'local',displayName:'aws-vps',state:'online'}],tasks:[partial,{id:'failed-card',project:'unassigned',title:'Failed work',status:'error',runState:'failed',stateLabel:'执行失败',runId:'failed-run'}],runs:[{id:'partial-run',taskId:partial.id,node:'local',state:'partial'},{id:'failed-run',taskId:'failed-card',node:'unknown-node',state:'failed'}]}});
  assert.match(p.content(),/aria-label="需处理"/);assert.match(p.content(),/部分完成 · 报告已生成/);assert.match(p.content(),/执行失败/);assert.doesNotMatch(p.content(),/执行异常/);
  assert.equal(vm.runInContext("cardDeviceLabel(state.tasks[0])",p.context),'aws-vps');
- assert.equal(vm.runInContext("state.records.runs[0].node",p.context),'local');
+ await p.action('task',partial.id);assert.equal(vm.runInContext("state.records.runs[0].node",p.context),'local');
  assert.equal(vm.runInContext("cardDeviceLabel(state.tasks[1])",p.context),'unknown-node');
  assert.equal(vm.runInContext("nodeDisplayName('local')",p.context),'aws-vps');
  assert.equal(vm.runInContext("nodeDisplayName('<unregistered>')",p.context),'<unregistered>');

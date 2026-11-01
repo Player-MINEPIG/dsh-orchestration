@@ -1,3 +1,4 @@
+import type { SessionTaskHeader, SessionTaskHeaderSource } from "./session-demand-reads.js";
 import { ExecutionModelChoice } from "./execution-models.js";
 import { Context, Service } from "@deepseek-ai/cordis";
 import z from "@deepseek-ai/schemastery";
@@ -7,7 +8,7 @@ import type {} from "@deepseek-ai/dsh-jobs";
 import type {} from "@deepseek-ai/dsh-sandbox-policy";
 import type {} from "@deepseek-ai/dsh-subprocess";
 import { DatabaseSync } from "node:sqlite";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import { chmodSync, copyFileSync, existsSync, mkdirSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { homedir } from "node:os";
@@ -66,6 +67,15 @@ export function localCodexProfile(task: Pick<LocalCodexTask, "model" | "reasonin
   return `model = ${JSON.stringify(task.model)}\nmodel_reasoning_effort = ${JSON.stringify(task.reasoningEffort)}\nsandbox_mode = ${JSON.stringify(permission.sandbox)}\napproval_policy = ${JSON.stringify(permission.approval)}\napprovals_reviewer = ${JSON.stringify(permission.reviewer)}\ncli_auth_credentials_store = "file"\nproject_root_markers = []\n[windows]\nsandbox = "unelevated"\n[features]\nplugins = false\napps = false\nremote_plugin = false\nhooks = false\n`;
 }
 
+export function localCodexRow(task:LocalCodexTask) {
+  return {id:task.id,title:task.title,description:task.description,status:task.status,direct:true,
+    stateLabel:({queued:"等待开始",running:"执行中",review:"待确认",done:"已完成",error:"需处理",cancelled:"已取消",unknown:"状态待核实"})[task.status],
+    owner:"local-codex" as const,source:"local-codex",node:"本机 · Codex Desktop",model:task.model,reasoningEffort:task.reasoningEffort,
+    parentMode:task.parentMode,permission:localCodexPermission(task.parentMode),time:task.createdAt,
+    returnedAt:task.returnedAt??(["review","done","error","cancelled"].includes(task.status)?task.updatedAt:undefined),
+    report:task.report,permissionLabel:localCodexPermission(task.parentMode).label,jobId:task.jobId,threadId:task.threadId,cwd:task.cwd,acceptance:task.acceptance};
+}
+
 /** Separate local-only storage: no task/run admission, outbox, scheduler or coordinator calls. */
 export class LocalCodexStore {
   readonly db: DatabaseSync;
@@ -73,9 +83,11 @@ export class LocalCodexStore {
     if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
     this.db = new DatabaseSync(path);
     this.db.exec("CREATE TABLE IF NOT EXISTS session_codex_tasks(id TEXT PRIMARY KEY, session_id TEXT NOT NULL, request_id TEXT NOT NULL, data TEXT NOT NULL, UNIQUE(session_id, request_id))");
-    for (const row of this.db.prepare("SELECT data FROM session_codex_tasks").all()) {
-      const task = JSON.parse(String(row.data)) as LocalCodexTask;
-      if (["queued", "running"].includes(task.status)) this.save({ ...task, status: "unknown", report: "服务已重启，先前执行状态待核实；未自动重跑。" });
+    this.prepareHeaders();
+    this.db.function("local_codex_contains",{deterministic:true},(value,needle)=>String(value??"").toLowerCase().includes(String(needle??"").toLowerCase())?1:0);
+    for (const row of this.db.prepare("SELECT id,session_id FROM session_codex_headers WHERE status IN ('queued','running')").all()) {
+      const task = this.get(String(row.session_id),String(row.id));
+      if(task)this.save({...task,status:"unknown",report:"服务已重启，先前执行状态待核实；未自动重跑。"});
     }
   }
   save(task: LocalCodexTask) {
@@ -84,12 +96,60 @@ export class LocalCodexStore {
     this.db.prepare("INSERT INTO session_codex_tasks VALUES (?,?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data")
       .run(task.id, task.sessionId, task.requestId, JSON.stringify(task));
   }
+  private prepareHeaders() {
+    this.db.exec("CREATE TABLE IF NOT EXISTS session_codex_header_meta(singleton INTEGER PRIMARY KEY CHECK(singleton=1),revision INTEGER NOT NULL,version INTEGER NOT NULL)");
+    if(!this.db.prepare("SELECT 1 FROM session_codex_header_meta WHERE singleton=1 AND version=2").get())this.db.exec("DROP TRIGGER IF EXISTS session_codex_header_insert; DROP TRIGGER IF EXISTS session_codex_header_update; DROP TRIGGER IF EXISTS session_codex_header_delete");
+    const returned="COALESCE(json_extract(NEW.data,'$.returnedAt'),CASE WHEN json_extract(NEW.data,'$.status') IN ('review','done','error','cancelled') THEN json_extract(NEW.data,'$.updatedAt') END)";
+    const label="CASE json_extract(NEW.data,'$.status') WHEN 'queued' THEN '等待开始' WHEN 'running' THEN '执行中' WHEN 'review' THEN '待确认' WHEN 'done' THEN '已完成' WHEN 'error' THEN '需处理' WHEN 'cancelled' THEN '已取消' ELSE '状态待核实' END";
+    const select=`NEW.id,NEW.session_id,json_extract(NEW.data,'$.status'),COALESCE(unixepoch(${returned},'subsec')*1000,0),COALESCE(unixepoch(json_extract(NEW.data,'$.createdAt'),'subsec')*1000,0),json_extract(NEW.data,'$.title')||' 本机 · Codex Desktop '||NEW.id||' '||${label},json_object('id',NEW.id,'title',json_extract(NEW.data,'$.title'),'status',json_extract(NEW.data,'$.status'),'direct',json('true'),'owner','local-codex','source','local-codex','node','本机 · Codex Desktop','model',json_extract(NEW.data,'$.model'),'reasoningEffort',json_extract(NEW.data,'$.reasoningEffort'),'time',json_extract(NEW.data,'$.createdAt'),'returnedAt',${returned},'stateLabel',${label},'detailVersion','2:'||COALESCE((SELECT revision+1 FROM session_codex_header_meta WHERE singleton=1),1))`;
+    this.db.exec(`CREATE TABLE IF NOT EXISTS session_codex_headers(id TEXT PRIMARY KEY,session_id TEXT NOT NULL,status TEXT NOT NULL,returned_sort REAL NOT NULL,time_sort REAL NOT NULL,search_text TEXT NOT NULL,data TEXT NOT NULL);
+      CREATE INDEX IF NOT EXISTS session_codex_header_order ON session_codex_headers(session_id,returned_sort DESC,time_sort DESC,id);
+      CREATE INDEX IF NOT EXISTS session_codex_header_status ON session_codex_headers(session_id,status,returned_sort DESC,time_sort DESC,id);
+      CREATE TABLE IF NOT EXISTS session_codex_header_meta(singleton INTEGER PRIMARY KEY CHECK(singleton=1),revision INTEGER NOT NULL,version INTEGER NOT NULL);
+      CREATE TRIGGER IF NOT EXISTS session_codex_header_insert AFTER INSERT ON session_codex_tasks BEGIN INSERT OR REPLACE INTO session_codex_headers SELECT ${select}; UPDATE session_codex_header_meta SET revision=revision+1 WHERE singleton=1; END;
+      CREATE TRIGGER IF NOT EXISTS session_codex_header_update AFTER UPDATE ON session_codex_tasks BEGIN DELETE FROM session_codex_headers WHERE id=OLD.id; INSERT OR REPLACE INTO session_codex_headers SELECT ${select}; UPDATE session_codex_header_meta SET revision=revision+1 WHERE singleton=1; END;
+      CREATE TRIGGER IF NOT EXISTS session_codex_header_delete AFTER DELETE ON session_codex_tasks BEGIN DELETE FROM session_codex_headers WHERE id=OLD.id; UPDATE session_codex_header_meta SET revision=revision+1 WHERE singleton=1; END;`);
+    if(!this.db.prepare("SELECT 1 FROM session_codex_header_meta WHERE singleton=1 AND version=2").get()) {
+      this.db.exec("BEGIN IMMEDIATE");
+      try {
+        this.db.exec("DELETE FROM session_codex_headers");
+        this.db.exec(`INSERT INTO session_codex_headers SELECT ${select.replaceAll('NEW.','source.')} FROM session_codex_tasks source`);
+        this.db.exec("INSERT OR REPLACE INTO session_codex_header_meta VALUES(1,1,2); COMMIT");
+      } catch(error) {this.db.exec("ROLLBACK");throw error;}
+    }
+  }
+  get(sessionId:string,taskId:string):LocalCodexTask|undefined {
+    const row=this.db.prepare("SELECT data FROM session_codex_tasks WHERE session_id=? AND id=?").get(sessionId,taskId);
+    return row?JSON.parse(String(row.data)):undefined;
+  }
+  byRequest(sessionId:string,requestId:string):LocalCodexTask|undefined {
+    const row=this.db.prepare("SELECT data FROM session_codex_tasks WHERE session_id=? AND request_id=?").get(sessionId,requestId);
+    return row?JSON.parse(String(row.data)):undefined;
+  }
+  headerSource(sessionId:string):SessionTaskHeaderSource {
+    return {readHeaders:query=>{
+      const status=query.status&&query.status!=="all"?query.status:null,search=query.search||"";
+      const where="session_id=? AND (? IS NULL OR status=?) AND (?='' OR local_codex_contains(search_text,?)=1)",args=[sessionId,status,status,search,search];
+      const counts:Record<string,number>={all:0};
+      for(const row of this.db.prepare("SELECT status,COUNT(*) n FROM session_codex_headers WHERE session_id=? GROUP BY status").all(sessionId)){counts[String(row.status)]=Number(row.n);counts.all=(counts.all??0)+Number(row.n);}
+      const total=Number(this.db.prepare(`SELECT COUNT(*) n FROM session_codex_headers WHERE ${where}`).get(...args)?.n??0);
+      const items:SessionTaskHeader[]=this.db.prepare(`SELECT data FROM session_codex_headers WHERE ${where} ORDER BY returned_sort DESC,time_sort DESC,id LIMIT ? OFFSET ?`).all(...args,query.limit,query.offset).map(row=>JSON.parse(String(row.data)));
+      const hash=createHash("sha256");
+      for(const row of this.db.prepare("SELECT id,data FROM session_codex_headers WHERE session_id=? ORDER BY id").iterate(sessionId))hash.update(JSON.stringify(row));
+      const revision=hash.digest("hex");
+      return {items,total,counts,directCount:counts.all??0,unavailableTasks:0,revision,sampledAt:new Date().toISOString()};
+    }};
+  }
+  detail(sessionId:string,taskId:string) {
+    const task=this.get(sessionId,taskId);
+    return task?localCodexRow(task):undefined;
+  }
   list(sessionId: string): LocalCodexTask[] {
     return this.db.prepare("SELECT data FROM session_codex_tasks WHERE session_id=? ORDER BY rowid").all(sessionId).map(row => JSON.parse(String(row.data)));
   }
   accept(sessionId: string, taskId: string, evidence: string) {
     if (!evidence.trim() || evidence.length > 8000) throw new Error("Provide bounded verification evidence before accepting the task");
-    const task = this.list(sessionId).find(task => task.id === taskId);
+    const task = this.get(sessionId,taskId);
     if (!task) throw new Error("Local task not found in this parent session");
     if (task.status === "done" && task.acceptance?.evidence === evidence) return task;
     if (task.status !== "review") throw new Error("Only a returned result awaiting review can be accepted");
@@ -99,19 +159,7 @@ export class LocalCodexStore {
     this.save(task);
     return task;
   }
-  rows(sessionId: string) {
-    return this.list(sessionId).map(task => ({
-      id: task.id, title: task.title, description: task.description, status: task.status, direct: true,
-      stateLabel: ({ queued: "等待开始", running: "执行中", review: "待确认", done: "已完成", error: "需处理", cancelled: "已取消", unknown: "状态待核实" })[task.status],
-      source: "local-codex", node: "本机 · Codex Desktop", model: task.model, reasoningEffort: task.reasoningEffort,
-      parentMode: task.parentMode, permission: localCodexPermission(task.parentMode),
-      time: task.createdAt,
-      returnedAt: task.returnedAt ?? (["review", "done", "error", "cancelled"].includes(task.status) ? task.updatedAt : undefined),
-      report: task.report, permissionLabel: localCodexPermission(task.parentMode).label,
-      jobId: task.jobId, threadId: task.threadId, cwd: task.cwd,
-      acceptance: task.acceptance,
-    }));
-  }
+  rows(sessionId: string) { return this.list(sessionId).map(localCodexRow); }
 }
 
 /** Bounded JSONL fold: process exit alone is never a successful task result. */
@@ -166,7 +214,7 @@ export class LocalCodexService extends Service {
     if(requested && (requested.provider!=="openai" || (requested.backend!==undefined && requested.backend!=="codex") || (requested.kind!==undefined && requested.kind!=="official-codex") || requested.resume))throw new Error("Local Codex requires provider=openai and backend=codex without resume");
     if(requested && input.reasoningEffort!==undefined)throw new Error("Use executionModel only; reasoningEffort is a legacy alias");
     if(requested && !/^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,199}$/.test(requested.model))throw new Error("Invalid Codex model");
-    const prior = this.store.list(String(agent.id)).find(task => task.requestId === input.requestId);
+    const prior = this.store.byRequest(String(agent.id),input.requestId);
     if (prior) {
       if ((JSON.stringify(requested ?? null)!==JSON.stringify(prior.requestedModel ?? null)) || prior.title !== input.title || prior.description !== input.prompt || prior.cwd !== cwd || (input.reasoningEffort !== undefined && prior.reasoningEffort !== input.reasoningEffort)) throw new Error("requestId already used with different instructions or reasoningEffort");
       return this.receipt(prior);

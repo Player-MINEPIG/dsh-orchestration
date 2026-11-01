@@ -1,3 +1,4 @@
+import {demandPageBridge} from "../../packages/task-system/test/demand-page-fixture.mjs";
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { resolve, join } from 'node:path';
@@ -10,7 +11,7 @@ const candidate = readFileSync(new URL('../../packages/task-system/dist/project-
 const baseline = process.env.DSH_BASELINE_PROJECT_PAGE && readFileSync(process.env.DSH_BASELINE_PROJECT_PAGE, 'utf8');
 const results = [];
 const selectedTitle = 'Stable selected task title';
-const task = (id, title, status = 'running', time = '2026-10-23T00:00:00Z') => ({ id, title, status, time, project: 'unassigned' });
+const task = (id, title, status = 'running', time = '2026-10-23T00:00:00Z') => ({ id, title, status, time, project: 'unassigned', ...(id==='selected'?{runId:'run-selected',runState:'running'}:{}) });
  let activePage;
  try {
  for (const [label, html] of [...(baseline ? [['baseline', baseline]] : []), ['candidate', candidate]]) {
@@ -19,16 +20,23 @@ const task = (id, title, status = 'running', time = '2026-10-23T00:00:00Z') => (
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   let reads = 0, failure = false;
-  let snapshot = { projects: [], settings: { root: null, revision: 0 }, tasks: [{...task('selected', selectedTitle),report:'Stable report paragraph',reportId:'report-selected'}, task('other', 'Other task')], nodes: [] };
-  await page.exposeFunction('fixtureRead', () => {
+  let snapshot = { runs:[{id:'run-selected',taskId:'selected',state:'running',createdAt:'2026-10-23T00:00:00Z'}],projects: [], settings: { root: null, revision: 0 }, tasks: [{...task('selected', selectedTitle),report:'Stable report paragraph',reportId:'report-selected'}, task('other', 'Other task')], nodes: [] };
+  await page.exposeFunction('fixtureRead', async request => {
    reads++;
-   return failure ? { error: 'Temporary read failure' } : { value: { ...snapshot, nodes: [{ observedAt: reads }] } };
+   if(failure)return {error:'Temporary read failure'};
+   if(request.method==='projectSnapshot')return {value:{...snapshot,nodes:[{observedAt:reads}]}};
+   return new Promise(resolve=>{
+    const requests=[],bridge=demandPageBridge(requests,response=>resolve(response));
+    bridge.send(request);bridge.answer({value:{...snapshot,reports:snapshot.tasks.filter(task=>task.reportId).map(task=>({id:task.reportId,taskId:task.id,runId:task.runId,kind:'result',title:'任务报告',body:task.report,contentVersion:task.report})),nodes:[{observedAt:reads}]}});
+   });
   });
   await page.addInitScript(() => {
    window.postMessage = async request => {
-    if (request?.channel !== 'dsh-project-runtime' || request.method !== 'projectSnapshot') return;
-    const response = await window.fixtureRead();
-    window.dispatchEvent(new MessageEvent('message', { source: window, data: { channel: 'dsh-project-runtime', id: request.id, ...response } }));
+    if(request?.channel!=='dsh-project-runtime')return;
+    if(request.method==='ready'){window.dispatchEvent(new MessageEvent('message',{source:window,data:{channel:request.channel,method:'active',input:{active:true,generation:1}}}));return;}
+    if(!request.id)return;
+    const response=await window.fixtureRead(request);
+    window.dispatchEvent(new MessageEvent('message',{source:window,data:{channel:request.channel,id:request.id,...response}}));
    };
   });
   await page.route('http://localhost:43191/**', route => route.fulfill({ contentType: 'text/html', body: html }));
@@ -76,15 +84,25 @@ const task = (id, title, status = 'running', time = '2026-10-23T00:00:00Z') => (
    const range = document.createRange(); range.selectNodeContents(node); getSelection().removeAllRanges(); getSelection().addRange(range);
    window.selectedReportNode = node;
   });
-  snapshot = { ...snapshot, tasks: snapshot.tasks.map(t => t.id === 'selected' ? {...t,maxResultRetries:4,reportHistory:[{title:'Prior report',body:'Older report body'}]} : t) };
+  snapshot = { ...snapshot, tasks: snapshot.tasks.map(t => t.id === 'selected' ? {...t,maxResultRetries:4,reportHistory:[{id:'report-older',runId:'run-selected',contentVersion:'older-v1',title:'Prior report',body:'Older report body'}]} : t) };
   await page.getByText('自动重新执行最多 4 次', {exact:false}).waitFor();
-  await page.getByText('Older report body', {exact:true}).waitFor({state:'attached'});
+  await page.getByRole('button',{name:/Prior report/}).waitFor();
+  assert.equal(await page.getByText('Older report body',{exact:true}).count(),0,'history headers must not eagerly download report bodies');
   assert.equal(await page.evaluate(() => selectedReportNode.isConnected && getSelection().toString()), 'Stable report paragraph');
   await page.screenshot({path:resolve(output,'selected-report-with-updated-details.png')});
   snapshot = { ...snapshot, tasks: snapshot.tasks.map(t => t.id === 'selected' ? {...t,report:'Updated report paragraph'} : t) };
   await page.getByText('Updated report paragraph', {exact:true}).waitFor();
   assert.notEqual(await page.evaluate(() => getSelection().toString()), 'Stable report paragraph');
-  await page.getByRole('button', { name: '关闭详情', exact: true }).click();
+  await page.getByRole('button',{name:/Prior report/}).click();
+  await page.getByRole('dialog').getByText('Older report body',{exact:true}).waitFor();
+  snapshot = {...snapshot,tasks:snapshot.tasks.map(t=>t.id==='selected'?{...t,report:'Newest report while old selection stays pinned'}:t)};
+  await page.waitForTimeout(3400);
+  await page.getByRole('dialog').getByText('Older report body',{exact:true}).waitFor();
+  assert.equal(await page.getByRole('dialog').getByText('Newest report while old selection stays pinned',{exact:true}).count(),0,'visible polling preserves the explicitly selected historical report');
+  await page.screenshot({path:resolve(output,'explicit-historical-report-remains-selected.png')});
+
+  for(let depth=0;depth<3&&await page.getByRole('button',{name:'关闭详情',exact:true}).count();depth++)await page.getByRole('button',{name:'关闭详情',exact:true}).click();
+  await page.getByRole('dialog').waitFor({state:'detached'});
   await selectTitle();
   snapshot = { ...snapshot, tasks: snapshot.tasks.map(t => t.id === 'selected' ? { ...t, title: 'Selected title changed' } : t) };
   await page.getByText('Selected title changed', { exact: true }).waitFor();
@@ -103,7 +121,7 @@ const task = (id, title, status = 'running', time = '2026-10-23T00:00:00Z') => (
   await page.waitForTimeout(1200);
   assert.equal(await page.evaluate(() => document.getElementById('elapsed-fixture').firstChild === elapsedNode && getSelection().toString()), timerText);
   assert.deepEqual(errors, []);
-  results.push({ label, reads, initial, heartbeat, concurrentUpdate, reordered, recovered, unchangedElapsedNodeRetained: true, firstClickOpensTask: true, selectedReportSurvivesOtherDetailsUpdate: true, changedAndRemovedTextNotRestored: true });
+  results.push({ label, reads, initial, heartbeat, concurrentUpdate, reordered, recovered, unchangedElapsedNodeRetained: true, firstClickOpensTask: true, selectedReportSurvivesOtherDetailsUpdate: true, explicitHistoricalReportRemainsSelected: true, historicalBodiesReadOnOpenOnly: true, changedAndRemovedTextNotRestored: true });
   await page.close();
  }
  writeFileSync(resolve(output, 'browser.json'), JSON.stringify(results, null, 2) + '\n');

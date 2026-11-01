@@ -335,10 +335,10 @@ test('signed native approval holds the live external call and rejects an allowed
     ] });
     const ledger = TaskLedger.open(join(h.dir, 'authority.sqlite'), { role: 'planner', nodeId: 'planner' });
     const stores = ['approval-server', 'approval-client', 'approval-worker'].map(name => new RecoveryStore(join(h.dir, `${name}.sqlite`)));
-    let effects = 0, delayed = false, worker, client, gateway;
+    let effects = 0, delayed = false, operatorResponded = false, approvalExpiresAt = 0, lateResponseReturnedAt = 0, delayedReply, worker, client, gateway;
     try {
       await h.ctx.loader.create({ id: 'approval', name: '@deepseek-ai/dsh-user-approval', config: { policy: 'ask' } });
-      await h.ctx.loader.create({ id: 'bridge', name: pathToFileURL(resolve('packages/task-system/dist/approval-bridge.js')).href, config: { enabled: true, reviewableTools: [{ toolName: 'remote_review', argumentKeys: ['operation'] }], timeoutMs: late ? 200 : 3000, pollIntervalMs: 20 } });
+      await h.ctx.loader.create({ id: 'bridge', name: pathToFileURL(resolve('packages/task-system/dist/approval-bridge.js')).href, config: { enabled: true, reviewableTools: [{ toolName: 'remote_review', argumentKeys: ['operation'] }], timeoutMs: late ? 1000 : 3000, pollIntervalMs: 20 } });
       await h.ctx.loader.await();
       const fixture = h.ctx.plugin({ name: 'remote-approval-effect', inject: ['tools', 'approval'], apply(ctx) { ctx.tools.register(defineTool({ name: 'remote_review', description: 'Offline approval fixture', parameters: { operation: { type: 'string', required: true } }, output: { schema: { type: 'json' }, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] }, execute: async (_args, exec) => { const decision = await ctx.approval.request({ agent: exec.agent, toolName: 'remote_review', callId: exec.callId, reason: 'One configured fixture effect', signal: exec.signal }); if (decision !== 'allowed-once') return { executed: false, decision }; effects++; return { executed: true }; } })); } });
       await fixture.await();
@@ -352,18 +352,29 @@ test('signed native approval holds the live external call and rejects an allowed
       client = new RemoteClient({ endpoint: 'https://offline-fixture.invalid/commands', nodeId: 'worker', keyId: peer.keyId, audience: 'planner', privateKey: keys.privateKey, store: stores[1], fetch: async (_url, options) => {
         const operation = JSON.parse(options.body).operation;
         const receipt = await gateway.handle(options.body);
-        if (late && operation === 'approvalStatus' && JSON.stringify(receipt).includes('allowed-once')) { delayed = true; await new Promise(resolve => setTimeout(resolve, 250)); }
+        if (operation === 'offerApproval') {
+          const approval = ledger.approvals()[0];
+          assert.ok(approval); assert.equal(effects, 0); assert.equal(h.ledger.approvals().length, 0);
+          approvalExpiresAt = approval.expiresAt;
+          assert.ok(Number.isFinite(approvalExpiresAt));
+          ledger.respondApproval('trusted-operator', { requestId: approval.requestId, expectedRevision: approval.revision, decision: 'allowed-once', actor: 'offline-operator' });
+          operatorResponded = true;
+        }
+        if (late && operation === 'approvalStatus' && JSON.stringify(receipt).includes('allowed-once')) {
+          delayed = true;
+          delayedReply = (async () => { await new Promise(resolve => setTimeout(resolve, Math.max(0, approvalExpiresAt - Date.now()) + 50)); lateResponseReturnedAt = Date.now(); })();
+          await delayedReply;
+        }
         return new Response(JSON.stringify(receipt));
       } });
       const remote = new RemoteLedgerClient(client, 'worker');
       worker = new ExecutorWorker({ ledger: remote, provider: nativeExecutionAdapter(h.ctx.taskSystem.native, { provider: 'test-offline', models: [{ model: 'script', reasoningEfforts: [] }], capabilities: ['native-offline'] }), store: stores[2], policy: { role: 'executor', nodeId: 'worker', capabilities: ['native-offline'], workspaces: [{ workspaceId: 'workspace', nodeId: 'worker', path: h.dir, allowedRoot: h.dir }] } });
       const running = worker.pollOnce(1);
       const deadline = Date.now() + 3000;
-      while (!ledger.approvals().length) { assert.ok(Date.now() < deadline); await new Promise(resolve => setTimeout(resolve, 5)); }
-      const approval = ledger.approvals()[0];
-      assert.equal(effects, 0); assert.equal(h.ledger.approvals().length, 0);
-      ledger.respondApproval('trusted-operator', { requestId: approval.requestId, expectedRevision: approval.revision, decision: 'allowed-once', actor: 'offline-operator' });
+      while (!operatorResponded) { assert.ok(Date.now() < deadline); await new Promise(resolve => setTimeout(resolve, 5)); }
+      assert.equal(h.ledger.approvals().length, 0);
       const [result] = await running;
+      if (late) { await delayedReply; assert.ok(lateResponseReturnedAt >= approvalExpiresAt, 'the allowed response arrives after its actual deadline'); }
       assert.equal(result.status, 'fulfilled');
       assert.equal(ledger.getRun(run.runId).state, late ? 'blocked' : 'succeeded');
       assert.equal(effects, late ? 0 : 1); assert.equal(delayed, late);

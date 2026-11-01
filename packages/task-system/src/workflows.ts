@@ -1,3 +1,4 @@
+import { prepareWorkflowReadIndex } from "./workflow-read-index.js";
 import { Workbench } from "./workbench.js";
 import { compileWorkflow, workflowResultStepIds } from "./workflow-graph.js";
 import { createHash, randomUUID } from "node:crypto";
@@ -67,12 +68,13 @@ export class WorkflowRuntime {
     this.db.exec(
       "CREATE TABLE IF NOT EXISTS workflow_definitions(id TEXT PRIMARY KEY, data TEXT NOT NULL, next_due TEXT); CREATE TABLE IF NOT EXISTS workflow_runs(id TEXT PRIMARY KEY, data TEXT NOT NULL); CREATE TABLE IF NOT EXISTS workflow_task_bindings(task_id TEXT PRIMARY KEY,data TEXT NOT NULL); CREATE TABLE IF NOT EXISTS workflow_adoptions(workflow_id TEXT PRIMARY KEY,data TEXT NOT NULL)",
     );
+    prepareWorkflowReadIndex(this.db);
     new Workbench(ledger);
     ledger.workflowRunAdmission = (run, invocation) =>
       this.admitRoot(run, invocation);
     ledger.workflowTaskConfiguration = (input) => this.configureTask(input);
     ledger.workflowExecutionPreflight = (workflowId) => {
-      const definition = this.definitions().find(item => item.workflowId === workflowId)
+      const definition = this.definition(workflowId)
         ?? fail("NOT_FOUND", "Workflow not found");
       requireRunnableDefinition(definition);
     };
@@ -178,9 +180,7 @@ export class WorkflowRuntime {
   ): WorkflowTaskBinding {
     this.project(command.projectId);
     const definition =
-      this.definitions().find(
-        (item) => item.workflowId === command.workflowId,
-      ) ?? fail("NOT_FOUND", "Workflow not found");
+      this.definition(command.workflowId) ?? fail("NOT_FOUND", "Workflow not found");
     requireRunnableDefinition(definition);
     if (definition.projectId !== command.projectId)
       fail("WORKFLOW_PROJECT", "Workflow belongs to another Project");
@@ -347,9 +347,7 @@ export class WorkflowRuntime {
       this.binding(root.taskId) ??
       fail("WORKFLOW_PROJECT", "Workflow Task is not configured");
     const definition =
-      this.definitions().find(
-        (item) => item.workflowId === invocation.workflowId,
-      ) ?? fail("NOT_FOUND", "Workflow not found");
+      this.definition(invocation.workflowId) ?? fail("NOT_FOUND", "Workflow not found");
     if (
       binding.workflowId !== definition.workflowId ||
       definition.projectId !== binding.projectId
@@ -387,6 +385,11 @@ export class WorkflowRuntime {
       }),
     });
   }
+  private definition(id:string|undefined):WorkflowDefinition|undefined {
+    if(id===undefined)return undefined;
+    const row=this.db.prepare('SELECT data FROM workflow_definitions WHERE id=?').get(id);
+    return row?JSON.parse(String(row.data)) as WorkflowDefinition:undefined;
+  }
   private definitions(): WorkflowDefinition[] {
     return this.rows<WorkflowDefinition>("workflow_definitions");
   }
@@ -406,8 +409,8 @@ export class WorkflowRuntime {
     return run;
   }
   getRunView(id: string): WorkflowRunView {
-    const row = this.db.prepare("SELECT data FROM workflow_runs WHERE id=?").get(id)
-      ?? this.db.prepare("SELECT data FROM workflow_runs WHERE json_extract(data,'$.runId')=?").get(id);
+    const header=this.db.prepare('SELECT id FROM workflow_run_headers WHERE id=? OR run_id=? LIMIT 1').get(id,id);
+    const row=header?this.db.prepare('SELECT data FROM workflow_runs WHERE id=?').get(String(header.id)):undefined;
     if (!row) fail("NOT_FOUND", "Workflow execution not found");
     return this.projectRunView(JSON.parse(String(row.data)) as WorkflowRunView);
   }
@@ -510,6 +513,11 @@ export class WorkflowRuntime {
       ...entries.filter((entry) => entry.nodeId !== this.programs.nodeId),
       ...local,
     ];
+  }
+  demandCatalog(workflowId:string) {
+    const nodes=this.ledger.nodeStatuses();
+    return {nodes,workspaces:this.ledger.registeredNodes().flatMap(node=>this.ledger.registeredWorkspaces(node.nodeId)),programs:this.catalog(nodes),models:this.ledger.registeredNodes(),
+      taskBindings:this.db.prepare("SELECT data FROM workflow_task_bindings WHERE json_extract(data,'$.workflowId')=?").all(workflowId).map(row=>JSON.parse(String(row.data)))};
   }
   snapshot(): WorkflowSnapshot {
     const nodes = this.ledger.nodeStatuses();
@@ -630,9 +638,7 @@ export class WorkflowRuntime {
       "save",
       command,
       () => {
-        const old = this.definitions().find(
-          (item) => item.workflowId === command.definition.workflowId,
-        );
+        const old = this.definition(command.definition.workflowId);
         if ((old?.revision ?? 0) !== command.expectedRevision)
           fail("CONFLICT", "Workflow definition changed");
         if (!command.definition.projectId)
@@ -681,9 +687,7 @@ export class WorkflowRuntime {
           fail("NOT_FOUND", "Task has no workflow configuration");
         if (!binding) {
           const definition =
-            this.definitions().find(
-              (item) => item.workflowId === command.workflowId,
-            ) ?? fail("NOT_FOUND", "Workflow not found");
+            this.definition(command.workflowId) ?? fail("NOT_FOUND", "Workflow not found");
           requireRunnableDefinition(definition);
           if (!definition.projectId)
             fail(
@@ -706,7 +710,7 @@ export class WorkflowRuntime {
         }
         if (command.workflowId && command.workflowId !== binding.workflowId)
           fail("WORKFLOW_PROJECT", "Task is configured for another workflow");
-        const definition = this.definitions().find(item => item.workflowId === binding.workflowId)
+        const definition = this.definition(binding.workflowId)
           ?? fail("NOT_FOUND", "Workflow not found");
         requireRunnableDefinition(definition);
         const admitted = this.ledger.prepareWorkflowRun({
@@ -948,20 +952,9 @@ export class WorkflowRuntime {
   tick({ scheduleEnabled = true } = {}) {
     this.ledger.assertManagementWritable();
     if (scheduleEnabled) this.schedule();
-    const runnable = this.db
-      .prepare(
-        `
-      SELECT data FROM workflow_runs
-      WHERE json_extract(data,'$.state') NOT IN ('succeeded','partial','failed','cancelled')
-        OR (json_extract(data,'$.state')='cancelled' AND EXISTS (
-          SELECT 1 FROM json_each(workflow_runs.data,'$.steps') AS step
-          WHERE json_extract(step.value,'$.state') IN ('queued','running','uncertain')
-        )) ORDER BY rowid DESC
-    `,
-      )
-      .all();
+    const runnable = this.db.prepare("SELECT id FROM workflow_run_headers WHERE runnable=1 ORDER BY seq DESC").all();
     for (const row of runnable) {
-      const run = JSON.parse(String(row.data)) as WorkflowRunView;
+      const run = this.getRun(String(row.id));
       if (run.runId && this.ledger.getRun(run.runId).cancellationRequested) {
         run.state = "cancelled";
         for (const step of run.steps) if (!step.runId) step.state = "cancelled";

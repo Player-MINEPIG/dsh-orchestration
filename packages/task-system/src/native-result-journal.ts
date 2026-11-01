@@ -283,6 +283,7 @@ export class NativeResultJournal {
           UNIQUE(attempt_id, execution_id)
         );
       `);
+      this.prepareReadHeaders();
       const schema = this.db
         .prepare("SELECT version FROM native_journal_meta")
         .all() as { version: number }[];
@@ -421,6 +422,25 @@ export class NativeResultJournal {
     identifier(commandId, "commandId");
     const row = this.row(commandId);
     return row ? this.decode(row) : undefined;
+  }
+  private prepareReadHeaders() {
+    this.db.exec(`CREATE TABLE IF NOT EXISTS native_result_headers(command_id TEXT PRIMARY KEY,run_id TEXT NOT NULL,attempt_id TEXT NOT NULL,session_id TEXT NOT NULL,state TEXT NOT NULL,ready_at REAL NOT NULL,reason_code TEXT,summary TEXT NOT NULL);
+      CREATE INDEX IF NOT EXISTS native_result_header_state ON native_result_headers(state,ready_at,command_id);
+      CREATE TABLE IF NOT EXISTS native_result_header_meta(version INTEGER PRIMARY KEY);`);
+    for (const operation of ["INSERT","UPDATE","DELETE"] as const) this.db.exec(`CREATE TRIGGER IF NOT EXISTS native_result_header_${operation} AFTER ${operation} ON native_results BEGIN
+      ${operation==='DELETE'?`DELETE FROM native_result_headers WHERE command_id=OLD.command_id;`:`INSERT INTO native_result_headers VALUES(NEW.command_id,json_extract(NEW.ready_json,'$.ref.runId'),NEW.attempt_id,json_extract(NEW.ready_json,'$.sessionId'),NEW.state,json_extract(NEW.ready_json,'$.readyAt'),NEW.reason_code,substr(COALESCE(json_extract(NEW.ready_json,'$.settlement.summary'),''),1,2000)) ON CONFLICT(command_id) DO UPDATE SET run_id=excluded.run_id,attempt_id=excluded.attempt_id,session_id=excluded.session_id,state=excluded.state,ready_at=excluded.ready_at,reason_code=excluded.reason_code,summary=excluded.summary;`}
+      END;`);
+    if(!this.db.prepare('SELECT 1 FROM native_result_header_meta WHERE version=1').get()) {
+      this.db.exec('BEGIN IMMEDIATE');
+      try {this.db.exec('UPDATE native_results SET state=state; INSERT INTO native_result_header_meta VALUES(1); COMMIT');}
+      catch(error){this.db.exec('ROLLBACK');throw error;}
+    }
+  }
+  pendingHeaders() {
+    this.assertOpen();
+    return this.db.prepare("SELECT * FROM native_result_headers WHERE state IN ('ready','held') ORDER BY ready_at,command_id").all()
+      .map(row=>({commandId:String(row.command_id),runId:String(row.run_id),attemptId:String(row.attempt_id),sessionId:String(row.session_id),
+        state:String(row.state),readyAt:Number(row.ready_at),reasonCode:row.reason_code?String(row.reason_code):undefined,summary:String(row.summary)}));
   }
   /** Held rows retain ready proof and are retryable; rejected rows require review. */
   pending(): NativeJournalEntry[] {

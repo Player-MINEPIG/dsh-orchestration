@@ -1,3 +1,9 @@
+import { ExecutorDemandReads } from "./executor-reads.js";
+import type { ExecutorClaim } from "../demand-reads.js";
+import type { RecoveryClaimHeader } from "./store.js";
+import type { NativeResultJournal } from "../native-result-journal.js";
+import type { DemandReadMethod, DemandReadInputs } from "../demand-reads.js";
+import type { TaskLedger } from "../ledger.js";
 import { TaskReturnInbox } from "./task-return-inbox.js";
 import { deploymentPolicy, ledgerRole, type DeploymentPolicy } from "../deployment.js";
 import { executorAlertFingerprint, type ExecutorAlert } from "../executor-alerts.js";
@@ -158,6 +164,7 @@ const operationSchema = z.union([
   z.const("sessionMessages"),
   z.const("sessionMessageReply"),
   z.const("projectSnapshot"),
+  z.const("demandRead"),
   z.const("projectCollaborate"),
   z.const("executionModelView"),
   z.const("reportAdmission"),
@@ -323,6 +330,7 @@ interface HostWebServer {
 }
 /** An independently replaceable taskSystem service supplies only this structural ledger seam. */
 export interface TaskSystemPort {
+  results?: Pick<NativeResultJournal,"pendingHeaders"|"get">;
   sessionPortal?: { beginConfigurationEdit(): Promise<() => void> };
   programs?: ProgramRegistry;
   executionDirectories?: { validatedRoot(): string | null };
@@ -650,25 +658,47 @@ export class RemoteExecutionService extends Service {
       throw error;
     }
   }
+  executorDemandRead<M extends DemandReadMethod>(method:M,input:DemandReadInputs[M],ledger:TaskLedger):unknown {
+    if(!this.executorReads||this.executorReadsLedger!==ledger||this.executorReadsStore!==this.store){
+      this.executorReads?.close();this.executorReadsLedger=ledger;this.executorReadsStore=this.store;
+      this.executorReads=new ExecutorDemandReads({ledger,nodeId:this.config.nodeId,store:this.store,
+        queue:()=>({revision:JSON.stringify([...this.workers].map(worker=>[worker.queueObservedAt,worker.lastPollFailed])),
+          records:[...this.workers].flatMap(worker=>worker.queueSnapshot().map(run=>({taskId:run.taskId,runId:run.runId,title:run.intentSnapshot?.title??run.taskId,
+            description:'',detailVersion:`${run.runId}:${run.updatedAt??''}`,state:run.state,source:'local-queue' as const,nodeId:this.config.nodeId,time:worker.queueObservedAt??run.updatedAt??'',sessionIds:[],
+            parentRunId:run.parentRunId,projectId:run.projectContext?.project?.projectId,projectTitle:run.projectContext?.project?.title,model:run.route?.model,workspaceId:run.route?.workspaceId})))}),
+        queueExecution:runId=>[...this.workers].flatMap(worker=>worker.queueSnapshot()).find(run=>run.runId===runId),
+        queueDetail:runId=>[...this.workers].flatMap(worker=>worker.queueSnapshot()).find(run=>run.runId===runId)?.intentSnapshot?.description??'',
+        pending:()=> (this.ctx.get('taskSystem') as TaskSystemPort|undefined)?.results?.pendingHeaders()??[],
+        pendingDetail:commandId=>(this.ctx.get('taskSystem') as TaskSystemPort|undefined)?.results?.get(commandId),
+        decorate:row=>row.source==='local-ledger'?row:this.decorateExecutorRecord(row),
+        decorateClaim:row=>this.decorateExecutorClaim(row),
+        context:()=>{const settings=this.settingsSnapshot(),observed=[...this.workers].map(worker=>worker.queueObservedAt).filter((at):at is string=>!!at).sort().at(-1)??null;
+          return {queueObservedAt:observed,pollState:settings.paused?'paused':[...this.workers].some(worker=>worker.lastPollFailed)?'failed':observed?'ready':'never',connection:settings,heartbeat:this.heartbeatSnapshot()};}});
+    }
+    return ledger.demandReads.withFacts(()=>this.executorReads!.read(method,input));
+  }
+  executorSessionOverrideTaskIds(sessionId:string,rootTaskIds:readonly string[],ledger:TaskLedger):string[] {
+    if(!this.executorReads||this.executorReadsLedger!==ledger||this.executorReadsStore!==this.store)this.executorDemandRead('readBootstrap',{},ledger);
+    return ledger.demandReads.withFacts(()=>this.executorReads!.sessionOverrideTaskIds(sessionId,rootTaskIds));
+  }
+  executorReadAlert(recordId:string,ledger:TaskLedger):ExecutorAlert {
+    if(!this.executorReads||this.executorReadsLedger!==ledger||this.executorReadsStore!==this.store)this.executorDemandRead('readBootstrap',{},ledger);
+    return ledger.demandReads.withFacts(()=>this.executorReads!.alert(recordId));
+  }
   queueSnapshot() {
-    const dispatches = (this.store?.dispatches() ?? []).filter(
-      (record) =>
-        !["acknowledged", "cancelled", "retry_scheduled"].includes(
-          record.state,
-        ),
-    );
+    const dispatches=this.store?.activeDispatchHeaders()??[];
     const byRun = new Map(
       dispatches.map((record) => [
-        record.claim.run.runId,
+        record.runId,
         {
-          taskId: record.claim.task.taskId,
-          runId: record.claim.run.runId,
-          title: record.claim.task.title,
+          taskId: record.taskId,
+          runId: record.runId,
+          title: record.title,
           state: String(record.state),
-          sessionId: record.sessionId,
-          workspaceId: record.claim.run.route?.workspaceId ?? null,
-          projectTitle: record.claim.run.projectContext?.project?.title ?? null,
-          executionDirectory: record.workspacePath ?? null,
+          sessionId: record.sessionIds[0]??"",
+          workspaceId: record.workspaceId ?? null,
+          projectTitle: record.projectTitle ?? null,
+          executionDirectory: record.executionDirectory ?? null,
         },
       ]),
     );
@@ -692,7 +722,9 @@ export class RemoteExecutionService extends Service {
       truncated: byRun.size > 100,
     };
   }
-  private dispositionProbes = new Map<string,number>();
+  private executorReads?:ExecutorDemandReads;
+  private executorReadsLedger?:TaskLedger;
+  private executorReadsStore?:RecoveryStore;
   private currentAuthority(authority:{endpoint:string;audience:string}) {
     return !!authority.endpoint && !!this.config.coordinator && new URL(authority.endpoint).href===new URL(this.config.coordinator.endpoint).href && authority.audience===this.config.coordinator.audience;
   }
@@ -705,13 +737,13 @@ export class RemoteExecutionService extends Service {
     if(!this.store)return row;
     const recordId=row.source==="local-ledger" ? `local:${row.runId}:${row.attemptId??"none"}` : `dispatch:${row.attemptId}`;
     const authority=row.source==="local-recovery" ? this.store.dispatchAuthority(row.runId,row.attemptId??"") : undefined;
-    const record=row.source==="local-recovery" && row.attemptId ? this.store.dispatch(row.attemptId) : undefined;
-    const observed=this.observedDisposition(recordId,authority,record?.claim.run.projectContext?.schedulerId);
+    const record=row.source==="local-recovery" && row.attemptId ? this.store.dispatchHeader(row.attemptId) : undefined;
+    const observed=this.observedDisposition(recordId,authority,record?.schedulerId);
     const disposition=row.authorityDisposition??observed?.value;
     const active=[...this.workers].some(worker=>worker.isExecuting(row.runId));
     const ended=row.state==="acknowledged" && ["blocked","failure","partial"].includes(row.outcome??"") || row.source==="local-ledger" && ["failed","blocked","partial"].includes(row.state);
     const canAcknowledge=ended && !active && !["leased","running"].includes(disposition?.attemptState??"") && disposition?.runState!=="uncertain";
-    const fingerprint=executorAlertFingerprint({recordId,authority:authority??null,state:row.state,outcome:row.outcome??null,detail:row.detail??null,receipt:record?.receipt?.commandId??null,disposition:disposition??null});
+    const fingerprint=executorAlertFingerprint({recordId,authority:authority??null,state:row.state,outcome:row.outcome??null,detail:row.detail??null,receipt:record?.receiptCommandId??null,disposition:disposition??null});
     return {...row,authorityEndpoint:authority?.endpoint,authorityNotice:authority && !this.currentAuthority(authority) ? "原调度端历史结果，当前连接不能核实其最新状态" : !observed && row.source==="local-recovery" ? "尚未核实当前调度端任务状态" : undefined,...(disposition?{authorityDisposition:disposition}:{}),...(observed?{dispositionObservedAt:new Date(observed.observedAt).toISOString()}:{}),alert:this.store.executorAlert(recordId,fingerprint,canAcknowledge)};
   }
   setExecutorAlertDisposition(input:{recordId:string;fingerprint:string;acknowledged:boolean},current:ExecutorAlert) {
@@ -724,16 +756,14 @@ export class RemoteExecutionService extends Service {
   private async observeExecutorDispositions() {
     const store=this.store,ledger=this.coordinatorLedger;
     if(!store || !ledger || !this.client?.cachedExecutorIdentity())return;
-    const candidates=[
-      ...store.panelDispatches().filter(row=>row.state==="acknowledged" && ["failure","blocked","partial","unknown"].includes(row.result?.outcome??"")).map(row=>({recordId:`dispatch:${row.attemptId}`,runId:row.claim.run.runId,attemptId:row.attemptId,schedulerId:row.claim.run.projectContext?.schedulerId,authority:store.dispatchAuthority(row.claim.run.runId,row.attemptId)})),
-      ...store.panelClaims().map(row=>({recordId:`claim:${row.commandId}`,runId:row.runId,attemptId:undefined,schedulerId:undefined,authority:{endpoint:row.endpoint,audience:row.audience}})),
-    ].filter(row=>row.authority && this.currentAuthority(row.authority) && ![...this.workers].some(worker=>worker.isExecuting(row.runId)))
-      .sort((a,b)=>(this.dispositionProbes.get(a.recordId)??0)-(this.dispositionProbes.get(b.recordId)??0));
+    const coordinator=this.config.coordinator;
+    if (!coordinator) return;
+    const candidates=store.dispositionCandidates(coordinator.endpoint,coordinator.audience,Date.now(),4,[...this.workers].flatMap(worker=>worker.activeRunIds()));
     let count=0;
     for(const row of candidates) {
-      const now=Date.now();if(now-(this.dispositionProbes.get(row.recordId)??0)<60000)continue;
+      const now=Date.now();
       if(count++>=4)break;
-      this.dispositionProbes.set(row.recordId,now);
+      store.markDispositionProbe(row.recordId,now+60000);
       try {
         const value=await ledger.executionDisposition({runId:row.runId,...(row.attemptId?{attemptId:row.attemptId}:{})});
         insist(!row.schedulerId || value.schedulerId===row.schedulerId,"SCHEDULER_IDENTITY_CHANGED",409);
@@ -741,18 +771,20 @@ export class RemoteExecutionService extends Service {
       } catch { /* An unavailable authority cannot prove cancellation or completion. */ }
     }
   }
+  private decorateExecutorClaim(row:Pick<RecoveryClaimHeader,'commandId'|'runId'|'state'|'endpoint'|'audience'|'code'|'message'>):ExecutorClaim {
+    const {commandId,runId,state,endpoint,audience,code,message}=row;
+    const recordId=`claim:${commandId}`,authority={endpoint,audience};
+    const observed=this.observedDisposition(recordId,authority),active=[...this.workers].some(worker=>worker.isExecuting(runId));
+    const resolved=!!observed&&!active&&!['leased','running'].includes(observed.value.attemptState??'')&&(observed.value.taskState==='cancelled'||observed.value.runState==='cancelled');
+    const canAcknowledge=!active&&(!this.currentAuthority(authority)||resolved);
+    const fingerprint=executorAlertFingerprint({recordId,authority,state,code:code??null,message:message??null,disposition:observed?.value??null});
+    return {commandId,runId,state,endpoint,audience,...(code?{code,message}:{}),resolved,authorityDisposition:observed?.value??null,dispositionObservedAt:observed?new Date(observed.observedAt).toISOString():null,
+      alert:this.store!.executorAlert(recordId,fingerprint,canAcknowledge),recoveryNote:!this.currentAuthority(authority)?'原调度端记录，当前连接无法恢复；可仅确认本机提醒，原领取回执保留':resolved?'调度端已确认取消，本机无活动执行；原领取回执保留':undefined};
+  }
   /** Local recovery and last observed work only; this method performs no RPC. */
   executorPanel() {
     const settings = this.settingsSnapshot();
-    const claims = (this.store?.panelClaims() ?? []).map(row => {
-      const recordId=`claim:${row.commandId}`,authority={endpoint:row.endpoint,audience:row.audience};
-      const observed=this.observedDisposition(recordId,authority),active=[...this.workers].some(worker=>worker.isExecuting(row.runId));
-      const resolved=!!observed && !active && !["leased","running"].includes(observed.value.attemptState??"") && (observed.value.taskState==="cancelled" || observed.value.runState==="cancelled");
-      const canAcknowledge=!active && (!this.currentAuthority(authority) || resolved);
-      const fingerprint=executorAlertFingerprint({recordId,authority,state:row.state,code:row.code??null,message:row.message??null,disposition:observed?.value??null});
-      return {...row,resolved,authorityDisposition:observed?.value??null,dispositionObservedAt:observed?new Date(observed.observedAt).toISOString():null,
-        alert:this.store!.executorAlert(recordId,fingerprint,canAcknowledge),recoveryNote:!this.currentAuthority(authority) ? "原调度端记录，当前连接无法恢复；可仅确认本机提醒，原领取回执保留" : resolved ? "调度端已确认取消，本机无活动执行；原领取回执保留" : undefined};
-    });
+    const claims=(this.store?.panelClaims()??[]).map(row=>this.decorateExecutorClaim(row));
     const claimByRun = new Map(claims.map(row => [row.runId, row]));
     const dispatches = this.store?.panelDispatches() ?? [];
     const records: ExecutorPanelRecord[] = [];
@@ -1277,6 +1309,7 @@ export class RemoteExecutionService extends Service {
       }
     }
     await this.client?.dispose();
+    this.executorReads?.close();this.executorReads=undefined;this.executorReadsLedger=undefined;this.executorReadsStore=undefined;
     this.store?.close();
   }
 }

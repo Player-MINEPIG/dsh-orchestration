@@ -68,8 +68,8 @@ export class ExecutionDirectories implements WorkspaceMemory {
       .prepare("INSERT OR IGNORE INTO execution_directory_bindings VALUES(?,?)")
       .run(key, JSON.stringify(value));
   }
-  dispatches() {
-    return [];
+  hasLegacySessionMapping() {
+    return false;
   }
   legacySchedulerIs() {
     return false;

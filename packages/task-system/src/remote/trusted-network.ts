@@ -1,5 +1,5 @@
 import { isIP } from 'node:net'
-import { EXECUTOR_OPERATIONS, identifier, insist } from './protocol.js'
+import { EXECUTOR_OPERATIONS, allowsOperation, identifier, insist } from './protocol.js'
 import type { RecoveryStore } from './store.js'
 import type { AuthorizedPeer, CommandEnvelope, Role, TransportIdentity } from './protocol.js'
 
@@ -89,8 +89,8 @@ export class TrustedNetworkVerifier {
     insist(identifier(envelope.nodeId),'INVALID_PEER',403)
     insist(envelope.audience === this.audience && peer.audience === this.audience,'WRONG_AUDIENCE',403)
     insist(envelope.issuedAt <= now + 5000 && envelope.expiresAt >= now && envelope.issuedAt >= now - 60000 && envelope.expiresAt > envelope.issuedAt && envelope.expiresAt - envelope.issuedAt <= 60000,'STALE_REQUEST',401)
-    if(!this.pairings) { insist(peer.operations.includes(envelope.operation),'OPERATION_DENIED',403);insist(peer.executionEnabled || ['executorIdentity','projectCollaborate','projectSnapshot','sessionMessages','sessionMessageReply','receipt'].includes(envelope.operation),'EXECUTION_DISABLED',403);return peer; }
-    const operations = peer.executionEnabled !== true ? EXECUTOR_OPERATIONS.filter(operation => ['executorIdentity','projectCollaborate','projectSnapshot','sessionMessages','sessionMessageReply','receipt'].includes(operation)) : EXECUTOR_OPERATIONS
+    if(!this.pairings) { insist(allowsOperation(peer.operations,envelope.operation),'OPERATION_DENIED',403);insist(peer.executionEnabled || ['executorIdentity','projectCollaborate','projectSnapshot','demandRead','sessionMessages','sessionMessageReply','receipt'].includes(envelope.operation),'EXECUTION_DISABLED',403);return peer; }
+    const operations = peer.executionEnabled !== true ? EXECUTOR_OPERATIONS.filter(operation => ['executorIdentity','projectCollaborate','projectSnapshot','demandRead','sessionMessages','sessionMessageReply','receipt'].includes(operation)) : EXECUTOR_OPERATIONS
     insist(operations.includes(envelope.operation),'OPERATION_DENIED',403)
     return {...peer,nodeId:envelope.nodeId,operations,managedAccess:true,networkSource:peer.address}
   }

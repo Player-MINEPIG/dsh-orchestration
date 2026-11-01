@@ -3,10 +3,10 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {readFileSync} from 'node:fs';
 let ui;
-vm.runInNewContext(readFileSync(new URL('../../packages/task-system/dist/settings-client.js',import.meta.url),'utf8'),{
-  window:{__ModuleLoader__:{load(row){ui=row.factory(()=>({}));}}},
+vm.runInNewContext(readFileSync(new URL('../../packages/task-system/src/settings-client.js',import.meta.url),'utf8'),{
+  structuredClone,window:{__ModuleLoader__:{load(row){ui=row.factory(()=>({}));}}},
 });
-const snapshot=id=>({sessionId:id,tasks:[],runs:[],counts:{all:0}});
+const snapshot=id=>({sessionId:id,items:[],tasks:[],runs:[],counts:{all:0},page:0,pageSize:20,total:0,pages:0});
 test('conversation tab is registered with session identity and is disposed with the plugin',()=>{
   let registration, component, removed=false;
   const invoke=()=>{};
@@ -19,7 +19,7 @@ test('conversation tab is registered with session identity and is disposed with 
 test('refresh is single-flight, preserves previous data on failure and ignores responses after leaving the session',async()=>{
   let resolve, reject, calls=0;
   const monitor=new ui.SessionTaskMonitor(()=>{calls++;return new Promise((yes,no)=>{resolve=yes;reject=no;});},'one');
-  const first=monitor.load(); await monitor.load(); assert.equal(calls,1);
+  monitor.active=true;const first=monitor.load(); await monitor.load(); assert.equal(calls,1);
   resolve(snapshot('one'));await first;const previous=monitor.snapshot().value;
   const next=monitor.load();reject(Error('offline'));await next;
   assert.equal(monitor.snapshot().value,previous);assert.ok(monitor.snapshot().error);
@@ -28,27 +28,27 @@ test('refresh is single-flight, preserves previous data on failure and ignores r
 });
 test('a response for another session is never displayed',async()=>{
   const monitor=new ui.SessionTaskMonitor(async()=>snapshot('other'),'one');
-  await monitor.load();assert.equal(monitor.snapshot().value,null);assert.ok(monitor.snapshot().error);
+  monitor.active=true;await monitor.load();assert.equal(monitor.snapshot().value,null);assert.ok(monitor.snapshot().error);
 });
 
 test('local refresh failure retains local evidence and never requests a project snapshot',async()=>{
   const calls=[];let fail=false;
   const value={...snapshot('local'),viewContext:{role:'executor',scope:'local',nodeId:'mbp'}};
   const monitor=new ui.SessionTaskMonitor(async(method,args)=>{calls.push([method,args.sessionId]);if(fail)throw Error('offline');return value;},'local');
-  await monitor.load();fail=true;await monitor.load();
-  assert.equal(monitor.snapshot().value,value);
+  monitor.active=true;await monitor.load();const previous=monitor.snapshot().value;assert.equal(JSON.stringify(previous),JSON.stringify(value));fail=true;await monitor.load();
+  assert.equal(monitor.snapshot().value,previous);
   assert.match(monitor.snapshot().error,/本机任务记录/);
   assert.doesNotMatch(monitor.snapshot().error,/调度端/);
-  assert.deepEqual(calls,[['sessionTasks','local'],['sessionTasks','local']]);
+  assert.deepEqual(calls,[['sessionTaskPage','local'],['sessionTaskPage','local']]);
 });
 
 function renderPanel(value,{filter='all',search='',error=null}={}) {
   let component,stateIndex=0;
   const state=[filter,search];
   const react={createElement:(type,props,...children)=>({type,props:props??{},children:children.flat(Infinity)}),Fragment:'fragment',
-    useMemo:fn=>fn(),useSyncExternalStore:()=>({value,loading:false,error}),useState:()=>[state[stateIndex++],()=>{}],useEffect:()=>{}};
-  vm.runInNewContext(readFileSync(new URL('../../packages/task-system/dist/settings-client.js',import.meta.url),'utf8'),{
-    window:{__ModuleLoader__:{load(row){component=row.factory(name=>name==='react'?react:{});}}},
+    useRef:()=>({current:null}),useMemo:fn=>{const monitor=fn();monitor.state.details=Object.fromEntries((value.tasks||[]).map(task=>[task.id,{task,runs:{items:(value.runs||[]).filter(run=>run.taskId===task.id)}}]));return monitor;},useSyncExternalStore:()=>({value,loading:false,error}),useState:()=>[state[stateIndex++],()=>{}],useEffect:()=>{}};
+  vm.runInNewContext(readFileSync(new URL('../../packages/task-system/src/settings-client.js',import.meta.url),'utf8'),{
+    structuredClone,window:{__ModuleLoader__:{load(row){component=row.factory(name=>name==='react'?react:{});}}},
   });
   return component.SessionTaskPanel({invoke:()=>{throw Error('Render must not request data');},sessionId:'source-session'});
 }
@@ -73,13 +73,13 @@ test('local cards preserve concrete result-return labels and actual task/run/ses
 });
 
 test('status filtering and identifier search keep parent associations without exposing unrelated cards',()=>{
-  const filtered=renderPanel(localView(),{filter:'done'});
+  const filtered=renderPanel({...localView(),tasks:localView().tasks.filter(task=>task.status==='done')},{filter:'done'});
   assert.equal(nodes(filtered).filter(node=>node.type==='details').length,1);
   assert.doesNotMatch(text(filtered),/Inspect fixture/);
-  const searched=renderPanel(localView(),{search:'executor-session'});
+  const searched=renderPanel({...localView(),tasks:localView().tasks.filter(task=>task.sessionIds?.includes('executor-session'))},{search:'executor-session'});
   assert.equal(nodes(searched).filter(node=>node.type==='details').length,1);
   assert.match(text(searched),/parent-task/);assert.doesNotMatch(text(searched),/Return fixture/);
-  assert.match(text(renderPanel(localView(),{search:'missing'})),/当前筛选没有任务/);
+  assert.match(text(renderPanel({...localView(),tasks:[],total:0,counts:{all:2}},{search:'missing'})),/当前筛选没有任务/);
 });
 
 test('snapshots without optional view context retain the scheduler labels and omit absent session evidence',()=>{
@@ -90,7 +90,7 @@ test('snapshots without optional view context retain the scheduler labels and om
 
 test('task session navigation opens only ledger-linked sessions on their actual node',async()=>{
  const snapshot={viewContext:{nodeId:'MBP'},tasks:[{id:'task',checkin:{owner:{kind:'session',nodeId:'MBP',sessionId:'origin'}}}],attempts:[{taskId:'task',runId:'r',nodeId:'MBP',sessionId:'execution'}],runs:[{id:'r',taskId:'task',node:'MBP',executionDriver:'dsh',sessionIds:['execution']}]};
- const opened=[],invoke=async(method,input)=>{assert.equal(method,'projectSnapshot');assert.equal(input.view,'planner');return snapshot;};
+ const opened=[],invoke=async(method,input)=>{assert.equal(method,'taskSessionAccess');assert.equal(input.view,'planner');if(input.nodeId!=='MBP')throw Error('所属设备不一致');return {allowed:['origin','execution'].includes(input.sessionId)};};
  for(const sessionId of ['origin','execution'])await ui.openTaskSession({taskId:'task',nodeId:'MBP',sessionId},invoke,id=>opened.push(id));
  assert.deepEqual(opened,['origin','execution']);
  await assert.rejects(ui.openTaskSession({taskId:'task',nodeId:'AWS',sessionId:'origin'},invoke,id=>opened.push(id)),/所属设备/);
@@ -100,7 +100,7 @@ test('task session navigation opens only ledger-linked sessions on their actual 
 
 test('local executor session navigation reads only the local snapshot and never switches to a coordinator view',async()=>{
  const opened=[],snapshot={viewContext:{nodeId:'MBP',role:'executor',scope:'local'},tasks:[{id:'local-task'}],runs:[{id:'local-run',taskId:'local-task',node:'MBP',executionDriver:'dsh',sessionIds:['local-dsh-session']}],attempts:[]};
- const invoke=async(method,input)=>{assert.equal(method,'projectSnapshot');assert.equal(input.view,'executor');return snapshot;};
+ const invoke=async(method,input)=>{assert.equal(method,'taskSessionAccess');assert.equal(input.view,'executor');return {allowed:snapshot.runs[0].executionDriver==='dsh'&&input.sessionId==='local-dsh-session'};};
  await ui.openTaskSession({view:'executor',taskId:'local-task',nodeId:'MBP',sessionId:'local-dsh-session'},invoke,id=>opened.push(id));
  assert.deepEqual(opened,['local-dsh-session']);snapshot.runs[0].executionDriver='external';
  await assert.rejects(ui.openTaskSession({view:'executor',taskId:'local-task',nodeId:'MBP',sessionId:'local-dsh-session'},invoke,id=>opened.push(id)),/不在当前任务/);

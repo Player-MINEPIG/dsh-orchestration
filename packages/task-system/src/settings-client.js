@@ -3238,9 +3238,8 @@ h(
       "executionPresets",
       "connectionSettings","saveConnectionSettings",
       "nodeModelSettings","refreshNodeModels","saveNodeModelDefault",
-      "workflowView", "setTaskPresentation", "readProjectReport", "getProjectReportPresentation",
-      "workflowPage", "workflowSnapshot", "saveWorkflow", "startWorkflow", "retryWorkflowStep", "cancelWorkflow", "configureWorkflowTask", "adoptWorkflow", "createProjectTask", "runProjectTask",
-      "sessionTasks",
+      "setTaskPresentation", "readProjectReport", "getProjectReportPresentation",
+      "workflowPage", "saveWorkflow", "startWorkflow", "retryWorkflowStep", "cancelWorkflow", "configureWorkflowTask", "adoptWorkflow", "createProjectTask", "runProjectTask",
       "projectExecutionSettings",
       "saveProjectExecutionSettings",
       "setExecutorAlertDisposition",
@@ -3253,7 +3252,9 @@ h(
       "scheduleOptions",
       "createScheduledPlan",
       "controlScheduledPlan",
-      "projectSnapshot",
+      "readBootstrap", "executorClaimsPage", "taskBoard", "taskPage", "taskDetail", "taskHistoryPage", "taskRunDetail", "taskReportDetail", "taskGraphPage", "taskAttentionGroupPage", "taskAttentionPage", "taskSessionAccess",
+      "projectListPage", "projectDetail", "projectCreateOptions", "scheduleListPage", "scheduleDetail", "scheduleHistoryPage", "executionPage", "reportListPage", "projectResourcesPage",
+      "workflowListPage", "workflowDetail", "workflowRunPage", "workflowRunDetail", "workflowStepDetail", "sessionTaskPage", "sessionTaskDetail",
       "projectPage",
       "saveProjectSettings",
       "createProject",
@@ -3276,7 +3277,7 @@ h(
       namespace: "taskPluginSettings",
       method,
       invocation: { kind: "direct" },
-      parameters: ["executionPresets", "workflowPage", "workflowSnapshot", "connectionSettings", "executionDirectorySettings", "executorWorkspaceGrants", "projectSettings", "projectPage", "conversationModels", "scheduleOptions"].includes(method)
+      parameters: ["executionPresets", "workflowPage", "connectionSettings", "executionDirectorySettings", "executorWorkspaceGrants", "projectSettings", "projectPage", "conversationModels", "scheduleOptions"].includes(method)
         ? []
         : [
             {
@@ -3412,17 +3413,35 @@ h(
           color: toast.status === "done" ? "#166534" : toast.status === "error" ? "#991b1b" : "inherit" } }, toast.text));
     }
     async function openTaskSession(input, invoke, openSession) {
-      const snapshot=await invoke("projectSnapshot",{view:input?.view==="executor"?"executor":"planner"});
-      const task=snapshot.tasks.find(task=>task.id===input?.taskId);
-      if(!task || task.observationOnly || snapshot.viewContext?.nodeId!==input.nodeId)throw Error("请在会话所属设备的 DSH 中打开，不能在当前设备打开其他节点的同名会话。");
-      const origin=task.checkin?.owner;
-      const source=origin?.kind==="session" && origin.nodeId===input.nodeId && origin.sessionId===input.sessionId;
-      const nativeRuns=snapshot.runs?.filter(r=>r.taskId===task.id && r.executionDriver==="dsh")??[];
-      const execution=snapshot.attempts?.some(a=>a.taskId===task.id && a.nodeId===input.nodeId && a.sessionId===input.sessionId && nativeRuns.some(r=>(r.id??r.runId)===a.runId)) ||
-        nativeRuns.some(r=>r.node===input.nodeId && r.sessionIds?.includes(input.sessionId));
-      if(!source && !execution)throw Error("此会话不在当前任务的来源或执行记录中，请刷新后重试。");
+      const access=await invoke("taskSessionAccess",{view:input?.view==="executor"?"executor":"planner",taskId:input.taskId,nodeId:input.nodeId,sessionId:input.sessionId});
+      if(access?.allowed!==true)throw Error("此会话不在当前任务的来源或本机执行记录中，请刷新后重试。");
       await openSession(input.sessionId);
       return {opened:true};
+    }
+    function watchTaskPanelVisibility(element, onChange) {
+      let previous;
+      const update = () => {
+        const style = element && getComputedStyle(element);
+        const visible = !!element?.isConnected && document.visibilityState !== "hidden" &&
+          element.getClientRects().length > 0 && style.visibility !== "hidden" && style.visibility !== "collapse";
+        if (visible !== previous) { previous = visible; onChange(visible); }
+      };
+      let ancestors=[];
+      const observeAncestors=()=>{
+        const next=[];for(let owner=element;owner;owner=owner.parentElement)next.push(owner);
+        if(next.length===ancestors.length&&next.every((owner,index)=>owner===ancestors[index]))return;
+        ancestors=next;observer.disconnect();
+        for(const owner of ancestors)observer.observe(owner,{attributes:true,childList:true,attributeFilter:["style","class","hidden","inert"]});
+      };
+      const observer = new MutationObserver(()=>{observeAncestors();update();});
+      observeAncestors();
+      const intersection = typeof IntersectionObserver === "undefined" ? null : new IntersectionObserver(update);
+      intersection?.observe(element);
+      const resize = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(update);
+      resize?.observe(element);
+      document.addEventListener("visibilitychange", update);
+      update();
+      return () => { observer.disconnect(); intersection?.disconnect(); resize?.disconnect(); document.removeEventListener("visibilitychange", update); onChange(false); };
     }
     function ProjectPanel({ invoke, directoryApi, navigation, nativeClient }) {
       const frame = React.useRef(null),
@@ -3431,7 +3450,15 @@ h(
         [error, setError] = React.useState(null),
         [detailFullscreen, setDetailFullscreen] = React.useState(false),
         [nativeConversation, setNativeConversation] = React.useState(null);
-      const frameReady=React.useRef(false);
+      const frameReady=React.useRef(false), panelRoot=React.useRef(null), panelActivity=React.useRef({active:false,generation:0});
+      const sendActivity = () => frame.current?.contentWindow?.postMessage({channel:"dsh-project-runtime",method:"active",input:panelActivity.current},"*");
+      React.useEffect(() => {
+        if (!html || !panelRoot.current) return;
+        return watchTaskPanelVisibility(panelRoot.current, active => {
+          panelActivity.current={active,generation:panelActivity.current.generation+1};
+          sendActivity();
+        });
+      }, [html]);
       const sendNavigation = () => {
         if(!navigation?.target)return;
         if(page.method!=="projectPage"){frameReady.current=false;setPage({method:"projectPage",context:null});return;}
@@ -3461,6 +3488,10 @@ h(
       }, [invoke, page]);
       React.useEffect(() => {
         const listener = async (event) => {
+          if (event.source === frame.current?.contentWindow && event.data?.channel === "dsh-project-runtime" && event.data.method === "ready") {
+            sendActivity();
+            return;
+          }
           if (event.source === frame.current?.contentWindow && event.data?.channel === "dsh-project-runtime" && event.data.method === "nativeConversation") {
             const input = event.data.input;
             const descriptor = input?.descriptor;
@@ -3533,6 +3564,8 @@ h(
               EXECUTOR_REQUIRED: "请在执行端 DSH 的任务设置中登记本机工作区。",
               CONFIGURATION_BUSY: "执行端仍有活动任务，请等执行与回传结束后更改目录授权。",
               PROJECT_SETTINGS_CHANGED: "项目设置已变化，请刷新并处理尚未领取的旧请求。",
+              READ_MODEL_UPDATING: "正在准备当前视图，请稍候…",
+              BOUNDED_READS_UNSUPPORTED: "中央任务服务需要更新后才能读取此视图。",
             };
             source.postMessage(
               {
@@ -3554,11 +3587,11 @@ h(
         return h("div", { role: "alert", style: { padding: 24 } }, error);
       if (!html)
         return h("div", { style: { padding: 24 } }, "正在加载项目与任务…");
-      return h("div", { style: { position: "relative", isolation: "isolate", zIndex: detailFullscreen ? 1000 : 0, width: "100%", height: "100%", minHeight: 0 } }, h("iframe", {
+      return h("div", { ref:panelRoot, style: { position: "relative", isolation: "isolate", zIndex: detailFullscreen ? 1000 : 0, width: "100%", height: "100%", minHeight: 0 } }, h("iframe", {
         ref: frame,
         title: page.method === "workflowPage" ? "项目工作流" : "项目与任务",
         srcDoc: html,
-        onLoad: () => {frameReady.current=true;sendTheme(frame, "dsh-project-runtime");sendNavigation();},
+        onLoad: () => {frameReady.current=true;sendTheme(frame, "dsh-project-runtime");sendActivity();sendNavigation();},
         sandbox: "allow-scripts allow-same-origin allow-forms allow-popups",
         style: {
           ...(detailFullscreen ? {position: "fixed", inset: 0, zIndex: 1000, width: "100vw", height: "100dvh"} : {}),
@@ -3631,35 +3664,70 @@ h(
     class SessionTaskMonitor {
       constructor(invoke, sessionId) {
         this.invoke = invoke; this.sessionId = sessionId; this.listeners = new Set();
-        this.state = { value: null, loading: false, error: null }; this.disposed = false;
+        this.state = { value: null, loading: false, error: null, details:{} }; this.disposed = false; this.epoch = 0; this.query={page:0,pageSize:20,status:"all",search:""}; this.expanded=new Set();this.active=false;
       }
       subscribe = (listener) => { this.listeners.add(listener); return () => this.listeners.delete(listener); };
       snapshot = () => this.state;
       update(patch) { this.state = { ...this.state, ...patch }; for (const listener of this.listeners) listener(); }
       async load() {
-        if (this.disposed || this.state.loading) return;
+        if (this.disposed || !this.active || this.state.loading) return;
+        const epoch = this.epoch;
         this.update({ loading: true });
         try {
-          const value = await this.invoke("sessionTasks", { sessionId: this.sessionId });
-          if (!value || value.sessionId !== this.sessionId || !Array.isArray(value.tasks) || !Array.isArray(value.runs) || !value.counts) throw Error("Invalid session snapshot");
-          if (!this.disposed) this.update({ value, loading: false, error: null });
-        } catch {
-          if (!this.disposed) this.update({ loading: false, error: this.state.value?.viewContext?.scope === "local" ? "暂时无法读取本机任务记录，请稍后重试。" : "暂时无法读取当前会话的任务状态，请稍后重试。" });
-        }
+          const value = await this.invoke("sessionTaskPage", {sessionId:this.sessionId,...this.query});
+          if (!value || value.sessionId !== this.sessionId || !Array.isArray(value.items) || !value.counts) throw Error("Invalid session task page");
+          if (!this.disposed && epoch === this.epoch) {
+            const visibleIds=new Set(value.items.map(task=>task.id));
+            for(const id of this.expanded)if(!visibleIds.has(id))this.expanded.delete(id);
+            const details=Object.fromEntries(Object.entries(this.state.details).filter(([id])=>this.expanded.has(id)));
+            this.retrySoon=false;this.update({value:{...value,tasks:value.items},details,loading:false,error:null});
+            for(const taskId of this.expanded) if(value.items.some(task=>task.id===taskId)) await this.loadTask(taskId);
+          }
+        } catch(error) {
+          const reason=error?.rpcError?.details?.reason||error?.details?.reason||error?.code;
+          this.retrySoon=reason==="READ_MODEL_UPDATING";
+          if (!this.disposed && epoch === this.epoch) this.update({ loading: false, error: this.retrySoon?"正在准备当前会话任务…":this.state.value?.viewContext?.scope === "local" ? "暂时无法读取本机任务记录，请稍后重试。" : "暂时无法读取当前会话的任务状态，请稍后重试。" });
+        } finally {if(!this.disposed&&this.active&&epoch===this.epoch)this.onSettled?.(this.retrySoon?500:5000);}
       }
-      dispose() { this.disposed = true; this.listeners.clear(); }
+      async loadTask(taskId,page=0) {
+        if(!this.active||this.disposed)return;
+        const epoch=this.epoch,card=this.state.value?.tasks.find(task=>task.id===taskId);if(!card)return;
+        const old=this.state.details[taskId],owner=card.owner||"task",view=this.state.value?.viewContext?.role;
+        try {
+          let detail=card.detailVersion&&old?.detailVersion===card.detailVersion?old:await this.invoke("sessionTaskDetail",{sessionId:this.sessionId,taskId,owner,view});
+          if(this.disposed||!this.active||epoch!==this.epoch||!this.expanded.has(taskId))return;
+          const runs=owner==="task"?await this.invoke("executionPage",{view,sessionId:this.sessionId,taskId,page,pageSize:5}):detail.runs;
+          if(!this.disposed&&epoch===this.epoch&&this.expanded.has(taskId))this.update({details:{...this.state.details,[taskId]:{...detail,detailVersion:card.detailVersion,task:{...card,...detail.task,direct:card.direct},runs}}});
+        } catch(error) { if(!this.disposed&&epoch===this.epoch)this.update({error:error.message||"任务详情暂时无法读取"}); }
+      }
+      setQuery(query) { if(Object.entries(query).every(([key,value])=>this.query[key]===value))return;this.suspend();this.expanded.clear();this.update({details:{}});this.query={...this.query,...query};void this.load(); }
+      toggleTask(taskId,open) { if(open){this.expanded.add(taskId);void this.loadTask(taskId);}else {this.expanded.delete(taskId);const details={...this.state.details};delete details[taskId];this.update({details});} }
+      suspend() { this.epoch++; this.update({loading:false}); }
+      dispose() { this.disposed = true; this.epoch++; this.listeners.clear(); }
     }
     function SessionTaskPanel({ invoke, sessionId }) {
+      const root = React.useRef(null);
       const monitor = React.useMemo(() => new SessionTaskMonitor(invoke, sessionId), [invoke, sessionId]);
       const { value, loading, error } = React.useSyncExternalStore(monitor.subscribe, monitor.snapshot);
       const [filter, setFilter] = React.useState("all"), [search, setSearch] = React.useState("");
       React.useEffect(() => {
         monitor.disposed = false;
-        void monitor.load();
-        const timer = setInterval(() => { if (document.visibilityState !== "hidden") void monitor.load(); }, 5000);
-        return () => { clearInterval(timer); monitor.dispose(); };
+        let active = false, timer;
+        const poll = async () => {
+          if (!active) return;
+          await monitor.load();
+        };
+        monitor.onSettled=delay=>{clearTimeout(timer);if(active)timer=setTimeout(poll,delay);};
+        const stop = watchTaskPanelVisibility(root.current, visible => {
+          active = visible;monitor.active=visible;
+          clearTimeout(timer);
+          monitor.suspend();
+          if (active) void poll();
+        });
+        return () => { active = false; clearTimeout(timer); monitor.onSettled=null; stop(); monitor.dispose(); };
       }, [monitor]);
       React.useEffect(() => { setFilter("all"); setSearch(""); }, [sessionId]);
+      React.useEffect(() => {monitor.setQuery({status:filter,search,page:0});},[monitor,filter,search]);
       const [theme, setTheme] = React.useState(hostTheme);
       React.useEffect(() => {
         const update = () => setTheme(hostTheme()), observer = new MutationObserver(update);
@@ -3673,19 +3741,19 @@ h(
       const tasks = value?.tasks ?? [], counts = value?.counts ?? {}, context = value?.viewContext;
       const local = context?.scope === "local";
       const formatTime = time => time && Number.isFinite(new Date(time).getTime()) ? new Date(time).toLocaleString() : "尚未观测";
-      const visible = tasks.filter(task => (filter === "all" || task.status === filter) && [task.title, task.node, task.id, task.parentTaskId, task.runId, task.sessionId, ...(task.sessionIds ?? []), task.stateLabel].filter(Boolean).join(" ").toLowerCase().includes(search.toLowerCase()));
+      const visible = tasks;
       const taskLabel = status => local && status === "done" ? "已回传" : sessionTaskLabels[status] || status;
       const statusColor = status => `var(--status-${({ accepted: "done", handled: "queued", cancelled: "queued", cancelling: "review", archived: "queued", unknown: "queued" })[status] || status}, var(--status-queued))`;
       const runLabel = run => run.stateLabel || (run.reviewStatus === "pending_user" ? "待确认" : run.reviewStatus === "accepted" ? "已验收" : run.reviewStatus === "rejected" ? "审核未通过" : ({ queued: "等待开始", running: "执行中", succeeded: "执行成功", partial: "部分完成", failed: "执行失败", blocked: "执行受阻", uncertain: "结果待核实", cancelled: "已取消" }[run.state] ?? run.state));
       const evidence = rows => h("dl", { className: "stm-evidence" }, rows.filter(([, detail]) => detail).map(([label, detail]) => h(React.Fragment, { key: label }, h("dt", null, label), h("dd", null, detail))));
-      return h("section", { className: "session-task-monitor", "data-theme": theme, "aria-label": "当前会话的执行任务" },
+      return h("section", { ref:root, className: "session-task-monitor", "data-theme": theme, "aria-label": "当前会话的执行任务" },
         h("style", null, `
           .session-task-monitor{--status-running:#315fa8;--status-review:#86601d;--status-queued:#62626b;--status-done:#347457;--status-error:#b43e48;--stm-panel:var(--dsw-alias-bg-layer-1,#fafafa);--stm-soft:var(--dsw-alias-bg-layer-2,#f5f5f7);--stm-line:var(--dsw-alias-border-l3,#d4d4d8);--stm-muted:var(--dsw-alias-label-secondary,#62626b);--stm-selected:var(--dsw-alias-bg-hover,#e4e4e7);height:100%;min-height:0;overflow:auto;box-sizing:border-box;padding:32px;line-height:1.6;color:var(--dsw-alias-label-primary,inherit);font-size:14px}
           .session-task-monitor[data-theme=dark]{--status-running:#7ca4ef;--status-review:#d3b686;--status-queued:#a1a1a1;--status-done:#91b9a4;--status-error:#e58f8f;--stm-panel:var(--dsw-alias-bg-layer-1,#1d1d1d);--stm-soft:var(--dsw-alias-bg-layer-2,#222);--stm-line:var(--dsw-alias-border-l3,#343434);--stm-muted:var(--dsw-alias-label-secondary,#a1a1a1);--stm-selected:var(--dsw-alias-bg-hover,#414141)}
           .session-task-monitor *{box-sizing:border-box}.session-task-monitor header{display:flex;gap:16px;justify-content:space-between;align-items:flex-start;flex-wrap:wrap}.session-task-monitor h2{font-size:26px;font-weight:600;letter-spacing:-.6px;margin:0 0 8px}.session-task-monitor p{margin:5px 0 14px}.session-task-monitor .stm-muted{color:var(--stm-muted);font-size:12px}.session-task-monitor .stm-scope{font-size:12px;color:var(--stm-muted);margin-bottom:8px}.session-task-monitor button,.session-task-monitor input{font:inherit;color:inherit;background:transparent;border:1px solid var(--stm-line);border-radius:9px;padding:10px 14px}.session-task-monitor button{cursor:pointer;min-height:40px}.session-task-monitor button:hover{background:var(--stm-selected)}.session-task-monitor button:disabled{opacity:.4;cursor:default}.session-task-monitor button:focus-visible,.session-task-monitor input:focus-visible,.session-task-monitor summary:focus-visible{outline:2px solid var(--status-running);outline-offset:3px}.session-task-monitor .stm-filters{display:flex;flex-wrap:wrap;gap:10px;margin:24px 0 16px}.session-task-monitor .stm-filters button{padding:8px 12px;font-size:12px;background:var(--stm-soft)}.session-task-monitor .stm-filters button[aria-pressed=true]{background:var(--stm-selected);border-color:var(--stm-muted)}.session-task-monitor .stm-filters b{margin-left:10px;font-weight:500}.session-task-monitor input{width:100%;margin-bottom:20px;background:var(--stm-soft)}.session-task-monitor input::placeholder{color:var(--stm-muted)}.session-task-monitor .stm-list{display:flex;flex-direction:column;border:1px solid var(--stm-line);border-radius:13px;overflow:hidden}.session-task-monitor .stm-list:empty{display:none}.session-task-monitor details{background:var(--stm-panel);border-bottom:1px solid var(--stm-line);min-width:0}.session-task-monitor details:last-child{border:0}.session-task-monitor summary{padding:18px;cursor:pointer;list-style:none}.session-task-monitor summary:hover{background:var(--stm-soft)}.session-task-monitor summary::-webkit-details-marker{display:none}.session-task-monitor .stm-row{display:flex;justify-content:space-between;gap:14px;align-items:flex-start}.session-task-monitor .stm-title{font-size:14px;font-weight:600;overflow-wrap:anywhere;min-width:0}.session-task-monitor .stm-status{display:inline-flex;align-items:center;gap:5px;padding:4px 8px;border-radius:6px;background:var(--stm-soft);font-size:12px;flex-shrink:0;white-space:nowrap}.session-task-monitor .stm-dot{width:6px;height:6px;border-radius:50%;background:currentColor;flex-shrink:0}.session-task-monitor .stm-meta{margin-top:6px;overflow-wrap:anywhere}.session-task-monitor .stm-body{padding:0 18px 18px;border-top:1px solid var(--stm-line)}.session-task-monitor .stm-body h3{font-size:13px;margin:16px 0 8px}.session-task-monitor .stm-text{white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px}.session-task-monitor .stm-empty{text-align:center;padding:35px 16px;color:var(--stm-muted)}.session-task-monitor .stm-notice{border:1px solid var(--stm-line);border-radius:10px;padding:12px;background:var(--stm-soft);font-size:13px}.session-task-monitor .stm-evidence{display:grid;grid-template-columns:90px minmax(0,1fr);gap:6px 12px;font-size:12px;margin:14px 0}.session-task-monitor dt{color:var(--stm-muted)}.session-task-monitor dd{margin:0;overflow-wrap:anywhere;font-family:ui-monospace,SFMono-Regular,monospace}.session-task-monitor .stm-runs{list-style:none;padding:0;margin:0;display:grid;gap:8px}.session-task-monitor .stm-run{border:1px solid var(--stm-line);border-radius:10px;padding:12px;background:var(--stm-soft)}.session-task-monitor .stm-run .stm-evidence{margin-bottom:0}
           @media(max-width:600px){.session-task-monitor{padding:20px 16px}.session-task-monitor h2{font-size:22px}.session-task-monitor .stm-filters{gap:6px}.session-task-monitor .stm-filters button{padding:7px 9px;min-height:36px}.session-task-monitor summary{padding:14px}.session-task-monitor .stm-row{gap:8px;flex-wrap:wrap}.session-task-monitor .stm-status{white-space:normal}.session-task-monitor .stm-body{padding:0 14px 14px}.session-task-monitor .stm-evidence{grid-template-columns:70px minmax(0,1fr)}}
         `),
-        h("header", null, h("div", null, h("div", { className: "stm-scope" }, local ? `本机执行${context.nodeId ? " · " + context.nodeId : ""}` : "当前会话"), h("h2", null, "会话任务"), h("p", { className: "stm-muted" }, value ? `共 ${counts.all ?? tasks.length} 项 · 会话任务 ${value.directCount ?? 0} 项 · 子任务 ${Math.max(0, (counts.all ?? tasks.length) - (value.directCount ?? 0))} 项` : "查看当前会话的执行任务与后续子任务")),
+        h("header", null, h("div", null, h("div", { className: "stm-scope" }, local ? `本机执行${context.nodeId ? " · " + context.nodeId : ""}` : "当前会话"), h("h2", null, "会话任务"), h("p", { className: "stm-muted" }, value ? `共 ${counts.all ?? value.total} 项${value.directCount===undefined?"":` · 会话任务 ${value.directCount} 项 · 子任务 ${Math.max(0,(counts.all??value.total)-value.directCount)} 项`}` : "查看当前会话的执行任务与后续子任务")),
           h("button", { type: "button", disabled: loading, onClick: () => monitor.load() }, loading ? "正在刷新…" : "刷新")),
         local && h("p", { className: "stm-muted" }, "仅显示当前会话关联的本机执行记录。"),
         error && h("p", { role: "alert", className: "stm-notice" }, error, value ? " 下方保留上次成功读取的数据。" : ""),
@@ -3695,15 +3763,16 @@ h(
         value?.localCodexCount > 0 && h("p", { className: "stm-muted" }, `${value.localCodexCount} 项本地 Codex 任务；结果回传后待确认，父会话验收后标记已完成。`),
         h("div", { className: "stm-filters", role: "group", "aria-label": "按任务状态筛选" }, Object.entries(sessionTaskLabels).filter(([key]) => ["all", "running", "queued", "review", "error", "done"].includes(key) || counts[key] || filter === key).map(([key]) => h("button", { key, type: "button", "aria-pressed": filter === key, style: { color: key === "all" ? undefined : statusColor(key) }, onClick: () => setFilter(key) }, taskLabel(key), h("b", null, counts[key] ?? 0)))),
         h("input", { type: "search", "aria-label": "搜索会话任务", placeholder: "搜索任务、执行端或任务 ID", value: search, onChange: event => setSearch(event.target.value) }),
-        h("div", { className: "stm-list", "aria-busy": loading }, visible.map(task => {
-          const runs = (value?.runs ?? []).filter(run => run.taskId === task.id).reverse();
-          return h("details", { key: task.id, "data-task-status": task.status }, h("summary", null, h("div", { className: "stm-row" }, h("span", { className: "stm-title" }, task.title), h("span", { className: "stm-status", style: { color: statusColor(task.status) } }, h("i", { className: "stm-dot", "aria-hidden": true }), task.stateLabel || taskLabel(task.status))), h("div", { className: "stm-muted stm-meta" }, `${task.direct ? "会话任务" : "子任务"} · ${task.node || "等待分配执行端"}${task.model ? " · " + task.model : ""} · 展开详情`)),
+        h("div", { className: "stm-list", "aria-busy": loading }, visible.map(card => {
+          const detail=monitor.state.details[card.id],task={...card,...detail?.task},runs=detail?.runs?.items||[];
+          return h("details", {key:task.id,"data-task-status":task.status,onToggle:event=>monitor.toggleTask(task.id,event.currentTarget.open)}, h("summary", null, h("div", { className: "stm-row" }, h("span", { className: "stm-title" }, task.title), h("span", { className: "stm-status", style: { color: statusColor(task.status) } }, h("i", { className: "stm-dot", "aria-hidden": true }), task.stateLabel || taskLabel(task.status))), h("div", { className: "stm-muted stm-meta" }, `${task.direct ? "会话任务" : "子任务"} · ${task.node || "等待分配执行端"}${task.model ? " · " + task.model : ""} · 展开详情`)),
             h("div", { className: "stm-body" }, evidence([["任务 ID", task.id], ["父任务 ID", task.parentTaskId], ["当前 Run", task.runId], ["执行会话", task.sessionIds?.length ? task.sessionIds.join(" · ") : task.sessionId]]), h("h3", null, task.source === "codex-cli" ? "调用来源" : "任务要求"), h("div", { className: "stm-text" }, task.description || "未提供任务要求"), h("h3", null, task.source === "codex-cli" ? "进程状态" : "最新结果"), h("div", { className: "stm-text" }, task.report || "尚无结果报告"),
               task.acceptance && h(React.Fragment, null, h("h3", null, "父会话验收"), h("div", { className: "stm-text" }, task.acceptance.evidence), h("p", { className: "stm-muted" }, `验收于 ${formatTime(task.acceptance.acceptedAt)}`)),
-              task.source === "local-codex" ? h("p", { className: "stm-muted" }, `${task.permissionLabel}${task.reasoningEffort ? " · 思考强度 " + task.reasoningEffort : ""} · ${task.cwd} · 启动于 ${formatTime(task.time)}`) : task.source === "codex-cli" ? h("p", { className: "stm-muted" }, `启动于 ${formatTime(task.time)} · 完整调用与输出可在本会话轨迹中查看。`) : h(React.Fragment, null, h("h3", null, `执行记录 · ${runs.length} 次`), h("ul", { className: "stm-runs" }, runs.slice(0, 5).map(run => h("li", { key: run.id, className: "stm-run" }, h("div", { className: "stm-row" }, h("strong", { className: "stm-text" }, runLabel(run)), h("span", { className: "stm-muted" }, formatTime(run.createdAt))), h("div", { className: "stm-muted" }, `${run.node || "待分配"}${run.model ? " · " + run.model : ""}`), evidence([["Run ID", run.id], ["父 Run ID", run.parentRunId], ["父任务 ID", run.parentTaskId], ["会话 ID", run.sessionIds?.length ? run.sessionIds.join(" · ") : run.sessionId]]))))),
-              runs.length > 5 && h("p", { className: "stm-muted" }, "此处显示最近 5 次执行；完整历史可在总任务面板查看。")));
+              task.source === "local-codex" ? h("p", { className: "stm-muted" }, `${task.permissionLabel}${task.reasoningEffort ? " · 思考强度 " + task.reasoningEffort : ""} · ${task.cwd} · 启动于 ${formatTime(task.time)}`) : task.source === "codex-cli" ? h("p", { className: "stm-muted" }, `启动于 ${formatTime(task.time)} · 完整调用与输出可在本会话轨迹中查看。`) : h(React.Fragment, null, h("h3", null, `执行记录 · ${runs.length} 次`), h("ul", { className: "stm-runs" }, runs.map(run => h("li", { key: run.id, className: "stm-run" }, h("div", { className: "stm-row" }, h("strong", { className: "stm-text" }, runLabel(run)), h("span", { className: "stm-muted" }, formatTime(run.createdAt))), h("div", { className: "stm-muted" }, `${run.node || "待分配"}${run.model ? " · " + run.model : ""}`), evidence([["Run ID", run.id], ["父 Run ID", run.parentRunId], ["父任务 ID", run.parentTaskId], ["会话 ID", run.sessionIds?.length ? run.sessionIds.join(" · ") : run.sessionId]]))))),
+              detail?.runs?.pages>1&&h("div",null,h("button",{disabled:detail.runs.page===0,onClick:()=>monitor.loadTask(task.id,detail.runs.page-1)},"较新执行"),h("span",null,` ${detail.runs.page+1} / ${detail.runs.pages} `),h("button",{disabled:detail.runs.page+1>=detail.runs.pages,onClick:()=>monitor.loadTask(task.id,detail.runs.page+1)},"更早执行"))));
         })),
-        !visible.length && h("div", { className: "stm-empty" }, !value ? (loading ? "正在读取任务…" : "读取失败，请重试") : tasks.length ? "当前筛选没有任务" : local ? "当前会话尚无本机执行记录" : "当前会话尚无执行任务"),
+        value?.pages>1&&h("nav",{"aria-label":"会话任务分页"},h("button",{disabled:loading||value.page===0,onClick:()=>monitor.setQuery({page:value.page-1})},"上一页"),h("span",null,` ${value.page+1} / ${value.pages} `),h("button",{disabled:loading||value.page+1>=value.pages,onClick:()=>monitor.setQuery({page:value.page+1})},"下一页")),
+        !visible.length && h("div", { className: "stm-empty" }, !value ? (loading ? "正在读取任务…" : "读取失败，请重试") : (counts.all??value.total??tasks.length)>0 ? "当前筛选没有任务" : local ? "当前会话尚无本机执行记录" : "当前会话尚无执行任务"),
         evidence([["来源会话", sessionId]]),
         local && context.pollState && h("p", { className: "stm-muted" }, `本机队列轮询：${({ never: "尚未观测", ready: "最近一次观测成功", failed: "最近一次观测失败，保留已有执行记录", paused: "已暂停，保留上次观测记录" })[context.pollState] || "状态待核实"}。队列观测与结果回传状态分别记录。`),
         (context?.observedAt || value?.sampledAt) && h("p", { className: "stm-muted" }, `更新于 ${formatTime(context?.observedAt || value?.sampledAt)}${context?.queueObservedAt ? " · 队列观测于 " + formatTime(context.queueObservedAt) : ""} · 每 5 秒自动刷新`));
@@ -3918,6 +3987,7 @@ h(
       inject: ["modules", "slots", "locale", "configForms", "remote", "remote.settings"],
       apply,
       Controller,
+      watchTaskPanelVisibility,
       SessionTaskMonitor,
       SessionTaskPanel,
       mountSessionTaskPanel,

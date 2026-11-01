@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { sessionCodexJobs, codexJobRows } from '../dist/session-codex-jobs.js';
-import { SessionDispatchIndex, sessionTaskSnapshot } from '../dist/session-task-monitor.js';
+const { sessionCodexJobs, codexJobRows }=await import(process.env.DSH_SESSION_JOBS_MODULE??'../dist/session-codex-jobs.js');
+const { SessionDispatchIndex, sessionTaskSnapshot }=await import(process.env.DSH_SESSION_MONITOR_MODULE??'../dist/session-task-monitor.js');
 
 const command = String.raw`$c='C:\Users\test\Codex\bin\codex.exe'; Get-Content 'private-brief.md' -Raw | & $c exec -m gpt-6-astra -o 'private-output.md' -`;
 function call(seq, name, args, result, error = false) {
@@ -82,11 +82,11 @@ test('historical calls survive reopening and next-turn refresh adds only new cal
   let revision = '1', events = launch(), reads = 0;
   const persistence = { identity: Symbol(), stat: async () => ({ revision }), open: async () => ({
     inheritedEventCount: 5,
-    read: async offset => { assert.equal(offset, 5); reads++; return { events }; }, close: async () => {},
+    read:async offset=>{reads++;return {events:events.filter(event=>event.seq>=offset)};}, close: async () => {},
   }) };
   assert.equal((await index.readHistory(persistence, 's')).codexJobs.length, 1);
   await index.readHistory(persistence, 's'); assert.equal(reads, 1);
-  revision = '2'; events = [...events, notice('pwsh-9', 'completed, exit code: 0'), ...launch(30, 'pwsh-10')];
+  revision = '2'; events = [...events, {...notice('pwsh-9', 'completed, exit code: 0'),seq:20}, ...launch(30, 'pwsh-10')];
   const reopened = await new SessionDispatchIndex().readHistory(persistence, 's');
   const next = await index.readHistory(persistence, 's');
   assert.deepEqual(next.codexJobs, reopened.codexJobs);

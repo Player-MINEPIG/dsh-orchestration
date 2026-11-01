@@ -1,3 +1,5 @@
+import { demandReadMethods, type DemandReadMethod } from "../demand-reads.js";
+import { parseDemandRead } from "../demand-read-inputs.js";
 import { sessionContinuation, CheckinRefs } from "./ports.js";
 import { ExpectedExecutionMs } from "../execution-expectation.js";
 import { ReturnFailure } from "../task-return-failure.js";
@@ -258,6 +260,11 @@ export function validatePayload(envelope: CommandEnvelope): void {
           throw new ProtocolError(error.code, 400);
         throw error;
       }
+      break;
+    case 'demandRead':
+      fields(p,['method','input']);
+      insist(demandReadMethods.includes(p.method as DemandReadMethod),'BOUNDED_READS_UNSUPPORTED',400);
+      try { parseDemandRead(p.method as DemandReadMethod,p.input); } catch {throw new ProtocolError('INVALID_DEMAND_READ',400);}
       break;
     case "projectSnapshot":
       fields(p, []);
@@ -932,6 +939,10 @@ export class RemoteGateway {
             p.input as unknown as import("../project-collaboration/types.js").ProjectCollaborationInput,
           );
           break;
+        case 'demandRead':
+          insist(ledger.projectDemandRead,'BOUNDED_READS_UNSUPPORTED',503);
+          result=await ledger.projectDemandRead(peer.nodeId,p.method as DemandReadMethod,p.input);
+          break;
         case "projectSnapshot":
           insist(ledger.projectSnapshot, "PROJECT_SNAPSHOT_UNSUPPORTED", 503);
           result = await ledger.projectSnapshot(peer.nodeId);
@@ -1490,6 +1501,7 @@ export class RemoteGateway {
       e.operation === "nodeStatus" ||
       e.operation === "executorIdentity" ||
       e.operation === "projectSnapshot" ||
+      e.operation === "demandRead" ||
       e.operation === "projectCollaborate" ||
       e.operation === "executionModelView" ||
       e.operation === "reportAdmission" ||

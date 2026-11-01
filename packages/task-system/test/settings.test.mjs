@@ -214,7 +214,7 @@ test("browser companion registers the shared persistent task settings surface an
       $host: { isLoopback: true },
       $mount: async (contribution) => {
         assert.equal(new Set(contribution.descriptors.map(d => d.method)).size, contribution.descriptors.length);
-        for (const method of ["sessionTasks", "scheduleOptions", "createScheduledPlan", "controlScheduledPlan", "workflowSnapshot", "workflowPage", "saveWorkflow", "startWorkflow", "retryWorkflowStep", "cancelWorkflow"])
+        for (const method of ["sessionTaskPage", "sessionTaskDetail", "taskSessionAccess", "readBootstrap", "taskBoard", "taskDetail", "workflowRunPage", "workflowRunDetail", "workflowStepDetail", "scheduleOptions", "createScheduledPlan", "controlScheduledPlan", "workflowPage", "saveWorkflow", "startWorkflow", "retryWorkflowStep", "cancelWorkflow"])
           assert.ok(contribution.descriptors.some(descriptor => descriptor.method === method));
         return () => {};
       },

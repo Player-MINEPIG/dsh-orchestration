@@ -50,49 +50,53 @@ function updateState(job: CodexJobRecord, text: string, time: number) {
   if (code) job.exitCode = Number(code[1]);
 }
 
-/** Read only paired tool receipts and host-authored job notices, never assistant claims. */
-export function sessionCodexJobs(events: readonly SessionEvent[]): CodexJobRecord[] {
-  const calls = new Map<string, { event: Extract<SessionEvent, { type: "tool/call" }>; args: Record<string, unknown> }>();
-  const jobs: CodexJobRecord[] = [], current = new Map<string, CodexJobRecord>();
-  const notice = (message: { source?: { kind: string }; content: readonly { type: string; text?: string }[] }, time: number) => {
-    if (message.source?.kind !== "tool-jobs") return;
-    const text = textOf(message.content), id = text.match(/^background job ([\w-]+)\b/)?.[1];
-    const job = id && current.get(id);
-    if (job) updateState(job, text, time);
-  };
-  for (const event of events) {
-    if (event.type === "tool/call" && ["pwsh", "bash", "job_output", "job_kill"].includes(event.data.name)) {
-      try { calls.set(event.data.callId, { event, args: JSON.parse(event.data.arguments) }); } catch { /* Incomplete call. */ }
-    } else if (event.type === "tool/result") {
-      const call = calls.get(event.data.message.toolCallId);
-      calls.delete(event.data.message.toolCallId);
-      if (!call || event.data.message.isError || event.data.error) continue;
-      const text = textOf(event.data.message.content);
-      if (["pwsh", "bash"].includes(call.event.data.name)) {
-        const command = call.args.command;
-        if (typeof command !== "string" || !isCodexExec(command)) continue;
-        const jobId = text.match(/^started background job ([\w-]+)\s*$/)?.[1]
-          ?? text.match(/\[still running after \d+ms; moved to background job ([\w-]+)\]/)?.[1];
-        if (!jobId) continue;
-        const job: CodexJobRecord = {
-          id: `shell-codex:${call.event.seq}:${call.event.data.callId}`, jobId,
-          title: typeof call.args.description === "string" ? call.args.description.slice(0, 240) : "Codex CLI 执行",
-          model: command.match(/(?:^|\s)(?:-m|--model)\s+["']?([\w.-]+)/)?.[1],
-          seq: call.event.seq, startedAt: call.event.time, acknowledgedAt: event.time,
-          commandHash: hash(command), state: "running",
-        };
-        jobs.push(job); current.set(jobId, job);
-      } else {
-        const job = typeof call.args.job_id === "string" && current.get(call.args.job_id);
-        if (!job) continue;
-        if (call.event.data.name === "job_kill" && text === `requested cancellation of job ${job.jobId}`) job.state = "stopping";
-        else updateState(job, text, event.time);
-      }
-    } else if (event.type === "user/message") notice(event.data, event.time);
-    else if (event.type === "agent/inbox/spliced") for (const message of event.data.inserted) notice(message, event.time);
+type PendingJobCall =
+  | {kind:"launch";callId:string;seq:number;startedAt:number;title:string;model?:string;commandHash:string}
+  | {kind:"control";name:"job_output"|"job_kill";jobId:string};
+
+/** Incremental receipt fold; pending calls retain hashes and routing metadata, never command text. */
+export class SessionCodexJobFold {
+  private calls=new Map<string,PendingJobCall>();
+  private jobs:CodexJobRecord[]=[];
+  private current=new Map<string,CodexJobRecord>();
+  clone() {
+    const copy=new SessionCodexJobFold();copy.calls=new Map([...this.calls].map(([id,call])=>[id,{...call}]));copy.jobs=this.jobs.map(job=>({...job}));
+    const byId=new Map(copy.jobs.map(job=>[job.id,job]));for(const [id,job]of this.current){const cloned=byId.get(job.id);if(cloned)copy.current.set(id,cloned);}return copy;
   }
-  return jobs;
+  snapshot(){return this.jobs.map(job=>({...job}));}
+  private notice(message:{source?:{kind:string};content:readonly {type:string;text?:string}[]},time:number) {
+    if(message.source?.kind!=="tool-jobs")return;
+    const text=textOf(message.content),id=text.match(/^background job ([\w-]+)\b/)?.[1],job=id?this.current.get(id):undefined;
+    if(job)updateState(job,text,time);
+  }
+  consume(events:readonly SessionEvent[]) {
+    for(const event of events){
+      if(event.type==="tool/call"&&["pwsh","bash","job_output","job_kill"].includes(event.data.name)){
+        try{
+          const args:Record<string,unknown>=JSON.parse(event.data.arguments),name=event.data.name;
+          if(name==="pwsh"||name==="bash"){
+            const command=args.command;if(typeof command!=="string"||!isCodexExec(command))continue;
+            this.calls.set(event.data.callId,{kind:"launch",callId:event.data.callId,seq:event.seq,startedAt:event.time,title:typeof args.description==="string"?args.description.slice(0,240):"Codex CLI 执行",model:command.match(/(?:^|\s)(?:-m|--model)\s+["']?([\w.-]+)/)?.[1],commandHash:hash(command)});
+          }else if((name==="job_output"||name==="job_kill")&&typeof args.job_id==="string")this.calls.set(event.data.callId,{kind:"control",name,jobId:args.job_id});
+        }catch{ /* Incomplete call. */ }
+      }else if(event.type==="tool/result"){
+        const call=this.calls.get(event.data.message.toolCallId);this.calls.delete(event.data.message.toolCallId);
+        if(!call||event.data.message.isError||event.data.error)continue;
+        const text=textOf(event.data.message.content);
+        if(call.kind==="launch"){
+          const jobId=text.match(/^started background job ([\w-]+)\s*$/)?.[1]??text.match(/\[still running after \d+ms; moved to background job ([\w-]+)\]/)?.[1];if(!jobId)continue;
+          const job:CodexJobRecord={id:`shell-codex:${call.seq}:${call.callId}`,jobId,title:call.title,model:call.model,seq:call.seq,startedAt:call.startedAt,acknowledgedAt:event.time,commandHash:call.commandHash,state:"running"};
+          this.jobs.push(job);this.current.set(jobId,job);
+        }else{
+          const job=this.current.get(call.jobId);if(!job)continue;
+          if(call.name==="job_kill"&&text===`requested cancellation of job ${job.jobId}`)job.state="stopping";else updateState(job,text,event.time);
+        }
+      }else if(event.type==="user/message")this.notice(event.data,event.time);
+      else if(event.type==="agent/inbox/spliced")for(const message of event.data.inserted)this.notice(message,event.time);
+    }
+  }
 }
+export function sessionCodexJobs(events:readonly SessionEvent[]):CodexJobRecord[]{const fold=new SessionCodexJobFold();fold.consume(events);return fold.snapshot();}
 
 export function codexJobRows(records: readonly CodexJobRecord[], sessionId: string, registry?: SessionJobRegistry) {
   const live = registry?.list(sessionId) ?? [];

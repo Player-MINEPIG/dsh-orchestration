@@ -1,3 +1,8 @@
+import { prepareProjectReadIndex } from "./project-read-index.js";
+import { parseDemandRead } from "./demand-read-inputs.js";
+import { DemandTaskViews, pageBounds } from "./demand-read-views.js";
+import type { DemandReadInputs, DemandReadOutputs, DemandReadMethod, ReadScope, TaskCard } from "./demand-reads.js";
+import type { CompactRun, CompactTask, CompactReport, CompactAttempt, FactMap } from "./ledger-read-index.js";
 import { nativeProjectSession, type NativeProjectSession } from "./project-session-protocol.js";
 import type { ProjectSessionMove } from "./project-sessions.js";
 import { temporaryTaskDirectory,temporaryTaskMetadata } from "./remote/project-workspace.js";
@@ -91,6 +96,7 @@ export interface ProjectAgentOptions {
 export class ProjectRuntime {
   collaboration?: import("./project-collaboration/authority.js").ProjectCollaborationAuthority;
   private readonly db;
+  private readonly demandViews: DemandTaskViews;
   private readonly workbench: Workbench;
   private readonly jobs = new Map<
     string,
@@ -118,7 +124,10 @@ export class ProjectRuntime {
   ) {
     this.db = ledger.managementDatabase();
     this.workbench = new Workbench(ledger);
+    this.workbench.prepareRegistration();
+    prepareProjectReadIndex(this.db);
     ledger.projectSnapshot = (nodeId) => this.snapshotForNode(nodeId) as unknown as import("./contracts.js").Json;
+    ledger.projectDemandRead = (nodeId,method,input) => JSON.parse(JSON.stringify(this.demandRead(method,parseDemandRead(method,input),{kind:"node",nodeId}))) as Json;
     this.db
       .exec(`CREATE TABLE IF NOT EXISTS pr_settings(id INTEGER PRIMARY KEY CHECK(id=1),root TEXT,revision INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS pr_project_workspaces(project TEXT PRIMARY KEY,workspace TEXT NOT NULL);
@@ -134,6 +143,7 @@ export class ProjectRuntime {
       CREATE TABLE IF NOT EXISTS pr_turns(command TEXT PRIMARY KEY,digest TEXT NOT NULL,owner TEXT NOT NULL,session TEXT NOT NULL,text TEXT NOT NULL,state TEXT NOT NULL,error TEXT,created TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS pr_dispatch(task TEXT PRIMARY KEY,decision TEXT NOT NULL,candidates TEXT NOT NULL,state TEXT NOT NULL,run TEXT,generation INTEGER NOT NULL,attempted TEXT NOT NULL,updated TEXT NOT NULL);`);
     if(!(this.db.prepare("PRAGMA table_info(pr_task_routes)").all() as {name:string}[]).some(column=>column.name==="expected_execution_ms"))this.db.exec("ALTER TABLE pr_task_routes ADD COLUMN expected_execution_ms INTEGER");
+    this.demandViews = new DemandTaskViews(this.db, ledger, nodeId, taskId => this.projectTaskCard(taskId),(taskId,scope)=>this.childAttentionRows(taskId,0,1,scope).total);
     // Existing project sessions keep their IDs; the column now names the
     // conversation owner, which can be a real project or a temporary task.
     for (const table of ["pr_sessions", "pr_turns"]) {
@@ -234,7 +244,7 @@ export class ProjectRuntime {
       }
     }
     // Legacy task grants remain valid local authorization, independent of remote heartbeat inventory.
-    const node = this.ledger.decisionCatalog().nodes.find(node => node.nodeId === this.nodeId);
+    const node = this.ledger.registeredNodes().find(node => node.nodeId === this.nodeId);
     for (const item of this.ledger.registeredWorkspaces(this.nodeId)) {
       if (item.workspaceId.startsWith("registry:") || item.state !== "ready" || !node?.enabled || !node.workspaceIds.includes(item.workspaceId) || workspaces.some(workspace => workspace.path === item.path)) continue;
       try {
@@ -267,7 +277,7 @@ export class ProjectRuntime {
     // Pre-settings bindings described an execution workspace. They are not the coordinator's cwd.
     const legacy=old && old.scope!=="coordinator" ? old : undefined;
     const executionBindings=settings.revision===0 && legacy ? {[legacy.nodeId]:legacy.workspaceId,...settings.executionBindings} : settings.executionBindings;
-    const nodes=this.ledger.decisionCatalog().nodes.filter(node=>node.roles.some(role=>role==="executor"||role==="both"));
+    const nodes=this.ledger.registeredNodes().filter(node=>node.roles.some(role=>role==="executor"||role==="both"));
     return {...settings,executionBindings,coordinatorWorkspace:old?.scope==="coordinator" ? old : {workspaceId:`pr:${p.id}:planner`,nodeId:this.nodeId,path:p.cwd,scope:"coordinator" as const},
       coordinatorSession:{sessionId:p.session,generation:p.generation},coordinatorOptions:this.workspaceOptions(),
       executors:nodes.map(node=>({...this.ledger.executorWorkspaceCatalog(node.nodeId),enabled:node.enabled,state:this.ledger.nodeStatuses().find(status=>status.nodeId===node.nodeId)?.state ?? "unknown"})),
@@ -330,7 +340,7 @@ export class ProjectRuntime {
     return this.readConversation({ ...this.project(projectId), session: sessionId, generation, cwd });
   }
   private validateExecutionBindings(allowedNodeIds:string[]|null,executionBindings:Record<string,string>) {
-    const nodes=this.ledger.decisionCatalog().nodes;
+    const nodes=this.ledger.registeredNodes();
     for(const nodeId of allowedNodeIds ?? []) if(!nodes.some(node=>node.nodeId===nodeId&&node.roles.some(role=>role==="executor"||role==="both")))throw new TaskError("FORBIDDEN","Unknown executor in project policy");
     for(const [nodeId,workspaceId] of Object.entries(executionBindings)) {
       const node=nodes.find(node=>node.nodeId===nodeId),workspace=this.ledger.executorWorkspaceCatalog(nodeId).workspaces.find(workspace=>workspace.workspaceId===workspaceId);
@@ -383,8 +393,24 @@ export class ProjectRuntime {
       throw new TaskError("BUSY","Wait for the managed coordinator turn/dispatcher task to settle before changing its workspace");
     if(p.state!=="ready" || !this.db.prepare("UPDATE pr_projects SET state='handoff' WHERE id=? AND state='ready'").run(p.id).changes)throw new TaskError("BUSY","Project is changing its session");
   }
+  private conversationContextTasks(project:ProjectRow) {
+    return this.demandViews.current(()=>{
+      const rows=this.db.prepare(`SELECT data FROM demand_task_display WHERE ${project.taskId?'id=?':'project=?'} ORDER BY seq`).all(project.taskId??project.id);
+      return rows.map(row=>{
+        const card:TaskCard=JSON.parse(String(row.data)),task=this.ledger.getTask(card.id);
+        const report=card.reportId?this.ledger.getReport(card.reportId):undefined;
+        const settled=card.runId?this.latestSettlement(card.runId):undefined;
+        return {...card,description:task.description,report:report?.body||(typeof settled?.detail==='object'&&settled.detail&&!Array.isArray(settled.detail)&&typeof settled.detail.summary==='string'?`执行回执：${settled.detail.summary}`:'尚未收到执行报告')};
+      });
+    });
+  }
+  private latestSettlement(runId:string) {
+    const row=this.db.prepare("SELECT id FROM demand_entity_facts WHERE kind='event' AND run_id=? AND json_extract(data,'$.type')='run.settled' ORDER BY seq DESC LIMIT 1").get(runId);
+    const event=row?this.db.prepare('SELECT data FROM events WHERE id=?').get(String(row.id)):undefined;
+    return event?JSON.parse(String(event.data)) as import('./contracts.js').Event:undefined;
+  }
   private async prepareCoordinatorGeneration(p:ProjectRow,cwd:string) {
-    const history=await this.conversation(p.id),tasks=this.snapshot().tasks.filter(task=>p.taskId?task.id===p.taskId:task.project===p.id);
+    const history=await this.conversation(p.id),tasks=this.conversationContextTasks(p);
     const summary=`项目目标：${p.goal}\n原统筹会话：${p.session}\n未完成任务（沿用原任务，不要重复创建）：${JSON.stringify(tasks.filter(task=>!["done","accepted"].includes(task.status)))}\n已完成或已验收任务的报告引用：${JSON.stringify(tasks.filter(task=>["done","accepted"].includes(task.status)).map(task=>({taskId:task.id,run:task.run,reportId:task.reportId})))}\n近期对话：${JSON.stringify(history.messages.slice(-16)).slice(-24000)}`;
     const sessionId=`project-${randomUUID()}`,generation=p.generation+1;
     const handle=await this.agents().create({sessionId:SessionId(sessionId),meta:{cwd},agentOptions:this.options(p.id)});
@@ -635,10 +661,10 @@ export class ProjectRuntime {
       this.existingDirectory(binding.path, [p.root]);
       if (input.workspace?.kind === "registered" && this.selectedWorkspace(input.workspace,p.id).path !== binding.path)
         throw new TaskError("WORKSPACE_POLICY", "Local workspace path changed; refresh and select again");
-      workspace = this.ledger.snapshot().workspaces?.find(workspace => workspace.workspaceId === binding.workspaceId)
+      workspace = this.ledger.registeredWorkspaces(this.nodeId).find(workspace => workspace.workspaceId === binding.workspaceId)
         ?? this.ledger.registerWorkspace(`pr:${p.id}:directory`, {...binding,label:title,state:"ready",createdAt:now()}).value;
       if (binding.scope !== "coordinator") {
-        const node = this.ledger.decisionCatalog().nodes.find(node => node.nodeId === this.nodeId);
+        const node = this.ledger.registeredNodes().find(node => node.nodeId === this.nodeId);
         if (node && !node.workspaceIds.includes(workspace.workspaceId)) this.ledger.registerNode(`pr:${p.id}:grant`, {...node,workspaceIds:[...node.workspaceIds,workspace.workspaceId]});
       }
     } else {
@@ -793,11 +819,6 @@ export class ProjectRuntime {
     } catch {
       return { taskId: task.taskId, dispatchState: "needs-planning" };
     }
-  }
-  private taskProject(taskId: string) {
-    const wb = this.workbench.snapshot();
-    const link = wb.backlogTasks.find((t) => t.taskId === taskId);
-    return wb.backlogs.find((b) => b.backlogId === link?.backlogId)?.projectId;
   }
   private adhoc(taskId: string): ProjectRow {
     const task = this.ledger.getTask(taskId);
@@ -1070,6 +1091,7 @@ export class ProjectRuntime {
   /** Persisted inbox admission; only pre-claim unavailability may move to the next candidate. */
   tick() {
     if (!this.accepting) return;
+    this.ledger.demandReads.ensureFacts();
     if(this.planner)for(const run of this.ledger.resultRetryCandidates()){
       if(!run.resultValidationFailure||this.resultRetries.has(run.runId))continue;
       const info=this.ledger.resultRetryInfo(run.runId);
@@ -1087,15 +1109,7 @@ export class ProjectRuntime {
         "SELECT task FROM pr_dispatch WHERE state<>'inbox' AND task IN (SELECT id FROM entities WHERE kind='task' AND state='inbox')",
       )
       .all()) {
-      if (
-        !this.ledger
-          .snapshot()
-          .runs.some(
-            (r) =>
-              r.taskId === pending.task &&
-              ["queued", "running", "uncertain"].includes(r.state),
-          )
-      )
+      if (!this.db.prepare("SELECT 1 FROM demand_entity_facts WHERE kind='run' AND task_id=? AND state IN ('queued','running','uncertain') LIMIT 1").get(String(pending.task)))
         this.db
           .prepare(
             "UPDATE pr_dispatch SET state='inbox',run=NULL,attempted='[]',updated=? WHERE task=?",
@@ -1117,13 +1131,12 @@ export class ProjectRuntime {
       updated: string;
     }[];
     for (const row of rows) {
-      let data = this.ledger.snapshot();
-      const task = data.tasks.find((t) => t.taskId === row.task);
+      const task = this.ledger.demandReads.fact('task',row.task);
       if (!task) continue;
       if (row.state === "assigned" && row.run) {
-        const run = this.ledger.getRun(row.run);
-        const config = run.configuration;
-        if (config && typeof config === "object" && !Array.isArray(config) && config.workflowInvocation) continue;
+        const run = this.ledger.demandReads.fact('run',row.run);
+        if(!run)continue;
+        if(run.workflowInvocation)continue;
         if (run.state === "queued") {
           const health = this.ledger
             .nodeStatuses()
@@ -1132,7 +1145,7 @@ export class ProjectRuntime {
             health?.state !== "online" &&
             Date.now() - Date.parse(row.updated) > 15000 &&
             !run.currentAttemptId &&
-            !(data.attempts ?? []).some((a) => a.runId === run.runId)
+            !this.db.prepare("SELECT 1 FROM demand_entity_facts WHERE kind='attempt' AND run_id=? LIMIT 1").get(run.runId)
           ) {
             try {
               this.ledger.returnUnclaimedToInbox(`pr:unclaimed:${run.runId}`, {
@@ -1164,19 +1177,15 @@ export class ProjectRuntime {
             );
           continue;
         }
-        data = this.ledger.snapshot();
+        this.ledger.demandReads.ensureFacts();
       }
-      const active = data.runs.find(
-        (r) =>
-          r.taskId === row.task &&
-          ["queued", "running", "uncertain"].includes(r.state),
-      );
+      const active = this.db.prepare("SELECT id runId FROM demand_entity_facts WHERE kind='run' AND task_id=? AND state IN ('queued','running','uncertain') ORDER BY seq LIMIT 1").get(row.task);
       if (active) {
         this.db
           .prepare(
             "UPDATE pr_dispatch SET state='assigned',run=?,updated=? WHERE task=?",
           )
-          .run(active.runId, now(), row.task);
+          .run(String(active.runId), now(), row.task);
         continue;
       }
       if (
@@ -1204,13 +1213,7 @@ export class ProjectRuntime {
           checks.push({ nodeId: route.nodeId, reason: "offline" });
           continue;
         }
-        const reservations = data.runs.filter(
-          (r) =>
-            r.route?.nodeId === route.nodeId &&
-            r.state === "queued" &&
-            !r.historyOnly &&
-            !r.observationOnly,
-        ).length;
+        const reservations = Number(this.db.prepare("SELECT COUNT(*) n FROM demand_entity_facts WHERE kind='run' AND node_id=? AND state='queued' AND COALESCE(json_extract(data,'$.historyOnly'),0)=0 AND COALESCE(json_extract(data,'$.observationOnly'),0)=0").get(route.nodeId)?.n??0);
         if (
           (health.availableSlots ?? 1) - reservations <= 0 ||
           (health.activeExecutions ?? health.activeClaims) >=
@@ -1267,14 +1270,13 @@ export class ProjectRuntime {
           .run(canonical(checks), now(), row.task);
     }
   }
-  private projectTaskIds(id: string) {
-    const wb = this.workbench.snapshot();
-    const backlogs = new Set(
-      wb.backlogs.filter((b) => b.projectId === id).map((b) => b.backlogId),
-    );
-    return wb.backlogTasks
-      .filter((t) => backlogs.has(t.backlogId))
-      .map((t) => t.taskId);
+  private projectTaskIds(id:string) {
+    return this.db.prepare('SELECT l.task_id FROM wb_backlog_tasks l JOIN wb_backlogs b ON b.backlog_id=l.backlog_id WHERE b.project_id=? ORDER BY l.rowid').all(id).map(row=>String(row.task_id));
+  }
+  private latestTaskRun(taskId:string) {
+    this.ledger.demandReads.ensureFacts();
+    const row=this.db.prepare("SELECT id FROM demand_entity_facts WHERE kind='run' AND task_id=? ORDER BY seq DESC LIMIT 1").get(taskId);
+    return row?this.ledger.getRun(String(row.id)):undefined;
   }
   send(input: { projectId: string; commandId: string; text: string }) {
     this.authorize();
@@ -1349,10 +1351,7 @@ export class ProjectRuntime {
           .prepare("SELECT summary FROM pr_sessions WHERE session=?")
           .get(p.session) as { summary: string }
       ).summary;
-      const related = this.snapshot()
-        .tasks.filter((t) =>
-          p.taskId ? t.id === p.taskId : t.project === p.id,
-        )
+      const related = this.conversationContextTasks(p)
         .map((t) => ({
           id: t.id,
           title: t.title,
@@ -1603,10 +1602,7 @@ export class ProjectRuntime {
   }
   review(input: { commandId: string; taskId: string }) {
     this.authorize();
-    const run = this.ledger
-      .snapshot()
-      .runs.filter((r) => r.taskId === input.taskId)
-      .at(-1);
+    const run = this.latestTaskRun(input.taskId);
     if (!run) throw new TaskError("NOT_FOUND", "Task has no run");
     return this.ledger.reviewRun(input.commandId, {
       runId: run.runId,
@@ -1703,10 +1699,7 @@ export class ProjectRuntime {
     if (
       run &&
       !this.ledger.commandReceipt(input.commandId) &&
-      this.ledger
-        .snapshot()
-        .runs.filter((r) => r.taskId === input.taskId)
-        .at(-1)?.runId !== run.runId
+      this.latestTaskRun(input.taskId)?.runId !== run.runId
     )
       throw new TaskError("CONFLICT", "Task changed; refresh before acting");
     if (!run) throw new TaskError("NOT_FOUND", "Task has no run");
@@ -1798,10 +1791,7 @@ export class ProjectRuntime {
       projectId = this.taskProject(input.taskId);
     // Operator retry keeps the last execution choice while it remains legal.
     // Queue admission still checks live readiness, capacity and Task policy.
-    const previous = this.ledger
-      .snapshot()
-      .runs.filter((r) => r.taskId === input.taskId)
-      .at(-1);
+    const previous = this.latestTaskRun(input.taskId);
     let route = previous?.route && { ...previous.route };
     // DSH session selection resolves its own workspace. Official backends use
     // an explicit workspace grant and do not create a DSH task-session binding.
@@ -1831,6 +1821,600 @@ export class ProjectRuntime {
     const receipt = this.planner.apply(requestId, { deferExecution: true });
     this.enqueueDecision(requestId, input.taskId);
     return receipt;
+  }
+  private taskProject(taskId:string):string|undefined {
+    const row=this.db.prepare(`WITH RECURSIVE ancestors(id,depth) AS (SELECT ?,0 UNION ALL SELECT f.parent,a.depth+1 FROM demand_entity_facts f JOIN ancestors a ON f.id=a.id WHERE f.kind='task' AND f.parent IS NOT NULL AND a.depth<100)
+      SELECT b.project_id FROM ancestors a JOIN wb_backlog_tasks l ON l.task_id=a.id JOIN wb_backlogs b ON b.backlog_id=l.backlog_id ORDER BY a.depth LIMIT 1`).get(taskId);
+    return row?String(row.project_id):undefined;
+  }
+  private projectTaskCard(taskId:string) {
+    const facts=this.ledger.demandReads,task=facts.fact('task',taskId);
+    if(!task)return undefined;
+    const latest=this.db.prepare("SELECT data FROM demand_entity_facts WHERE kind='run' AND task_id=? ORDER BY seq DESC LIMIT 1").get(taskId);
+    const run=latest?JSON.parse(String(latest.data)) as CompactRun:undefined;
+    const reports:CompactReport[]=run?[
+      this.db.prepare("SELECT data FROM demand_entity_facts WHERE kind='report' AND run_id=? AND json_extract(data,'$.kind')='result' ORDER BY seq DESC LIMIT 1").get(run.runId),
+      this.db.prepare("SELECT data FROM demand_entity_facts WHERE kind='report' AND run_id=? AND json_extract(data,'$.kind')='note' AND json_extract(data,'$.supplemental')=1 ORDER BY seq DESC LIMIT 1").get(run.runId),
+    ].flatMap(row=>row?[JSON.parse(String(row.data))]:[]):[];
+    const unreadCount=Number(this.db.prepare(`SELECT COUNT(*) n FROM demand_entity_facts f WHERE f.kind='report' AND f.task_id=? AND json_extract(f.data,'$.kind')='result' AND NOT EXISTS(SELECT 1 FROM pr_report_reads rr WHERE rr.report=f.id AND rr.version=json_extract(f.data,'$.contentVersion'))`).get(taskId)?.n??0);
+    const dispatch=this.db.prepare('SELECT state,candidates,attempted FROM pr_dispatch WHERE task=?').get(taskId) as {state:string;candidates:string;attempted:string}|undefined;
+    const projectId=this.taskProject(taskId),visibility=this.db.prepare('SELECT visibility FROM pr_task_presentation WHERE task=?').get(taskId)?.visibility;
+    const hasWorkflows=!!this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='workflow_task_bindings'").get();
+    const bindingRow=hasWorkflows?this.db.prepare("SELECT data FROM workflow_task_bindings WHERE task_id=?").get(taskId):undefined;
+    const workflowBinding=bindingRow?JSON.parse(String(bindingRow.data)):undefined;
+    const workflowRunState=run&&this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='workflow_run_headers'").get()?this.db.prepare('SELECT state FROM workflow_run_headers WHERE run_id=? LIMIT 1').get(run.runId)?.state:undefined;
+    const attempt=run?.currentAttemptId?facts.fact('attempt',run.currentAttemptId):undefined;
+    const event=run?this.db.prepare("SELECT data FROM demand_entity_facts WHERE kind='event' AND run_id=? AND json_extract(data,'$.type')='run.settled' ORDER BY seq DESC LIMIT 1").get(run.runId):undefined;
+    const settled=event?JSON.parse(String(event.data)):undefined;
+    const data={runs:run?[run]:[],reports,attempts:attempt?[attempt]:[],events:settled?[settled as FactMap['event']]:[]};
+    const legacy=this.presentTask(task,{data,dispatch,projectId,visibility:visibility?String(visibility):undefined,workflowBinding,workflowRunState:workflowRunState?String(workflowRunState):undefined,unreadCount});
+    const {description: _description,supplementaryReports:_supplementary,reportHistory:_history,report:_report,artifact:_artifact,recommendation:_recommendation,candidateChecks:_checks,...small}=legacy;
+    const projectTitle=projectId?String(this.db.prepare('SELECT title FROM wb_projects WHERE project_id=?').get(projectId)?.title??projectId):'未归属项目';
+    const card:TaskCard={...small,projectTitle,reportPreview:reports.find(report=>report.reportId===legacy.reportId)?.bodyPreview||settled?.summary?.slice(0,300)||'尚未收到执行报告',childAttentionCount:0,deviceLabel:legacy.node};
+    const next=legacy.checkin.nextCheckAt?Date.parse(legacy.checkin.nextCheckAt):NaN;
+    const sessions=run?this.db.prepare('SELECT session_id FROM run_context_sessions WHERE run_id=?').all(run.runId).map(row=>String(row.session_id)):[];
+    return {card,search:[card.title,card.node,card.id,card.parentTaskId,card.runId,card.checkin.owner?.kind==='session'?card.checkin.owner.sessionId:null,attempt?.sessionId,...sessions,card.stateLabel].filter(Boolean).join(' '),nextTransition:Number.isFinite(next)?next:null};
+  }
+  private attentionSource(taskId:string,scope:ReadScope,parentRunId?:string) {
+    const access=this.demandViews.scope(scope),prefix=access.cte?`${access.cte},`:'WITH RECURSIVE';
+    const cte=`${prefix} attention_descendants(id) AS (SELECT id FROM demand_entity_facts WHERE kind='task' AND parent=? UNION SELECT f.id FROM demand_entity_facts f JOIN attention_descendants x ON f.parent=x.id WHERE f.kind='task')`;
+    const args=[...access.args,taskId,...(parentRunId?[parentRunId]:[])];
+    const from=`FROM demand_entity_facts r JOIN demand_task_display d ON d.id=r.task_id WHERE r.kind='run' AND r.task_id IN (SELECT id FROM attention_descendants) AND ${access.predicate} AND d.coordinator=0 AND json_extract(d.data,'$.parentTaskId') IS NOT NULL AND COALESCE(json_extract(r.data,'$.reviewStatus'),'')<>'accepted'
+      AND (json_extract(r.data,'$.reviewStatus') IN ('pending_user','rejected') OR (r.id=json_extract(d.data,'$.runId') AND d.status='error'))
+      AND NOT(r.id=json_extract(d.data,'$.runId') AND d.status='handled') ${parentRunId?"AND COALESCE(json_extract(r.data,'$.parentRunId'),json_extract(d.data,'$.parentRunId'))=?":''}`;
+    return {cte,args,from};
+  }
+  private childAttentionRows(taskId:string,page:number,pageSize:number,scope:ReadScope={kind:'planner'},parentRunId?:string) {
+    if(this.ledger.demandReads.fact('task',taskId)?.parentTaskId)return this.demandViews.envelope([],0,{page:0,pageSize});
+    const {cte,args,from}=this.attentionSource(taskId,scope,parentRunId);
+    const total=Number(this.db.prepare(`${cte} SELECT COUNT(*) n ${from}`).get(...args)?.n??0);page=Math.min(page,Math.max(0,Math.ceil(total/pageSize)-1));
+    const items=this.db.prepare(`${cte} SELECT r.id,r.state,r.data,d.id task_id,d.data task_data ${from} ORDER BY r.seq LIMIT ? OFFSET ?`).all(...args,pageSize,page*pageSize).map(row=>{const run=JSON.parse(String(row.data)),task=JSON.parse(String(row.task_data));return {taskId:String(row.task_id),runId:String(row.id),parentRunId:run.parentRunId??task.parentRunId??null,parentCreatedAt:(run.parentRunId??task.parentRunId)?this.ledger.demandReads.fact('run',run.parentRunId??task.parentRunId)?.createdAt??null:null,state:String(row.state),node:run.route?.nodeId??task.node,summary:this.attentionSummary(run)};});
+    return this.demandViews.envelope(items,total,{page,pageSize});
+  }
+  private attentionGroups(taskId:string,input:{page?:number;pageSize?:number},scope:ReadScope) {
+    this.demandViews.card(taskId,scope);
+    const bounds=pageBounds(input,5,20);
+    if(this.ledger.demandReads.fact('task',taskId)?.parentTaskId)return {...this.demandViews.envelope([],0,{...bounds,page:0}),totalAttention:0,unbound:0};
+    const q=this.attentionSource(taskId,scope),parent="COALESCE(json_extract(r.data,'$.parentRunId'),json_extract(d.data,'$.parentRunId'))";
+    const groups=`${q.cte}, attention_groups AS (SELECT ${parent} parentRunId,COUNT(*) count ${q.from} GROUP BY ${parent}), dated_groups AS (SELECT g.*,p.task_id taskId,json_extract(p.data,'$.createdAt') createdAt,COALESCE((julianday(json_extract(p.data,'$.createdAt'))-2440587.5)*86400000,0) createdMs FROM attention_groups g LEFT JOIN demand_entity_facts p ON p.kind='run' AND p.id=g.parentRunId)`;
+    const summary=this.db.prepare(`${groups} SELECT COUNT(CASE WHEN parentRunId IS NOT NULL THEN 1 END) total,COALESCE(SUM(count),0) totalAttention,COALESCE(SUM(CASE WHEN parentRunId IS NULL THEN count ELSE 0 END),0) unbound FROM dated_groups`).get(...q.args)!;
+    const total=Number(summary.total);bounds.page=Math.min(bounds.page,Math.max(0,Math.ceil(total/bounds.pageSize)-1));
+    const items=this.db.prepare(`${groups} SELECT parentRunId,count,createdAt,taskId FROM dated_groups WHERE parentRunId IS NOT NULL ORDER BY createdMs DESC,parentRunId COLLATE NOCASE ASC LIMIT ? OFFSET ?`).all(...q.args,bounds.pageSize,bounds.page*bounds.pageSize).map(row=>({parentRunId:String(row.parentRunId),count:Number(row.count),createdAt:row.createdAt?String(row.createdAt):null,taskId:row.taskId&&this.visibleTask(String(row.taskId),scope)?String(row.taskId):null}));
+    return {...this.demandViews.envelope(items,total,bounds),totalAttention:Number(summary.totalAttention),unbound:Number(summary.unbound)};
+  }
+  private attentionSummary(run:{state:string;reviewStatus?:string|null}) {
+    return run.reviewStatus==='rejected'?'审核未通过':run.state==='partial'?'部分完成 · 详见本次报告':run.state==='failed'?'执行失败':run.state==='uncertain'?'结果待核实':run.state==='blocked'?'执行受阻':'结果需核对';
+  }
+  demandRead<M extends DemandReadMethod>(method:M,input:DemandReadInputs[M],scope:ReadScope={kind:'planner'}):DemandReadOutputs[M] {
+    const parsed=parseDemandRead(method,input);
+    return this.demandViews.current(()=>this.readDemandProduct(method,parsed,scope)) as DemandReadOutputs[M];
+  }
+  private readDemandProduct(method:DemandReadMethod,input:DemandReadInputs[DemandReadMethod],scope:ReadScope):unknown {
+    const views=this.demandViews;
+    switch(method) {
+      case 'taskPage':return views.taskPage(input as DemandReadInputs['taskPage'],scope);
+      case 'taskBoard': {
+        const query=input as DemandReadInputs['taskBoard'];
+        if(!Array.isArray(query.columns)||query.columns.length>13||new Set(query.columns.map(c=>c.status)).size!==query.columns.length)throw new TaskError('INVALID','Invalid board columns');
+        const counts=views.counts({...query,status:'all'},scope);
+        const columns=Object.fromEntries(query.columns.map(column=>[column.status,views.selectTaskPage({...query,status:column.status,page:column.page,pageSize:query.pageSize??5},scope,counts.matchedByStatus[column.status])]));
+        return {columns,counts,revision:this.ledger.demandReads.revision,sampledAt:now(),viewContext:views.context(scope),nodes:this.publicNodes(scope)};
+      }
+      case 'taskDetail': {
+        const {taskId}=input as DemandReadInputs['taskDetail'],card=views.card(taskId,scope),task=this.ledger.getTask(taskId);
+        const dispatch=this.db.prepare('SELECT candidates,attempted FROM pr_dispatch WHERE task=?').get(taskId);
+        return {task:{...card,description:task.description,artifact:card.reportId?this.ledger.demandReads.fact('report',card.reportId)?.title??'等待执行报告':'等待执行报告',recommendation:scope.kind==='planner'&&dispatch?JSON.parse(String(dispatch.candidates)):[],candidateChecks:scope.kind==='planner'&&dispatch?JSON.parse(String(dispatch.attempted)):[]},runs:views.runPage({taskId,pageSize:5},scope),reports:views.reportPage({taskId},scope),childAttention:this.childAttentionRows(taskId,0,20,scope)};
+      }
+      case 'taskHistoryPage': {const q=input as DemandReadInputs['taskHistoryPage'];views.card(q.taskId,scope);return views.runPage(q,scope,5);}
+      case 'executionPage':return views.runPage(input as DemandReadInputs['executionPage'],scope);
+      case 'reportListPage':return views.reportPage(input as DemandReadInputs['reportListPage'],scope);
+      case 'taskReportDetail': {
+        const q=input as DemandReadInputs['taskReportDetail'];views.card(q.taskId,scope);const fact=this.ledger.demandReads.fact('report',q.reportId);
+        if(!fact||fact.taskId!==q.taskId||q.runId&&fact.runId!==q.runId)throw new TaskError('NOT_FOUND','Report unavailable');
+        const report=this.ledger.getReport(q.reportId);return {...views.reportHeader(fact),body:report.body,workflowOutputs:report.workflowOutputs??[]};
+      }
+      case 'taskRunDetail': {
+        const q=input as DemandReadInputs['taskRunDetail'];views.card(q.taskId,scope);const run=this.ledger.getRun(q.runId);if(run.taskId!==q.taskId)throw new TaskError('NOT_FOUND','Run unavailable');
+        return {run:this.publicRunDetail(run),attempts:this.ledger.demandReads.facts('attempt',run.runId).map(a=>({attemptId:a.attemptId,taskId:a.taskId,runId:a.runId,nodeId:a.nodeId,fence:a.fence,state:a.state,sessionId:a.sessionId,executionId:a.executionId})),reports:views.reportPage({taskId:q.taskId,runId:q.runId},scope),children:views.runPage({parentRunId:q.runId},scope)};
+      }
+      case 'taskAttentionGroupPage': {const q=input as DemandReadInputs['taskAttentionGroupPage'];return this.attentionGroups(q.taskId,q,scope);}
+      case 'taskAttentionPage': {const q=input as DemandReadInputs['taskAttentionPage'];views.card(q.taskId,scope);const bounds=pageBounds(q);return this.childAttentionRows(q.taskId,bounds.page,bounds.pageSize,scope,q.parentRunId);}
+      default:return this.readSecondaryProduct(method,input,scope);
+    }
+  }
+  private sessionHeaderPage(input:DemandReadInputs['sessionTaskPage'],scope:ReadScope) {
+    const q=input as DemandReadInputs['sessionTaskPage']&{rootTaskIds?:string[];excludeTaskIds?:string[];offset?:number;limit?:number},access=this.demandViews.scope(scope),readerNode=scope.kind==='node'?scope.nodeId:this.nodeId;
+    const prefix=access.cte?`${access.cte},`:'WITH RECURSIVE',roots=JSON.stringify(q.rootTaskIds??[]);
+    const cte=`${prefix} session_seeds(id) AS (
+      SELECT value FROM json_each(?)
+      UNION SELECT r.task_id FROM demand_entity_facts r WHERE r.kind='run' AND r.node_id=? AND (
+        EXISTS(SELECT 1 FROM demand_entity_facts a WHERE a.kind='attempt' AND a.run_id=r.id AND json_extract(a.data,'$.sessionId')=?)
+        OR EXISTS(SELECT 1 FROM run_context_sessions c WHERE c.run_id=r.id AND c.session_id=?))),
+      session_tasks(id) AS (SELECT id FROM session_seeds UNION SELECT f.id FROM demand_entity_facts f JOIN session_tasks s ON f.parent=s.id WHERE f.kind='task')`;
+    const cteArgs=[...access.args,roots,readerNode,q.sessionId,q.sessionId],excluded=JSON.stringify(q.excludeTaskIds??[]),args=[...cteArgs,excluded],base=`d.id IN (SELECT id FROM session_tasks) AND ${access.predicate} AND d.id NOT IN (SELECT value FROM json_each(?))`;
+    const counts:Record<string,number>={all:0};for(const row of this.db.prepare(`${cte} SELECT d.status,COUNT(*) n FROM demand_task_display d WHERE ${base} GROUP BY d.status`).all(...args)){counts[String(row.status)]=Number(row.n);counts.all!+=Number(row.n);}
+    const filters=[base],matchArgs=[...args];
+    if(q.status&&q.status!=='all'){filters.push('d.status=?');matchArgs.push(q.status);}if(q.search){filters.push('instr(lower(d.search_text),lower(?))>0');matchArgs.push(q.search);}
+    const where=filters.join(' AND '),total=Number(this.db.prepare(`${cte} SELECT COUNT(*) n FROM demand_task_display d WHERE ${where}`).get(...matchArgs)?.n??0);
+    const bounds=pageBounds(q),offset=q.offset??Math.min(bounds.page,Math.max(0,Math.ceil(total/bounds.pageSize)-1))*bounds.pageSize,limit=q.limit??bounds.pageSize;
+    const returned=`COALESCE(json_extract(d.data,'$.returnedAt'),CASE WHEN d.status IN ('review','done','accepted','error','cancelled') THEN d.updated_at END)`;
+    const rows=this.db.prepare(`${cte} SELECT d.data,d.header_digest,d.id IN (SELECT id FROM session_seeds) direct,${returned} returnedAt FROM demand_task_display d WHERE ${where} ORDER BY COALESCE(unixepoch(${returned},'subsec'),0) DESC,COALESCE(unixepoch(d.updated_at,'subsec'),0) DESC,d.id COLLATE BINARY ASC LIMIT ? OFFSET ?`).all(...matchArgs,limit,offset);
+    const items=rows.map(row=>{const card=this.demandViews.mask(JSON.parse(String(row.data)),scope);return {...card,direct:!!row.direct,source:'task-system',detailVersion:String(row.header_digest),returnedAt:row.returnedAt?String(row.returnedAt):null};});
+    const directCount=Number(this.db.prepare(`${cte} SELECT COUNT(*) n FROM demand_task_display d WHERE ${base} AND d.id IN (SELECT id FROM session_seeds)`).get(...args)?.n??0);
+    const unavailableTasks=Number(this.db.prepare(`${cte} SELECT COUNT(*) n FROM (SELECT DISTINCT value id FROM json_each(?)) roots WHERE roots.id NOT IN (SELECT value FROM json_each(?)) AND NOT EXISTS(SELECT 1 FROM demand_task_display d WHERE d.id=roots.id AND ${access.predicate})`).get(...cteArgs,roots,excluded)?.n??0);
+    const headers=this.db.prepare(`${cte} SELECT group_concat(header_digest,'') digest FROM (SELECT d.header_digest FROM demand_task_display d INDEXED BY demand_session_digest WHERE ${base} ORDER BY d.id)`).get(...args)?.digest??'';
+    const revision=digest({headers,counts,directCount,unavailableTasks,roots:[...(q.rootTaskIds??[])].sort(),excluded:[...(q.excludeTaskIds??[])].sort(),sessionId:q.sessionId,readerNode});
+    return {...this.demandViews.envelope(items,total,{page:Math.floor(offset/Math.max(1,limit)),pageSize:limit}),revision,sessionId:q.sessionId,counts,directCount,unavailableTasks,runs:[]};
+  }
+  private readSecondaryProduct(method:DemandReadMethod,input:DemandReadInputs[DemandReadMethod],scope:ReadScope):unknown {
+    const views=this.demandViews,db=this.db;
+    switch(method) {
+      case 'sessionTaskPage':return this.sessionHeaderPage(input as DemandReadInputs['sessionTaskPage'],scope);
+      case 'executorClaimsPage':return views.envelope([],0,pageBounds(input as DemandReadInputs['executorClaimsPage']));
+      case 'readBootstrap': {
+        const service=this.ctx.get('taskSystem') as TaskSystemService|undefined;
+        const counts=views.counts({presentation:'all',project:{kind:'unassigned'}},scope),access=views.scope(scope);
+        return {settings:scope.kind==='planner'?{...this.settings(),enabled:true}:{enabled:false},viewCapabilities:{planner:true,executor:true},viewContext:views.context(scope),
+          nodes:this.publicNodes(scope),
+          scheduleRuntime:{enabled:!!service?.config.schedulerEnabled,ticking:!!service?.config.keepAlive},temporaryTaskCount:counts.baseTotal,
+          scheduleCount:Number(db.prepare(`${access.cte} SELECT COUNT(*) n FROM demand_entity_facts s JOIN demand_task_display d ON d.id=s.task_id WHERE s.kind='schedule' AND ${access.predicate}`).get(...access.args)?.n??0)};
+      }
+      case 'projectCreateOptions':if(scope.kind!=='planner')throw new TaskError('FORBIDDEN','Planner settings required');return {settings:this.settings(),workspaceOptions:this.workspaceOptions()};
+      case 'projectListPage': {
+        const q=input as DemandReadInputs['projectListPage'],bounds=pageBounds(q),access=this.projectReadAccess(scope),args=[...access.args],conditions=[access.where];
+        if(q.search){conditions.push("instr(lower(p.title||' '||p.description||' '||p.goal),lower(?))>0");args.push(q.search);}
+        const where=conditions.join(' AND '),total=Number(db.prepare(`${access.cte} SELECT COUNT(*) n FROM wb_projects p WHERE ${where}`).get(...args)?.n??0);
+        bounds.page=Math.min(bounds.page,Math.max(0,Math.ceil(total/bounds.pageSize)-1));
+        const items=db.prepare(`${access.cte} SELECT p.project_id,substr(p.description,1,300) preview FROM wb_projects p WHERE ${where} ORDER BY p.updated_at DESC,p.project_id LIMIT ? OFFSET ?`).all(...args,bounds.pageSize,bounds.page*bounds.pageSize).map(row=>{
+          const project=this.publicProject(String(row.project_id),scope,false),{description:_description,goal:_goal,next:_next,coordinatorWorkspace:_coordinator,context:_context,messages:_messages,executionSettings:_settings,...card}=project;
+          const query={project:{kind:'project' as const,projectId:project.id},presentation:'coordinator' as const},taskCounts=views.counts(query,scope);
+          const priority=['error','review','cancelling','running','queued','draft'] as const,focusStatus=priority.find(status=>taskCounts.byStatus[status]>0),focus=focusStatus?views.taskPage({...query,status:focusStatus,pageSize:1},scope).items[0]:undefined;
+          const collaboration=this.collaboration?db.prepare(`SELECT substr(json_extract(data,'$.summary'),1,300) summary,json_extract(data,'$.updatedAt') updatedAt,json_extract(data,'$.state') state FROM collaboration_bindings WHERE project_id=? ${scope.kind==='node'?'AND owner_node_id=?':''} ORDER BY json_extract(data,'$.updatedAt') DESC LIMIT 1`).get(project.id,...(scope.kind==='node'?[scope.nodeId]:[])):undefined;
+          const pending=!!this.collaboration&&!!db.prepare(`SELECT 1 FROM collaboration_bindings WHERE project_id=? AND json_extract(data,'$.state')='pending_review' ${scope.kind==='node'?'AND owner_node_id=?':''} LIMIT 1`).get(project.id,...(scope.kind==='node'?[scope.nodeId]:[]));
+          const status=focus&&['error','review'].includes(focus.status)?focus.status:pending?'review':focus?.status??(['done','accepted','handled','cancelled','archived'] as const).find(status=>taskCounts.byStatus[status]>0)??'observed';
+          const labels:Record<string,string>={error:'需处理',review:'待确认',cancelling:'取消中',running:'执行中',queued:'等待执行',draft:'待开始',done:'已完成',accepted:'已验收',handled:'已处理',cancelled:'已取消',archived:'已归档',observed:'暂无任务'};
+          return {...card,taskCounts,descriptionPreview:String(row.preview),...(collaboration?{collaborationPreview:collaboration}:{}),activity:{status,label:pending&&status==='review'&&focus?.status!=='review'?'会话成果待复核':focus?.stateLabel??labels[status]??status,focus:focus?{id:focus.id,title:focus.title,status:focus.status,stateLabel:focus.stateLabel}:null}};
+        });return views.envelope(items,total,bounds);
+      }
+      case 'projectDetail': {
+        const q=input as DemandReadInputs['projectDetail'];this.assertProjectRead(q.projectId,scope);
+        return {project:this.publicProject(q.projectId,scope),taskCounts:views.counts({project:{kind:'project',projectId:q.projectId},presentation:'all'},scope),collaborations:this.resourcePage({kind:'collaborations',projectId:q.projectId},scope),registrations:this.resourcePage({kind:'registrations',projectId:q.projectId},scope)};
+      }
+      case 'projectResourcesPage':return this.resourcePage(input as DemandReadInputs['projectResourcesPage'],scope);
+      case 'taskSessionAccess': {
+        const q=input as DemandReadInputs['taskSessionAccess'],card=views.card(q.taskId,scope);
+        if(card.observationOnly||q.nodeId!==(scope.kind==='node'?scope.nodeId:this.nodeId))throw new TaskError('FORBIDDEN','Open the session on its own device');
+        const origin=this.ledger.demandReads.fact('task',q.taskId)?.dispatchOrigin;
+        const source=origin?.kind==='session'&&origin.nodeId===q.nodeId&&origin.sessionId===q.sessionId;
+        const execution=!!db.prepare(`SELECT 1 FROM demand_entity_facts r WHERE r.kind='run' AND r.task_id=? AND COALESCE(json_extract(r.data,'$.workflowInvocation'),0)=0 AND COALESCE(json_extract(r.data,'$.observationOnly'),0)=0 AND json_extract(r.data,'$.route.backend') IS NULL AND (
+          EXISTS(SELECT 1 FROM demand_entity_facts a WHERE a.kind='attempt' AND a.run_id=r.id AND a.node_id=? AND json_extract(a.data,'$.sessionId')=?) OR (r.node_id=? AND EXISTS(SELECT 1 FROM run_context_sessions c WHERE c.run_id=r.id AND c.session_id=?))) LIMIT 1`).get(q.taskId,q.nodeId,q.sessionId,q.nodeId,q.sessionId);
+        if(!source&&!execution)throw new TaskError('FORBIDDEN','Session is not part of this task');return {allowed:true};
+      }
+      case 'taskGraphPage': {
+        const q=input as DemandReadInputs['taskGraphPage'],bounds=pageBounds(q),access=views.scope(scope),args=[...access.args],where=[access.predicate];
+        if(q.taskId)views.card(q.taskId,scope);
+        if(q.projectId){where.push('d.project=?');args.push(q.projectId);}if(q.parentTaskId||q.taskId){where.push("json_extract(d.data,'$.parentTaskId')=?");args.push(q.parentTaskId??q.taskId!);}else if(q.runId){where.push("json_extract(d.data,'$.parentRunId')=?");args.push(q.runId);}else if(!q.projectId)where.push("json_extract(d.data,'$.parentTaskId') IS NULL");
+        const condition=where.join(' AND '),total=Number(db.prepare(`${access.cte} SELECT COUNT(*) n FROM demand_task_display d WHERE ${condition}`).get(...args)?.n??0);bounds.page=Math.min(bounds.page,Math.max(0,Math.ceil(total/bounds.pageSize)-1));
+        const items=db.prepare(`${access.cte} SELECT d.data FROM demand_task_display d WHERE ${condition} ORDER BY d.seq LIMIT ? OFFSET ?`).all(...args,bounds.pageSize,bounds.page*bounds.pageSize).map(row=>views.mask(JSON.parse(String(row.data)),scope));
+        return {...views.envelope(items,total,bounds),edges:items.flatMap(task=>task.parentTaskId?[{from:task.parentTaskId,to:task.id,kind:'task'}]:[]),boundary:items.map(task=>({id:task.id,parentId:task.parentTaskId,remaining:Number(db.prepare(`${access.cte} SELECT COUNT(*) n FROM demand_task_display d WHERE json_extract(d.data,'$.parentTaskId')=? AND ${access.predicate}`).get(...access.args,task.id)?.n??0)}))};
+      }
+      case 'scheduleListPage': {
+        const q=input as DemandReadInputs['scheduleListPage'],bounds=pageBounds(q),access=views.scope(scope),args=[...access.args],where=["f.kind='schedule'",access.predicate];
+        if(q.project?.kind==='project'){where.push('d.project=?');args.push(q.project.projectId);}else if(q.project?.kind==='unassigned')where.push("d.project='unassigned'");
+        const from=`FROM demand_entity_facts f JOIN demand_task_display d ON d.id=f.task_id WHERE ${where.join(' AND ')}`,total=Number(db.prepare(`${access.cte} SELECT COUNT(*) n ${from}`).get(...args)?.n??0);bounds.page=Math.min(bounds.page,Math.max(0,Math.ceil(total/bounds.pageSize)-1));
+        return views.envelope(db.prepare(`${access.cte} SELECT f.id ${from} ORDER BY f.seq DESC LIMIT ? OFFSET ?`).all(...args,bounds.pageSize,bounds.page*bounds.pageSize).map(row=>this.publicSchedule(String(row.id),scope)),total,bounds);
+      }
+      case 'scheduleDetail':{const q=input as DemandReadInputs['scheduleDetail'],schedule=this.publicSchedule(q.scheduleId,scope);return {schedule,task:views.card(schedule.taskId,scope)};}
+      case 'scheduleHistoryPage': {
+        const q=input as DemandReadInputs['scheduleHistoryPage'];this.publicSchedule(q.scheduleId,scope);const bounds=pageBounds(q),total=Number(db.prepare("SELECT COUNT(*) n FROM entities WHERE kind='occurrence' AND parent=?").get(q.scheduleId)?.n??0);bounds.page=Math.min(bounds.page,Math.max(0,Math.ceil(total/bounds.pageSize)-1));
+        const items=db.prepare("SELECT data FROM entities WHERE kind='occurrence' AND parent=? ORDER BY rowid DESC LIMIT ? OFFSET ?").all(q.scheduleId,bounds.pageSize,bounds.page*bounds.pageSize).map(row=>{const occurrence=JSON.parse(String(row.data));const run=occurrence.runId?this.ledger.demandReads.fact('run',occurrence.runId):undefined;return {...occurrence,run:run?views.runHeader(run,run.sourceSeq):null};});return views.envelope(items,total,bounds);
+      }
+      case 'workflowListPage': {
+        const q=input as DemandReadInputs['workflowListPage'],bounds=pageBounds(q);
+        if(!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='workflow_definition_headers'").get())return views.envelope([],0,bounds);
+        const projectAccess=this.projectReadAccess(scope),conditions=[scope.kind==='planner'?'1':`w.project_id IN (${projectAccess.cte} SELECT p.project_id FROM wb_projects p WHERE ${projectAccess.where})`],args=scope.kind==='planner'?[]:[...projectAccess.args];
+        if(q.projectId){conditions.push('w.project_id=?');args.push(q.projectId);}const where=conditions.join(' AND '),total=Number(db.prepare(`SELECT COUNT(*) n FROM workflow_definition_headers w WHERE ${where}`).get(...args)?.n??0);bounds.page=Math.min(bounds.page,Math.max(0,Math.ceil(total/bounds.pageSize)-1));
+        const rows=db.prepare(`SELECT id,project_id project,title,description,revision,result_steps results,step_count steps,node_ids nodes FROM workflow_definition_headers w WHERE ${where} ORDER BY seq DESC LIMIT ? OFFSET ?`).all(...args,bounds.pageSize,bounds.page*bounds.pageSize);
+        return views.envelope(rows.map(row=>({workflowId:String(row.id),projectId:row.project??null,title:String(row.title),description:String(row.description),revision:Number(row.revision),resultStepIds:row.results?JSON.parse(String(row.results)):null,nodeIds:JSON.parse(String(row.nodes??'[]')),stepCount:Number(row.steps)})),total,bounds);
+      }
+      case 'workflowDetail': {
+        const q=input as DemandReadInputs['workflowDetail'];
+        const row=db.prepare('SELECT data FROM workflow_definitions WHERE id=?').get(q.workflowId);if(!row)throw new TaskError('NOT_FOUND','Workflow unavailable');
+        const service=this.ctx.get('taskSystem') as TaskSystemService|undefined;if(!service)throw new TaskError('UNAVAILABLE','Workflow service unavailable');
+        const definition=JSON.parse(String(row.data)) as import('./workflow-contracts.js').WorkflowDefinition;
+        if(scope.kind==='planner')return {...service.workflows.demandCatalog(q.workflowId),definition};
+        if(!definition.projectId)throw new TaskError('NOT_FOUND','Workflow unavailable');this.assertProjectRead(definition.projectId,scope);
+        return {readOnly:true,definition:this.publicWorkflowDefinition(definition),nodes:this.publicNodes(scope),workspaces:[],programs:[],models:[],taskBindings:[]};
+      }
+      case 'workflowRunPage': {
+        const q=input as DemandReadInputs['workflowRunPage'],bounds=pageBounds(q);
+        if(!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='workflow_run_headers'").get())return views.envelope([],0,bounds);
+        if(q.taskId)views.card(q.taskId,scope);
+        const access=views.scope(scope),conditions=['w.workflow_id=?',access.predicate],args=[...access.args,q.workflowId];
+        if(q.taskId){conditions.push("COALESCE(w.task_id,json_extract(a.data,'$.taskId'))=?");args.push(q.taskId);}
+        if(q.runId){conditions.push('w.run_id=?');args.push(q.runId);}if(q.legacyOnly)conditions.push('w.run_id IS NULL');
+        const from=`FROM workflow_run_headers w LEFT JOIN workflow_adoptions a ON a.workflow_id=w.workflow_id LEFT JOIN demand_task_display d ON d.id=COALESCE(w.task_id,json_extract(a.data,'$.taskId')) WHERE ${conditions.join(' AND ')}`;
+        const total=Number(db.prepare(`${access.cte} SELECT COUNT(*) n ${from}`).get(...args)?.n??0);bounds.page=Math.min(bounds.page,Math.max(0,Math.ceil(total/bounds.pageSize)-1));
+        const rows=db.prepare(`${access.cte} SELECT w.data,COALESCE(w.task_id,json_extract(a.data,'$.taskId')) taskId,COALESCE(w.project_id,json_extract(a.data,'$.projectId')) projectId ${from} ORDER BY w.seq DESC LIMIT ? OFFSET ?`).all(...args,bounds.pageSize,bounds.page*bounds.pageSize);
+        return views.envelope(rows.map(row=>({...JSON.parse(String(row.data)),taskId:row.taskId??null,projectId:row.projectId??null})),total,bounds);
+      }
+      case 'workflowRunDetail':case 'workflowStepDetail': {
+        const q=input as DemandReadInputs['workflowRunDetail']&{stepId?:string};const service=this.ctx.get('taskSystem') as TaskSystemService|undefined;if(!service)throw new TaskError('UNAVAILABLE','Workflow service unavailable');
+        const run=service.workflows.getRunView(q.workflowRunId);if(scope.kind==='node'){if(!run.taskId)throw new TaskError('NOT_FOUND','Workflow execution unavailable');views.card(run.taskId,scope);}
+        if(method==='workflowStepDetail'){const step=run.steps.find(step=>step.stepId===q.stepId);if(!step||scope.kind==='node'&&step.nodeId!==scope.nodeId&&!(step.taskId&&this.visibleTask(step.taskId,scope)))throw new TaskError('NOT_FOUND','Step unavailable');return scope.kind==='planner'?step:this.publicWorkflowStep(step);}
+        const definition=scope.kind==='planner'?run.definition:this.publicWorkflowDefinition(run.definition);
+        return {run:{workflowRunId:run.workflowRunId,workflowId:run.workflowId,projectId:run.projectId??null,taskId:run.taskId??null,runId:run.runId??null,definitionRevision:run.definitionRevision,title:run.title,createdAt:run.createdAt,state:run.state,definition,dispatches:scope.kind==='planner'?run.dispatches:[],steps:run.steps.filter(step=>scope.kind==='planner'||step.nodeId===scope.nodeId||step.taskId&&this.visibleTask(step.taskId,scope)).map(step=>scope.kind==='planner'?(({output:_output,...rest})=>rest)(step):this.publicWorkflowStep(step))},definition};
+      }
+      default:throw new TaskError('UNSUPPORTED',`Demand read ${method} is not implemented`);
+    }
+  }
+  private publicWorkflowStep(step:import('./workflow-contracts.js').WorkflowStepView) {
+    return {stepId:step.stepId,nodeId:step.nodeId,title:step.title,kind:step.kind,state:step.state,reason:step.reason??null,taskId:step.taskId??null,runId:step.runId??null,reportId:step.reportId??null,summary:step.summary??null,attemptCount:step.attemptCount};
+  }
+  private publicWorkflowDefinition(definition:import('./workflow-contracts.js').WorkflowDefinition) {
+    return {workflowId:definition.workflowId,projectId:definition.projectId??null,title:definition.title,description:definition.description,revision:definition.revision,resultStepIds:definition.resultStepIds??null,stages:definition.stages??[],calls:definition.calls??[],steps:definition.steps.map(step=>({stepId:step.stepId,stageId:step.stageId??null,nodeId:step.nodeId,title:step.title,position:step.position??null,dependsOn:step.dependsOn,kind:step.execution.kind,execution:{kind:step.execution.kind}}))};
+  }
+  private visibleTask(taskId:string,scope:ReadScope) {
+    const access=this.demandViews.scope(scope);
+    return !!this.db.prepare(`${access.cte} SELECT 1 FROM demand_task_display d WHERE d.id=? AND ${access.predicate}`).get(...access.args,taskId);
+  }
+  private publicNodes(scope:ReadScope) {
+    const access=this.demandViews.scope(scope);
+    return this.ledger.nodeStatuses().filter(node=>scope.kind==='planner'||node.nodeId===scope.nodeId||!!this.db.prepare(`${access.cte} SELECT 1 FROM demand_entity_facts r JOIN demand_task_display d ON d.id=r.task_id WHERE r.kind='run' AND r.node_id=? AND ${access.predicate} LIMIT 1`).get(...access.args,node.nodeId)).map(node=>({nodeId:node.nodeId,displayName:node.nodeId===this.nodeId?(this.ctx.get('taskSystem') as TaskSystemService|undefined)?.config.nodeDisplayName?.trim()||node.nodeId:node.nodeId,state:node.state,availableSlots:node.availableSlots??null}));
+  }
+  private projectReadAccess(scope:ReadScope) {
+    const access=this.demandViews.scope(scope);
+    if(scope.kind==='planner')return {cte:'',args:[] as import('node:sqlite').SQLInputValue[],where:'1'};
+    const collaboration=!!this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='collaboration_bindings'").get();
+    return {cte:access.cte,args:[...access.args,scope.nodeId,...(collaboration?[scope.nodeId]:[])],where:`(p.project_id IN (SELECT d.project FROM demand_task_display d WHERE ${access.predicate}) OR p.project_id IN (SELECT project_id FROM wb_project_workspaces WHERE node_id=?) ${collaboration?'OR p.project_id IN (SELECT project_id FROM collaboration_bindings WHERE owner_node_id=?)':''})`};
+  }
+  private assertProjectRead(projectId:string,scope:ReadScope) {
+    const access=this.projectReadAccess(scope);
+    if(!this.db.prepare(`${access.cte} SELECT 1 FROM wb_projects p WHERE ${access.where} AND p.project_id=?`).get(...access.args,projectId))throw new TaskError('NOT_FOUND','Project unavailable');
+  }
+  private publicProject(projectId:string,scope:ReadScope,detail=true) {
+    this.assertProjectRead(projectId,scope);
+    const p=this.db.prepare(`SELECT project_id,title,${detail?'description,goal,next_step':"'' description,'' goal,'' next_step"},state FROM wb_projects WHERE project_id=?`).get(projectId)!;
+    const runtime=this.db.prepare('SELECT * FROM pr_projects WHERE id=?').get(projectId),binding=this.projectWorkspace(projectId);
+    const collaboration=this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='collaboration_bindings'").get()?this.db.prepare('SELECT cwd FROM collaboration_bindings WHERE project_id=? LIMIT 1').get(projectId):undefined;
+    const fallback=this.db.prepare("SELECT json_extract(f.data,'$.path') path FROM wb_project_workspaces w JOIN demand_entity_facts f ON f.kind='workspace' AND f.id=w.workspace_id WHERE w.project_id=? AND w.is_default=1 LIMIT 1").get(projectId);
+    const sessionId=runtime?String(runtime.session):null,canChat=scope.kind==='planner'?runtime?.state==='ready':!!sessionId&&!!this.nativeSession(sessionId);
+    return {id:projectId,title:String(p.title),description:String(p.description),goal:String(p.goal),next:String(p.next_step||'继续项目工作'),stage:runtime?.state==='ready'?'正在推进':runtime?'准备工作区':collaboration?'会话协作':'历史项目',workspaceNodeId:binding?.nodeId??this.nodeId,coordinatorWorkspace:runtime?String(runtime.cwd):null,workspace:binding?.path||runtime?.cwd||collaboration?.cwd||fallback?.path||'未绑定',session:Number(runtime?.generation??0),sessionId:scope.kind==='planner'||canChat?sessionId:null,context:0,phase:String(p.state),messages:[],canChat,canConfigure:!!runtime&&scope.kind==='planner',executionSettings:runtime&&scope.kind==='planner'?this.ledger.projectExecutionSettings.read(projectId):null};
+  }
+  private publicSchedule(scheduleId:string,scope:ReadScope) {
+    const s=this.ledger.demandReads.fact('schedule',scheduleId);if(!s)throw new TaskError('NOT_FOUND','Schedule unavailable');const task=this.demandViews.card(s.taskId,scope);
+    return {scheduleId,taskId:s.taskId,title:task.title,project:task.project,enabled:s.enabled,revision:s.revision??1,retiredAt:s.retiredAt??null,intervalMs:s.intervalMs??null,cron:s.cron??null,timeZone:s.timeZone??null,nextDueAt:s.nextDueAt,overlap:s.overlap,misfire:s.misfire??'once',node:s.route?.nodeId??null,model:s.route?.model??null,blocked:['cancelled','archived'].includes(task.nativeState)};
+  }
+  private resourcePage(input:{kind:'artifacts'|'milestones'|'registrations'|'collaborations';projectId?:string;page?:number;pageSize?:number},scope:ReadScope) {
+    if(input.projectId)this.assertProjectRead(input.projectId,scope);
+    const bounds=pageBounds(input),views=this.demandViews,access=this.projectReadAccess(scope),projectSql=`${access.cte} SELECT p.project_id FROM wb_projects p WHERE ${access.where}${input.projectId?' AND p.project_id=?':''}`;
+    let args:import('node:sqlite').SQLInputValue[]=[...access.args,...(input.projectId?[input.projectId]:[])];
+    let from:string,ids:string;
+    if(input.kind==='artifacts'){
+      const taskAccess=views.scope(scope),conditions:string[]=[];args=[];
+      if(scope.kind==='node'){conditions.push(`r.task_id IN (${taskAccess.cte} SELECT d.id FROM demand_task_display d WHERE ${taskAccess.predicate})`);args.push(...taskAccess.args);}
+      if(input.projectId){conditions.push('(EXISTS(SELECT 1 FROM demand_task_display d WHERE d.id=r.task_id AND d.project=?) OR EXISTS(SELECT 1 FROM wb_artifact_relations a WHERE a.artifact_id=r.artifact_id AND a.project_id=?))');args.push(input.projectId,input.projectId);}
+      from=`FROM wb_artifacts r WHERE ${conditions.length?conditions.join(' AND '):'1'}`;ids='r.artifact_id';
+    }
+    else if(input.kind==='milestones'){from=`FROM wb_milestones r WHERE r.project_id IN (${projectSql})`;ids='r.milestone_id';}
+    else if(input.kind==='collaborations'){if(!this.collaboration)return views.envelope([],0,bounds);from=`FROM collaboration_bindings r WHERE r.project_id IN (${projectSql})${scope.kind==='node'?' AND r.owner_node_id=?':''}`;if(scope.kind==='node')args.push(scope.nodeId);ids='r.binding_id';}
+    else {from=`FROM registration_read_headers r WHERE r.project_id IN (${projectSql})`;ids='r.id';}
+    const total=Number(this.db.prepare(`SELECT COUNT(*) n ${from}`).get(...args)?.n??0);bounds.page=Math.min(bounds.page,Math.max(0,Math.ceil(total/bounds.pageSize)-1));
+    const rows=this.db.prepare(`SELECT ${ids} id ${from} ORDER BY ${ids} LIMIT ? OFFSET ?`).all(...args,bounds.pageSize,bounds.page*bounds.pageSize);
+    const items=rows.map(row=>{
+      const id=String(row.id);
+      if(input.kind==='artifacts')return {id,...this.workbench.getArtifact(id)};
+      if(input.kind==='milestones')return this.workbench.getMilestone(id);
+      if(input.kind==='collaborations')return JSON.parse(String(this.db.prepare('SELECT data FROM collaboration_bindings WHERE binding_id=?').get(id)!.data));
+      const record=JSON.parse(String(this.db.prepare('SELECT data FROM registration_read_headers WHERE id=?').get(id)!.data));
+      return {...record,unknownOriginalTimes:!!record.unknownOriginalTimes};
+    });
+    return views.envelope(items,total,bounds);
+  }
+  private publicRunDetail(run:import('./contracts.js').Run) {
+    const fact=this.ledger.demandReads.fact('run',run.runId)!;
+    const seq=Number(this.db.prepare("SELECT seq FROM demand_entity_facts WHERE kind='run' AND id=?").get(run.runId)?.seq??0),header=this.demandViews.runHeader(fact,seq);
+    const detail=this.latestSettlement(run.runId)?.detail;
+    const resultRow=!run.observationOnly&&run.route?.backend?this.db.prepare("SELECT id FROM demand_entity_facts WHERE kind='report' AND run_id=? AND json_extract(data,'$.attemptId')=? AND json_extract(data,'$.kind')='result' ORDER BY seq DESC LIMIT 1").get(run.runId,run.currentAttemptId??null):undefined;
+    const candidate=resultRow?this.ledger.getReport(String(resultRow.id)).data:undefined;
+    const evidence=candidate&&typeof candidate==='object'&&!Array.isArray(candidate)&&candidate.backend===run.route?.backend?candidate:{};
+    const diagnostic=(key:string)=>typeof evidence[key]==='string'&&evidence[key].length<=256?evidence[key]:null;
+    const diagnosticRow=this.db.prepare("SELECT id FROM demand_entity_facts WHERE kind='report' AND run_id=? AND json_extract(data,'$.kind') IN ('note','progress') AND json_extract(data,'$.schemaId')='execution-diagnostic.v1' ORDER BY seq DESC LIMIT 1").get(run.runId);
+    const diagnosticReport=diagnosticRow?this.ledger.getReport(String(diagnosticRow.id)):undefined;
+
+    const noteReports=(run.contextNotes??[]).flatMap(note=>{try{return [this.ledger.getReport(typeof note==='string'?note:note.reportId)];}catch{return [];}});
+    return {...header,sessionIds:run.sessionIds??[],retryPrompt:noteReports.flatMap(report=>{const d=report.data;return d&&typeof d==='object'&&!Array.isArray(d)&&d.actor==='operator:task-center'&&typeof d.retryPrompt==='string'?[d.retryPrompt]:[];}).at(-1)??null,
+      inputSnapshot:run.intentSnapshot?{title:run.intentSnapshot.title,description:run.intentSnapshot.description,goal:run.intentSnapshot.goal??null,project:run.projectContext?.project??null,criteria:run.intentSnapshot.acceptanceCriteria,notes:noteReports.map(report=>({id:report.reportId,title:report.title,body:report.body}))}:null,
+      settlementSummary:detail&&typeof detail==='object'&&!Array.isArray(detail)&&typeof detail.summary==='string'?detail.summary:null,diagnosticReport:diagnosticReport?{id:diagnosticReport.reportId,title:diagnosticReport.title,body:diagnosticReport.body}:null,runtimeVersion:diagnostic('cliVersion'),runtimeSource:diagnostic('cliSource'),actualModel:diagnostic('verifiedModel'),actualReasoningEffort:diagnostic('verifiedReasoningEffort'),productThreadId:diagnostic('productThreadId')};
+  }
+  private presentTask(t: import("./contracts.js").Task | CompactTask, context: {
+    data: {runs:(import('./contracts.js').Run|CompactRun)[];reports:(Report|CompactReport)[];attempts?:(import('./contracts.js').Attempt|CompactAttempt)[];events:(import('./contracts.js').Event|FactMap['event'])[]};
+    dispatch: {candidates:string;state:string;attempted:string}|undefined;
+    projectId: string|undefined; visibility:string|undefined; workflowRunState:string|undefined;
+    workflowBinding: {taskId:string;projectId:string;workflowId:string;revision:number}|undefined; unreadCount:number;
+  }) {
+      const { data, dispatch, projectId, visibility, workflowRunState, workflowBinding, unreadCount } = context;
+      const runs = data.runs.filter((r) => r.taskId === t.taskId),
+        run = runs.at(-1);
+      const supplementaryReports = data.reports.filter(
+        (r) =>
+          r.taskId === t.taskId &&
+          !!run &&
+          r.runId === run.runId &&
+          r.kind === "note" &&
+          ('supplemental' in r ? r.supplemental : r.data && typeof r.data === 'object' && !Array.isArray(r.data) && r.data.supplemental === true),
+      );
+      const resultReports = data.reports.filter(
+        (r) =>
+          r.taskId === t.taskId &&
+          !!run &&
+          r.runId === run.runId &&
+          r.kind === "result",
+      );
+      // A supplement updates the report view, not the historical execution outcome.
+      const report = supplementaryReports.at(-1) ?? resultReports.at(-1);
+      const reportHistory = [...resultReports, ...supplementaryReports].filter(
+        (r) => r.reportId !== report?.reportId,
+      );
+
+      const attention = this.ledger.taskActionState(t.taskId);
+      const communication=this.ledger.checkins.communicationState(t.taskId);
+      const resultReturn=communication.failure;
+      const checkin=this.ledger.checkins.view(t.taskId);
+      const responsibility=checkin.responsibility;
+      const requiresUser=checkin.approvalRequired;
+      const missingOwnerForFailure=checkin.category==="needs_owner" &&
+        (t.state==="failed" || ["failed","partial","uncertain","blocked"].includes(run?.state??"") || run?.reviewStatus==="rejected" || run?.dispatchIssue?.kind==="needs_action");
+      const capabilityBlocked=!!resultReturn || communication.deliveryBlocked || missingOwnerForFailure;
+      const cancelled = t.state === "cancelled";
+      const cancellationBlocker = cancelled && (communication.uncertain || communication.materialsPending);
+      const cancellationReason = communication.uncertain ? "任务已取消，但执行结果仍未核实；请核实执行端停止及已有副作用" : "任务已取消，仍有待补交或核对的材料";
+      const manual = t.state === "completed" ? t.manualCompletion : undefined;
+      const materialRequest = manual?.requestMessageId
+        ? (()=>{const row=this.db.prepare("SELECT data FROM demand_entity_facts WHERE kind='sessionMessage' AND task_id=? AND json_extract(data,'$.supplementFor')=? ORDER BY seq DESC LIMIT 1").get(t.taskId,manual.decisionId);return row?JSON.parse(String(row.data)) as FactMap['sessionMessage']:this.ledger.demandReads.fact('sessionMessage',manual.requestMessageId!);})()
+        : undefined;
+      const materialsStatus = !manual
+        ? null
+        : manual.materials !== "pending"
+          ? "closed"
+          : supplementaryReports.length
+            ? "received"
+            : materialRequest?.state === "failed"
+              ? "failed"
+              : materialRequest?.state === "uncertain"
+                ? "uncertain"
+                : "requested";
+      const materialsLabel = {
+        received: "已收到材料，待核对",
+        requested: "已请求补交，等待回复",
+        failed: "补交请求失败",
+        uncertain: "补交回复未确认",
+        closed: "已完成人工确认",
+      }[materialsStatus ?? "closed"];
+
+
+      const status = resultReturn
+        ? "error"
+        : manual
+        ? "done"
+        : cancelled
+            ? communication.uncertain || communication.materialsPending
+            ? "error"
+            : communication.active
+              ? "cancelling"
+              : "cancelled"
+          : t.state === "archived"
+            ? "archived"
+            : run?.dispatchIssue?.kind === "needs_action"
+              ? "error"
+            : workflowRunState === "needs_attention"
+              ? "error"
+            : t.state === "inbox" && dispatch?.state === "inbox"
+              ? "queued"
+              : attention.confirmationPending ||
+                  run?.reviewStatus === "pending_user"
+                ? "review"
+                : run?.reviewStatus === "accepted"
+                  ? "accepted"
+                  : attention.handled
+                  ? "handled"
+                  : run?.reviewStatus === "rejected"
+                    ? "error"
+                    : run?.state === "succeeded" || t.state === "completed"
+                      ? "done"
+                      : ["failed", "partial", "uncertain", "blocked"].includes(
+                            run?.state || "",
+                          ) || t.state === "failed"
+                        ? "error"
+                        : run?.state === "running"
+                          ? "running"
+                          : run?.state === "cancelled"
+                            ? "cancelled"
+                            : !run && t.state === "ready" ? "draft" : "queued";
+      return {
+        id: t.taskId,
+        showInCoordinator:visibility==="primary"||visibility!=="execution"&&!t.parentTaskId&&!(run && ('workflow' in run ? run.workflow : run.configuration&&typeof run.configuration==='object'&&!Array.isArray(run.configuration)&&run.configuration.workflow)),
+        kind: t.kind,
+        parentTaskId: t.parentTaskId ?? null,
+        parentRunId: t.parentRunId ?? null,
+        delegationDisplay: t.delegationDisplay?.mode ?? "task",
+        observationOnly: t.kind === "observed" || !!run?.observationOnly,
+        project: projectId || "unassigned",
+        title: t.title,
+        description: 'description' in t ? t.description : '',
+        status,
+        checkin:{...checkin,owner: t.dispatchOrigin?.kind === "session"
+          ? {kind:"session",nodeId:t.dispatchOrigin.nodeId,sessionId:t.dispatchOrigin.sessionId,cwd:t.dispatchOrigin.cwd??null,
+            model:t.dispatchOrigin.composition?.model??null,reasoningEffort:t.dispatchOrigin.composition?.reasoningEffort??null,preset:t.dispatchOrigin.composition?.preset??null}
+          : t.dispatchOrigin ? {kind:"system",nodeId:t.dispatchOrigin.nodeId} : null,returnDelivery:resultReturn ? {messageId:resultReturn.messageId,state:resultReturn.state,reason:resultReturn.reply ?? "原会话回信需处理",nextAttemptAt:resultReturn.nextAttemptAt ?? null} : null,
+        responsibility:{state:requiresUser || cancellationBlocker?"needs_user":responsibility?.state??(capabilityBlocked?"needs_user":status==="error"?"unreviewed":"none"),
+          summary:requiresUser?"等待你的执行授权或结果审核":cancellationBlocker?cancellationReason:responsibility?.summary??(capabilityBlocked?resultReturn?.reply??checkin.reason:status==="error"?"执行有异常，尚无负责会话对当前证据的处理声明":""),
+          at:responsibility?.at??null,nodeId:responsibility?.nodeId??null,sessionId:responsibility?.sessionId??null}},
+        actionVersion: attention.version,
+        dispatchIssue: run?.dispatchIssue ?? null,
+        canRepair: attention.canRepair,
+        runId: run?.runId ?? null,
+        revision:t.revision??1,
+        workflowBinding:(()=>{const binding=workflowBinding;return binding?{taskId:binding.taskId,projectId:binding.projectId,workflowId:binding.workflowId,revision:binding.revision}:null;})(),
+        canRunDirect:!!this.db.prepare("SELECT task FROM pr_task_routes WHERE task=?").get(t.taskId),
+        unreadResultCount:unreadCount,
+        maxResultRetries:t.policy?.maxResultRetries??2,
+        resultRetry:run?this.ledger.resultRetryInfo(run.runId):null,
+        executionStartedAt: run?.executionStartedAt ?? null,
+        executionEndedAt:
+          run && !["queued", "running"].includes(run.state)
+            ? run.updatedAt
+            : null,
+        canRequestStatus:
+          !workflowBinding && run?.state === "running" && !run.cancellationRequested,
+        progressRequest:
+          data.attempts?.find((a) => a.attemptId === run?.currentAttemptId)
+            ?.progressRequest ?? null,
+        confirmationRevision: t.confirmation?.revision ?? 1,
+        canHandle: attention.canHandle && !attention.handled,
+        canConfirm:
+          t.kind !== "observed" &&
+          (attention.canHandle ||
+            attention.canCancel ||
+            manual?.materials === "pending"),
+        canComplete:
+          t.kind !== "observed" &&
+          (attention.canHandle || manual?.materials === "pending"),
+        canRequestMaterials:
+          attention.canHandle &&
+          !!data.attempts?.find(
+            (a) =>
+              a.attemptId === run?.currentAttemptId &&
+              this.ledger
+                .sessionMessageTargets(t.taskId)
+                .some(
+                  (s) =>
+                    s.nodeId === a.nodeId &&
+                    s.sessionId === a.sessionId &&
+                    s.workspaceId,
+                ),
+          ),
+        manualCompletion: manual ?? null,
+        supplementaryReports,
+        materialsStatus,
+        materialsLabel: manual ? materialsLabel : null,
+        reportHistory,
+        reportSource: supplementaryReports.some(
+          (r) => r.reportId === report?.reportId,
+        )
+          ? "supplement"
+          : "execution",
+        reportUpdatedAt: report?.recordedAt ?? null,
+        canCancel: attention.canCancel,
+        canRetry: attention.canRetry,
+        retryDisabledReason: attention.canRetry
+          ? null
+          : attention.uncertain
+            ? "执行结果不确定，请先核实执行端"
+            : attention.active
+              ? "已有等待接收或正在执行的记录，请勿重复执行"
+              : attention.confirmationPending ||
+                  run?.reviewStatus === "pending_user"
+                ? "请先批准执行或审核结果"
+                : run?.state === "partial"
+                  ? "部分完成，请先明确剩余工作"
+                  : t.state === "inbox"
+                    ? "已在等待执行端接收，无需重复提交"
+                    : "仅已结束且失败、受阻或审核未通过的任务可重新执行",
+        conversationKind: projectId ? "project" : "temporary",
+        canRestore: attention.handled && run?.reviewStatus !== "accepted",
+        canReconcile: attention.canReconcile,
+        confirmationPending: attention.confirmationPending,
+        stateLabel: resultReturn
+          ? "需处理 · 原会话未回信"
+          : manual
+          ? manual.materials === "pending"
+            ? `已完成 · ${materialsLabel}`
+            : "已完成 · 人工确认"
+          : cancelled && communication.uncertain
+            ? "取消待核实"
+            : attention.confirmationPending
+              ? "待批准执行"
+              : run?.reviewStatus === "pending_user" && !cancelled
+                ? "待审核结果"
+                : run?.reviewStatus === "accepted" && !cancelled && t.state !== "archived"
+                  ? "已验收"
+                  : t.state === "inbox" && dispatch?.state === "inbox"
+                  ? "等待执行端接收"
+                  : run?.dispatchIssue?.kind === "needs_action"
+                    ? "需处理"
+                    : run?.dispatchIssue?.kind === "waiting"
+                      ? "等待执行端目录"
+                    : status === "error" && run?.reviewStatus === "rejected"
+                      ? "审核未通过"
+                    : status === "error" && run?.state === "partial" && !run.dispatchIssue
+                      ? report ? "部分完成 · 报告已生成" : "部分完成"
+                    : status === "error" && run?.state === "failed" ? "执行失败"
+                    : status === "error" && run?.state === "blocked" ? "执行受阻"
+                    : status === "error" && run?.state === "uncertain" ? "结果待核实"
+                    : run?.state === "queued"
+                    ? "待领取"
+                    : null,
+        runStatus:
+          run?.state === "cancelled"
+            ? "cancelled"
+            : run?.state === "succeeded"
+              ? "done"
+              : run?.state === "running"
+                ? "running"
+                : [
+                      "failed",
+                      "cancelled",
+                      "partial",
+                      "uncertain",
+                      "blocked",
+                    ].includes(run?.state || "")
+                  ? "error"
+                  : "queued",
+        resultStatus: report
+          ? manual
+            ? materialsStatus === "received"
+              ? "review"
+              : "done"
+            : run?.reviewStatus === "pending_user" && !cancelled
+              ? "review"
+              : run?.reviewStatus === "accepted"
+                ? "accepted"
+                : run?.state === "succeeded"
+                  ? "done"
+                  : "error"
+          : "queued",
+        runState: run?.state ?? null,
+        node: run?.route?.nodeId || (run?.observationOnly ? "来源执行（仅观察）" : "待选择执行端"),
+        model: run?.route?.model || (run?.observationOnly ? "来源未声明" : "待选择"),
+        effort: run?.route?.reasoningEffort || "默认",
+        report:
+          (report && 'body' in report ? report.body : '') ||
+          (() => {
+            const settled = data.events.findLast(
+              (event) =>
+                event.runId === run?.runId && event.type === "run.settled",
+            );
+            const detail = settled && 'detail' in settled ? settled.detail : settled && 'summary' in settled ? {summary:settled.summary} : undefined;
+            const summary =
+              detail && typeof detail === "object" && !Array.isArray(detail)
+                ? detail.summary
+                : undefined;
+            return typeof summary === "string"
+              ? `执行回执：${summary}`
+              : "尚未收到执行报告";
+          })(),
+        reportId: report?.reportId || null,
+        artifact: report?.title || "等待执行报告",
+        time: t.updatedAt,
+        returnedAt: run && !["queued", "running"].includes(run.state) ? data.events.findLast(event => event.runId === run.runId && event.type === "run.settled")?.at ?? null : null,
+        run: run?.runId || "待创建",
+        nativeState: t.state,
+        dispatchState: dispatch?.state ?? null,
+        recommendation: dispatch ? JSON.parse(dispatch.candidates) : [],
+        candidateChecks: dispatch ? JSON.parse(dispatch.attempted) : [],
+        reviewStatus: run?.reviewStatus || null,
+      };
   }
   snapshot() {
     return this.ledger.checkins.withReadScope(() => this.snapshotWithCheckins());
@@ -1916,298 +2500,11 @@ export class ProjectRuntime {
     );
     const taskSystem=this.ctx.get("taskSystem") as TaskSystemService | undefined;
     const workflowSnapshot=taskSystem?.workflows.snapshot();
-    const workflowDefinitionView=(definition:NonNullable<typeof workflowSnapshot>["definitions"][number])=>({workflowId:definition.workflowId,projectId:definition.projectId??null,title:definition.title,description:definition.description,revision:definition.revision,resultStepIds:definition.resultStepIds??null,stages:definition.stages??[],calls:definition.calls??[],steps:definition.steps.map(step=>({stepId:step.stepId,stageId:step.stageId??null,nodeId:step.nodeId,title:step.title,position:step.position??null,dependsOn:step.dependsOn,kind:step.execution.kind}))});
+    const workflowDefinitionView=(definition:import('./workflow-contracts.js').WorkflowDefinition)=>this.publicWorkflowDefinition(definition);
     const workflowBindings=workflowSnapshot?.taskBindings??[];
-    const tasks = data.tasks.map((t) => {
-      const dispatch = dispatches.get(t.taskId);
-      const runs = data.runs.filter((r) => r.taskId === t.taskId),
-        run = runs.at(-1);
-      const supplementaryReports = data.reports.filter(
-        (r) =>
-          r.taskId === t.taskId &&
-          !!run &&
-          r.runId === run.runId &&
-          r.kind === "note" &&
-          r.data &&
-          typeof r.data === "object" &&
-          !Array.isArray(r.data) &&
-          r.data.supplemental === true,
-      );
-      const resultReports = data.reports.filter(
-        (r) =>
-          r.taskId === t.taskId &&
-          !!run &&
-          r.runId === run.runId &&
-          r.kind === "result",
-      );
-      // A supplement updates the report view, not the historical execution outcome.
-      const report = supplementaryReports.at(-1) ?? resultReports.at(-1);
-      const reportHistory = [...resultReports, ...supplementaryReports].filter(
-        (r) => r.reportId !== report?.reportId,
-      );
-
-      const attention = this.ledger.taskActionState(t.taskId);
-      const communication=this.ledger.checkins.communicationState(t.taskId);
-      const resultReturn=communication.failure;
-      const checkin=this.ledger.checkins.view(t.taskId);
-      const responsibility=checkin.responsibility;
-      const requiresUser=checkin.approvalRequired;
-      const missingOwnerForFailure=checkin.category==="needs_owner" &&
-        (t.state==="failed" || ["failed","partial","uncertain","blocked"].includes(run?.state??"") || run?.reviewStatus==="rejected" || run?.dispatchIssue?.kind==="needs_action");
-      const capabilityBlocked=!!resultReturn || communication.deliveryBlocked || missingOwnerForFailure;
-      const cancelled = t.state === "cancelled";
-      const cancellationBlocker = cancelled && (communication.uncertain || communication.materialsPending);
-      const cancellationReason = communication.uncertain ? "任务已取消，但执行结果仍未核实；请核实执行端停止及已有副作用" : "任务已取消，仍有待补交或核对的材料";
-      const manual = t.state === "completed" ? t.manualCompletion : undefined;
-      const materialRequest = manual?.requestMessageId
-        ? (this.ledger
-            .sessionMessages(t.taskId)
-            .filter((m) => m.supplementFor === manual.decisionId)
-            .at(-1) ?? this.ledger.getSessionMessage(manual.requestMessageId))
-        : undefined;
-      const materialsStatus = !manual
-        ? null
-        : manual.materials !== "pending"
-          ? "closed"
-          : supplementaryReports.length
-            ? "received"
-            : materialRequest?.state === "failed"
-              ? "failed"
-              : materialRequest?.state === "uncertain"
-                ? "uncertain"
-                : "requested";
-      const materialsLabel = {
-        received: "已收到材料，待核对",
-        requested: "已请求补交，等待回复",
-        failed: "补交请求失败",
-        uncertain: "补交回复未确认",
-        closed: "已完成人工确认",
-      }[materialsStatus ?? "closed"];
-
-      const workflowRun=workflowSnapshot?.runs.find(flow=>flow.runId===run?.runId);
-      const status = resultReturn
-        ? "error"
-        : manual
-        ? "done"
-        : cancelled
-            ? communication.uncertain || communication.materialsPending
-            ? "error"
-            : communication.active
-              ? "cancelling"
-              : "cancelled"
-          : t.state === "archived"
-            ? "archived"
-            : run?.dispatchIssue?.kind === "needs_action"
-              ? "error"
-            : workflowRun?.state === "needs_attention"
-              ? "error"
-            : t.state === "inbox" && dispatch?.state === "inbox"
-              ? "queued"
-              : attention.confirmationPending ||
-                  run?.reviewStatus === "pending_user"
-                ? "review"
-                : run?.reviewStatus === "accepted"
-                  ? "accepted"
-                  : attention.handled
-                  ? "handled"
-                  : run?.reviewStatus === "rejected"
-                    ? "error"
-                    : run?.state === "succeeded" || t.state === "completed"
-                      ? "done"
-                      : ["failed", "partial", "uncertain", "blocked"].includes(
-                            run?.state || "",
-                          ) || t.state === "failed"
-                        ? "error"
-                        : run?.state === "running"
-                          ? "running"
-                          : run?.state === "cancelled"
-                            ? "cancelled"
-                            : !run && t.state === "ready" ? "draft" : "queued";
-      return {
-        id: t.taskId,
-        showInCoordinator:presentation.get(t.taskId)==="primary"||presentation.get(t.taskId)!=="execution"&&!t.parentTaskId&&!(run?.configuration&&typeof run.configuration==="object"&&!Array.isArray(run.configuration)&&run.configuration.workflow),
-        kind: t.kind,
-        parentTaskId: t.parentTaskId ?? null,
-        parentRunId: t.parentRunId ?? null,
-        delegationDisplay: t.delegationDisplay?.mode ?? "task",
-        observationOnly: t.kind === "observed" || !!run?.observationOnly,
-        project: taskProjects.get(t.taskId) || "unassigned",
-        title: t.title,
-        description: t.description,
-        status,
-        checkin:{...checkin,owner: t.dispatchOrigin?.kind === "session"
-          ? {kind:"session",nodeId:t.dispatchOrigin.nodeId,sessionId:t.dispatchOrigin.sessionId,cwd:t.dispatchOrigin.cwd??null,
-            model:t.dispatchOrigin.composition?.model??null,reasoningEffort:t.dispatchOrigin.composition?.reasoningEffort??null,preset:t.dispatchOrigin.composition?.preset??null}
-          : t.dispatchOrigin ? {kind:"system",nodeId:t.dispatchOrigin.nodeId} : null,returnDelivery:resultReturn ? {messageId:resultReturn.messageId,state:resultReturn.state,reason:resultReturn.reply ?? "原会话回信需处理",nextAttemptAt:resultReturn.nextAttemptAt ?? null} : null,
-        responsibility:{state:requiresUser || cancellationBlocker?"needs_user":responsibility?.state??(capabilityBlocked?"needs_user":status==="error"?"unreviewed":"none"),
-          summary:requiresUser?"等待你的执行授权或结果审核":cancellationBlocker?cancellationReason:responsibility?.summary??(capabilityBlocked?resultReturn?.reply??checkin.reason:status==="error"?"执行有异常，尚无负责会话对当前证据的处理声明":""),
-          at:responsibility?.at??null,nodeId:responsibility?.nodeId??null,sessionId:responsibility?.sessionId??null}},
-        actionVersion: attention.version,
-        dispatchIssue: run?.dispatchIssue ?? null,
-        canRepair: attention.canRepair,
-        runId: run?.runId ?? null,
-        revision:t.revision??1,
-        workflowBinding:(()=>{const binding=workflowBindings.find(binding=>binding.taskId===t.taskId);return binding?{taskId:binding.taskId,projectId:binding.projectId,workflowId:binding.workflowId,revision:binding.revision}:null;})(),
-        canRunDirect:!!this.db.prepare("SELECT task FROM pr_task_routes WHERE task=?").get(t.taskId),
-        unreadResultCount:unreadByTask.get(t.taskId)??0,
-        maxResultRetries:t.policy?.maxResultRetries??2,
-        resultRetry:run?this.ledger.resultRetryInfo(run.runId):null,
-        executionStartedAt: run?.executionStartedAt ?? null,
-        executionEndedAt:
-          run && !["queued", "running"].includes(run.state)
-            ? run.updatedAt
-            : null,
-        canRequestStatus:
-          !workflowBindings.some(binding=>binding.taskId===t.taskId) && run?.state === "running" && !run.cancellationRequested,
-        progressRequest:
-          data.attempts?.find((a) => a.attemptId === run?.currentAttemptId)
-            ?.progressRequest ?? null,
-        confirmationRevision: t.confirmation?.revision ?? 1,
-        canHandle: attention.canHandle && !attention.handled,
-        canConfirm:
-          t.kind !== "observed" &&
-          (attention.canHandle ||
-            attention.canCancel ||
-            manual?.materials === "pending"),
-        canComplete:
-          t.kind !== "observed" &&
-          (attention.canHandle || manual?.materials === "pending"),
-        canRequestMaterials:
-          attention.canHandle &&
-          !!data.attempts?.find(
-            (a) =>
-              a.attemptId === run?.currentAttemptId &&
-              this.ledger
-                .sessionMessageTargets(t.taskId)
-                .some(
-                  (s) =>
-                    s.nodeId === a.nodeId &&
-                    s.sessionId === a.sessionId &&
-                    s.workspaceId,
-                ),
-          ),
-        manualCompletion: manual ?? null,
-        supplementaryReports,
-        materialsStatus,
-        materialsLabel: manual ? materialsLabel : null,
-        reportHistory,
-        reportSource: supplementaryReports.some(
-          (r) => r.reportId === report?.reportId,
-        )
-          ? "supplement"
-          : "execution",
-        reportUpdatedAt: report?.recordedAt ?? null,
-        canCancel: attention.canCancel,
-        canRetry: attention.canRetry,
-        retryDisabledReason: attention.canRetry
-          ? null
-          : attention.uncertain
-            ? "执行结果不确定，请先核实执行端"
-            : attention.active
-              ? "已有等待接收或正在执行的记录，请勿重复执行"
-              : attention.confirmationPending ||
-                  run?.reviewStatus === "pending_user"
-                ? "请先批准执行或审核结果"
-                : run?.state === "partial"
-                  ? "部分完成，请先明确剩余工作"
-                  : t.state === "inbox"
-                    ? "已在等待执行端接收，无需重复提交"
-                    : "仅已结束且失败、受阻或审核未通过的任务可重新执行",
-        conversationKind: taskProjects.get(t.taskId) ? "project" : "temporary",
-        canRestore: attention.handled && run?.reviewStatus !== "accepted",
-        canReconcile: attention.canReconcile,
-        confirmationPending: attention.confirmationPending,
-        stateLabel: resultReturn
-          ? "需处理 · 原会话未回信"
-          : manual
-          ? manual.materials === "pending"
-            ? `已完成 · ${materialsLabel}`
-            : "已完成 · 人工确认"
-          : cancelled && communication.uncertain
-            ? "取消待核实"
-            : attention.confirmationPending
-              ? "待批准执行"
-              : run?.reviewStatus === "pending_user" && !cancelled
-                ? "待审核结果"
-                : run?.reviewStatus === "accepted" && !cancelled && t.state !== "archived"
-                  ? "已验收"
-                  : t.state === "inbox" && dispatch?.state === "inbox"
-                  ? "等待执行端接收"
-                  : run?.dispatchIssue?.kind === "needs_action"
-                    ? "需处理"
-                    : run?.dispatchIssue?.kind === "waiting"
-                      ? "等待执行端目录"
-                    : status === "error" && run?.reviewStatus === "rejected"
-                      ? "审核未通过"
-                    : status === "error" && run?.state === "partial" && !run.dispatchIssue
-                      ? report ? "部分完成 · 报告已生成" : "部分完成"
-                    : status === "error" && run?.state === "failed" ? "执行失败"
-                    : status === "error" && run?.state === "blocked" ? "执行受阻"
-                    : status === "error" && run?.state === "uncertain" ? "结果待核实"
-                    : run?.state === "queued"
-                    ? "待领取"
-                    : null,
-        runStatus:
-          run?.state === "cancelled"
-            ? "cancelled"
-            : run?.state === "succeeded"
-              ? "done"
-              : run?.state === "running"
-                ? "running"
-                : [
-                      "failed",
-                      "cancelled",
-                      "partial",
-                      "uncertain",
-                      "blocked",
-                    ].includes(run?.state || "")
-                  ? "error"
-                  : "queued",
-        resultStatus: report
-          ? manual
-            ? materialsStatus === "received"
-              ? "review"
-              : "done"
-            : run?.reviewStatus === "pending_user" && !cancelled
-              ? "review"
-              : run?.reviewStatus === "accepted"
-                ? "accepted"
-                : run?.state === "succeeded"
-                  ? "done"
-                  : "error"
-          : "queued",
-        runState: run?.state ?? null,
-        node: run?.route?.nodeId || (run?.observationOnly ? "来源执行（仅观察）" : "待选择执行端"),
-        model: run?.route?.model || (run?.observationOnly ? "来源未声明" : "待选择"),
-        effort: run?.route?.reasoningEffort || "默认",
-        report:
-          report?.body ||
-          (() => {
-            const settled = data.events.findLast(
-              (event) =>
-                event.runId === run?.runId && event.type === "run.settled",
-            );
-            const detail = settled?.detail;
-            const summary =
-              detail && typeof detail === "object" && !Array.isArray(detail)
-                ? detail.summary
-                : undefined;
-            return typeof summary === "string"
-              ? `执行回执：${summary}`
-              : "尚未收到执行报告";
-          })(),
-        reportId: report?.reportId || null,
-        artifact: report?.title || "等待执行报告",
-        time: t.updatedAt,
-        returnedAt: run && !["queued", "running"].includes(run.state) ? data.events.findLast(event => event.runId === run.runId && event.type === "run.settled")?.at ?? null : null,
-        run: run?.runId || "待创建",
-        nativeState: t.state,
-        dispatchState: dispatch?.state ?? null,
-        recommendation: dispatch ? JSON.parse(dispatch.candidates) : [],
-        candidateChecks: dispatch ? JSON.parse(dispatch.attempted) : [],
-        reviewStatus: run?.reviewStatus || null,
-      };
-    });
+    const tasks = data.tasks.map(t => this.presentTask(t, {data,dispatch:dispatches.get(t.taskId),projectId:taskProjects.get(t.taskId),visibility:presentation.get(t.taskId),
+      workflowRunState:workflowSnapshot?.runs.find(flow=>flow.runId===data.runs.findLast(run=>run.taskId===t.taskId)?.runId)?.state,
+      workflowBinding:workflowBindings.find(binding=>binding.taskId===t.taskId),unreadCount:unreadByTask.get(t.taskId)??0}));
     const taskById=new Map(data.tasks.map(task=>[task.taskId,task])),runById=new Map(data.runs.map(run=>[run.runId,run]));
     const projectedTasks=new Map(tasks.map(task=>[task.id,task]));
     const attentionByRoot=new Map<string,{taskId:string;runId:string|null;parentRunId:string|null;parentCreatedAt:string|null;state:string;node:string;summary:string}[]>();
@@ -2221,14 +2518,14 @@ export class ProjectRuntime {
       while(ancestor?.parentTaskId&&!seen.has(ancestor.taskId)){seen.add(ancestor.taskId);ancestor=taskById.get(ancestor.parentTaskId);}
       if(!ancestor)continue;
       const parentRunId=run.parentRunId??task.parentRunId,parent=parentRunId?runById.get(parentRunId):undefined,rows=attentionByRoot.get(ancestor.taskId)??[];
-      rows.push({taskId:task.id,runId:run.runId,parentRunId:parentRunId??null,parentCreatedAt:parent?.createdAt??null,state:run.state,node:run.route?.nodeId??task.node,summary:run.reviewStatus==="rejected"?"审核未通过":run.state==="partial"?"部分完成 · 详见本次报告":run.state==="failed"?"执行失败":run.state==="uncertain"?"结果待核实":run.state==="blocked"?"执行受阻":"结果需核对"});
+      rows.push({taskId:task.id,runId:run.runId,parentRunId:parentRunId??null,parentCreatedAt:parent?.createdAt??null,state:run.state,node:run.route?.nodeId??task.node,summary:this.attentionSummary(run)});
       attentionByRoot.set(ancestor.taskId,rows);
     }
     // Explicit public views only. Never expose Run.configuration or provider credentials.
     return {
       settings: this.settings(),
       workflowDefinitions:(workflowSnapshot?.definitions??[]).map(workflowDefinitionView),
-      workflowRuns:(workflowSnapshot?.runs??[]).map(flow=>({workflowRunId:flow.workflowRunId,workflowId:flow.workflowId,projectId:flow.projectId??null,taskId:flow.taskId??null,runId:flow.runId??null,definitionRevision:flow.definitionRevision,title:flow.title,createdAt:flow.createdAt,state:flow.state,definition:workflowDefinitionView(flow.definition),dispatches:flow.dispatches??[],steps:flow.steps.map(step=>({stepId:step.stepId,nodeId:step.nodeId,title:step.title,kind:step.kind,state:step.state,reason:step.reason??null,taskId:step.taskId??null,runId:step.runId??null,reportId:step.reportId??null,summary:step.summary??null,attemptCount:step.attemptCount}))})),
+      workflowRuns:(workflowSnapshot?.runs??[]).map(flow=>({workflowRunId:flow.workflowRunId,workflowId:flow.workflowId,projectId:flow.projectId??null,taskId:flow.taskId??null,runId:flow.runId??null,definitionRevision:flow.definitionRevision,title:flow.title,createdAt:flow.createdAt,state:flow.state,definition:workflowDefinitionView(flow.definition),dispatches:flow.dispatches??[],steps:flow.steps.map(step=>this.publicWorkflowStep(step))})),
       viewContext: {role:"planner",scope:"all",nodeId:this.nodeId,observedAt:data.generatedAt},
       projectCollaborations,
       projectRegistrations: (data.projectRegistrations ?? []).map(r => ({
@@ -2324,13 +2621,13 @@ export class ProjectRuntime {
     this.authorize();
     if(input.expectedExecutionMs!==undefined)ExpectedExecutionMs.parse(input.expectedExecutionMs);
     const created=this.ledger.managementCommand(input.commandId,"project-agent-task",input,()=>{
-      const project=this.workbench.snapshot().projects.find(p=>p.projectId===input.projectId&&p.state!=="archived");
+      const project=this.db.prepare("SELECT project_id projectId,goal FROM wb_projects WHERE project_id=? AND state<>'archived'").get(input.projectId);
       if(!project)throw new TaskError("NOT_FOUND","Project unavailable");
       const selected=new ScheduledPlans(this.ledger).options().routes.find(r=>r.id===input.routeId);
       if(!selected)throw new TaskError("CONFLICT","Execution route changed; refresh before creating a task");
       const task=this.ledger.prepareWorkflowTask({title:input.title,description:input.description,tags:["project-task"],...(selected.route.backend?{policy:{allowedBackends:[selected.route.backend]}}:{})});
       const backlogId=`direct-backlog:${input.projectId}`;
-      this.db.prepare("INSERT OR IGNORE INTO wb_backlogs(backlog_id,revision,project_id,title,goal,state,priority,criteria) VALUES(?,1,?,'项目任务',?,'open','normal','[]')").run(backlogId,input.projectId,project.goal);
+      this.db.prepare("INSERT OR IGNORE INTO wb_backlogs(backlog_id,revision,project_id,title,goal,state,priority,criteria) VALUES(?,1,?,'项目任务',?,'open','normal','[]')").run(backlogId,input.projectId,String(project.goal));
       this.db.prepare("INSERT INTO wb_backlog_tasks(backlog_id,task_id) VALUES(?,?)").run(backlogId,task.taskId);
       this.db.prepare("INSERT INTO pr_task_routes(task,route,expected_execution_ms) VALUES(?,?,?)").run(task.taskId,canonical(selected.route),input.expectedExecutionMs??null);
       return {taskId:task.taskId};

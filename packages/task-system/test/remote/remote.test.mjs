@@ -323,3 +323,19 @@ test('a claim already admitted but not yet returned remains a configuration bloc
  f.ledger.claim=async(...args)=>{const receipt=claim(...args);entered();await pending;return receipt;};
  const execution=f.worker.execute(f.run.runId,'claim-inflight');await claiming;assert.equal(f.store.dispatches().length,0);await assert.rejects(f.worker.beginConfigurationEdit(),{code:'CONFIGURATION_BUSY'});finish();await execution;
 });
+
+
+test('explicit recovery returns completed dispatches while startup polling only reads recovery candidates', async t => {
+ const f=worker(t);await f.worker.execute('run1','complete-before-restart');
+ assert.equal((await f.worker.recoverResults())[0].state,'acknowledged');
+ assert.equal(f.executions(),1);
+ f.store.dispatches=()=>{throw new Error('startup must not decode completed dispatch history')};
+ let scanned=false;const recover=f.store.recoverDispatches.bind(f.store);
+ f.store.recoverDispatches=()=>{const result=recover();scanned=true;return result;};
+ f.worker.startPolling(100);
+ const deadline=Date.now()+1000;
+ while(!scanned&&Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,10));
+ assert.equal(scanned,true);await f.worker.dispose();
+ assert.equal(f.worker.lastPollFailed,false);
+ assert.equal(f.executions(),1);
+});

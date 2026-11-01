@@ -1,3 +1,6 @@
+import { ExecutorDemandReads } from "./remote/executor-reads.js";
+import { demandReadInputs, parseDemandRead } from "./demand-read-inputs.js";
+import type { DemandReadMethod } from "./demand-reads.js";
 import { ProtocolError } from "./remote/protocol.js";
 import { ExpectedExecutionMs } from "./execution-expectation.js";
 import { CentralTaskControl } from "./central-control.js";
@@ -13,6 +16,9 @@ import { SaveWorkflow, StartWorkflow, RetryWorkflowStep, CancelWorkflow, Configu
 import { scheduledPlanInput, scheduledPlanControl } from "./scheduled-plans.js";
 import { SessionDispatchIndex, sessionDispatchOperations, sessionTaskSnapshot, sortSessionTasks } from "./session-task-monitor.js";
 import type { SessionJobRegistry } from "./session-codex-jobs.js";
+import { readSessionDemandPage, parseSessionHeaderSlice, parseLedgerSessionDetail, emptySessionRuns, arraySessionHeaderSource, type SessionTaskHeaderSource } from "./session-demand-reads.js";
+import { codexJobRows } from "./session-codex-jobs.js";
+import { SessionId } from "@deepseek-ai/dsh-session";
 import type {} from "./local-codex.js";
 import { readDecisionPreferences, saveDecisionPreference } from "./decision-preferences.js";
 import {
@@ -356,6 +362,7 @@ export function hasTaskConfigOverride(patches: readonly unknown[]): boolean {
 }
 
 const projectInputs = {
+  ...demandReadInputs,
   nodeModelSettings:z.object({nodeId:z.string().min(1).max(128)}).strict(),
   refreshNodeModels:z.object({nodeId:z.string().min(1).max(128)}).strict(),
   saveNodeModelDefault:z.object({nodeId:z.string().min(1).max(128),expectedRevision:z.number().int().nonnegative(),expectedCatalogRevision:z.string().min(1),choice:ExecutionModelChoice}).strict(),
@@ -376,6 +383,7 @@ const projectInputs = {
   retryWorkflowStep: RetryWorkflowStep,
   cancelWorkflow: CancelWorkflow,
   sessionTasks: z.object({ sessionId: z.string().min(1).max(200) }).strict(),
+  sessionTaskDetail:z.object({sessionId:z.string().min(1).max(200),taskId:z.string().min(1).max(200),owner:z.enum(['task','local-codex','codex-cli']),view:z.enum(['planner','executor']).optional()}).strict(),
   scheduleOptions:null,
   createScheduledPlan:scheduledPlanInput,
   controlScheduledPlan:scheduledPlanControl,
@@ -525,6 +533,127 @@ export const projectDescriptors: InvocationDescriptor[] = Object.entries(
 export class TaskPluginSettings extends TypertRemoteService {
   constructor(ctx: Context) {
     super(ctx, "taskPluginSettings");
+    ctx.on('session/event',(session,event)=>this.sessionDispatchIndex.observe(session,event));
+    ctx.on('session/disposed',session=>this.sessionDispatchIndex.detach(session));
+  }
+  async executorClaimsPage(input:unknown) { return this.demandProduct("executorClaimsPage",input); }
+  async readBootstrap(input:unknown) { return this.demandProduct("readBootstrap",input); }
+  async taskBoard(input:unknown) { return this.demandProduct("taskBoard",input); }
+  async taskPage(input:unknown) { return this.demandProduct("taskPage",input); }
+  async taskDetail(input:unknown) { return this.demandProduct("taskDetail",input); }
+  async taskHistoryPage(input:unknown) { return this.demandProduct("taskHistoryPage",input); }
+  async taskRunDetail(input:unknown) { return this.demandProduct("taskRunDetail",input); }
+  async taskReportDetail(input:unknown) { return this.demandProduct("taskReportDetail",input); }
+  async taskAttentionGroupPage(input:unknown) { return this.demandProduct("taskAttentionGroupPage",input); }
+  async taskAttentionPage(input:unknown) { return this.demandProduct("taskAttentionPage",input); }
+  async taskGraphPage(input:unknown) { return this.demandProduct("taskGraphPage",input); }
+  async taskSessionAccess(input:unknown) { return this.demandProduct("taskSessionAccess",input); }
+  async projectListPage(input:unknown) { return this.demandProduct("projectListPage",input); }
+  async projectDetail(input:unknown) { return this.demandProduct("projectDetail",input); }
+  async projectCreateOptions(input:unknown) { return this.demandProduct("projectCreateOptions",input); }
+  async projectResourcesPage(input:unknown) { return this.demandProduct("projectResourcesPage",input); }
+  async scheduleListPage(input:unknown) { return this.demandProduct("scheduleListPage",input); }
+  async scheduleDetail(input:unknown) { return this.demandProduct("scheduleDetail",input); }
+  async scheduleHistoryPage(input:unknown) { return this.demandProduct("scheduleHistoryPage",input); }
+  async executionPage(input:unknown) { return this.demandProduct("executionPage",input); }
+  async reportListPage(input:unknown) { return this.demandProduct("reportListPage",input); }
+  async workflowListPage(input:unknown) { return this.demandProduct("workflowListPage",input); }
+  async workflowDetail(input:unknown) { return this.demandProduct("workflowDetail",input); }
+  async workflowRunPage(input:unknown) { return this.demandProduct("workflowRunPage",input); }
+  async workflowRunDetail(input:unknown) { return this.demandProduct("workflowRunDetail",input); }
+  async workflowStepDetail(input:unknown) { return this.demandProduct("workflowStepDetail",input); }
+  async sessionTaskPage(input:unknown) { return this.demandProduct("sessionTaskPage",input); }
+  async sessionTaskDetail(input:unknown) {
+    const value=projectInputs.sessionTaskDetail.parse(input);
+    return this.projectOperation(async()=>{
+      if(value.owner==='local-codex'){
+        const row=this.ctx.get('localCodex')?.store.detail(value.sessionId,value.taskId);
+        if(!row)throw new TaskError('NOT_FOUND','Local task unavailable in this session');
+        return {task:row,runs:emptySessionRuns()};
+      }
+      if(value.owner==='codex-cli'){
+        const persistence=this.ctx.get('sessionPersistence');
+        if(!persistence)throw new TaskError('PROJECT_UNAVAILABLE','Session task monitor unavailable');
+        const history=await this.sessionDispatchIndex.readHistory(persistence,value.sessionId,this.ctx.get('sessions')?.get(SessionId(value.sessionId))),record=history.codexJobs.find(row=>row.id===value.taskId);
+        if(!record)throw new TaskError('NOT_FOUND','Shell task unavailable in this session');
+        const row=codexJobRows([record],value.sessionId,this.ctx.get('jobs') as SessionJobRegistry|undefined)[0];
+        if(!row)throw new TaskError('NOT_FOUND','Shell task unavailable in this session');
+        return {task:{...row,owner:'codex-cli'},runs:emptySessionRuns()};
+      }
+      const detail=parseLedgerSessionDetail(await this.demandProduct('taskDetail',{view:value.view,taskId:value.taskId}));
+      if(detail.reportId){
+        const report=z.object({id:z.string(),taskId:z.string(),body:z.string()}).parse(await this.demandProduct('taskReportDetail',{view:value.view,taskId:value.taskId,runId:detail.task.runId??undefined,reportId:detail.reportId}));
+        if(report.taskId!==value.taskId||report.id!==detail.reportId)throw new TaskError('NOT_FOUND','Report unavailable');
+        detail.task.report=report.body;
+      }
+      return detail;
+    });
+  }
+  private localExecutorReads: {ledger:TaskSystemService['ledger'];reads:ExecutorDemandReads}|undefined;
+  private localExecutorProduct(method:DemandReadMethod,input:import('./demand-reads.js').DemandReadInputs[DemandReadMethod],task:TaskSystemService):unknown {
+    if(this.localExecutorReads?.ledger!==task.ledger){
+      this.localExecutorReads?.reads.close();
+      this.localExecutorReads={ledger:task.ledger,reads:new ExecutorDemandReads({ledger:task.ledger,nodeId:task.config.nodeId,
+        queue:()=>({revision:'none',records:[]}),pending:()=>task.results?.pendingHeaders?.()??[],pendingDetail:commandId=>task.results?.get(commandId),
+        decorate:row=>row,decorateClaim:()=>{throw new TaskError('NOT_FOUND','Remote recovery is not configured');},
+        context:()=>({queueObservedAt:null,pollState:'never',connection:null,heartbeat:null})})};
+      this.ctx.effect?.(()=>()=>{this.localExecutorReads?.reads.close();this.localExecutorReads=undefined;},'ledger-only executor read products');
+    }
+    return task.ledger.demandReads.withFacts(()=>this.localExecutorReads!.reads.read(method,input));
+  }
+  private async demandProduct(method:DemandReadMethod,input:unknown):Promise<unknown> {
+    return this.projectOperation(async()=>{
+      const parsed=parseDemandRead(method,input),task=this.ctx.get('taskSystem') as TaskSystemService|undefined;
+      if(!task)throw new TaskError('PROJECT_UNAVAILABLE','Task service unavailable');
+      if(method==='sessionTaskPage')return this.readSessionTaskPage(parsed as import('./demand-reads.js').DemandReadInputs['sessionTaskPage']);
+      const remote=this.ctx.get('remoteExecution') as RemoteExecutionService|undefined;
+      const view=parsed.view??(task.config.centralMode===undefined&&task.config.role==='executor'?'executor':'planner');
+      if(view==='executor') {
+        if(remote)return remote.executorDemandRead(method,parsed,task.ledger);
+        return this.localExecutorProduct(method,parsed,task);
+      }
+      if(deploymentPolicy(task.config).centralMode==='remote') {
+        if(!remote?.coordinatorLedger?.projectDemandRead||remote.settingsSnapshot().paused)throw new TaskError('CENTRAL_UNAVAILABLE','Central task center unavailable');
+        try {const value=await remote.coordinatorLedger.projectDemandRead(task.config.nodeId,method,parsed);return value&&typeof value==='object'&&!Array.isArray(value)&&'viewContext' in value?{...value,viewContext:{role:'planner',scope:'central',nodeId:task.config.nodeId}}:value;}
+        catch(error){if(error instanceof ProtocolError&&['UNKNOWN_OPERATION','BOUNDED_READS_UNSUPPORTED'].includes(error.code))throw new TaskError('BOUNDED_READS_UNSUPPORTED','Update the central task plugin');throw error;}
+      }
+      if(!task.projects)throw new TaskError('PROJECT_UNAVAILABLE','Project service unavailable');
+      return task.projects.demandRead(method,parsed);
+    });
+  }
+  private async readSessionTaskPage(input:import('./demand-reads.js').DemandReadInputs['sessionTaskPage']):Promise<unknown> {
+    const task=this.ctx.get('taskSystem') as TaskSystemService|undefined,persistence=this.ctx.get('sessionPersistence');
+    if(!task||!persistence)throw new TaskError('PROJECT_UNAVAILABLE','Session task monitor unavailable');
+    const sessionId=input.sessionId,operations=sessionDispatchOperations(task.ledger,sessionId),history=await this.sessionDispatchIndex.readHistory(persistence,sessionId,this.ctx.get('sessions')?.get(SessionId(sessionId)));
+    let roots=[...new Set([...operations.taskIds,...history.ids])];const remote=this.ctx.get('remoteExecution') as RemoteExecutionService|undefined;
+    const policy=deploymentPolicy(task.config);
+    const localSource:SessionTaskHeaderSource={readHeaders:async query=>{
+      const request={sessionId,rootTaskIds:roots,...query};
+      const value=remote?remote.executorDemandRead('sessionTaskPage',request,task.ledger):this.localExecutorProduct('sessionTaskPage',request,task);
+      if(!value)throw new TaskError('PROJECT_UNAVAILABLE','Local task view unavailable');
+      const result=parseSessionHeaderSlice(value);
+      return {...result,viewContext:{role:'executor',scope:'local',nodeId:task.config.nodeId,observedAt:result.sampledAt}};
+    }};
+    let view=input.view??(task.config.centralMode===undefined&&task.config.role==='executor'?'executor':'planner');
+    const assigned=policy.executionEnabled&&remote?remote.executorSessionOverrideTaskIds(sessionId,[],task.ledger):[];
+    if(input.view===undefined&&policy.centralMode==='remote'&&assigned.length)view='executor';
+    roots=[...new Set([...roots,...assigned])];
+    const overrideIds=view==='planner'&&policy.centralMode==='host'&&policy.executionEnabled&&assigned.length&&remote?remote.executorSessionOverrideTaskIds(sessionId,roots,task.ledger):[];
+    const ledgerSource:SessionTaskHeaderSource={readHeaders:async query=>{
+      const request={sessionId,rootTaskIds:roots,excludeTaskIds:overrideIds,...query};
+      if(policy.centralMode==='remote'){
+        if(!remote?.coordinatorLedger?.projectDemandRead||remote.settingsSnapshot().paused){
+          if(roots.length)throw new TaskError('CENTRAL_UNAVAILABLE','Central task center unavailable');
+          const result=await arraySessionHeaderSource([]).readHeaders(query);
+          return {...result,viewContext:{role:'executor',scope:'local',nodeId:task.config.nodeId,observedAt:result.sampledAt}};
+        }
+        const result=parseSessionHeaderSlice(await remote.coordinatorLedger.projectDemandRead(task.config.nodeId,'sessionTaskPage',request));
+        return {...result,viewContext:{role:'planner',scope:'central',nodeId:task.config.nodeId,observedAt:result.sampledAt}};
+      }
+      if(!task.projects)throw new TaskError('PROJECT_UNAVAILABLE','Project service unavailable');
+      return parseSessionHeaderSlice(task.projects.demandRead('sessionTaskPage',request));
+    }};
+    return readSessionDemandPage(input,{sessionId,roots,pendingDispatches:operations.pending,codexJobs:history.codexJobs,jobs:this.ctx.get('jobs') as SessionJobRegistry|undefined,localCodex:this.ctx.get('localCodex')?.store,ledgerSource,localExecutorSource:view==='executor'?localSource:undefined,taskOverlaySources:overrideIds.length?[localSource]:[]});
   }
   private workflowService() {
     const service = this.ctx.get("taskSystem");
@@ -610,11 +739,22 @@ export class TaskPluginSettings extends TypertRemoteService {
     if(!task || !deploymentPolicy(task.config).executionEnabled || !remote)throw new RemoteError("task/project","This host has no executor workspace grant service",{reason:"EXECUTOR_REQUIRED"});
     return remote;
   }
+  private localExecutorAlert(recordId:string,task:TaskSystemService) {
+    task.ledger.demandReads.ensureFacts();
+    const db=task.ledger.managementDatabase(),nodeId=task.config.nodeId;
+    const row=db.prepare("SELECT id FROM demand_entity_facts WHERE kind='run' AND node_id=? AND 'local:'||id||':'||COALESCE(json_extract(data,'$.currentAttemptId'),'none')=? LIMIT 1").get(nodeId,recordId);
+    if(!row)return undefined;
+    const run=task.ledger.demandReads.fact('run',String(row.id))!,owner=task.ledger.demandReads.fact('task',run.taskId),attempt=run.currentAttemptId?task.ledger.demandReads.fact('attempt',run.currentAttemptId):undefined;
+    if(!owner)return undefined;
+    const pending=task.results?.pendingHeaders?.().some(entry=>entry.runId===run.runId)??false,state=pending?'result':run.state;
+    const disposition={schedulerId:task.ledger.schedulerIdentity(),runId:run.runId,taskId:run.taskId,taskState:owner.state,runState:run.state,attemptId:attempt?.attemptId??null,attemptState:attempt?.state??null,currentAttemptId:run.currentAttemptId??null,cancellationRequested:run.cancellationRequested===true};
+    const fingerprint=executorAlertFingerprint({recordId,state,outcome:run.outcome??null,disposition});
+    return task.ledger.executorAlerts.alert(recordId,fingerprint,['failed','blocked','partial'].includes(state)&&!['leased','running'].includes(attempt?.state??''));
+  }
   async setExecutorAlertDisposition(input:unknown) {
     const value=projectInputs.setExecutorAlertDisposition.parse(input),task=this.ctx.get("taskSystem"),remote=this.ctx.get("remoteExecution");
     if(!task || !deploymentPolicy(task.config).executionEnabled)throw new RemoteError("task/project","Executor unavailable",{reason:"EXECUTOR_REQUIRED"});
-    const snapshot=this.localExecutorSnapshot(task);
-    const alert=[...snapshot.runs.map(row=>row.alert),...snapshot.viewContext.unresolvedClaims.map(row=>row.alert)].find(alert=>alert?.recordId===value.recordId);
+    const alert=remote?remote.executorReadAlert(value.recordId,task.ledger):this.localExecutorAlert(value.recordId,task);
     if(!alert)throw new RemoteError("task/project","Alert changed; refresh the panel",{reason:"ALERT_CHANGED"});
     try{
       if(value.recordId.startsWith("local:")) {
@@ -981,29 +1121,14 @@ export class TaskPluginSettings extends TypertRemoteService {
       | RemoteExecutionService
       | undefined;
     const remoteQueue = remote?.queueSnapshot();
-    const snapshot = task.ledger.snapshot();
-    const tasks = new Map(snapshot.tasks.map((task) => [task.taskId, task]));
-    const runs = snapshot.runs.filter(
-      (run) =>
-        run.route?.nodeId === task.config.nodeId &&
-        ["queued", "running", "blocked", "uncertain"].includes(run.state) &&
-        !run.historyOnly &&
-        !run.observationOnly,
-    );
-    const items = [
-      ...(remoteQueue?.items ?? []),
-      ...runs.map((run) => ({
-        taskId: run.taskId,
-        runId: run.runId,
-        title: tasks.get(run.taskId)?.title ?? run.taskId,
-        state: run.state,
-        sessionId:
-          (snapshot.attempts ?? []).find(
-            (attempt) => attempt.attemptId === run.currentAttemptId,
-          )?.sessionId ?? null,
-        workspaceId: run.route?.workspaceId ?? null,
-      })),
-    ];
+    task.ledger.demandReads.ensureFacts();
+    const db=task.ledger.managementDatabase();
+    const candidates=db.prepare("SELECT data FROM demand_entity_facts WHERE kind='run' AND node_id=? AND state IN ('queued','running','blocked','uncertain') AND COALESCE(json_extract(data,'$.historyOnly'),0)=0 AND COALESCE(json_extract(data,'$.observationOnly'),0)=0 ORDER BY seq LIMIT 101").all(task.config.nodeId);
+    const items=[...(remoteQueue?.items??[]),...candidates.map(row=>{
+      const run=JSON.parse(String(row.data)) as import('./ledger-read-index.js').CompactRun;
+      return {taskId:run.taskId,runId:run.runId,title:task.ledger.demandReads.fact('task',run.taskId)?.title??run.taskId,state:run.state,
+        sessionId:run.currentAttemptId?task.ledger.demandReads.fact('attempt',run.currentAttemptId)?.sessionId??null:null,workspaceId:run.route?.workspaceId??null};
+    })];
     return QueueSnapshot.parse({
       sampledAt: new Date().toISOString(),
       nodeId: task.config.nodeId,

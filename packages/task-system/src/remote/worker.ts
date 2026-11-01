@@ -74,6 +74,7 @@ export class ExecutorWorker {
   queueObservedAt: string | null = null;
   private observedQueue: import("./ports.js").Run[] = [];
   isExecuting(runId:string) {return this.runs.has(runId);}
+  activeRunIds() {return [...this.runs.keys()];}
   queueSnapshot() {
     return this.observedQueue.map((run) => ({ ...run }));
   }
@@ -144,7 +145,7 @@ export class ExecutorWorker {
     this.concurrencyBudget = concurrency;
     // Delivery can fail after execution has already finished. Retry the durable
     // result on ordinary polling as well as startup, using the same command ID.
-    for (const record of this.options.store.dispatches()) {
+    for (const record of this.options.store.dispatchCandidates(["result"])) {
       if (record.state === "result" && !this.runs.has(record.lease.runId))
         await this.deliver(record);
     }
@@ -329,7 +330,7 @@ export class ExecutorWorker {
       lastPoll = this.now();
       this.polling = (async () => {
         if (!recovered) {
-          await this.recoverResults();
+          await this.recoverPendingResults();
           recovered = true;
         }
         if (!this.active) return [];
@@ -812,7 +813,7 @@ export class ExecutorWorker {
     const { ledger, store } = this.options;
     if (!ledger.getRun || !ledger.getAttempt) return;
     for (const record of store
-      .dispatches()
+      .dispatchCandidates(["uncertain"])
       .filter(
         (row) => row.state === "uncertain" && !this.runs.has(row.lease.runId),
       )) {
@@ -842,6 +843,10 @@ export class ExecutorWorker {
     }
   }
   async recoverResults(): Promise<DispatchRecord[]> {
+    await this.recoverPendingResults();
+    return this.options.store.dispatches();
+  }
+  private async recoverPendingResults(): Promise<void> {
     insist(this.runs.size === 0, "RECOVERY_REQUIRES_IDLE", 409);
     const records = this.options.store.recoverDispatches();
     for (const record of records) {
@@ -852,7 +857,6 @@ export class ExecutorWorker {
         await this.requestRetry(record);
     }
     await this.reconcileUncertain();
-    return this.options.store.dispatches();
   }
   private async confirmCancellation(
     record: DispatchRecord,

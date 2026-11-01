@@ -8,8 +8,8 @@ function editor(contextOverride = {}) {
     new URL("../src/workflow-ui.js", import.meta.url),
     "utf8",
   ).replace(
-    "  refresh();\n  setInterval(refresh, 10000);",
-    "  window.editor={state,loadedRuns,selectNode,normalized,derive,checkCalls,changeCall,visibleBoxes,graphTerminals,validate,fit,zoomAt,graph,act,fullRender,refresh};",
+    '  parent.postMessage({channel:"dsh-project-runtime",method:"ready"}, "*");',
+    "  hostActive=true;window.editor={state,loadedRuns,selectNode,normalized,derive,checkCalls,changeCall,visibleBoxes,graphTerminals,validate,fit,zoomAt,graph,act,fullRender,refresh,stepProducts};",
   );
   const elements = new Map(),
     listeners = {},
@@ -54,7 +54,10 @@ function editor(contextOverride = {}) {
     elements.set(id, row);
     return row;
   }
-  const parent = { postMessage: (request) => requests.push(request) };
+  let automatic=null;
+  const bounded=(request,seed)=>{const input=request.input||{},definition=seed.definitions.find(row=>row.workflowId===(input.workflowId||"w"))||seed.definitions[0],page=items=>({items,page:0,pageSize:20,total:items.length,pages:items.length?1:0,revision:"fixture",sampledAt:"2026-11-01T00:00:00Z"}),run=seed.runs.find(row=>row.workflowRunId===input.workflowRunId||row.runId===input.workflowRunId);switch(request.method){case "workflowListPage":return page(seed.definitions.map(({steps,stages,calls,...header})=>header));case "workflowDetail":return {...seed,definitions:undefined,runs:undefined,definition};case "workflowRunPage":return page(seed.runs.map(({input,steps,dispatches,definition,...header})=>header));case "workflowRunDetail":if(!run)throw Error("所选历史执行不存在或不可读取");return {run:{...run,steps:run.steps.map(({output,...step})=>step)},definition:run.definition};case "workflowStepDetail":return run?.steps.find(step=>step.stepId===input.stepId);default:throw Error(request.method);}};
+  const deliver=(request,seed,error)=>{let value;try{if(!error)value=bounded(request,seed);}catch(reason){error=reason.message;}windowEvents.message({source:parent,data:{channel:"dsh-project-runtime",id:request.id,value,error}});};
+  const parent = { postMessage: request=>{if(!request.id&&request.method!=="detailFullscreen")return;requests.push(request);if(request.id&&automatic&&request.method.startsWith("workflow")&&request.method!=="workflowPage")Promise.resolve().then(()=>deliver(request,automatic));} };
   const document = {
     getElementById: element,
     addEventListener: (name, fn) => (listeners[name] = fn),
@@ -65,7 +68,7 @@ function editor(contextOverride = {}) {
   };
   const window = {
     __DSH_WORKFLOW_CONTEXT__: { projectId: "p", workflowId: "w", ...contextOverride },
-    addEventListener: (name, fn) => (windowEvents[name] = fn),
+    addEventListener: (name, fn) => (windowEvents[name] = ((previous)=>event=>{previous?.(event);fn(event);})(windowEvents[name])),
     scrollTo() {},
   };
   let sequence = 0;
@@ -87,6 +90,8 @@ function editor(contextOverride = {}) {
   });
   vm.runInContext(source, context);
   const api = window.editor;
+  const refresh=api.refresh;api.refresh=(...args)=>{automatic=null;return refresh(...args);};
+  const change=listeners.change;listeners.change=event=>{automatic=null;return change(event);};
   const stages = [
     ["a", "vps"],
     ["b", "mbp"],
@@ -121,7 +126,7 @@ function editor(contextOverride = {}) {
   };
   api.state.draft = structuredClone(definition);
   api.state.workflowId = "w";
-  api.state.stageId = "a";
+  api.state.stageId = "a";api.state.stepId=contextOverride.stepId||"a";
   api.state.snapshot = {
     definitions: [structuredClone(definition)],
     runs: [],
@@ -143,6 +148,7 @@ function editor(contextOverride = {}) {
     requests,
     parent,
     document,
+    answer(request,seed,error){if(seed)automatic=seed;deliver(request,seed,error);},
   };
 }
 
@@ -396,7 +402,7 @@ function runSummary(e, workflowRunId) {
   return { workflowRunId, workflowId: "w", definitionRevision: 1, definition: structuredClone(e.state.draft), input: {}, dispatches: [], createdAt: "2026-10-18", state: "succeeded", steps: [{ stepId: "a", nodeId: "vps", taskId: "task-a", runId: `${workflowRunId}-step-run`, reportId: `${workflowRunId}-report`, state: "succeeded", summary: "Summary only" }] };
 }
 function answer(e, request, value, error) {
-  e.windowEvents.message({ source: e.parent, data: { channel: "dsh-project-runtime", id: request.id, value, error } });
+  if(value?.definitions||["workflowListPage","workflowDetail","workflowRunPage","workflowRunDetail","workflowStepDetail"].includes(request.method))e.answer(request,value,error);else e.windowEvents.message({ source: e.parent, data: { channel: "dsh-project-runtime", id: request.id, value, error } });
 }
 
 test("default workflow view asks for summaries and requests selected historical details immediately", async () => {
@@ -405,20 +411,24 @@ test("default workflow view asks for summaries and requests selected historical 
   e.state.snapshot.runs = [summary];
   const polling = e.refresh();
   const poll = e.requests.at(-1);
-  assert.equal(poll.method, "workflowView");
-  assert.equal(poll.input.workflowRunId, null);
+  assert.equal(poll.method, "workflowListPage");
+  assert.equal(poll.input.projectId, "p");
   answer(e, poll, structuredClone(e.state.snapshot)); await polling;
   const selected = e.listeners.change({ target: { id: "history", value: "historic" } });
   const request = e.requests.at(-1);
-  assert.equal(request.method, "workflowView");
-  assert.equal(request.input.workflowRunId, "historic");
+  assert.equal(request.method, "workflowListPage");
+  assert.equal(request.input.projectId, "p");
   assert.match(e.element("step-detail").innerHTML, /正在加载本次执行详情/);
+  assert.match(e.element("device-graph").innerHTML,/正在加载所选执行的历史拓扑/);
   assert.doesNotMatch(e.element("step-detail").innerHTML, /尚未产生输出/);
   const full = { ...summary, input: { pinned: true }, dispatches: [{ stepId: "a", taskId: "task-a", runId: "historic-step-run" }], steps: [{ ...summary.steps[0], output: { value: "Full historical output" } }] };
   answer(e, request, { ...e.state.snapshot, runs: [full] }); await selected;
   assert.match(e.element("step-detail").innerHTML, /Full historical output/);
   assert.match(e.element("step-detail").innerHTML, /historic-step-run/);
   assert.equal(e.loadedRuns.get("historic").input.pinned, true);
+  assert.ok(e.requests.some(row=>row.method==="workflowRunDetail"&&row.input.workflowRunId==="historic"));
+  assert.ok(e.requests.some(row=>row.method==="workflowStepDetail"&&row.input.workflowRunId==="historic"&&row.input.stepId==="a"));
+  assert.equal(e.requests.some(row=>row.method==="workflowView"),false);
 });
 
 test("history switches discard older responses and errors while retaining selected Run IDs and output", async () => {
@@ -429,8 +439,8 @@ test("history switches discard older responses and errors while retaining select
   const firstRequest = e.requests.at(-1);
   const latest = e.listeners.change({ target: { id: "history", value: "second" } });
   const secondRequest = e.requests.at(-1);
-  assert.equal(firstRequest.input.workflowRunId, "first");
-  assert.equal(secondRequest.input.workflowRunId, "second");
+  assert.equal(firstRequest.method,"workflowListPage");
+  assert.equal(secondRequest.method,"workflowListPage");
   const full = { ...second, steps: [{ ...second.steps[0], output: { value: "Second precise output" } }] };
   answer(e, secondRequest, { ...e.state.snapshot, runs: [first, full] }); await latest;
   answer(e, firstRequest, undefined, "Old connection failed"); await old;
@@ -444,7 +454,7 @@ test("history switches discard older responses and errors while retaining select
   answer(e, slowRequest, { ...e.state.snapshot, runs: [first, full] }); await slow;
   assert.equal(e.state.runId, "first");
   assert.match(e.element("step-detail").innerHTML, /First precise output/);
-  assert.equal(e.state.snapshot.runs[0].steps[0].output.value, "First precise output");
+  assert.equal(e.state.snapshot.runs.find(row=>row.workflowRunId==="first").steps[0].output.value, "First precise output");
 });
 
 test("a failed detail refresh preserves the last exact output and can be retried", async () => {
@@ -471,12 +481,12 @@ test("a deep link requests its exact Run on first load and then permits returnin
   const snapshot = { ...e.state.snapshot, runs: [{ ...summary, runId: "root-alias", steps: [{ ...summary.steps[0], output: { pinned: true } }] }] };
   e.state.draft = null; e.state.snapshot = null; e.state.workflowId = "";
   const initial = e.refresh();
-  assert.equal(e.requests.at(-1).input.workflowRunId, "root-alias");
+  assert.equal(e.requests.at(-1).method,"workflowListPage");
   answer(e, e.requests.at(-1), snapshot); await initial;
   assert.equal(e.state.runId, "historic");
   assert.equal(e.loadedRuns.get("historic").steps[0].output.pinned, true);
   const currentPlan = e.listeners.change({ target: { id: "history", value: "" } });
-  assert.equal(e.requests.at(-1).input.workflowRunId, null);
+  assert.equal(e.requests.at(-1).method,"workflowListPage");
   answer(e, e.requests.at(-1), { ...snapshot, runs: [summary] }); await currentPlan;
   assert.equal(e.state.runId, "");
 });
@@ -488,10 +498,10 @@ test("switching between pending Runs with identical step state replaces the load
   for (const run of [first, second]) run.steps = [{ stepId: "a", nodeId: "vps", state: "pending", attemptCount: 0 }];
   e.state.snapshot.runs = [first, second];
   const one = e.listeners.change({ target: { id: "history", value: "first" } });
-  answer(e, e.requests.at(-1), structuredClone(e.state.snapshot)); await one;
+  answer(e, e.requests.at(-1), {...e.state.snapshot,runs:[first,second]}); await one;
   const two = e.listeners.change({ target: { id: "history", value: "second" } });
   assert.match(e.element("step-detail").innerHTML, /正在加载本次执行详情/);
-  answer(e, e.requests.at(-1), structuredClone(e.state.snapshot)); await two;
+  answer(e, e.requests.at(-1), {...e.state.snapshot,runs:[first,second]}); await two;
   assert.doesNotMatch(e.element("step-detail").innerHTML, /正在加载本次执行详情/);
   assert.match(e.element("step-detail").innerHTML, /尚未产生输出/);
 });
@@ -499,7 +509,7 @@ test("switching between pending Runs with identical step state replaces the load
 test("opening a historical task report sends the selected workflow, step, task, Run and report IDs", async () => {
   const e = editor(); const full = runSummary(e, "historic");
   full.steps[0].output = { value: "Precise report" };
-  e.loadedRuns.set("historic", full); e.state.snapshot.runs = [full];
+  e.loadedRuns.set("historic", full);e.stepProducts.set(JSON.stringify(["historic",full.steps[0].stepId]),full.steps[0]); e.state.snapshot.runs = [full];
   e.state.runId = "historic"; e.state.stepId = "a"; e.fullRender();
   assert.match(e.element("step-detail").innerHTML, /id="open-task-execution"/);
   const opening = e.act("open-task-execution");
@@ -684,7 +694,7 @@ test("node overview and internal steps are separate labelled navigation sections
 test("step result prioritizes the report before process and associations while technical data starts collapsed", () => {
   const e = editor(); const full = runSummary(e, "historic");
   full.steps[0].output = { presentation: { mediaType: "text/html", body: "<h1>Core report</h1>" }, value: 42 };
-  e.state.runId = "historic"; e.loadedRuns.set("historic", full); e.state.snapshot.runs = [full];
+  e.state.runId = "historic"; e.loadedRuns.set("historic", full);e.stepProducts.set(JSON.stringify(["historic",full.steps[0].stepId]),full.steps[0]); e.state.snapshot.runs = [full];
   e.selectNode({ kind: "step", id: "a" });
   const html = e.element("step-detail").innerHTML;
   assert.deepEqual(Array.from(html.matchAll(/data-result-section="([^"]+)"/g), match => match[1]), ["result", "process", "associations", "provenance"]);
@@ -699,7 +709,7 @@ test("step result prioritizes the report before process and associations while t
 test("unavailable associations are omitted without hiding the result or inventing supplementary content", () => {
   const e = editor(); const full = runSummary(e, "pending");
   full.steps = [{ stepId: "a", nodeId: "vps", state: "pending", attemptCount: 0, summary: "Waiting for executor" }];
-  e.state.runId = "pending"; e.loadedRuns.set("pending", full); e.state.snapshot.runs = [full];
+  e.state.runId = "pending"; e.loadedRuns.set("pending", full);e.stepProducts.set(JSON.stringify(["pending",full.steps[0].stepId]),full.steps[0]); e.state.snapshot.runs = [full];
   e.selectNode({ kind: "step", id: "a" });
   const html = e.element("step-detail").innerHTML;
   assert.match(html, /Waiting for executor/); assert.match(html, /data-result-section="process"/);
