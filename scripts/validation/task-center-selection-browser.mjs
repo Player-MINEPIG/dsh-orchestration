@@ -1,3 +1,4 @@
+import {demandPageBridge} from "../../packages/task-system/test/demand-page-fixture.mjs";
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { resolve, join } from 'node:path';
@@ -20,15 +21,22 @@ const task = (id, title, status = 'running', time = '2026-10-23T00:00:00Z') => (
   page.on('pageerror', error => errors.push(error.message));
   let reads = 0, failure = false;
   let snapshot = { projects: [], settings: { root: null, revision: 0 }, tasks: [{...task('selected', selectedTitle),report:'Stable report paragraph',reportId:'report-selected'}, task('other', 'Other task')], nodes: [] };
-  await page.exposeFunction('fixtureRead', () => {
+  await page.exposeFunction('fixtureRead', async request => {
    reads++;
-   return failure ? { error: 'Temporary read failure' } : { value: { ...snapshot, nodes: [{ observedAt: reads }] } };
+   if(failure)return {error:'Temporary read failure'};
+   if(request.method==='projectSnapshot')return {value:{...snapshot,nodes:[{observedAt:reads}]}};
+   return new Promise(resolve=>{
+    const requests=[],bridge=demandPageBridge(requests,response=>resolve(response));
+    bridge.send(request);bridge.answer({value:{...snapshot,reports:snapshot.tasks.filter(task=>task.reportId).map(task=>({id:task.reportId,taskId:task.id,kind:'result',title:'任务报告',body:task.report,contentVersion:task.report})),nodes:[{observedAt:reads}]}});
+   });
   });
   await page.addInitScript(() => {
    window.postMessage = async request => {
-    if (request?.channel !== 'dsh-project-runtime' || request.method !== 'projectSnapshot') return;
-    const response = await window.fixtureRead();
-    window.dispatchEvent(new MessageEvent('message', { source: window, data: { channel: 'dsh-project-runtime', id: request.id, ...response } }));
+    if(request?.channel!=='dsh-project-runtime')return;
+    if(request.method==='ready'){window.dispatchEvent(new MessageEvent('message',{source:window,data:{channel:request.channel,method:'active',input:{active:true,generation:1}}}));return;}
+    if(!request.id)return;
+    const response=await window.fixtureRead(request);
+    window.dispatchEvent(new MessageEvent('message',{source:window,data:{channel:request.channel,id:request.id,...response}}));
    };
   });
   await page.route('http://localhost:43191/**', route => route.fulfill({ contentType: 'text/html', body: html }));

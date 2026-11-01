@@ -84,14 +84,7 @@ export class SessionMessages {
       store.saveSessionMessageState(message.messageId, saved);
     }
     if (!saved) {
-      const record = store
-        .dispatches()
-        .find(
-          (d) =>
-            d.sessionId === message.sessionId &&
-            d.claim.task.taskId === message.taskId &&
-            d.claim.run.route?.workspaceId === message.workspaceId,
-        );
+      const record=store.sessionDispatch(message.sessionId,message.taskId,message.workspaceId);
       const binding = policy.workspaces.find(
         (w) =>
           w.workspaceId === message.workspaceId && w.nodeId === message.nodeId,

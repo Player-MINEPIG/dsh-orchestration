@@ -51,6 +51,7 @@
     stepId: "",
     filter: "all",
     pending: false,
+    workflowPage:0,historyPage:0,
   };
   const requests = new Map(),
     commandIds = new Map();
@@ -90,7 +91,7 @@
     if (!request) return;
     clearTimeout(request.timer);
     requests.delete(event.data.id);
-    if (event.data.error) request.reject(Error(event.data.error));
+    if (event.data.error) request.reject(Object.assign(Error(event.data.error),{code:event.data.errorCode}));
     else request.resolve(event.data.value);
   });
   function notice(text) {
@@ -98,7 +99,8 @@
     clearTimeout(notice.timer);
     notice.timer = setTimeout(() => ($("notice").textContent = ""), 7000);
   }
-  const loadedRuns = new Map();
+  const loadedRuns = new Map();let workflowSelectionSequence=0;
+  const remoteReadOnly=()=>state.snapshot?.readOnly===true;
   const run = () =>
     loadedRuns.get(state.runId) ||
     state.snapshot?.runs.find((row) => row.workflowRunId === state.runId);
@@ -179,17 +181,18 @@
     const visible = rows.filter(
       (row) =>
         state.filter === "all" ||
-        (new Set(row.steps.map((s) => s.nodeId)).size > 1
+        (new Set(row.nodeIds || (row.steps||[]).map((s) => s.nodeId)).size > 1
           ? "multi"
           : "single") === state.filter,
     );
     $("workflow-list").innerHTML =
       visible
         .map((row) => {
-          const count = new Set(row.steps.map((s) => s.nodeId)).size;
-          return `<button type="button" class="workflow-item ${row.workflowId === state.workflowId ? "active" : ""}" data-workflow="${esc(row.workflowId)}"><strong>${esc(row.title)}</strong><small>${count > 1 ? `${count} 台设备协作` : "单设备"} · ${row.steps.length} 个步骤${row.schedule?.enabled ? " · 定时运行" : ""}</small></button>`;
+          const count = new Set(row.nodeIds || (row.steps||[]).map((s) => s.nodeId)).size;
+          return `<button type="button" class="workflow-item ${row.workflowId === state.workflowId ? "active" : ""}" data-workflow="${esc(row.workflowId)}"><strong>${esc(row.title)}</strong><small>${count > 1 ? `${count} 台设备协作` : "单设备"} · ${row.stepCount??row.steps?.length??0} 个步骤${row.schedule?.enabled ? " · 定时运行" : ""}</small></button>`;
         })
         .join("") || '<p class="empty">暂无工作流。点击“新建工作流”开始。</p>';
+    $("workflow-pagination").innerHTML = pageButtons(state.snapshot?.workflowPage,"workflow");
   }
   function renderHeading() {
     const def = definition();
@@ -198,24 +201,24 @@
     $("revision").textContent = run()
       ? `本次执行固定使用版本 ${run().definitionRevision}`
       : `版本 ${def.revision || "未保存"}${state.dirty ? " · 有未保存修改" : ""}`;
-    $("save-workflow").disabled = state.pending || !!run() || !state.dirty;
+    $("save-workflow").disabled = remoteReadOnly() || state.pending || !!run() || !state.dirty;
     $("start-workflow").disabled =
-      state.pending ||
+      remoteReadOnly() || state.pending ||
       !!run() ||
       state.dirty ||
       !state.snapshot.definitions.some(
         (row) => row.workflowId === state.workflowId,
       );
-    $("edit-definition").classList.toggle("hidden", !run());
+    $("edit-definition").classList.toggle("hidden", remoteReadOnly() || !run());
     $("cancel-workflow").classList.toggle(
       "hidden",
       !run() ||
         ["succeeded", "partial", "failed", "cancelled"].includes(run().state),
     );
-    $("cancel-workflow").disabled = state.pending;
-    $("add-step").classList.toggle("hidden", !!run());
-    $("device-controls").classList.toggle("hidden", !!run());
-    $("start-input").classList.toggle("hidden", !!run());
+    $("cancel-workflow").disabled = remoteReadOnly() || state.pending;
+    $("add-step").classList.toggle("hidden", remoteReadOnly() || !!run());
+    $("device-controls").classList.toggle("hidden", remoteReadOnly() || !!run());
+    $("start-input").classList.toggle("hidden", remoteReadOnly() || !!run());
     const unbound = def.steps.filter(step => step.execution.kind === "unbound");
     $("run-state").innerHTML = run() ? badge(run().state) : unbound.length ? `<span class="badge">计划中 · ${unbound.length} 个步骤待选执行方式</span>` : "";
   }
@@ -233,11 +236,12 @@
           ),
         )
         .join("");
+    $("history-pagination").innerHTML=pageButtons(state.snapshot?.historyPage,"history");
   }
   function renderDefinitionEditor() {
     const def = state.draft;
-    if (run()) {
-      $("definition-editor").innerHTML = "";
+    if (!def || run() || remoteReadOnly()) {
+      $("definition-editor").innerHTML = remoteReadOnly()?'<p class="hint">当前节点只读浏览已授权的流程拓扑。</p>':"";
       return;
     }
     $("definition-editor").innerHTML =
@@ -322,7 +326,7 @@
       }
   }
   function changeCall(fromStepId, toStepId, remove = false) {
-    if (run()) throw Error("历史执行只读");
+    if (run() || remoteReadOnly()) throw Error("当前流程只读");
     const next = clone(state.draft);
     next.calls = remove
       ? next.calls.filter(
@@ -450,7 +454,7 @@
             : views.some((view) => view.state === "running")
               ? "running"
               : "pending";
-        return `<article class="graph-card ${box.id === (isStep ? state.stepId : state.stageId) ? "active" : ""}" data-card="${esc(box.id)}" style="left:${box.x}px;top:${box.y}px;width:${box.w}px;height:${box.h}px"><button type="button" class="card-main" ${isStep ? `data-step="${esc(row.stepId)}"` : `data-stage="${esc(row.stageId)}"`}><span class="card-kind">${isStep ? kindName(row.execution.kind) : "设备阶段"}</span><strong>${esc(row.title === row.nodeId ? nodeDisplayName(row.nodeId) : row.title)}</strong>${isStep ? "" : `<span class="muted">设备 ${esc(nodeDisplayName(row.nodeId))} · ${steps.length} 个内部步骤</span><span class="stage-steps">${steps.map(step => `<span class="stage-step"><span>${esc(step.title)}</span><small>${esc(kindName(step.execution.kind))}</small></span>`).join("")}</span>`}${run() ? badge(result) : ""}</button>${!isStep ? `<span class="availability">当前设备 ${badge(nodeStatus(row.nodeId).state)}</span>` : ""}${!run() ? `<button type="button" class="port in" data-port="in" data-endpoint="${esc(box.id)}" aria-label="连接到 ${esc(row.title)}">●</button><button type="button" class="port out" data-port="out" data-endpoint="${esc(box.id)}" aria-label="从 ${esc(row.title)} 调用">●</button>` : ""}</article>`;
+        return `<article class="graph-card ${box.id === (isStep ? state.stepId : state.stageId) ? "active" : ""}" data-card="${esc(box.id)}" style="left:${box.x}px;top:${box.y}px;width:${box.w}px;height:${box.h}px"><button type="button" class="card-main" ${isStep ? `data-step="${esc(row.stepId)}"` : `data-stage="${esc(row.stageId)}"`}><span class="card-kind">${isStep ? kindName(row.execution.kind) : "设备阶段"}</span><strong>${esc(row.title === row.nodeId ? nodeDisplayName(row.nodeId) : row.title)}</strong>${isStep ? "" : `<span class="muted">设备 ${esc(nodeDisplayName(row.nodeId))} · ${steps.length} 个内部步骤</span><span class="stage-steps">${steps.map(step => `<span class="stage-step"><span>${esc(step.title)}</span><small>${esc(kindName(step.execution.kind))}</small></span>`).join("")}</span>`}${run() ? badge(result) : ""}</button>${!isStep ? `<span class="availability">当前设备 ${badge(nodeStatus(row.nodeId).state)}</span>` : ""}${!run() && !remoteReadOnly() ? `<button type="button" class="port in" data-port="in" data-endpoint="${esc(box.id)}" aria-label="连接到 ${esc(row.title)}">●</button><button type="button" class="port out" data-port="out" data-endpoint="${esc(box.id)}" aria-label="从 ${esc(row.title)} 调用">●</button>` : ""}</article>`;
       })
       .join("");
     const terminals = graphTerminals(boxes);
@@ -487,7 +491,7 @@
         .join("") || option("", "没有已登记设备", "");
     $("add-device").disabled = !$("add-device-select").value || state.pending;
     $("add-step").disabled = !stage || state.pending;
-    const readOnly = !!run();
+    const readOnly = remoteReadOnly() || !!run();
     $("graph-panel").classList.toggle("is-readonly", readOnly);
     $("graph-legend").textContent = readOnly
       ? "执行快照只读。点击节点查看详情，拖动空白平移，滚轮缩放。"
@@ -563,13 +567,13 @@
     const steps = def.steps.filter(step => step.stageId === stage.stageId);
     const ids = new Set(steps.map(step => step.stepId));
     const calls = def.calls.filter(call => ids.has(call.fromStepId) || ids.has(call.toStepId));
-    const readOnly = !!run();
+    const readOnly = remoteReadOnly() || !!run();
     const title = id => def.steps.find(step => step.stepId === id)?.title || id;
     const connection = state.connection;
     const source = connection ? def.steps.filter(step => step.stageId === connection.fromStageId) : [];
     const destination = connection ? def.steps.filter(step => step.stageId === connection.toStageId) : [];
     $("step-detail").innerHTML = `<h3 class="detail-section-title">节点信息</h3>${readOnly
-      ? `<p>执行设备 ${esc(nodeDisplayName(stage.nodeId))} · ${steps.length} 个内部步骤</p><p class="hint">本次执行固定使用版本 ${esc(run().definitionRevision)}。阶段与连线只读，选择左侧步骤查看本次结果。</p>`
+      ? `<p>执行设备 ${esc(nodeDisplayName(stage.nodeId))} · ${steps.length} 个内部步骤</p><p class="hint">本次执行固定使用版本 ${esc(run()?.definitionRevision??def.revision)}。阶段与连线只读，选择左侧步骤查看本次结果。</p>`
       : `<div class="fields"><label>阶段名称<input id="stage-title" value="${esc(stage.title)}"></label><label>执行设备<select id="stage-node">${state.snapshot.nodes.map(row => option(row.nodeId, nodeDisplayName(row.nodeId), stage.nodeId)).join("")}${!state.snapshot.nodes.some(row => row.nodeId === stage.nodeId) ? option(stage.nodeId, stage.nodeId, stage.nodeId) : ""}</select></label></div><p class="muted">选择左侧步骤可设置执行方式、前序调用和输入映射。</p>`}
       <div class="row">${!state.focusStage ? '<button type="button" id="enter-stage">查看内部步骤图</button>' : ''}${!readOnly ? '<button type="button" id="remove-stage" class="danger">删除阶段</button>' : ''}</div>
       ${connection && !readOnly ? `<section class="node-connection"><h3>连接这两个阶段的步骤</h3><label>调用出口<select id="call-from">${source.map(step => option(step.stepId, step.title, "")).join("")}</select></label><label>调用入口<select id="call-to">${destination.map(step => option(step.stepId, step.title, "")).join("")}</select></label><button type="button" id="add-call"${source.length && destination.length ? "" : " disabled"}>添加调用</button><p class="muted">连线决定先后顺序。传递数据时，在步骤详情中设置输入映射。</p></section>` : ''}
@@ -581,6 +585,7 @@
       renderStageEditor();
       return;
     }
+    if (remoteReadOnly() && !run()) {$("step-detail").innerHTML=`<h3>${esc(step.title)}</h3><p>设备 ${esc(nodeDisplayName(step.nodeId))} · ${esc(kindName(step.execution.kind))}</p><p class="hint">当前节点只读浏览拓扑；执行设置不可读取或更改。</p>`;return;}
     if (run()) {
       renderStepResult();
       return;
@@ -618,7 +623,8 @@
     const step = selectedStep(),
       view = run()?.steps.find((row) => row.stepId === step?.stepId);
     if (!step || !view) return;
-    if (!loadedRuns.has(run().workflowRunId)) {
+    if (!loadedRuns.has(run().workflowRunId) || !stepProducts.has(JSON.stringify([run().workflowRunId,step.stepId]))) {
+      if(loadedRuns.has(run().workflowRunId))void readSelectedStep();
       $("step-detail").innerHTML = `<h3>${esc(step.title)}</h3>${badge(view.state)}<p class="hint">正在加载本次执行详情。连接失败时可点击刷新重试。</p>`;
       return;
     }
@@ -653,15 +659,17 @@
     stepList();
     renderStepEditor();
   }
-  function selectWorkflow(workflowId) {
+  async function selectWorkflow(workflowId,{loaded=false}={}) {
     if (state.dirty && !confirm("当前定义尚未保存，放弃修改并切换？")) return;
-    const def = state.snapshot.definitions.find(
-      (row) => row.workflowId === workflowId,
-    );
-    if (!def) return;
+    const epoch=readEpoch,selection=++workflowSelectionSequence;
+    const detail=loaded?{definition:state.snapshot.definitions.find(row=>row.workflowId===workflowId)}:await api("workflowDetail",{workflowId});
+    if(epoch!==readEpoch||selection!==workflowSelectionSequence||!readsActive())return;
+    const def=detail.definition;
+    state.snapshot={...state.snapshot,...detail,definitions:state.snapshot.definitions.map(row=>row.workflowId===workflowId?def:row)};
     Object.assign(state, {
       draft: normalized(def),
       workflowId,
+      historyPage:0,
       runId: "",
       dirty: false,
       nodeId: "",
@@ -672,24 +680,48 @@
     });
     fullRender();
     fit();
+    loadedRuns.clear();stepProducts.clear();
+    if(!loaded)void refresh({force:true});
   }
+  function pageButtons(result,kind){return !result||result.pages<=1?"":`<button type="button" data-page-kind="${kind}" data-page-delta="-1" ${result.page===0?"disabled":""}>上一页</button><span>${result.page+1} / ${result.pages} · 共 ${result.total} 项</span><button type="button" data-page-kind="${kind}" data-page-delta="1" ${result.page+1>=result.pages?"disabled":""}>下一页</button>`;}
+  async function readWorkflowSnapshot(workflowRunId) {
+    const epoch=readEpoch,workflowId=state.workflowId;
+    const current=()=>readsActive()&&epoch===readEpoch&&workflowId===state.workflowId;
+    const workflowPage=await api("workflowListPage",{projectId:context.projectId||undefined,page:state.workflowPage,pageSize:20});
+    if(!current())throw Error("读取已结束");
+    const chosen=state.workflowId||context.workflowId||workflowPage.items[0]?.workflowId;
+    if(!chosen)return {definitions:workflowPage.items,runs:[],nodes:[],workspaces:[],programs:[],models:[],taskBindings:[],workflowPage};
+    const [detail,historyPage]=await Promise.all([api("workflowDetail",{workflowId:chosen}),api("workflowRunPage",{workflowId:chosen,page:state.historyPage,pageSize:20})]);
+    if(!current())throw Error("读取已结束");
+    const snapshot={...detail,definitions:workflowPage.items.map(row=>row.workflowId===chosen?detail.definition:row),runs:historyPage.items,workflowPage,historyPage};
+    if(!snapshot.definitions.some(row=>row.workflowId===chosen))snapshot.definitions.push(detail.definition);
+    if(workflowRunId){const exact=await api("workflowRunDetail",{workflowRunId});if(!current())throw Error("读取已结束");const run={...exact.run,definition:exact.definition||exact.run.definition};snapshot.runs=snapshot.runs.filter(row=>row.workflowRunId!==run.workflowRunId);snapshot.runs.push(run);const stepId=state.stepId||context.stepId;if(stepId){const step=await api("workflowStepDetail",{workflowRunId:run.workflowRunId,stepId});run.steps=run.steps.map(row=>row.stepId===stepId?{...row,...step}:row);snapshot.stepProduct={workflowRunId:run.workflowRunId,stepId,step};}}
+    return snapshot;
+  }
+  const stepProducts=new Map(),stepRequests=new Set();
+  async function readSelectedStep(){const currentRun=run(),stepId=state.stepId;if(!currentRun||!stepId||!readsActive())return;const key=JSON.stringify([currentRun.workflowRunId,stepId]);if(stepRequests.has(key))return;stepRequests.add(key);const epoch=readEpoch;try{const step=await api("workflowStepDetail",{workflowRunId:currentRun.workflowRunId,stepId});if(epoch!==readEpoch||run()!==currentRun||state.stepId!==stepId)return;stepProducts.clear();stepProducts.set(key,step);currentRun.steps=currentRun.steps.map(row=>row.stepId===stepId?{...row,...step}:row);renderStepResult();}catch(error){if(epoch===readEpoch)notice(error.message);}finally{stepRequests.delete(key);}}
   let refreshing = false;
   let refreshSequence = 0;
   const viewSelection = () => state.runId || (!state.draft ? context.runId : null) || null;
   async function refresh({ force = false } = {}) {
-    if ((!force && refreshing) || gesture) return;
+    if (!readsActive() || (!force && refreshing)) return;
+    if (gesture) { scheduleRefresh(); return; }
     const sequence = ++refreshSequence;
+    const epoch = readEpoch;
     const workflowRunId = viewSelection();
-    const current = () => sequence === refreshSequence && workflowRunId === viewSelection();
+    const current = () => readsActive() && epoch === readEpoch && sequence === refreshSequence && workflowRunId === viewSelection();
     refreshing = true;
     try {
-      const snapshot = await api("workflowView", { workflowRunId });
+      const snapshot = await readWorkflowSnapshot(workflowRunId);
       if (!current()) return;
       if (workflowRunId) {
         const detail = snapshot.runs.find(row => row.workflowRunId === workflowRunId || row.runId === workflowRunId);
         if (!detail) throw Error("所选历史执行不存在或不可读取，请核对记录后重试。");
         loadedRuns.set(detail.workflowRunId, detail);
       }
+      loadedRuns.clear();
+      if(workflowRunId){const exact=snapshot.runs.find(row=>row.workflowRunId===workflowRunId||row.runId===workflowRunId);if(exact)loadedRuns.set(exact.workflowRunId,exact);}
+      stepProducts.clear();if(snapshot.stepProduct)stepProducts.set(JSON.stringify([snapshot.stepProduct.workflowRunId,snapshot.stepProduct.stepId]),snapshot.stepProduct.step);
       state.snapshot = snapshot;
       $("connection").textContent = `已更新 ${new Date().toLocaleTimeString()}`;
       $("error").textContent = "";
@@ -705,7 +737,7 @@
           fullRender();
           return;
         }
-        selectWorkflow(chosen.workflowId);
+        await selectWorkflow(chosen.workflowId,{loaded:true});
         const selectedRun = snapshot.runs.find(
           (row) =>
             row.workflowRunId === context.runId || row.runId === context.runId,
@@ -760,8 +792,9 @@
       if (!current()) return;
       $("connection").textContent = "暂时无法刷新；保留最近已载入数据，可重试";
       $("error").textContent = error.message;
+      refresh.retrySoon=error.code==="READ_MODEL_UPDATING";
     } finally {
-      if (sequence === refreshSequence) refreshing = false;
+      if (sequence === refreshSequence) { refreshing = false; scheduleRefresh(); }
     }
   }
   function validate(def) {
@@ -842,6 +875,7 @@
   async function act(action) {
     try {
       if (!state.snapshot) throw Error("尚未连接到调度端，请先刷新连接");
+      if(remoteReadOnly()&&!['back-project','fit-graph','zoom-in','zoom-out','fullscreen-graph','enter-stage','leave-stage','show-task','open-task-execution'].includes(action))throw Error("当前节点只能浏览已授权的流程拓扑");
       if (action === "new-workflow") {
         if (!context.projectId) throw Error("请从项目打开流程编辑器");
         if (state.dirty && !confirm("放弃当前未保存修改并新建？")) return;
@@ -1090,8 +1124,9 @@
     if (state.pending) return;
     const target = event.target.closest("button");
     if (!target) return;
+    if(target.dataset.pageKind){const kind=target.dataset.pageKind,key=kind==="workflow"?"workflowPage":"historyPage",result=state.snapshot[key];state[key]=Math.max(0,Math.min(result.pages-1,result.page+Number(target.dataset.pageDelta)));void refresh({force:true});return;}
     if (target.dataset.workflow) {
-      selectWorkflow(target.dataset.workflow);
+      void selectWorkflow(target.dataset.workflow).catch(error=>notice(error.message));
       return;
     }
     if (target.dataset.stage || target.dataset.stageDetail) {
@@ -1113,6 +1148,7 @@
       return;
     }
     if (target.dataset.removeBinding) {
+      if(remoteReadOnly())return;
       delete selectedStep().inputs[target.dataset.removeBinding];
       setDirty();
       renderStepEditor();
@@ -1147,7 +1183,7 @@
       fit();
       return refresh({ force: true });
     }
-    if (run() || !state.draft) return;
+    if (remoteReadOnly() || run() || !state.draft) return;
     const step = selectedStep();
     try {
       if(el.id==='workflow-result-mode') {
@@ -1289,7 +1325,7 @@
     }
   });
   document.addEventListener("input", (event) => {
-    if (run() || !state.draft) return;
+    if (remoteReadOnly() || run() || !state.draft) return;
     const el = event.target,
       step = selectedStep();
     if (el.id === "workflow-title") {
@@ -1341,14 +1377,14 @@
     suppressClick = false;
     const port = event.target.closest("[data-port]");
     const card = event.target.closest("[data-card]");
-    if (port && !run())
+    if (port && !run() && !remoteReadOnly())
       gesture = {
         kind: "connect",
         id: port.dataset.endpoint,
         direction: port.dataset.port,
         start: pointer(event),
       };
-    else if (card && !run())
+    else if (card && !run() && !remoteReadOnly())
       gesture = {
         kind: "drag",
         id: card.dataset.card,
@@ -1470,8 +1506,26 @@
     )
       act("fullscreen-graph");
   });
-  if (typeof ResizeObserver !== "undefined")
-    new ResizeObserver(() => applyViewport()).observe($("graph-container"));
-  refresh();
-  setInterval(refresh, 10000);
+  const graphResize = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => applyViewport());
+  graphResize?.observe($("graph-container"));
+  let hostActive = false, hostGeneration = -1, readEpoch = 0, disposed = false, refreshTimer;
+  function readsActive() { return !disposed && hostActive && document.visibilityState !== "hidden"; }
+  function scheduleRefresh() { clearTimeout(refreshTimer); if (readsActive()) refreshTimer = setTimeout(refresh, refresh.retrySoon?500:10000); }
+  function updateReadActivity() { readEpoch++; refreshSequence++; refreshing = false; clearTimeout(refreshTimer); if (readsActive()) void refresh(); }
+  window.addEventListener("message", event => {
+    if (event.source !== parent || event.data?.channel !== "dsh-project-runtime" || event.data.method !== "active") return;
+    const input = event.data.input;
+    if (!input || typeof input.active !== "boolean" || !Number.isSafeInteger(input.generation) || input.generation < hostGeneration) return;
+    hostGeneration = input.generation;
+    if (hostActive === input.active) return;
+    hostActive = input.active; updateReadActivity();
+  });
+  document.addEventListener("visibilitychange", updateReadActivity);
+  window.addEventListener("pageshow", event => {if(!event.persisted)return;disposed=false;hostActive=false;hostGeneration=-1;readEpoch++;graphResize?.observe($("graph-container"));parent.postMessage({channel:"dsh-project-runtime",method:"ready"},"*");});
+  window.addEventListener("pagehide", () => {
+    disposed = true; updateReadActivity(); clearTimeout(notice.timer); graphResize?.disconnect();
+    for (const request of requests.values()) { clearTimeout(request.timer); request.reject(Error("页面已关闭")); }
+    requests.clear();
+  });
+  parent.postMessage({channel:"dsh-project-runtime",method:"ready"}, "*");
 })();

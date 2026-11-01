@@ -1,3 +1,5 @@
+import markdownit from 'markdown-it';
+import {demandPageBridge} from './demand-page-fixture.mjs';
 import {registerExecutor} from '../../../tests/dsh/executor-fixture.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -8,12 +10,12 @@ import {createNativeHarness} from '../../../tests/dsh/native-harness.mjs';
 import {Workbench} from '../dist/workbench.js';
 
 function page(){
- const script=readFileSync(new URL('../dist/project-page.html',import.meta.url),'utf8').match(/<script>([\s\S]*?)<\/script>/)[1];
- const elements=new Map(),requests=[],events={},documentEvents={};let seq=0;
- const parent={postMessage:r=>{if(r.method!=='detailFullscreen')requests.push(r);}};
- const context=vm.createContext({atob,structuredClone,console,Date,Map,Set,URL,innerWidth:1200,MutationObserver:class{observe(){}disconnect(){}},matchMedia:()=>({matches:false,addEventListener(){},removeEventListener(){}}),crypto:{randomUUID:()=>String(++seq)},parent,window:{addEventListener:(name,fn)=>events[name]=fn},document:{documentElement:{dataset:{}},activeElement:{tagName:'BODY'},querySelector:()=>null,querySelectorAll:()=>[],addEventListener:(name,fn)=>documentEvents[name]=fn,getElementById(id){if(!elements.has(id))elements.set(id,{innerHTML:'',dataset:{},setAttribute(){},removeAttribute(){},focus(){}});return elements.get(id);}},setTimeout:()=>1,clearTimeout:()=>{},setInterval:()=>1});
- vm.runInContext(script,context);
- return {context,requests,html:()=>elements.get('app').innerHTML,overlay:()=>elements.get('overlays').innerHTML,action:(name,id)=>vm.runInContext(`actions(${JSON.stringify(name)},${JSON.stringify(id)})`,context),async answer(value){const req=requests.shift();assert.ok(req);events.message({source:parent,data:{channel:'dsh-project-runtime',id:req.id,value}});await new Promise(resolve=>setImmediate(resolve));},set(code){return vm.runInContext(code,context);}};
+ const script=readFileSync(new URL('../src/project-page.html',import.meta.url),'utf8').match(/<script>([\s\S]*?)<\/script>/)[1];
+ const elements=new Map(),requests=[],reads=[],events={},documentEvents={};let seq=0;
+ let demand;const parent={postMessage:r=>{if(r.id)reads.push(r);if(demand)demand.send(r);else if(r.id)requests.push(r);}};
+ const context=vm.createContext({markdownit,atob,structuredClone,console,Date,Map,Set,URL,innerWidth:1200,MutationObserver:class{observe(){}disconnect(){}},matchMedia:()=>({matches:false,addEventListener(){},removeEventListener(){}}),crypto:{randomUUID:()=>String(++seq)},parent,window:{addEventListener:(name,fn)=>events[name]=((prior)=>event=>{prior?.(event);fn(event);})(events[name])},document:{documentElement:{dataset:{}},activeElement:{tagName:'BODY'},querySelector:()=>null,querySelectorAll:()=>[],addEventListener:(name,fn)=>documentEvents[name]=fn,getElementById(id){if(!elements.has(id))elements.set(id,{innerHTML:'',dataset:{},setAttribute(){},removeAttribute(){},focus(){}});return elements.get(id);}},setTimeout:()=>1,clearTimeout:()=>{},clearInterval:()=>{},setInterval:()=>1});
+ vm.runInContext(script,context);demand=demandPageBridge(requests,data=>events.message({source:parent,data:{channel:'dsh-project-runtime',...data}}));events.message({source:parent,data:{channel:'dsh-project-runtime',method:'active',input:{active:true,generation:1}}});vm.runInContext('patchHtml=(root,html)=>{root.innerHTML=html;}',context);
+ return {context,requests,reads,html:()=>elements.get('app').innerHTML,overlay:()=>elements.get('overlays').innerHTML,action:(name,id)=>demand.action(name,()=>vm.runInContext(`actions(${JSON.stringify(name)},${JSON.stringify(id)})`,context)),async answer(value){await demand.answer({value});},set(code){return vm.runInContext(code,context);}};
 }
 const flow={workflowId:'report',projectId:'p',revision:2,title:'日报流程',description:'Test',stages:[{stageId:'first',title:'准备',nodeId:'VPS',position:{x:0,y:0}},{stageId:'collect',title:'采集',nodeId:'MBP',position:{x:300,y:0}},{stageId:'last',title:'汇总',nodeId:'VPS',position:{x:600,y:0}}],steps:[{stepId:'a',stageId:'first',title:'开始',nodeId:'VPS',dependsOn:[]},{stepId:'b',stageId:'collect',title:'读取',nodeId:'MBP',dependsOn:['a']},{stepId:'c',stageId:'last',title:'汇总',nodeId:'VPS',dependsOn:['b']}],calls:[{fromStepId:'a',toStepId:'b'},{fromStepId:'b',toStepId:'c'}]};
 const project={id:'p',title:'日报项目',goal:'Daily report',description:'Daily report',stage:'Active',workspace:'/p',session:1,canChat:true,messages:[]};
@@ -32,8 +34,8 @@ test('selected historical workflow Run stays successful while current executor i
  const p=page(),task={id:'task',project:'p',title:'日报任务',description:'Daily',status:'done',runId:'root',runState:'succeeded',workflowBinding:{workflowId:'report'},recommendation:[]};
  const run={id:'root',taskId:'task',state:'succeeded',createdAt:'2026-10-17T00:00:00Z'};
  const execution={workflowRunId:'invocation',runId:'root',taskId:'task',projectId:'p',workflowId:'report',state:'succeeded',definitionRevision:1,definition:{...flow,revision:1,title:'历史流程版本'},steps:flow.steps.map(step=>({stepId:step.stepId,title:step.title,nodeId:step.nodeId,state:'succeeded',reportId:step.stepId+'-report',runId:step.stepId+'-run'}))};
- await p.answer({...base,tasks:[task],runs:[run],workflowRuns:[execution],reports:[{id:'a-report',runId:'a-run',taskId:'a-task',kind:'result',body:'原步骤报告'}]});await p.action('schedule-run','root');
- assert.match(p.overlay(),/历史流程版本/);assert.match(p.overlay(),/已完成/);assert.match(p.overlay(),/离线或未知/);assert.match(p.overlay(),/原步骤报告/);assert.doesNotMatch(p.overlay(),/阶段需处理|阶段执行中/);
+ await p.answer({...base,tasks:[task,{id:'a-task',parentTaskId:'task',project:'p',title:'步骤任务',status:'done',runId:'a-run'}],runs:[run,{id:'a-run',parentRunId:'root',taskId:'a-task',state:'succeeded'}],workflowRuns:[execution],reports:[{id:'a-report',runId:'a-run',taskId:'a-task',kind:'result',body:'原步骤报告'}]});await p.action('schedule-run','root');
+ assert.match(p.overlay(),/历史流程版本/);assert.match(p.overlay(),/已完成/);assert.match(p.overlay(),/离线或未知/);assert.doesNotMatch(p.overlay(),/阶段需处理|阶段执行中/);assert.equal(p.reads.some(request=>request.method==='taskReportDetail'),false,'opening workflow topology does not read every step report body');await p.action('schedule-run','a-run');assert.match(p.overlay(),/原步骤报告/);assert.equal(p.reads.find(request=>request.method==='taskReportDetail').input.runId,'a-run');
 });
 
 test('workflow task creation does not require an Agent route and manual trigger never starts execution',async()=>{

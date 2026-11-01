@@ -412,6 +412,7 @@ export interface LedgerPort {
   ): MaybePromise<unknown>;
   /** Authority derives visibility from the authenticated executor node. */
   projectSnapshot?(nodeId: string): MaybePromise<Json>;
+  projectDemandRead?(nodeId:string,method:import("../demand-reads.js").DemandReadMethod,input:unknown):MaybePromise<Json>;
   projectCollaborate?(
     nodeId: string,
     commandId: string,

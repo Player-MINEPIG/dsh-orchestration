@@ -699,6 +699,9 @@ export class RemoteLedgerClient implements LedgerPort {
     }
     return result;
   }
+  async projectDemandRead(_nodeId:string,method:import('../demand-reads.js').DemandReadMethod,input:unknown):Promise<Json> {
+    return this.command<Json>('demandRead',`demand-read:${randomUUID()}`,{method,input:JSON.parse(JSON.stringify(input))});
+  }
   async projectSnapshot(_nodeId?: string): Promise<Json> {
     // Scope is derived by the gateway; never send a caller-supplied node id.
     return this.command<Json>(

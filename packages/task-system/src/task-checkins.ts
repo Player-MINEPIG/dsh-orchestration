@@ -1,3 +1,4 @@
+import type { CompactRun, CompactTask, CompactMessage } from "./ledger-read-index.js";
 import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { Task, Run, Attempt, DispatchOrigin, Event } from "./contracts.js";
@@ -159,6 +160,18 @@ export class TaskCheckins {
       throw new TaskError("INVALID", "Invalid task check-in interval");
     this.intervalMs = intervalMs;
   }
+  private task(taskId: string): Task | CompactTask {
+    if (!this.ledger.demandReads) return this.ledger.getTask(taskId);
+    const task = this.ledger.demandReads.fact("task",taskId);
+    if (!task) throw new TaskError("NOT_FOUND", "Task not found");
+    return task;
+  }
+  private messages(taskId: string): (SessionMessage | CompactMessage)[] {
+    if (!this.ledger.demandReads) return this.ledger.sessionMessages(taskId);
+    this.ledger.demandReads.ensureFacts();
+    return this.db.prepare("SELECT data FROM demand_entity_facts WHERE kind='sessionMessage' AND parent=? ORDER BY seq DESC LIMIT 200")
+      .all(taskId).map(row=>JSON.parse(String(row.data)) as CompactMessage).reverse();
+  }
   private now() {
     return this.ledger.managementNow();
   }
@@ -174,7 +187,7 @@ export class TaskCheckins {
       .all(kind)
       .map((row) => JSON.parse(String(row.data)));
   }
-  private runRead: { rows?: Run[]; tasks?: Task[] } | undefined;
+  private runRead: { rows?: (Run | CompactRun)[]; tasks?: (Task | CompactTask)[] } | undefined;
   withReadScope<T>(operation: () => T): T {
     const previous = this.runRead;
     this.runRead = previous ?? {};
@@ -184,13 +197,13 @@ export class TaskCheckins {
       this.runRead = previous;
     }
   }
-  private runs(): Run[] {
-    const rows = this.runRead?.rows ?? this.rows<Run>("run");
+  private runs(): (Run | CompactRun)[] {
+    const rows = this.runRead?.rows ?? (this.ledger.demandReads ? this.ledger.demandReads.facts("run") : this.rows<Run>("run"));
     if (this.runRead) this.runRead.rows = rows;
     return rows;
   }
-  private tasks(): Task[] {
-    const rows = this.runRead?.tasks ?? this.rows<Task>("task");
+  private tasks(): (Task | CompactTask)[] {
+    const rows = this.runRead?.tasks ?? (this.ledger.demandReads ? this.ledger.demandReads.facts("task") : this.rows<Task>("task"));
     if (this.runRead) this.runRead.tasks = rows;
     return rows;
   }
@@ -222,26 +235,32 @@ export class TaskCheckins {
   private record(taskId: string) {
     return this.read<CheckinRecord>("taskCheckin", taskId);
   }
-  private owner(task: Task) {
+  private owner(task: Task | CompactTask) {
     return task.dispatchOrigin?.kind === "session"
       ? task.dispatchOrigin
       : undefined;
   }
   private latestRun(taskId:string) {
+    if (this.ledger.demandReads) {
+      this.ledger.demandReads.reconcileFacts();
+      const row = this.db.prepare(`SELECT data FROM demand_entity_facts WHERE kind='run' AND task_id=?
+        AND COALESCE(json_extract(data,'$.historyOnly'),0)=0 AND COALESCE(json_extract(data,'$.observationOnly'),0)=0 ORDER BY seq DESC LIMIT 1`).get(taskId);
+      return row ? JSON.parse(String(row.data)) as CompactRun : undefined;
+    }
     return this.runs().findLast(run=>run.taskId===taskId && !run.historyOnly && !run.observationOnly);
   }
-  private executionOpen(run:Run) {
-    const task=this.ledger.getTask(run.taskId);
+  private executionOpen(run:Run | CompactRun) {
+    const task=this.task(run.taskId);
     return ["queued","running"].includes(run.state) && this.latestRun(run.taskId)?.runId===run.runId && !["cancelled","archived","completed"].includes(task.state) && !task.manualCompletion;
   }
-  private executionDeferred(run:Run) {
-    let task:Task|undefined=this.ledger.getTask(run.taskId);
+  private executionDeferred(run:Run | CompactRun) {
+    let task:Task|CompactTask|undefined=this.task(run.taskId);
     const seen=new Set<string>();
     while(task && !seen.has(task.taskId)) {
       seen.add(task.taskId);
       const record=this.record(task.taskId),receipt=this.responsibilityState(task.taskId).receipt;
       if(record?.plan.kind==="paused" || receipt?.state==="needs_user" || receipt?.state==="resolved" || this.approvalRequired(task.taskId))return true;
-      task=task.parentTaskId?this.ledger.getTask(task.parentTaskId):undefined;
+      task=task.parentTaskId?this.task(task.parentTaskId):undefined;
     }
     return false;
   }
@@ -251,15 +270,22 @@ export class TaskCheckins {
     return `任务超过派发时设置的预计执行上界。请核对中央 task_query/task_history/task_wait 的当前进度、已有报告及正在等待的子任务，记录下一步或说明需要人工处理。此问询不授予取消、重跑、新建Run或扩大权限的授权；不要因超出预计时间就终止真实工作。同一Run的这次到期只提醒一次，完成事件仍照常返回。\n${JSON.stringify({taskId:run.taskId,runId:run.runId,expectedExecutionMs:expectation.expectedExecutionMs,startedAt:expectation.startedAt,dueAt:executionDueAt(expectation)})}`;
   }
   private enqueueExecutions() {
-    for(const run of this.runs()) {
-      const expectation=run.executionExpectation;
-      if(expectation?.phase!=="started" || executionDueAt(expectation)>this.now() || !this.executionOpen(run))continue;
-      const messageId=executionCheckId(run.runId);
-      if(this.read<SessionMessage>("sessionMessage",messageId))continue;
-      const origin=run.dispatchOrigin;
-      if(origin?.kind!=="session")continue;
-      const protectedOrigin=!!origin.parentLease;
-      const message:SessionMessage={messageId,taskId:run.taskId,nodeId:origin.nodeId,sessionId:origin.sessionId,workspaceId:"origin-session",checkIn:{kind:"execution-deadline",eventId:messageId,origin:structuredClone(origin),runId:run.runId,tasks:[],automatic:true},text:this.executionPrompt(run),state:protectedOrigin?"failed":"queued",createdAt:this.now(),updatedAt:this.now(),...(protectedOrigin?{reply:"原调度会话属于受管执行租约，不能通过超时问询恢复旧租约；请人工核实原执行。"}:{})};
+    this.ledger.demandReads.reconcileFacts();
+    const candidates = this.db.prepare(`SELECT id FROM demand_entity_facts WHERE kind='run' AND state IN ('queued','running')
+      AND due_at<=? AND json_extract(data,'$.executionExpectation.phase')='started' ORDER BY due_at,seq`).all(Date.parse(this.now()));
+    for (const candidate of candidates) {
+      const messageId = executionCheckId(String(candidate.id));
+      if (this.db.prepare("SELECT 1 FROM entities WHERE kind='sessionMessage' AND id=?").get(messageId)) continue;
+      const run = this.ledger.getRun(String(candidate.id));
+      const expectation = run.executionExpectation;
+      if (expectation?.phase !== "started" || executionDueAt(expectation) > this.now() || !this.executionOpen(run)) continue;
+      const origin = run.dispatchOrigin;
+      if (origin?.kind !== "session") continue;
+      const protectedOrigin = !!origin.parentLease;
+      const message: SessionMessage = {messageId,taskId:run.taskId,nodeId:origin.nodeId,sessionId:origin.sessionId,workspaceId:"origin-session",
+        checkIn:{kind:"execution-deadline",eventId:messageId,origin:structuredClone(origin),runId:run.runId,tasks:[],automatic:true},
+        text:this.executionPrompt(run),state:protectedOrigin ? "failed" : "queued",createdAt:this.now(),updatedAt:this.now(),
+        ...(protectedOrigin ? {reply:"原调度会话属于受管执行租约，不能通过超时问询恢复旧租约；请人工核实原执行。"} : {})};
       this.write("sessionMessage",messageId,message,run.taskId,message.state);
       this.audit("task.execution_check_queued",run.taskId,{runId:run.runId,messageId});
     }
@@ -268,10 +294,15 @@ export class TaskCheckins {
     const run=this.latestRun(taskId),expectation=run?.executionExpectation;
     if(!run || !expectation)return {phase:"not_set"};
     if(expectation.phase==="pending_start")return expectation;
-    const dueAt=executionDueAt(expectation),message=this.read<SessionMessage>("sessionMessage",executionCheckId(run.runId));
+    const dueAt=executionDueAt(expectation),message=this.ledger.demandReads
+      ? this.ledger.demandReads.fact("sessionMessage",executionCheckId(run.runId))
+      : this.read<SessionMessage>("sessionMessage",executionCheckId(run.runId));
     const scopeUnavailable=run.dispatchOrigin?.kind!=="session";
     const withdrawn=message?.withdrawn || !this.executionOpen(run);
     return {phase:message?.state==="completed"?"processed":withdrawn?"withdrawn":scopeUnavailable?"needs_action":message?.state==="failed"?"needs_action":message?.state==="queued"?"queued":dueAt<=this.now()?"due":"running",expectedExecutionMs:expectation.expectedExecutionMs,startedAt:expectation.startedAt,dueAt,...(message?{messageId:message.messageId,...(!withdrawn && message.reply?{reason:message.reply}:{})}:{}),...(!withdrawn && scopeUnavailable?{reason:"未记录可安全接收问询的原调度会话，不能自动选择替代会话"}:{})};
+  }
+  responsibilityFingerprint(taskId: string) {
+    return this.responsibilityState(taskId).fingerprint;
   }
   private responsibilityState(taskId: string) {
     const receipt = this.read<ResponsibilityReceipt>(
@@ -290,8 +321,8 @@ export class TaskCheckins {
             run.runId,
             this.ledger.taskActionState(run.taskId).fingerprint,
           ]),
-          returns: this.ledger
-            .sessionMessages(taskId)
+          returns: this
+            .messages(taskId)
             .filter((m) => m.completion || (m.checkIn?.kind==="execution-deadline" && (m.state!=="queued" || (m.deliveryAttempts??0)>0)))
             .map((m) => m.checkIn?.kind==="execution-deadline" ? [m.messageId,m.deliveryAttempts??0,m.state,!!m.withdrawn] : [m.messageId, m.deliveryAttempts ?? 0]),
           attention: this.record(taskId)?.attention ?? null,
@@ -307,6 +338,7 @@ export class TaskCheckins {
     };
   }
   private responsibilityTaskIds(taskId: string) {
+    if (this.ledger.demandReads) return new Set(this.ledger.demandReads.taskIds(taskId));
     const tasks = this.tasks(),
       ids = new Set([taskId]);
     for (let changed = true; changed; ) {
@@ -323,7 +355,8 @@ export class TaskCheckins {
     }
     return ids;
   }
-  private responsibilityScope(taskId: string) {
+  private responsibilityScope(taskId: string): (Run | CompactRun)[] {
+    if (this.ledger.demandReads) return this.ledger.demandReads.runScope(taskId);
     const ids = this.responsibilityTaskIds(taskId);
     const runs = this.runs().filter(
       (run) => !run.historyOnly && !run.observationOnly,
@@ -358,15 +391,15 @@ export class TaskCheckins {
     );
   }
   communicationState(taskId: string) {
-    const task = this.ledger.getTask(taskId), scope = this.responsibilityScope(taskId);
+    const task = this.task(taskId), scope = this.responsibilityScope(taskId);
     const latest = this.latestRun(taskId);
     const active = scope.some(run => ["queued", "running"].includes(run.state));
     const uncertain = scope.some(run => run.state === "uncertain");
-    const materialsPending = [...this.responsibilityTaskIds(taskId)].some(id => this.ledger.getTask(id).manualCompletion?.materials === "pending");
+    const materialsPending = [...this.responsibilityTaskIds(taskId)].some(id => this.task(id).manualCompletion?.materials === "pending");
     const settledCancellation = task.state === "cancelled" && !active && !uncertain && !materialsPending && !this.approvalRequired(taskId);
     const relevant = new Set(scope.filter(run => run.runId === latest?.runId || ["queued", "running", "uncertain"].includes(run.state) || run.reviewStatus === "pending_user").map(run => run.runId));
-    const messages = this.ledger.sessionMessages(taskId);
-    const latestReturns = new Map<string, SessionMessage>();
+    const messages = this.messages(taskId);
+    const latestReturns = new Map<string, SessionMessage | CompactMessage>();
     for (const message of messages) {
       const check = message.checkIn;
       if (message.completion && relevant.has(message.completion.runId)) latestReturns.set(message.completion.runId, message);
@@ -381,8 +414,8 @@ export class TaskCheckins {
   private effectiveAttention(record: CheckinRecord | undefined) {
     return record?.attention === "delivery_unavailable" && !this.communicationState(record.taskId).deliveryBlocked ? undefined : record?.attention;
   }
-  private category(task: Task): CheckinCategory {
-    const runs = this.runs().filter(
+  private category(task: Task | CompactTask): CheckinCategory {
+    const runs = (this.ledger.demandReads ? this.ledger.demandReads.runScope(task.taskId) : this.runs()).filter(
       (run) => !run.historyOnly && !run.observationOnly,
     );
     const own = runs.filter((run) => run.taskId === task.taskId),
@@ -441,7 +474,7 @@ export class TaskCheckins {
     if(!childFault && latest?.coordinatorSession)return "coordinating";
     if(latest?.state==="queued" && latest.dispatchIssue?.kind!=="needs_action")return "waiting_execution";
     if (
-      !childFault && this.rows<Attempt>("attempt").some(
+      !childFault && (this.ledger.demandReads ? this.db.prepare("SELECT data FROM demand_entity_facts WHERE kind='attempt' AND state IN ('leased','running') AND lease_at>?").all(now).map(row=>JSON.parse(String(row.data)) as Attempt) : this.rows<Attempt>("attempt")).some(
         (attempt) =>
           scope.has(attempt.runId) &&
           ["leased", "running"].includes(attempt.state) &&
@@ -455,19 +488,14 @@ export class TaskCheckins {
       )
     )
       return "active_execution";
-    if (
-      this.rows<SessionMessage>("sessionMessage").some(
-        (message) =>
-          message.state === "queued" &&
-          message.completion?.origin.kind === "session" &&
-          message.nodeId === owner.nodeId &&
-          message.sessionId === owner.sessionId,
-      )
-    )
-      return "result_pending";
+    const pendingReturn = this.ledger.demandReads
+      ? !!this.db.prepare(`SELECT 1 FROM demand_entity_facts WHERE kind='sessionMessage' AND state='queued' AND node_id=?
+          AND json_extract(data,'$.sessionId')=? AND json_extract(data,'$.completion.origin.kind')='session' LIMIT 1`).get(owner.nodeId,owner.sessionId)
+      : this.rows<SessionMessage>("sessionMessage").some(message=>message.state==="queued" && message.completion?.origin.kind==="session" && message.nodeId===owner.nodeId && message.sessionId===owner.sessionId);
+    if (pendingReturn) return "result_pending";
     return "ready";
   }
-  capture(task: Task) {
+  capture(task: Task | CompactTask) {
     if (
       task.parentTaskId ||
       this.record(task.taskId) ||
@@ -499,7 +527,7 @@ export class TaskCheckins {
     return this.withReadScope(() => this.readView(taskId));
   }
   private readView(taskId: string): CheckinView {
-    const task = this.ledger.getTask(taskId),
+    const task = this.task(taskId),
       record = this.record(taskId),
       category = this.category(task);
     const responsibility = this.responsibilityState(taskId);
@@ -569,7 +597,7 @@ export class TaskCheckins {
   }
   command(raw: CheckinCommand, actor: DispatchOrigin | undefined): CheckinView {
     const input = CheckinCommand.parse(raw),
-      task = this.ledger.getTask(input.taskId),
+      task = this.task(input.taskId),
       owner = this.owner(task);
     if (
       actor?.kind !== "session" ||
@@ -700,7 +728,7 @@ export class TaskCheckins {
       "task_checkin.request",
       { taskId },
       () => {
-        const task = this.ledger.getTask(taskId),
+        const task = this.task(taskId),
           view = this.view(taskId);
         if (!view.canRequest) return view;
         this.capture(task);
@@ -726,13 +754,9 @@ export class TaskCheckins {
   private enqueue(records: CheckinRecord[], automatic: boolean) {
     const first = records[0]!;
     const owner = this.owner(this.ledger.getTask(first.taskId))!;
-    const pending = this.rows<SessionMessage>("sessionMessage").find(
-      (message) =>
-        message.checkIn &&
-        message.state === "queued" &&
-        message.nodeId === owner.nodeId &&
-        message.sessionId === owner.sessionId,
-    );
+    this.ledger.demandReads.ensureFacts();
+    const pending = this.db.prepare(`SELECT 1 FROM demand_entity_facts WHERE kind='sessionMessage' AND state='queued'
+      AND json_extract(data,'$.checkIn') IS NOT NULL AND node_id=? AND json_extract(data,'$.sessionId')=? LIMIT 1`).get(owner.nodeId,owner.sessionId);
     if (pending) return;
     const messageId = `task-checkin:${randomUUID()}`;
     const message: SessionMessage = {
@@ -763,20 +787,21 @@ export class TaskCheckins {
     }
   }
   private prompt(records: CheckinRecord[]) {
-    return `任务进度检查。你是这些任务已记录的负责会话，可自行完成或按既有授权派发子任务。请先用 task_checkin(action=status) 核对当前检查计划，再读取 task_history/task_query/task_wait 的当前记录和已有报告，核对实际进度。不要把回信ACK、空闲或工具文字当成任务完成，也不要重复已完成的外部操作。在聊天中接手处理时，请先用 task_checkin(action=status) 读取 responsibilityVersion，再用 action=responsibility、expectedVersion、state=coordinator、summary 明确由你跟进。只有需要用户决定、授权或你无法修复的阻碍时才用 needs_user，summary 写清具体卡点和所需决定；你已核实本轮异常处理完毕时用 resolved 并说明处理结果，这只关闭本轮跟进，不替代正式提交或人工验收。新执行、报告或审核变化会使声明失效。若工作已完成，请用现有 task_submit_result 等正式工具收尾；草稿可按现有项目和 creator 权限先 task_bind_dispatcher。若仍需继续、等待子任务/外部条件或人工处理，请用 task_checkin(action=update,taskId,commandId,observation,summary,plan) 记录进度和下一次检查时间，或暂停并说明原因。若现有工具/权限不允许收尾，明确记录限制，不能扩大权限。此检查不授予审批、执行租约或重跑结果不确定操作的权限。若当前任务已结束，不再执行。\n${JSON.stringify(records.map((record) => ({ taskId: record.taskId, title: this.ledger.getTask(record.taskId).title, category: this.category(this.ledger.getTask(record.taskId)), previousObservation: record.observation ?? null })))}\n如果原会话能力中没有 task_checkin，使用已有正式任务工具完成可做的工作，并说明无法设置检查时间；不要自行安装或扩大工具权限。`;
+    return `任务进度检查。你是这些任务已记录的负责会话，可自行完成或按既有授权派发子任务。请先用 task_checkin(action=status) 核对当前检查计划，再读取 task_history/task_query/task_wait 的当前记录和已有报告，核对实际进度。不要把回信ACK、空闲或工具文字当成任务完成，也不要重复已完成的外部操作。在聊天中接手处理时，请先用 task_checkin(action=status) 读取 responsibilityVersion，再用 action=responsibility、expectedVersion、state=coordinator、summary 明确由你跟进。只有需要用户决定、授权或你无法修复的阻碍时才用 needs_user，summary 写清具体卡点和所需决定；你已核实本轮异常处理完毕时用 resolved 并说明处理结果，这只关闭本轮跟进，不替代正式提交或人工验收。新执行、报告或审核变化会使声明失效。若工作已完成，请用现有 task_submit_result 等正式工具收尾；草稿可按现有项目和 creator 权限先 task_bind_dispatcher。若仍需继续、等待子任务/外部条件或人工处理，请用 task_checkin(action=update,taskId,commandId,observation,summary,plan) 记录进度和下一次检查时间，或暂停并说明原因。若现有工具/权限不允许收尾，明确记录限制，不能扩大权限。此检查不授予审批、执行租约或重跑结果不确定操作的权限。若当前任务已结束，不再执行。\n${JSON.stringify(records.map((record) => ({ taskId: record.taskId, title: this.task(record.taskId).title, category: this.category(this.task(record.taskId)), previousObservation: record.observation ?? null })))}\n如果原会话能力中没有 task_checkin，使用已有正式任务工具完成可做的工作，并说明无法设置检查时间；不要自行安装或扩大工具权限。`;
   }
   tick() {
+    if (!this.ledger.demandReads.reconcileFacts()) return;
     this.withReadScope(() => this.tickWithRunRead());
   }
   private tickWithRunRead() {
     this.ledger.workflowAtomic(() => {
       this.enqueueExecutions();
-      for (const message of this.rows<SessionMessage>("sessionMessage")) {
-        if (
-          message.checkIn &&
-          message.state === "queued" &&
-          this.disposition(message) === "obsolete"
-        ) {
+      const pendingMessages = this.db.prepare(`SELECT data FROM demand_entity_facts WHERE kind='sessionMessage' AND state='queued'
+        AND json_extract(data,'$.checkIn') IS NOT NULL ORDER BY seq`).all();
+      for (const row of pendingMessages) {
+        const header: CompactMessage = JSON.parse(String(row.data));
+        if (this.disposition(header) === "obsolete") {
+          const message = this.ledger.getSessionMessage(header.messageId);
           this.acknowledge(message, []);
           message.state = "completed";
           message.withdrawn=true;
@@ -793,13 +818,21 @@ export class TaskCheckins {
         }
       }
       const groups = new Map<string, CheckinRecord[]>();
-      for (const record of this.rows<CheckinRecord>("taskCheckin")) {
-        const task = this.ledger.getTask(record.taskId),
+      this.ledger.demandReads.reconcileFacts();
+      const candidates = this.db.prepare(`SELECT c.task_id FROM demand_checkin_candidates c LEFT JOIN demand_entity_facts f ON f.kind='taskCheckin' AND f.id=c.task_id WHERE c.wake_at<=? ORDER BY c.wake_at,f.seq,c.task_id LIMIT 128`).all(Date.parse(this.now()));
+      for (const candidate of candidates) {
+        const record = this.record(String(candidate.task_id));
+        if (!record) { this.db.prepare("DELETE FROM demand_checkin_candidates WHERE task_id=?").run(String(candidate.task_id)); continue; }
+        const task = this.task(record.taskId),
           category = this.category(task);
         if (["closed", "not_admitted"].includes(category)) {
           this.cancelPending(record);
+          this.db.prepare("UPDATE demand_checkin_candidates SET wake_at=NULL WHERE task_id=?").run(record.taskId);
           continue;
         }
+        const nextWake = record.requested && ["ready","approval","waiting_user"].includes(category) ? Date.parse(this.now())
+          : !record.pendingMessageId && !this.effectiveAttention(record) && record.plan.kind==="scheduled" && category==="ready" ? Date.parse(record.plan.nextCheckAt) : null;
+        this.db.prepare("UPDATE demand_checkin_candidates SET wake_at=? WHERE task_id=?").run(nextWake,record.taskId);
         if (
           record.pendingMessageId ||
           this.effectiveAttention(record) ||
@@ -840,7 +873,7 @@ export class TaskCheckins {
       message?.state === "queued" &&
       message.checkIn?.tasks.every((ref) =>
         ["closed", "not_admitted"].includes(
-          this.category(this.ledger.getTask(ref.taskId)),
+          this.category(this.task(ref.taskId)),
         ),
       )
     ) {
@@ -856,9 +889,9 @@ export class TaskCheckins {
       );
     }
   }
-  disposition(message: SessionMessage): "ready" | "defer" | "obsolete" {
+  disposition(message: SessionMessage | CompactMessage): "ready" | "defer" | "obsolete" {
     if(message.checkIn?.kind==="execution-deadline") {
-      const run=this.read<Run>("run",message.checkIn.runId);
+      const run=this.ledger.demandReads ? this.ledger.demandReads.fact("run",message.checkIn.runId) : this.read<Run>("run",message.checkIn.runId);
       if(!run || run.taskId!==message.taskId || run.dispatchOrigin?.kind!=="session" || run.dispatchOrigin.nodeId!==message.nodeId || run.dispatchOrigin.sessionId!==message.sessionId || run.executionExpectation?.phase!=="started" || executionDueAt(run.executionExpectation)>this.now() || !this.executionOpen(run))return "obsolete";
       return this.executionDeferred(run)?"defer":"ready";
     }
@@ -871,7 +904,7 @@ export class TaskCheckins {
         record.revision !== ref.revision
       )
         continue;
-      const category = this.category(this.ledger.getTask(ref.taskId));
+      const category = this.category(this.task(ref.taskId));
       if (
         [
           "closed",
@@ -900,7 +933,7 @@ export class TaskCheckins {
         record.revision !== ref.revision
       )
         return [];
-      const category = this.category(this.ledger.getTask(ref.taskId));
+      const category = this.category(this.task(ref.taskId));
       return category === "ready" ||
         (!message.checkIn?.automatic && ["approval", "waiting_user","waiting_children","coordinating","waiting_execution"].includes(category))
         ? [record]
@@ -931,7 +964,7 @@ export class TaskCheckins {
       if (
         asked.has(JSON.stringify(ref)) &&
         record.revision === ref.revision &&
-        this.category(this.ledger.getTask(ref.taskId)) === "ready"
+        this.category(this.task(ref.taskId)) === "ready"
       ) {
         if (message.checkIn?.automatic && ++record.checksWithoutUpdate >= 3)
           record.attention = "no_update";

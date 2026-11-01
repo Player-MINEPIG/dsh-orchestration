@@ -1,3 +1,4 @@
+import {demandPageBridge} from './demand-page-fixture.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
@@ -7,10 +8,10 @@ const markdownit=createRequire(import.meta.url)('markdown-it');
 
 function page(){
  const html=readFileSync(new URL('../src/project-page.html',import.meta.url),'utf8'),source=html.match(/<script>([\s\S]*?)<\/script>/)[1];
- const elements=new Map(),requests=[],events={},parent={postMessage:request=>{if(request.id)requests.push(request);}};let sequence=0;
- const context=vm.createContext({markdownit,atob,structuredClone,console,Date,Map,Set,URL,innerWidth:1200,MutationObserver:class{observe(){}disconnect(){}},matchMedia:()=>({matches:false,addEventListener(){},removeEventListener(){}}),crypto:{randomUUID:()=>String(++sequence)},parent,window:{addEventListener:(name,listener)=>events[name]=listener},document:{documentElement:{dataset:{}},title:'',activeElement:{tagName:'BODY'},querySelector:()=>null,querySelectorAll:()=>[],addEventListener(){},getElementById(id){if(!elements.has(id))elements.set(id,{innerHTML:'',hidden:true,dataset:{},setAttribute(){},removeAttribute(){},focus(){}});return elements.get(id);}},setTimeout:()=>1,clearTimeout(){},setInterval:()=>1});
- vm.runInContext(source,context);vm.runInContext('patchHtml=(root,html)=>{root.innerHTML=html;};',context);
- return {requests,context,action:(action,id)=>vm.runInContext(`actions(${JSON.stringify(action)},${JSON.stringify(id)})`,context),overlay:()=>elements.get('overlays').innerHTML,content:()=>elements.get('app').innerHTML,async answer(response){const request=requests.shift();assert.ok(request,'a page RPC is pending');events.message({source:parent,data:{channel:'dsh-project-runtime',id:request.id,...response}});await new Promise(resolve=>setImmediate(resolve));}};
+ const elements=new Map(),requests=[],events={},parent={postMessage:request=>{if(demand)demand.send(request);else if(request.id)requests.push(request);}};let demand;let sequence=0;
+ const context=vm.createContext({markdownit,atob,structuredClone,console,Date,Map,Set,URL,innerWidth:1200,MutationObserver:class{observe(){}disconnect(){}},matchMedia:()=>({matches:false,addEventListener(){},removeEventListener(){}}),crypto:{randomUUID:()=>String(++sequence)},parent,window:{addEventListener:(name,listener)=>events[name]=((previous)=>event=>{previous?.(event);listener(event);})(events[name])},document:{documentElement:{dataset:{}},title:'',activeElement:{tagName:'BODY'},querySelector:()=>null,querySelectorAll:()=>[],addEventListener(){},getElementById(id){if(!elements.has(id))elements.set(id,{innerHTML:'',hidden:true,dataset:{},setAttribute(){},removeAttribute(){},focus(){}});return elements.get(id);}},setTimeout:()=>1,clearTimeout(){},clearInterval:()=>{},setInterval:()=>1});
+ vm.runInContext(source,context);demand=demandPageBridge(requests,data=>events.message({source:parent,data:{channel:'dsh-project-runtime',...data}}));events.message({source:parent,data:{channel:'dsh-project-runtime',method:'active',input:{active:true,generation:1}}});vm.runInContext('patchHtml=(root,html)=>{root.innerHTML=html;};',context);
+ return {requests,context,action:(action,id)=>demand.action(action,()=>vm.runInContext(`actions(${JSON.stringify(action)},${JSON.stringify(id)})`,context)),overlay:()=>elements.get('overlays').innerHTML,content:()=>elements.get('app').innerHTML,async answer(response){await demand.answer(response);}};
 }
 const checkin={phase:'scheduled',category:'ready',reason:'等待负责会话核对',canRequest:true,revision:1,nextCheckAt:'2026-10-26T04:00:00Z',observation:null,checksWithoutUpdate:0,deliveryFailures:0,pendingMessageId:null};
 const task={id:'draft-task',project:'unassigned',title:'未派发调查',description:'读取资料',status:'draft',nativeState:'ready',actionVersion:'v1',runId:null,confirmationRevision:1,checkin};

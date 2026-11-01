@@ -26,7 +26,7 @@ function expectedRun(f,key='bounded',expectedExecutionMs=2000){
  return {task,run,start(){const claim=f.l.claim(key+'-claim',{runId:run.runId,nodeId:'worker',ttlMs:60000}).value;const ref={runId:run.runId,attemptId:claim.attempt.attemptId,nodeId:'worker',fence:claim.attempt.fence,executionId:key+'-execution'};f.l.markRunning(key+'-running',ref);return ref;}};
 }
 
-test('check-in maintenance and status read Runs once per operation and observe the next operation changes',t=>{
+test('check-in maintenance and status read compact facts and observe the next operation changes',t=>{
  const f=fixture(t),r=route(f),tasks=[];
  for(let i=0;i<20;i++){
   const task=f.task('history-'+i),run=f.l.createRun('run-'+i,{taskId:task.taskId,route:r}).value;
@@ -37,12 +37,12 @@ test('check-in maintenance and status read Runs once per operation and observe t
  db.prepare("UPDATE entities SET state='succeeded',data=json_set(data,'$.state','succeeded') WHERE kind='run'").run();
  let runReads=0;const prepare=db.prepare.bind(db);
  db.prepare=sql=>{const statement=prepare(sql),all=statement.all.bind(statement);statement.all=(...args)=>{if(sql==='SELECT data FROM entities WHERE kind=? ORDER BY rowid'&&args[0]==='run')runReads++;return all(...args);};return statement;};
- f.l.checkins.tick();assert.equal(runReads,1,'one maintenance operation must not re-read all Run payloads for every historical task');
- runReads=0;assert.equal(f.l.checkins.view(tasks[0].task.taskId).category,'closed');assert.equal(runReads,1);
+ f.l.checkins.tick();assert.equal(runReads,0,'maintenance must not read cold Run payloads');
+ runReads=0;assert.equal(f.l.checkins.view(tasks[0].task.taskId).category,'closed');assert.equal(runReads,0);
  const latest={...tasks[0].run,runId:'legacy-unindexed-latest',state:'queued'};
  db.prepare("UPDATE entities SET state='ready',data=json_set(data,'$.state','ready') WHERE kind='task' AND id=?").run(tasks[0].task.taskId);
  db.prepare("INSERT INTO entities(kind,id,data) VALUES('run',?,?)").run(latest.runId,JSON.stringify(latest));
- runReads=0;assert.equal(f.l.checkins.view(tasks[0].task.taskId).category,'waiting_execution','a later read must see the latest Run even if legacy parent/state columns are null');assert.equal(runReads,1);
+ runReads=0;assert.equal(f.l.checkins.view(tasks[0].task.taskId).category,'waiting_execution','a later read must see the latest Run even if legacy parent/state columns are null');assert.equal(runReads,0);
  f.l.checkins.tick();assert.equal(f.l.checkins.view(tasks[0].task.taskId).category,'waiting_execution');
 });
 
@@ -55,13 +55,13 @@ test('the complete project snapshot shares Task, Run and action reads across its
  let runReads=0,taskReads=0,actionReads=0;const prepare=db.prepare.bind(db);
  db.prepare=sql=>{const statement=prepare(sql),all=statement.all.bind(statement);statement.all=(...args)=>{if(sql==='SELECT data FROM entities WHERE kind=? ORDER BY rowid'){if(args[0]==='run')runReads++;if(args[0]==='task')taskReads++;}if(sql==='SELECT data FROM entities WHERE kind=? AND parent=? ORDER BY rowid'&&args[0]==='report')actionReads++;return all(...args);};return statement;};
  const snapshot=runtime.snapshot();assert.equal(snapshot.tasks.length,20);assert.equal(snapshot.runs.length,20);assert.ok(snapshot.tasks.every(task=>task.status==='done'));
- assert.equal(runReads,2,'one ledger snapshot read plus one shared check-in read for the entire task list');
- assert.equal(taskReads,3,'ledger, decision catalog and check-in scope each read Task facts once');assert.equal(actionReads,20,'each task action is evaluated once');
+ assert.equal(runReads,1,'only the explicit full snapshot reads all Run payloads');
+ assert.equal(taskReads,1,'only the explicit ledger snapshot reads Task payloads');assert.equal(actionReads,0,'task action reads compact Report facts');
  runReads=0;taskReads=0;actionReads=0;
  const first=snapshot.tasks[0],before=first.actionVersion;
  db.prepare("UPDATE entities SET state='cancelled',data=json_set(data,'$.state','cancelled') WHERE kind='task' AND id=?").run(first.id);
  const next=runtime.snapshot();assert.equal(next.tasks.length,20);assert.equal(next.tasks.find(task=>task.id===first.id).status,'cancelled');assert.notEqual(next.tasks.find(task=>task.id===first.id).actionVersion,before);
- assert.equal(runReads,2,'the next request must use a fresh read scope');assert.equal(taskReads,3);assert.equal(actionReads,20);
+ assert.equal(runReads,1,'the next full snapshot must observe current evidence');assert.equal(taskReads,1);assert.equal(actionReads,0);
 });
 
 test('execution bound starts only on the fenced actual start, survives renew and restart, and fires once under a valid lease',t=>{
@@ -305,4 +305,13 @@ test('a child result awaiting user review blocks parent resolution and remains a
  f.l.submit('child-partial',{runId:run.runId,attemptId:claim.attempt.attemptId,nodeId:'worker',fence:claim.attempt.fence,outcome:'partial',summary:'User must review this delivery'});
  assert.equal(f.l.checkins.view(parent.taskId).approvalRequired,true);
  assert.throws(()=>f.l.withDispatchOrigin(owner(),()=>f.l.taskCheckin({action:'responsibility',commandId:'close-parent',taskId:parent.taskId,expectedVersion:f.l.checkins.view(parent.taskId).responsibilityVersion,state:'resolved',summary:'Cannot close a child review'})),e=>e.code==='FORBIDDEN');
+});
+
+test('ready check-in preserves the authority owners complete continuation through queue, delivery and restart',t=>{
+ const f=fixture(t),continuation={id:'resume-adapter',data:{thread:'original',checkpoint:{token:'opaque-fixture',step:3}}};
+ const task=f.task('resume-original',{...owner(),continuation});
+ f.advance();f.l.checkins.tick();
+ const message=f.messages()[0];assert.ok(message);assert.deepEqual(message.checkIn.origin.continuation,continuation);
+ f.reopen();const resumed=f.messages()[0];assert.equal(resumed.messageId,message.messageId);assert.deepEqual(resumed.checkIn.origin.continuation,continuation);
+ assert.deepEqual(f.l.getTask(task.taskId).dispatchOrigin.continuation,continuation);
 });

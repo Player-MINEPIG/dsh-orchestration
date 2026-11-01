@@ -1,3 +1,4 @@
+import {demandReadMethods} from "../../packages/task-system/dist/demand-reads.js";
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
 import {readFileSync} from 'node:fs';
@@ -20,10 +21,10 @@ export async function testTaskCheckins(browser,{output}={}){
    if(request.url==='/page'){response.setHeader('content-type','text/html; charset=utf-8');response.end(html);return;}
    if(request.url==='/rpc'&&request.method==='POST'){
     let body='';for await(const chunk of request){body+=chunk;assert.ok(body.length<10000);}
-    const {method,input}=JSON.parse(body);assert.ok(['projectSnapshot','actOnProjectTask'].includes(method));calls.push({method,input});
+    const {method,input}=JSON.parse(body);assert.ok([...demandReadMethods,'actOnProjectTask'].includes(method));calls.push({method,input});
     const value=await settings[method](input);response.setHeader('content-type','application/json');response.end(JSON.stringify({value}));return;
    }
-   response.setHeader('content-type','text/html; charset=utf-8');response.end(`<!doctype html><html><body style="margin:0"><iframe title="Task center" src="/page" style="width:100vw;height:100vh;border:0"></iframe><script>addEventListener('message',async event=>{const x=event.data;if(x?.channel!=='dsh-project-runtime'||!x.id)return;const result=await(await fetch('/rpc',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({method:x.method,input:x.input})})).json();event.source.postMessage({channel:x.channel,id:x.id,...result},location.origin);});</script></body></html>`);
+   response.setHeader('content-type','text/html; charset=utf-8');response.end(`<!doctype html><html><body style="margin:0"><iframe title="Task center" src="/page" style="width:100vw;height:100vh;border:0"></iframe><script>addEventListener('message',async event=>{const x=event.data;if(x?.channel!=='dsh-project-runtime')return;if(x.method==='ready'){event.source.postMessage({channel:x.channel,method:'active',input:{active:true,generation:1}},'*');return;}if(!x.id)return;const result=await(await fetch('/rpc',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({method:x.method,input:x.input})})).json();event.source.postMessage({channel:x.channel,id:x.id,...result},location.origin);});</script></body></html>`);
   }catch(error){response.statusCode=400;response.setHeader('content-type','application/json');response.end(JSON.stringify({error:error.message,errorCode:error.details?.reason??error.code}));}
  });
  const context=await browser.newContext({viewport:{width:1280,height:1000}}),page=await context.newPage(),errors=[];

@@ -13,14 +13,7 @@ export type WorkspaceBinding = {
 export interface WorkspaceMemory {
   sessionWorkspace(key: string): WorkspaceBinding | undefined;
   rememberSessionWorkspace(key: string, value: WorkspaceBinding): void;
-  dispatches(): {
-    sessionId: string;
-    claim: {
-      task: { taskId: string };
-      attempt: { nodeId: string };
-      run: { projectContext?: unknown };
-    };
-  }[];
+  hasLegacySessionMapping(sessionId:string,taskId:string,nodeId:string):boolean;
   legacySchedulerIs(schedulerId: string, nodeId: string): boolean;
 }
 
@@ -252,15 +245,7 @@ async function provisionExecutionWorkspace(
       409,
     );
     // Existing sessions from the pre-project protocol keep their original cwd.
-    const legacy = store
-      .dispatches()
-      .some(
-        (record) =>
-          record.sessionId === sessionId &&
-          record.claim.task.taskId === claim.task.taskId &&
-          record.claim.attempt.nodeId === claim.attempt.nodeId &&
-          !record.claim.run.projectContext,
-      );
+    const legacy=store.hasLegacySessionMapping(sessionId,claim.task.taskId,claim.attempt.nodeId);
     insist(
       legacy &&
         store.legacySchedulerIs(context.schedulerId, claim.attempt.nodeId),

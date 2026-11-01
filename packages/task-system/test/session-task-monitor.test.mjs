@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { TaskLedger } from '../dist/ledger.js';
 import { SessionCollaboration } from '../dist/project-collaboration/session.js';
-import { dispatchedTaskIds, SessionDispatchIndex, sessionDispatchOperations, sessionTaskSnapshot, sortSessionTasks } from '../dist/session-task-monitor.js';
+const { dispatchedTaskIds, SessionDispatchIndex, sessionDispatchOperations, sessionTaskSnapshot, sortSessionTasks }=await import(process.env.DSH_SESSION_MONITOR_MODULE??'../dist/session-task-monitor.js');
 
 test('results sort by return time across sources, ahead of unfinished tasks; ties are stable', () => {
   const tasks = [
@@ -41,15 +41,15 @@ test('dispatch receipts include plan apply, project, direct runs and delegation;
 
 test('index skips fork-inherited history, invalidates on changes, caches only IDs and always closes read handles', async () => {
   const index = new SessionDispatchIndex();
-  let opens=0, closes=0, revision='one', fail=false;
-  const persistence={identity:Symbol(),stat:async()=>({revision}),open:async(id,mode)=>{
+  let opens=0, closes=0, revision='one', fail=false;const history=receipt('project_dispatch',{taskId:'one'}).map((event,i)=>({...event,seq:12+i})),offsets=[];
+  const persistence={identity:Symbol(),stat:async()=>({revision,eventCount:12+history.length}),open:async(id,mode)=>{
     opens++; assert.equal(mode,'read'); return {inheritedEventCount:12, read:async offset=>{
-      assert.equal(offset,12); if(fail)throw Error('read failed'); return {events:receipt('project_dispatch',{taskId:revision})};
+      offsets.push(offset);if(fail)throw Error('read failed');return {events:history.filter(event=>event.seq>=offset)};
     }, close:async()=>{closes++;}};
   }};
   assert.deepEqual(await index.read(persistence,'fork'),['one']);
   await index.read(persistence,'fork'); assert.equal(opens,1);
-  revision='two'; assert.deepEqual(await index.read(persistence,'fork'),['two']);
+  revision='two';history.push(...receipt('project_dispatch',{taskId:'two'}).map((event,i)=>({...event,seq:14+i})));assert.deepEqual(await index.read(persistence,'fork'),['one','two']);assert.deepEqual(offsets,[12,14]);
   fail=true; revision='three'; await assert.rejects(index.read(persistence,'fork'),/read failed/);
   assert.equal(closes,3);
 });

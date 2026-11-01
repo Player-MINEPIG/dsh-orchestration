@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { LocalCodexStore, LocalCodexService, localCodexPermission, localCodexProfile, localCodexReasoningEffort, CodexOutput } from '../dist/local-codex.js';
+const { LocalCodexStore, LocalCodexService, localCodexPermission, localCodexProfile, localCodexReasoningEffort, CodexOutput } = await import(process.env.DSH_LOCAL_CODEX_MODULE??'../dist/local-codex.js');
 
 test('DSH writable permission modes use auto review with workspace sandbox; readonly stays readonly', () => {
   for (const parentMode of ['workspace-write', 'danger-full-access']) {

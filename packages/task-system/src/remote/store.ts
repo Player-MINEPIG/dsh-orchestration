@@ -1,3 +1,4 @@
+import type { ExecutorPanelRecord } from "../executor-panel.js";
 import { ExecutionDisposition, ExecutorAlertStore, type ExecutorAlert } from "../executor-alerts.js";
 import { ExecutionCatalogDelivery } from "../execution-models.js";
 import { z } from "zod";
@@ -73,6 +74,8 @@ export interface DispatchRecord {
   detail?: string;
   reconciliation?: { runState: "cancelled" | "failed"; observedAt: string };
 }
+export type RecoveryDispatchHeader = ExecutorPanelRecord & {sourceSeq:number;schedulerId?:string;receiptCommandId?:string;reportVersion?:string;hasReport?:number};
+export interface RecoveryClaimHeader {commandId:string;runId:string;state:string;endpoint:string;audience:string;code?:string;message?:string;attemptId?:string;sourceSeq:number}
 /** One owner per file. SQLite FULL/WAL commits precede side effects and admission ACKs. */
 export class RecoveryStore {
   private db: DatabaseSync;
@@ -147,7 +150,103 @@ export class RecoveryStore {
         ?.value,
     );
     insist(/^[0-9a-f-]{36}$/.test(this.instanceId), "INVALID_STORE_IDENTITY");
+    this.preparePanelHeaders();
   }
+  private preparePanelHeaders() {
+    this.transaction(() => {
+      this.db.exec(`CREATE TABLE IF NOT EXISTS recovery_panel_revision(id INTEGER PRIMARY KEY CHECK(id=1),revision INTEGER NOT NULL);
+        INSERT OR IGNORE INTO recovery_panel_revision VALUES(1,0);
+        CREATE TABLE IF NOT EXISTS recovery_panel_retention(id INTEGER PRIMARY KEY CHECK(id=1),floor INTEGER NOT NULL);
+        INSERT OR IGNORE INTO recovery_panel_retention VALUES(1,-1);
+        CREATE TABLE IF NOT EXISTS recovery_panel_changes(kind TEXT NOT NULL,id TEXT NOT NULL,revision INTEGER NOT NULL,PRIMARY KEY(kind,id));
+        CREATE INDEX IF NOT EXISTS recovery_panel_change_revision ON recovery_panel_changes(revision,kind,id);
+        CREATE TABLE IF NOT EXISTS recovery_dispatch_headers(id TEXT PRIMARY KEY,seq INTEGER NOT NULL,run_id TEXT NOT NULL,task_id TEXT NOT NULL,state TEXT NOT NULL,outcome TEXT,data TEXT NOT NULL);
+        CREATE INDEX IF NOT EXISTS recovery_dispatch_run ON recovery_dispatch_headers(run_id,seq DESC);
+        CREATE INDEX IF NOT EXISTS recovery_dispatch_state ON recovery_dispatch_headers(state,seq);
+        CREATE TABLE IF NOT EXISTS recovery_claim_headers(id TEXT PRIMARY KEY,seq INTEGER NOT NULL,run_id TEXT NOT NULL,attempt_id TEXT,state TEXT NOT NULL,endpoint TEXT NOT NULL,audience TEXT NOT NULL,data TEXT NOT NULL);
+        CREATE INDEX IF NOT EXISTS recovery_claim_run ON recovery_claim_headers(run_id,attempt_id,state,seq DESC);
+        CREATE INDEX IF NOT EXISTS recovery_claim_state ON recovery_claim_headers(state,seq DESC);
+        CREATE TABLE IF NOT EXISTS recovery_disposition_probes(record_id TEXT PRIMARY KEY,next_at REAL NOT NULL);`);
+      const dispatch = (row:string) => `INSERT INTO recovery_dispatch_headers VALUES(${row}.id,${row}.rowid,COALESCE(json_extract(${row}.data,'$.claim.run.runId'),''),COALESCE(json_extract(${row}.data,'$.claim.task.taskId'),''),COALESCE(json_extract(${row}.data,'$.state'),''),json_extract(${row}.data,'$.result.outcome'),
+        json_object('taskId',json_extract(${row}.data,'$.claim.task.taskId'),'runId',json_extract(${row}.data,'$.claim.run.runId'),
+          'title',COALESCE(json_extract(${row}.data,'$.claim.task.title'),json_extract(${row}.data,'$.claim.run.taskId'),''),'description','',
+          'state',json_extract(${row}.data,'$.state'),'source','local-recovery','nodeId',COALESCE(json_extract(${row}.data,'$.lease.nodeId'),json_extract(${row}.data,'$.claim.attempt.nodeId'),''),
+          'time',COALESCE(json_extract(${row}.data,'$.receipt.acceptedAt'),json_extract(${row}.data,'$.claim.run.updatedAt'),''),
+          'sessionIds',json(CASE WHEN COALESCE(json_extract(${row}.data,'$.sessionId'),'')='' THEN '[]' ELSE json_array(json_extract(${row}.data,'$.sessionId')) END),
+          'executionDriver',CASE WHEN json_extract(${row}.data,'$.claim.run.route.backend') IS NOT NULL OR json_extract(${row}.data,'$.claim.run.route.execution') IS NOT NULL THEN 'external' ELSE 'dsh' END,
+          'parentTaskId',json_extract(${row}.data,'$.claim.task.parentTaskId'),'parentRunId',json_extract(${row}.data,'$.claim.run.parentRunId'),
+          'projectId',json_extract(${row}.data,'$.claim.run.projectContext.project.projectId'),'projectTitle',json_extract(${row}.data,'$.claim.run.projectContext.project.title'),
+          'model',json_extract(${row}.data,'$.claim.run.route.model'),'workspaceId',json_extract(${row}.data,'$.claim.run.route.workspaceId'),
+          'executionDirectory',json_extract(${row}.data,'$.workspacePath'),'detail',json_extract(${row}.data,'$.detail'),
+          'report',substr(json_extract(${row}.data,'$.result.summary'),1,2000),'outcome',json_extract(${row}.data,'$.result.outcome'),
+          'attemptId',${row}.id,'schedulerId',json_extract(${row}.data,'$.claim.run.projectContext.schedulerId'),
+          'claimNodeId',json_extract(${row}.data,'$.claim.attempt.nodeId'),'hasProjectContext',CASE WHEN json_extract(${row}.data,'$.claim.run.projectContext') IS NULL THEN 0 ELSE 1 END,'receiptCommandId',json_extract(${row}.data,'$.receipt.commandId'),'sourceSeq',${row}.rowid,'reportVersion','local:'||(SELECT revision FROM recovery_panel_revision WHERE id=1),'hasReport',CASE WHEN COALESCE(json_extract(${row}.data,'$.result.report.body'),json_extract(${row}.data,'$.result.summary'),'')<>'' THEN 1 ELSE 0 END))
+        ON CONFLICT(id) DO UPDATE SET seq=excluded.seq,run_id=excluded.run_id,task_id=excluded.task_id,state=excluded.state,outcome=excluded.outcome,data=excluded.data;`;
+      const claim = (row:string) => `INSERT INTO recovery_claim_headers SELECT ${row}.id,${row}.rowid,COALESCE(json_extract(${row}.data,'$.payload.runId'),''),json_extract(${row}.data,'$.receipt.result.value.attempt.attemptId'),COALESCE(json_extract(${row}.data,'$.state'),''),COALESCE(json_extract(${row}.data,'$.endpoint'),''),COALESCE(json_extract(${row}.data,'$.audience'),''),
+        json_object('commandId',${row}.id,'runId',json_extract(${row}.data,'$.payload.runId'),'state',json_extract(${row}.data,'$.state'),
+          'endpoint',COALESCE(json_extract(${row}.data,'$.endpoint'),''),'audience',COALESCE(json_extract(${row}.data,'$.audience'),''),
+          'code',json_extract(${row}.data,'$.receipt.result.claimRejected.code'),'message',json_extract(${row}.data,'$.receipt.result.claimRejected.message'),
+          'attemptId',json_extract(${row}.data,'$.receipt.result.value.attempt.attemptId'),'sourceSeq',${row}.rowid)
+        WHERE json_extract(${row}.data,'$.operation')='claim'
+        ON CONFLICT(id) DO UPDATE SET seq=excluded.seq,run_id=excluded.run_id,attempt_id=excluded.attempt_id,state=excluded.state,endpoint=excluded.endpoint,audience=excluded.audience,data=excluded.data;`;
+      for (const operation of ['INSERT','UPDATE','DELETE'] as const) for (const [table,kind] of [['dispatches','dispatch'],['outbound','claim']] as const) {
+        const row=operation==='DELETE'?'OLD':'NEW';
+        this.db.exec(`CREATE TRIGGER IF NOT EXISTS recovery_panel_${table}_${operation} AFTER ${operation} ON ${table} ${table==='outbound'?`WHEN json_extract(${row}.data,'$.operation')='claim'`:''} BEGIN
+          UPDATE recovery_panel_revision SET revision=revision+1 WHERE id=1;
+          ${operation==='DELETE'?`DELETE FROM recovery_${kind}_headers WHERE id=OLD.id;`:kind==='dispatch'?dispatch(row):`DELETE FROM recovery_claim_headers WHERE id=NEW.id; ${claim(row)}`}
+          INSERT INTO recovery_panel_changes VALUES('${kind}',${row}.id,(SELECT revision FROM recovery_panel_revision WHERE id=1)) ON CONFLICT(kind,id) DO UPDATE SET revision=excluded.revision;
+          DELETE FROM recovery_disposition_probes WHERE record_id='${kind}:'||${row}.id;
+        END;`);
+      }
+      for (const operation of ['INSERT','UPDATE','DELETE'] as const) {
+        const row=operation==='DELETE'?'OLD':'NEW';
+        this.db.exec(`CREATE TRIGGER IF NOT EXISTS recovery_panel_alert_${operation} AFTER ${operation} ON executor_alert_dispositions BEGIN
+          UPDATE recovery_panel_revision SET revision=revision+1 WHERE id=1;
+          INSERT INTO recovery_panel_changes VALUES('alert',${row}.record,(SELECT revision FROM recovery_panel_revision WHERE id=1)) ON CONFLICT(kind,id) DO UPDATE SET revision=excluded.revision;
+        END;`);
+      }
+      if (!this.db.prepare("SELECT 1 FROM metadata WHERE key='panelHeadersV1'").get()) {
+        for (const row of this.db.prepare('SELECT id FROM dispatches ORDER BY rowid').all()) {
+          this.db.prepare('UPDATE dispatches SET data=data WHERE id=?').run(String(row.id));
+        }
+        for (const row of this.db.prepare("SELECT id FROM outbound WHERE json_extract(data,'$.operation')='claim' ORDER BY rowid").all()) {
+          this.db.prepare('UPDATE outbound SET data=data WHERE id=?').run(String(row.id));
+        }
+        this.db.prepare("INSERT INTO metadata VALUES('panelHeadersV1','1')").run();
+      }
+    });
+  }
+  get panelReadRevision() {return Number(this.db.prepare('SELECT revision FROM recovery_panel_revision WHERE id=1').get()?.revision??0);}
+  acknowledgePanelChanges(revision:number) {this.db.prepare('UPDATE recovery_panel_retention SET floor=MAX(floor,?) WHERE id=1').run(revision);this.db.prepare('DELETE FROM recovery_panel_changes WHERE revision<=?').run(revision);}
+  panelChangesSince(revision:number) {if(revision<Number(this.db.prepare('SELECT floor FROM recovery_panel_retention WHERE id=1').get()?.floor??-1))return [{kind:'rebuild',id:''}];return this.db.prepare('SELECT kind,id FROM recovery_panel_changes WHERE revision>? ORDER BY revision,kind,id').all(revision).map(row=>({kind:String(row.kind),id:String(row.id)}));}
+  dispatchHeader(attemptId:string):RecoveryDispatchHeader|undefined {const row=this.db.prepare('SELECT data FROM recovery_dispatch_headers WHERE id=?').get(attemptId);return row?JSON.parse(String(row.data)):undefined;}
+  activeDispatchHeaders():RecoveryDispatchHeader[] {return this.db.prepare("SELECT data FROM recovery_dispatch_headers WHERE state NOT IN ('acknowledged','cancelled','retry_scheduled') ORDER BY seq").all().map(row=>JSON.parse(String(row.data)));}
+  dispatchHeaders():RecoveryDispatchHeader[] {return this.db.prepare('SELECT data FROM recovery_dispatch_headers ORDER BY seq').all().map(row=>JSON.parse(String(row.data)));}
+  claimHeader(commandId:string):RecoveryClaimHeader|undefined {const row=this.db.prepare('SELECT data FROM recovery_claim_headers WHERE id=?').get(commandId);return row?JSON.parse(String(row.data)):undefined;}
+  claimHeaders():RecoveryClaimHeader[] {return this.db.prepare("SELECT data FROM recovery_claim_headers WHERE state IN ('sending','pending','uncertain') ORDER BY seq DESC").all().map(row=>JSON.parse(String(row.data)));}
+  sessionDispatch(sessionId:string,taskId:string,workspaceId:string):DispatchRecord|undefined {
+    const row=this.db.prepare("SELECT id FROM recovery_dispatch_headers WHERE json_extract(data,'$.sessionIds[0]')=? AND task_id=? AND json_extract(data,'$.workspaceId')=? ORDER BY id LIMIT 1").get(sessionId,taskId,workspaceId);
+    return row?this.dispatch(String(row.id)):undefined;
+  }
+  hasLegacySessionMapping(sessionId:string,taskId:string,nodeId:string):boolean {
+    return !!this.db.prepare("SELECT 1 FROM recovery_dispatch_headers WHERE json_extract(data,'$.sessionIds[0]')=? AND task_id=? AND json_extract(data,'$.claimNodeId')=? AND json_extract(data,'$.hasProjectContext')=0 LIMIT 1").get(sessionId,taskId,nodeId);
+  }
+  dispatchCandidates(states:readonly DispatchRecord['state'][]):DispatchRecord[] {
+    if(!states.length)return [];
+    return this.db.prepare(`SELECT d.data FROM dispatches d JOIN recovery_dispatch_headers h ON h.id=d.id WHERE h.state IN (${states.map(()=>'?').join(',')}) ORDER BY h.seq`)
+      .all(...states).map(row=>JSON.parse(String(row.data)) as DispatchRecord);
+  }
+  dispositionCandidates(endpoint:string,audience:string,now:number,limit=4,excludedRunIds:readonly string[]=[]) {
+    return this.db.prepare(`WITH candidates(record_id,run_id,attempt_id,scheduler_id,endpoint,audience,seq) AS (
+      SELECT 'dispatch:'||d.id,d.run_id,d.id,json_extract(d.data,'$.schedulerId'),c.endpoint,c.audience,d.seq FROM recovery_dispatch_headers d
+        JOIN recovery_claim_headers c ON c.run_id=d.run_id AND c.attempt_id=d.id AND c.state='done'
+        WHERE d.state='acknowledged' AND d.outcome IN ('failure','blocked','partial','unknown') AND c.endpoint=? AND c.audience=?
+      UNION SELECT 'claim:'||id,run_id,NULL,NULL,endpoint,audience,seq FROM recovery_claim_headers WHERE state IN ('sending','pending','uncertain') AND endpoint=? AND audience=?)
+      SELECT c.* FROM candidates c LEFT JOIN recovery_disposition_probes p ON p.record_id=c.record_id
+      WHERE COALESCE(p.next_at,0)<=? ${excludedRunIds.length?`AND c.run_id NOT IN (${excludedRunIds.map(()=>'?').join(',')})`:''} ORDER BY COALESCE(p.next_at,0),c.seq,c.record_id LIMIT ?`).all(endpoint,audience,endpoint,audience,now,...excludedRunIds,limit)
+      .map(row=>({recordId:String(row.record_id),runId:String(row.run_id),attemptId:row.attempt_id?String(row.attempt_id):undefined,schedulerId:row.scheduler_id?String(row.scheduler_id):undefined,authority:{endpoint:String(row.endpoint),audience:String(row.audience)}}));
+  }
+  markDispositionProbe(recordId:string,nextAt:number) {this.db.prepare('INSERT INTO recovery_disposition_probes VALUES(?,?) ON CONFLICT(record_id) DO UPDATE SET next_at=excluded.next_at').run(recordId,nextAt);}
   workspaceGrantState(): LocalWorkspaceGrantState {
     const row = this.db
       .prepare("SELECT value FROM metadata WHERE key='localWorkspaceGrants'")
@@ -595,8 +694,8 @@ export class RecoveryStore {
       .all(limit).flatMap(row => typeof row.runId === "string" && typeof row.state === "string" ? [{commandId:String(row.commandId),runId:row.runId,state:row.state,endpoint:String(row.endpoint ?? ""),audience:String(row.audience ?? ""),...(typeof row.code === "string" ? {code:row.code,message:String(row.message ?? "")} : {})}] : []);
   }
   dispatchAuthority(runId:string,attemptId:string) {
-    const row=this.db.prepare("SELECT json_extract(data,'$.endpoint') AS endpoint,json_extract(data,'$.audience') AS audience FROM outbound WHERE json_extract(data,'$.operation')='claim' AND json_extract(data,'$.payload.runId')=? AND json_extract(data,'$.state')='done' AND json_extract(data,'$.receipt.result.value.attempt.attemptId')=? AND json_extract(data,'$.receipt.result.value.run.runId')=? ORDER BY rowid DESC LIMIT 1").get(runId,attemptId,runId);
-    return row && typeof row.endpoint==="string" && typeof row.audience==="string" ? {endpoint:row.endpoint,audience:row.audience} : undefined;
+    const row=this.db.prepare("SELECT endpoint,audience FROM recovery_claim_headers WHERE run_id=? AND attempt_id=? AND state='done' ORDER BY seq DESC LIMIT 1").get(runId,attemptId);
+    return row?{endpoint:String(row.endpoint),audience:String(row.audience)}:undefined;
   }
   executionObservation(recordId:string) {
     const row=this.db.prepare("SELECT value FROM metadata WHERE key=?").get(`disposition:${recordId}`);
@@ -605,6 +704,8 @@ export class RecoveryStore {
     return {authority:String(value.authority),observedAt:Number(value.observedAt),value:ExecutionDisposition.parse(value.value)};
   }
   saveExecutionObservation(recordId:string,authority:string,value:ExecutionDisposition,now:number) {
+    this.db.prepare('UPDATE recovery_panel_revision SET revision=revision+1 WHERE id=1').run();
+    this.db.prepare("INSERT INTO recovery_panel_changes VALUES('observation',?,?) ON CONFLICT(kind,id) DO UPDATE SET revision=excluded.revision").run(recordId,this.panelReadRevision);
     this.db.prepare("INSERT INTO metadata VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(`disposition:${recordId}`,canonical({authority,observedAt:now,value}));
   }
   executorAlert(recordId:string,fingerprint:string,canAcknowledge:boolean):ExecutorAlert {return this.executorAlerts.alert(recordId,fingerprint,canAcknowledge);}
@@ -622,7 +723,7 @@ export class RecoveryStore {
     return this.transaction(() => this.recoverDispatchRows());
   }
   private recoverDispatchRows(): DispatchRecord[] {
-    const records = this.dispatches();
+    const records = this.dispatchCandidates(["dispatching","result","cancellation","retry_pending","uncertain"]);
     for (const record of records)
       if (record.state === "dispatching") {
         record.state = "uncertain";

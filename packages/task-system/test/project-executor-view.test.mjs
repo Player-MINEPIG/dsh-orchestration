@@ -329,3 +329,22 @@ test('session collaboration without runs is visible only to its owner node in or
     assert(!other.projects.some(p=>p.id===result.projectId));
   } finally { await h.dispose(); }
 });
+
+
+test("named remote demand products preserve peer scope and reject caller identity",async t=>{
+ const f=await setup(t);
+ const page=await f.settings.taskPage({view:"planner",presentation:"all",pageSize:2});
+ assert.equal(page.items.length,2);assert.equal(page.viewContext.scope,"central");
+ assert.ok(!JSON.stringify(page).includes("PRIVATE"));
+ const next=await f.settings.taskPage({view:"planner",presentation:"all",pageSize:2,page:1});
+ assert.equal(new Set([...page.items,...next.items].map(row=>row.id)).size,page.items.length+next.items.length);
+ await assert.rejects(()=>f.settings.taskPage({view:"planner",presentation:"all",nodeId:"other"}));
+ const selected=page.items[0];const detail=await f.settings.taskDetail({view:"planner",taskId:selected.id});
+ assert.equal(detail.task.id,selected.id);assert.equal(detail.task.canRetry,false);assert.equal("configuration" in detail.task,false);
+});
+
+
+test("bounded reads reuse only an existing public read capability",async()=>{
+ const {allowsOperation}=await import('../dist/remote/protocol.js');
+ assert.equal(allowsOperation(['projectSnapshot'],'demandRead'),true);assert.equal(allowsOperation(['demandRead'],'demandRead'),true);assert.equal(allowsOperation(['heartbeat','getRun'],'demandRead'),false);assert.equal(allowsOperation(['projectSnapshot'],'submit'),false);
+});

@@ -1,3 +1,4 @@
+import { DemandReadIndex, type CompactTask } from "./ledger-read-index.js";
 import { CheckinRefs } from "./remote/ports.js";
 import { TaskCheckins } from "./task-checkins.js";
 import { ExpectedExecutionMs } from "./execution-expectation.js";
@@ -347,7 +348,9 @@ export class TaskLedger {
     catch (error) { this.db.exec('ROLLBACK'); throw error; }
   }
   projectSnapshot?: (nodeId: string) => Json;
+  projectDemandRead?: (nodeId:string, method:import("./demand-reads.js").DemandReadMethod,input:unknown)=>Json;
   projectCollaborate?: (nodeId: string, commandId: string, input: import("./project-collaboration/types.js").ProjectCollaborationInput) => Json | Promise<Json>;
+  readonly demandReads: DemandReadIndex;
   readonly role: Role;
   readonly nodeId: string;
   private readonly clock: () => number;
@@ -503,7 +506,18 @@ export class TaskLedger {
       // Keep commands' three-column layout compatible with the prior release.
       this.db.exec("CREATE TABLE IF NOT EXISTS transient_command_expiry(id TEXT PRIMARY KEY,expires INTEGER NOT NULL); CREATE INDEX IF NOT EXISTS command_expiry ON transient_command_expiry(expires)");
     }
+    if (!options.readOnly) this.backfillEntityIndexes();
     this.checkins = new TaskCheckins(this, options.checkinIntervalMs);
+    if (options.readOnly) this.demandReads = new DemandReadIndex(this.db,this.clock,true);
+    else {
+      this.db.exec("BEGIN IMMEDIATE");
+      try {
+        const validLegacy = this.validLegacyReadReceipts();
+        this.demandReads = new DemandReadIndex(this.db,this.clock);
+        if (validLegacy) this.preserveReadReceipts(validLegacy);
+        this.db.exec("COMMIT");
+      } catch (error) { if (this.db.isTransaction) this.db.exec("ROLLBACK"); this.db.close(); throw error; }
+    }
     this.receiptExpirySupported = !!this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='transient_command_expiry'").get();
     if (!options.readOnly)
       this.db
@@ -518,6 +532,61 @@ export class TaskLedger {
       this.db.close();
       fail("SCHEMA", "Unsupported ledger schema");
     }
+  }
+  private backfillEntityIndexes() {
+    this.db.exec(`CREATE TABLE IF NOT EXISTS ledger_index_migrations(name TEXT PRIMARY KEY);
+      BEGIN IMMEDIATE;`);
+    try {
+      if (!this.db.prepare("SELECT 1 FROM ledger_index_migrations WHERE name='canonical-parent-state-v1'").get()) {
+        this.db.exec(`UPDATE entities SET
+          parent=CASE kind WHEN 'task' THEN json_extract(data,'$.parentTaskId')
+            WHEN 'attempt' THEN json_extract(data,'$.runId') ELSE json_extract(data,'$.taskId') END,
+          state=json_extract(data,'$.state')
+          WHERE kind IN ('task','run','attempt','report','schedule','delivery','sessionMessage');
+          INSERT INTO ledger_index_migrations(name) VALUES('canonical-parent-state-v1');`);
+      }
+      this.db.exec(`CREATE INDEX IF NOT EXISTS entity_occurrence_run ON entities(kind,json_extract(data,'$.runId')) WHERE kind='occurrence';`);
+      for (const operation of ["INSERT","UPDATE"] as const) {
+        const parent = "CASE NEW.kind WHEN 'task' THEN json_extract(NEW.data,'$.parentTaskId') WHEN 'attempt' THEN json_extract(NEW.data,'$.runId') ELSE json_extract(NEW.data,'$.taskId') END";
+        this.db.exec(`CREATE TRIGGER IF NOT EXISTS canonical_entity_${operation.toLowerCase()} AFTER ${operation} ON entities
+          WHEN NEW.kind IN ('task','run','attempt','report','schedule','delivery','sessionMessage')
+            AND (NEW.parent IS NOT (${parent}) OR NEW.state IS NOT json_extract(NEW.data,'$.state')) BEGIN
+            UPDATE entities SET parent=${parent},state=json_extract(NEW.data,'$.state') WHERE kind=NEW.kind AND id=NEW.id;
+          END;`);
+      }
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+  private validLegacyReadReceipts() {
+    if (this.db.prepare("SELECT 1 FROM ledger_index_migrations WHERE name='demand-fingerprints-v2'").get()) return null;
+    return this.checkins.withReadScope(() => {
+      const attention: string[] = [], responsibility: string[] = [];
+      for (const row of this.db.prepare("SELECT id,data FROM entities WHERE kind='task-attention'").all()) {
+        const record: {fingerprint:string} = JSON.parse(String(row.data));
+        if (record.fingerprint === this.taskActionState(String(row.id)).fingerprint) attention.push(String(row.id));
+      }
+      for (const row of this.db.prepare("SELECT id,data FROM entities WHERE kind='taskResponsibility'").all()) {
+        const record: {fingerprint:string} = JSON.parse(String(row.data));
+        if (record.fingerprint === this.checkins.responsibilityFingerprint(String(row.id))) responsibility.push(String(row.id));
+      }
+      return {attention,responsibility};
+    });
+  }
+  private preserveReadReceipts(valid: {attention:string[];responsibility:string[]}) {
+      for (const taskId of valid.attention) {
+        const record = this.get<{fingerprint:string;handled:boolean}>("task-attention",taskId)!;
+        record.fingerprint = this.taskActionState(taskId).fingerprint;
+        this.put("task-attention",taskId,record);
+      }
+      for (const taskId of valid.responsibility) {
+        const record = this.get<import("./task-checkins.js").ResponsibilityReceipt>("taskResponsibility",taskId)!;
+        record.fingerprint = this.checkins.responsibilityFingerprint(taskId);
+        this.put("taskResponsibility",taskId,record,taskId);
+      }
+      this.db.prepare("INSERT OR IGNORE INTO ledger_index_migrations VALUES('demand-fingerprints-v2')").run();
   }
   private configurationPaused = false;
   private receiptExpirySupported = false;
@@ -674,10 +743,8 @@ export class TaskLedger {
       value.sessionIds = [
         ...new Set([...(value.sessionIds ?? []), ...sessions, ...inherited]),
       ];
-      const occurrence = this.list<{ occurrenceId: string; runId?: string }>(
-        "occurrence",
-      ).find((x) => x.runId === value.runId);
-      if (occurrence) value.occurrenceId = occurrence.occurrenceId;
+      const occurrenceRow = this.db.prepare("SELECT data FROM entities WHERE kind='occurrence' AND json_extract(data,'$.runId')=? ORDER BY rowid LIMIT 1").get(value.runId);
+      if (occurrenceRow) value.occurrenceId = JSON.parse(String(occurrenceRow.data)).occurrenceId;
     }
     return value as T;
   }
@@ -1920,7 +1987,7 @@ export class TaskLedger {
       return this.getTask(t.taskId);
     });
   }
-  private confirmationAllows(task: Task) {
+  private confirmationAllows(task: Pick<Task, "kind" | "confirmation">) {
     return (
       !(this.options.requireConfirmation || task.confirmation?.required) ||
       task.confirmation?.state === "approved"
@@ -2715,12 +2782,12 @@ export class TaskLedger {
         run.taskId !== task.taskId ||
         run.state !== "queued" ||
         run.currentAttemptId ||
-        this.list<Attempt>("attempt").some((a) => a.runId === run.runId)
+        this.db.prepare("SELECT 1 FROM entities WHERE kind='attempt' AND parent=? LIMIT 1").get(run.runId)
       )
         fail("CONFLICT", "Execution has already been claimed");
       run.state = "cancelled";
       run.updatedAt = this.now();
-      this.put("run", run.runId, run);
+      this.saveRun(run);
       task.state = "inbox";
       task.updatedAt = this.now();
       this.saveTask(task);
@@ -3533,7 +3600,7 @@ export class TaskLedger {
       .schedulerId;
   }
   sessionMessageTargets(taskId: string) {
-    this.getTask(taskId);
+    if (!this.demandReads.fact("task",taskId)) fail("NOT_FOUND","Task not found");
     return this.list<TaskSession>("taskSession", taskId);
   }
   sessionMessages(taskId: string) {
@@ -3589,33 +3656,57 @@ export class TaskLedger {
     });
   }
   pendingSessionMessages(nodeId: string, options?: SessionMessageQuery) {
-    const messages = this.list<import("./remote/ports.js").SessionMessage>(
-      "sessionMessage",
-    );
-    if(options?.forAdmission) {
-      if(!options.messageId)fail("INVALID","Admission refresh requires one exact message ID");
-      const message=messages.find(m=>m.messageId===options.messageId && m.nodeId===nodeId);
-      if(!message)return [];
-      let admission=message.state!=="queued"?"obsolete" as const:message.checkIn?this.checkins.disposition(message):"ready" as const;
-      if(admission==="ready" && ((message.nextAttemptAt ?? "")>this.now() || (this.get<{until:string}>("sessionReturnCooldown",hash([message.nodeId,message.sessionId]))?.until ?? "")>this.now()))admission="defer";
-      return [{...(admission==="ready" && message.checkIn?this.checkins.prepare(message):message),admission}];
+    id(nodeId);
+    if (options?.forAdmission) {
+      const messageId = options.messageId ?? fail("INVALID", "Admission refresh requires one exact message ID");
+      const message = this.get<import("./remote/ports.js").SessionMessage>("sessionMessage", messageId);
+      if (!message || message.nodeId !== nodeId) return [];
+      let admission = message.state !== "queued" ? "obsolete" as const : message.checkIn ? this.checkins.disposition(message) : "ready" as const;
+      if (admission === "ready" && ((message.nextAttemptAt && Date.parse(message.nextAttemptAt) > this.clock()) ||
+        Date.parse(this.get<{until:string}>("sessionReturnCooldown", hash([message.nodeId,message.sessionId]))?.until ?? "") > this.clock())) admission = "defer";
+      return [{...(admission === "ready" && message.checkIn ? this.checkins.prepare(message) : message), admission}];
     }
-    for(const message of messages)if(message.completion && message.state==="queued" && (message.consecutiveDeliveryFailures ?? (!message.deliveryFailure ? message.deliveryAttempts ?? 0 : 0))>=3) {
-      message.state="failed";
-      message.reply="原会话连续三次未能处理回信，已停止自动问询；请修复会话后手动重试。";
-      if(!this.options.readOnly)this.put("sessionMessage",message.messageId,message,message.taskId,message.state);
-    }
-    const excluded = new Set(options?.excludeMessageIds);
-    let start = 0;
+    this.demandReads.ensureFacts();
+    let after = 0;
     if (options?.afterMessageId) {
-      const index = messages.findIndex(m => m.messageId === options.afterMessageId && m.nodeId === nodeId);
-      if (index < 0) fail("FORBIDDEN", "Message cursor does not belong to this node");
-      start = index + 1;
+      const cursor = this.db.prepare("SELECT seq FROM demand_entity_facts WHERE kind='sessionMessage' AND id=? AND node_id=?").get(options.afterMessageId,nodeId)
+        ?? fail("FORBIDDEN", "Message cursor does not belong to this node");
+      after = Number(cursor.seq);
     }
-    return messages.slice(start)
-      .filter((m) => (!options?.messageId || m.messageId === options.messageId) && (!m.checkIn || this.checkins.disposition(m) === "ready") && !excluded.has(m.messageId) && (!options?.kind || (options.kind === "completion" ? Boolean(m.completion) : options.kind === "continuation" ? Boolean(m.completion || m.checkIn) : !m.completion && !m.checkIn)) && m.nodeId === nodeId && m.state === "queued" && (!m.nextAttemptAt || m.nextAttemptAt<=this.now()))
-      .filter(m=>!(m.completion || m.checkIn) || (this.get<{until:string}>("sessionReturnCooldown",hash([m.nodeId,m.sessionId]))?.until ?? "")<=this.now())
-      .slice(0, 4).map(message => message.checkIn ? this.checkins.prepare(message) : message);
+    const failedReturns = this.db.prepare(`SELECT id FROM demand_entity_facts WHERE kind='sessionMessage' AND state='queued'
+      AND node_id=? AND json_extract(data,'$.completion') IS NOT NULL
+      AND COALESCE(json_extract(data,'$.consecutiveDeliveryFailures'),
+        CASE WHEN json_extract(data,'$.deliveryFailure') IS NULL THEN COALESCE(json_extract(data,'$.deliveryAttempts'),0) ELSE 0 END)>=3`).all(nodeId);
+    for (const row of failedReturns) {
+      const message = this.getSessionMessage(String(row.id));
+      message.state = "failed";
+      message.reply = "原会话连续三次未能处理回信，已停止自动问询；请修复会话后手动重试。";
+      if (!this.options.readOnly) this.put("sessionMessage",message.messageId,message,message.taskId,message.state);
+    }
+    this.demandReads.ensureFacts();
+    const excluded = new Set(options?.excludeMessageIds);
+    const ready: import("./remote/ports.js").SessionMessage[] = [];
+    while (ready.length < 4) {
+      const rows = this.db.prepare(`SELECT id,seq,data FROM demand_entity_facts WHERE kind='sessionMessage' AND state='queued'
+        AND node_id=? AND seq>? AND (? IS NULL OR id=?) AND (due_at IS NULL OR due_at<=?)
+        AND (? IS NULL OR (?='completion' AND json_extract(data,'$.completion') IS NOT NULL)
+          OR (?='continuation' AND (json_extract(data,'$.completion') IS NOT NULL OR json_extract(data,'$.checkIn') IS NOT NULL))
+          OR (? NOT IN ('completion','continuation') AND json_extract(data,'$.completion') IS NULL AND json_extract(data,'$.checkIn') IS NULL))
+        ORDER BY seq LIMIT 64`).all(nodeId,after,options?.messageId ?? null,options?.messageId ?? null,this.clock(),
+          options?.kind ?? null,options?.kind ?? null,options?.kind ?? null,options?.kind ?? null);
+      if (!rows.length) break;
+      for (const row of rows) {
+        after = Number(row.seq);
+        if (excluded.has(String(row.id))) continue;
+        const header: import("./ledger-read-index.js").CompactMessage = JSON.parse(String(row.data));
+        if ((header.completion || header.checkIn) && Date.parse(this.get<{until:string}>("sessionReturnCooldown",hash([header.nodeId,header.sessionId]))?.until ?? "") > this.clock()) continue;
+        if (header.checkIn && this.checkins.disposition(header) !== "ready") continue;
+        const message = this.getSessionMessage(header.messageId);
+        ready.push(message.checkIn ? this.checkins.prepare(message) : message);
+        if (ready.length === 4) break;
+      }
+    }
+    return ready;
   }
   completeSessionMessage(
     commandId: string,
@@ -4383,8 +4474,8 @@ export class TaskLedger {
     return state;
   }
   private readTaskActionState(taskId: string) {
-    const task = this.getTask(taskId),
-      runs = this.list<Run>("run", taskId),
+    const task = this.demandReads ? this.demandReads.fact("task", taskId) ?? fail("NOT_FOUND", "Task not found") : this.getTask(taskId),
+      runs = this.demandReads ? this.demandReads.facts("run", taskId) : this.list<Run>("run", taskId),
       run = runs.at(-1);
     const owned = runs.filter((r) => !(r.historyOnly || r.observationOnly));
     const active = owned.some((r) => ["queued", "running"].includes(r.state));
@@ -4392,36 +4483,22 @@ export class TaskLedger {
     const confirmationPending =
       !["cancelled", "archived", "completed", "failed"].includes(task.state) &&
       !this.confirmationAllows(task);
-    const fingerprint = hash({
-      ...(task.manualCompletion
-        ? { manualCompletion: task.manualCompletion }
-        : {}),
-      task: [
-        task.taskId,
-        task.state,
-        task.updatedAt,
-        task.confirmation ?? null,
-      ],
-      runs: runs.map((r) => [
-        r.runId,
-        r.state,
-        r.reviewStatus ?? null,
-        !!r.cancellationRequested,
-        r.currentAttemptId ?? null,
-        r.dispatchIssue?.revision ?? null,
-        r.route ?? null,
-        r.executionModel ?? null,
-        r.projectContext ?? null,
-      ]),
-      reports: this.list<Report>("report", taskId).map((r) => r.reportId),
-    });
+    const base = {
+      ...(task.manualCompletion ? {manualCompletion:task.manualCompletion} : {}),
+      task:[task.taskId,task.state,task.updatedAt,task.confirmation ?? null],
+      reports:this.demandReads ? this.demandReads.facts("report",taskId).map(report=>report.reportId) : this.list<Report>("report",taskId).map(report=>report.reportId),
+    };
+    const fingerprint = this.demandReads
+      ? hash({...base,schema:2,runs:runs.map(run=>"actionComponentDigest" in run ? run.actionComponentDigest : null)})
+      : hash({...base,runs:runs.map(r=>[r.runId,r.state,r.reviewStatus ?? null,!!r.cancellationRequested,r.currentAttemptId ?? null,
+          r.dispatchIssue?.revision ?? null,r.route ?? null,r.executionModel ?? null,"projectContext" in r ? r.projectContext ?? null : null])});
     const record = this.get("task-attention", taskId) as
       | { fingerprint: string; handled: boolean }
       | undefined;
     const handled = record?.fingerprint === fingerprint && record.handled;
     return {
       version: hash({ fingerprint, record }),
-      canRepair: !!run && !["cancelled","archived"].includes(task.state) && !run.cancellationRequested && run.state === "queued" && run.dispatchIssue?.kind === "needs_action" && !run.currentAttemptId && !this.list<Attempt>("attempt").some(a=>a.runId===run.runId),
+      canRepair: !!run && !["cancelled","archived"].includes(task.state) && !run.cancellationRequested && run.state === "queued" && run.dispatchIssue?.kind === "needs_action" && !run.currentAttemptId && !this.db.prepare("SELECT 1 FROM entities WHERE kind='attempt' AND parent=? LIMIT 1").get(run.runId),
       fingerprint,
       handled: !!handled,
       confirmationPending,
@@ -4454,7 +4531,7 @@ export class TaskLedger {
           task.state !== "completed" ||
           ["pending_user", "rejected"].includes(run?.reviewStatus ?? "")),
       canReconcile:
-        !(run && this.isWorkflowInvocation(run)) &&
+        !(run && ("workflowInvocation" in run ? run.workflowInvocation : this.isWorkflowInvocation(run))) &&
         task.kind !== "observed" &&
         task.state !== "archived" &&
         run?.state === "uncertain" &&
@@ -4504,7 +4581,11 @@ export class TaskLedger {
         node.models=[...models.values()];this.put("node",node.nodeId,node);
         this.event("node.execution_catalog",{nodeId:node.nodeId,revision:view.catalog.snapshot.revision,complete:input.result.complete},undefined);
       }
-      if(!view.catalog.request)for(const run of this.list<Run>("run").filter(run=>run.state==="queued"&&run.route?.nodeId===input.nodeId))this.refreshDispatchEligibility(run.runId);
+      if (!view.catalog.request) {
+        this.demandReads.ensureFacts();
+        for (const row of this.db.prepare("SELECT id FROM demand_entity_facts WHERE kind='run' AND state='queued' AND node_id=? ORDER BY seq").all(input.nodeId))
+          this.refreshDispatchEligibility(String(row.id));
+      }
       return view;
     });
   }
@@ -4602,7 +4683,7 @@ export class TaskLedger {
         return this.setDispatchIssue(run,{kind:"waiting",code:"EXECUTION_CATALOG_PENDING",message:"Waiting for a fresh executor model catalog. The last known configuration has been preserved.",action:"refresh_catalog"});
       }
       const available=(route:ExecutionRoute)=>!!positive && positive.expiresAt>this.clock() && positive.models.some(choice=>sameExecutionModel(choice,route));
-      if(!this.options.readOnly && view.catalog.state==="fresh" && view.catalog.snapshot?.complete && !available(run.route) && run.executionModel.origin!=="explicit" && !this.list<Attempt>("attempt").some(a=>a.runId===run.runId)) {
+      if(!this.options.readOnly && view.catalog.state==="fresh" && view.catalog.snapshot?.complete && !available(run.route) && run.executionModel.origin!=="explicit" && !this.db.prepare("SELECT 1 FROM entities WHERE kind='attempt' AND parent=? LIMIT 1").get(run.runId)) {
         const fallback={provider:"deepseek-official",model:"deepseek-flash",reasoningEffort:"high"};
         if(available({...run.route,...fallback,backend:undefined})) {
           const original={provider:run.route.provider,model:run.route.model,...(run.route.reasoningEffort?{reasoningEffort:run.route.reasoningEffort}:{}),...(run.route.backend?{backend:run.route.backend}:{})};
@@ -4915,58 +4996,41 @@ export class TaskLedger {
     });
   }
   recoveryNeeded() {
-    return (
-      this.list<Attempt>("attempt").some(
-        (a) =>
-          ["leased", "running"].includes(a.state) &&
-          Date.parse(a.leaseExpiresAt) <= this.clock(),
-      ) ||
-      this.list<Delivery>("delivery").some(
-        (d) =>
-          d.state === "sending" &&
-          Date.parse(d.leaseExpiresAt ?? "") <= this.clock(),
-      )
-    );
+    this.demandReads.ensureFacts();
+    return !!this.db.prepare(`SELECT 1 FROM demand_entity_facts WHERE
+      ((kind='attempt' AND state IN ('leased','running')) OR (kind='delivery' AND state='sending'))
+      AND lease_at<=? LIMIT 1`).get(this.clock());
   }
   recoverExpired(commandId: string) {
     return this.command(commandId, "recoverExpired", {}, () => {
       const expired: Attempt[] = [];
-      for (const a of this.list<Attempt>("attempt")) {
-        if (
-          !["leased", "running"].includes(a.state) ||
-          Date.parse(a.leaseExpiresAt) > this.clock()
-        )
-          continue;
+      this.demandReads.ensureFacts();
+      const attempts = this.db.prepare(`SELECT e.data FROM demand_entity_facts f JOIN entities e ON e.kind=f.kind AND e.id=f.id
+        WHERE f.kind='attempt' AND f.state IN ('leased','running') AND f.lease_at<=? ORDER BY f.seq`).all(this.clock());
+      for (const row of attempts) {
+        const a: Attempt = JSON.parse(String(row.data));
         a.state = "uncertain";
         a.updatedAt = this.now();
         this.saveAttempt(a);
         const run = this.getRun(a.runId);
         if (run.currentAttemptId === a.attemptId && !TERMINAL.has(run.state)) {
           run.state = "uncertain";
-
           run.updatedAt = this.now();
           this.saveRun(run);
           const t = this.getTask(run.taskId);
           t.state = "waiting";
           t.updatedAt = this.now();
           this.saveTask(t);
-          this.event(
-            "attempt.expired",
-            { attemptId: a.attemptId, policy: "reconcile-before-retry" },
-            t.taskId,
-            run.runId,
-          );
+          this.event("attempt.expired", {attemptId: a.attemptId, policy: "reconcile-before-retry"}, t.taskId, run.runId);
         }
         expired.push(a);
       }
-      for (const d of this.list<Delivery>("delivery")) {
-        if (
-          d.state === "sending" &&
-          Date.parse(d.leaseExpiresAt ?? "") <= this.clock()
-        ) {
-          d.state = "uncertain";
-          this.put("delivery", d.deliveryId, d, d.taskId, d.state);
-        }
+      const deliveries = this.db.prepare(`SELECT e.data FROM demand_entity_facts f JOIN entities e ON e.kind=f.kind AND e.id=f.id
+        WHERE f.kind='delivery' AND f.state='sending' AND f.lease_at<=? ORDER BY f.seq`).all(this.clock());
+      for (const row of deliveries) {
+        const d: Delivery = JSON.parse(String(row.data));
+        d.state = "uncertain";
+        this.put("delivery", d.deliveryId, d, d.taskId, d.state);
       }
       return { expired };
     });
@@ -5728,9 +5792,8 @@ export class TaskLedger {
         : new Date(Date.parse(s.nextDueAt) + (s.intervalMs ?? 0)).toISOString();
       const missed = Date.parse(nextSlot) <= this.clock();
       const skipMisfire = missed && s.misfire === "skip";
-      const active = this.list<Run>("run", s.taskId).some(
-        (r) => !TERMINAL.has(r.state),
-      );
+      this.demandReads.ensureFacts();
+      const active = !!this.db.prepare("SELECT 1 FROM demand_entity_facts WHERE kind='run' AND task_id=? AND state IN ('queued','running') LIMIT 1").get(s.taskId);
       let run: Run | undefined;
       const template = this.getTemplate(s.templateId, s.templateVersion);
       const policySelection=!input.route && s.route && s.executionModel && s.executionModel.origin!=="explicit" && !s.route.execution ? this.selectExecutionModel(s.route.nodeId) : undefined;
@@ -5794,15 +5857,11 @@ export class TaskLedger {
   }
   pendingRuns(nodeId: string) {
     id(nodeId);
-    const runs = this.db
-      .prepare(`
-        SELECT data FROM entities WHERE kind='run' AND state='queued'
-          AND json_extract(data,'$.route.nodeId')=? ORDER BY rowid
-      `)
-      .all(nodeId)
-      .map((row) => this.refreshDispatchEligibility(JSON.parse(String(row.data)).runId));
+    this.demandReads.ensureFacts();
+    const runs = this.db.prepare(`SELECT id FROM demand_entity_facts WHERE kind='run' AND state='queued' AND node_id=? ORDER BY seq`)
+      .all(nodeId).map(row=>this.refreshDispatchEligibility(String(row.id)));
     if (!runs.length) return [];
-    const tasks = new Map(this.list<Task>("task").map((t) => [t.taskId, t]));
+    const tasks = new Map([...new Set(runs.map(run => run.taskId))].map(taskId => [taskId, this.getTask(taskId)]));
     return runs
       .filter(
         (r) =>
@@ -5835,13 +5894,13 @@ export class TaskLedger {
       });
   }
   scheduleDue() {
-    return this.list<Schedule>("schedule").filter(
-      (s) =>
-        s.enabled &&
-        !s.retiredAt &&
-        !["cancelled", "archived"].includes(this.getTask(s.taskId).state) &&
-        Date.parse(s.nextDueAt) <= this.clock(),
-    );
+    this.demandReads.ensureFacts();
+    return this.db.prepare(`SELECT e.data FROM demand_entity_facts s JOIN demand_entity_facts t ON t.kind='task' AND t.id=s.task_id
+      JOIN entities e ON e.kind=s.kind AND e.id=s.id
+      WHERE s.kind='schedule' AND json_extract(s.data,'$.enabled')=1
+        AND json_extract(s.data,'$.retiredAt') IS NULL AND s.due_at<=?
+        AND t.state NOT IN ('cancelled','archived') ORDER BY s.seq`)
+      .all(this.clock()).map(row => JSON.parse(String(row.data)) as Schedule);
   }
   claimDelivery(
     commandId: string,
@@ -5953,39 +6012,51 @@ export class TaskLedger {
     };
   }
   resultRetryCandidates(): Run[] {
-    return this.db
-      .prepare(`
-        SELECT candidate.data FROM entities AS candidate
-        WHERE candidate.kind='run' AND candidate.state='failed'
-          AND json_type(candidate.data,'$.resultValidationFailure')='object'
-          AND NOT EXISTS (
-            SELECT 1 FROM entities AS newer
-            WHERE newer.kind='run' AND newer.parent=candidate.parent
-              AND newer.rowid>candidate.rowid
-          ) ORDER BY candidate.rowid
-      `)
-      .all()
-      .map((row) => this.projectEntity<Run>("run", JSON.parse(String(row.data))));
+    this.demandReads.ensureFacts();
+    const candidates = this.db.prepare(`SELECT candidate.id FROM demand_entity_facts candidate
+      WHERE candidate.kind='run' AND candidate.state='failed' AND json_extract(candidate.data,'$.hasResultValidationFailure')=1
+        AND NOT EXISTS(SELECT 1 FROM demand_entity_facts newer WHERE newer.kind='run' AND newer.task_id=candidate.task_id AND newer.seq>candidate.seq)
+      ORDER BY candidate.seq`).all();
+    return candidates.filter(row=>this.resultRetryInfo(String(row.id)).eligible).map(row=>this.getRun(String(row.id)));
   }
   resultRetryInfo(runId: string) {
-    const run=this.getRun(runId),task=this.getTask(run.taskId),config=run.configuration;
-    const retry=config&&typeof config==="object"&&!Array.isArray(config)?config.taskRetry:null;
-    const count=retry&&typeof retry==="object"&&!Array.isArray(retry)&&retry.automatic===true&&typeof retry.count==="number"?retry.count:0;
-    const limit=task.policy?.maxResultRetries??2;
-    const latest=this.list<Run>("run",task.taskId).at(-1);
-    const eligible=!!run.resultValidationFailure&&run.state==="failed"&&latest?.runId===runId&&count<limit&&!['cancelled','archived','completed'].includes(task.state)&&!this.taskActionState(task.taskId).handled;
+    const run = this.demandReads.fact("run",runId) ?? fail("NOT_FOUND","Run not found");
+    const task = this.demandReads.fact("task",run.taskId) ?? fail("NOT_FOUND","Task not found");
+    const count = run.automaticResultRetryCount, limit = task.policy?.maxResultRetries ?? 2;
+    const latest = this.db.prepare("SELECT id FROM demand_entity_facts WHERE kind='run' AND task_id=? ORDER BY seq DESC LIMIT 1").get(task.taskId);
+    const eligible = run.hasResultValidationFailure && run.state==='failed' && latest?.id===runId && count<limit &&
+      !['cancelled','archived','completed'].includes(task.state) && !this.taskActionState(task.taskId).handled;
     return {limit,count,remaining:Math.max(0,limit-count),eligible};
   }
   allSettled(taskId: string, quietMs = 1000, rootRunId?: string, includeTask = false) {
     finite(quietMs, 0, 300000, "quiet window");
-    this.getTask(taskId);
-    const scope = rootRunId
-      ? this.executionScope(taskId, rootRunId)
-      : undefined;
-    const tasks = scope?.tasks ?? [...(includeTask?[this.getTask(taskId)]:[]),...this.descendants(taskId)],
-      ids = new Set(tasks.map((t) => t.taskId));
-    const runs =
-      scope?.runs ?? this.list<Run>("run").filter((r) => ids.has(r.taskId));
+    const root = this.demandReads.fact("task",taskId) ?? fail("NOT_FOUND","Task not found");
+    const allTasks = this.demandReads.facts("task"), allRuns = this.demandReads.facts("run");
+    let tasks: typeof allTasks, runs: typeof allRuns;
+    if (rootRunId) {
+      if (this.demandReads.fact("run",rootRunId)?.taskId !== taskId) fail("FORBIDDEN","Execution scope belongs to another task");
+      const runIds = new Set([rootRunId]), taskIds = new Set<string>();
+      const owned = allRuns.filter(run=>!(run.historyOnly || run.observationOnly));
+      for (let changed=true;changed;) {
+        changed=false;
+        for (const task of allTasks) if (!taskIds.has(task.taskId) && task.taskId!==taskId &&
+          ((task.parentRunId && runIds.has(task.parentRunId)) || (!task.parentRunId && task.parentTaskId && (task.parentTaskId===taskId || taskIds.has(task.parentTaskId))))) {
+          taskIds.add(task.taskId);changed=true;
+        }
+        for (const run of owned) if (!runIds.has(run.runId) && ((run.parentRunId && runIds.has(run.parentRunId)) ||
+          (!run.parentRunId && taskIds.has(run.taskId) && !allTasks.find(task=>task.taskId===run.taskId)?.parentRunId))) {
+          runIds.add(run.runId);taskIds.add(run.taskId);changed=true;
+        }
+      }
+      tasks=allTasks.filter(task=>taskIds.has(task.taskId));
+      runs=owned.filter(run=>run.runId!==rootRunId && runIds.has(run.runId));
+    } else {
+      const descendants = new Set(this.demandReads.taskIds(taskId));
+      if (!includeTask) descendants.delete(root.taskId);
+      tasks=allTasks.filter(task=>descendants.has(task.taskId));
+      runs=allRuns.filter(run=>descendants.has(run.taskId));
+    }
+    const ids = new Set(tasks.map(task=>task.taskId));
     const pending = runs.filter(
       (r) =>
         !(r.historyOnly || r.observationOnly) &&

@@ -19,7 +19,7 @@ export function isTransientReceipt(operation: unknown, payload?: unknown): boole
   return typeof operation === "string" && [
     "listWork", "heartbeat", "getRun", "executionDisposition", "getAttempt", "receipt", "nodeStatus",
     "taskHistory", "taskWait", "approvalStatus", "sessionContext",
-    "sessionMessages", "projectSnapshot", "executionModelRequests", "executionModelView",
+    "sessionMessages", "projectSnapshot", "demandRead", "executionModelRequests", "executionModelView",
   ].includes(operation);
 }
 

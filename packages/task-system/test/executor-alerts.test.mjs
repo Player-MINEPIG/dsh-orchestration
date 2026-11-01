@@ -14,10 +14,11 @@ import {createNativeHarness} from '../../../tests/dsh/native-harness.mjs';
 function panel(t) {
  const dir=mkdtempSync(join(tmpdir(),'executor-alert-'));let store=new RecoveryStore(join(dir,'recovery.sqlite'));
  const ledger=TaskLedger.open(':memory:'),workers=new Set();
- const remote=Object.assign(Object.create(RemoteExecutionService.prototype),{store,workers,config:{role:'executor',nodeId:'MBP',coordinator:{endpoint:'https://current.invalid/',audience:'current'},paused:false},dispositionProbes:new Map()});
- const ctx={get:k=>({taskSystem:{config:{role:'executor',nodeId:'MBP'},ledger,results:{pending:()=>[]}},remoteExecution:remote})[k]};
+ const remote=Object.assign(Object.create(RemoteExecutionService.prototype),{store,workers,config:{role:'executor',nodeId:'MBP',coordinator:{endpoint:'https://current.invalid/',audience:'current'},paused:false}});
+ const ctx={get:k=>({taskSystem:{config:{role:'executor',nodeId:'MBP'},ledger,results:{pending:()=>[],pendingHeaders:()=>[],get:()=>undefined}},remoteExecution:remote})[k]};
+ Object.defineProperty(remote,'ctx',{value:ctx,writable:true});
  const settings=Object.assign(Object.create(TaskPluginSettings.prototype),{ctx});
- t.after(()=>{store.close();ledger.close();rmSync(dir,{recursive:true,force:true});});
+ t.after(()=>{remote.executorReads?.close();store.close();ledger.close();rmSync(dir,{recursive:true,force:true});});
  const record=(state='acknowledged',outcome='blocked',attemptId='attempt')=>({attemptId,state,claim:{task:{taskId:'task',title:'Historical blocked workload',description:'Read-only task'},run:{runId:'run',taskId:'task',state:'blocked',updatedAt:'2026-10-22T00:00:00Z',route:{nodeId:'MBP'}},attempt:{attemptId}},lease:{runId:'run',attemptId,nodeId:'MBP',fence:1},sessionId:'execution-session',result:{outcome,summary:'Original result'},receipt:{commandId:'result-'+attemptId,acceptedAt:'2026-10-22T00:00:00Z',value:{}}});
  const disposition={schedulerId:'scheduler-fixture',taskId:'task',runId:'run',taskState:'cancelled',runState:'blocked',attemptId:'attempt',attemptState:'settled',currentAttemptId:'attempt',cancellationRequested:false};
  return {dir,remote,settings,ledger,workers,record,disposition,get store(){return store},restart(){store.close();store=new RecoveryStore(join(dir,'recovery.sqlite'));remote.store=store;}};
@@ -54,9 +55,9 @@ test('current authority claim cancellation is observed; old authority and failed
  await f.remote.observeExecutorDispositions();let claims=(await f.settings.projectSnapshot()).viewContext.unresolvedClaims;
  assert.equal(calls.length,1);assert.equal(calls[0].runId,'current');assert.equal(claims.find(c=>c.runId==='current').resolved,true);assert.equal(claims.find(c=>c.runId==='old').resolved,false);assert.equal(f.store.outbound('current').state,'uncertain');
  const current=claims.find(c=>c.runId==='current');await f.settings.setExecutorAlertDisposition({recordId:current.alert.recordId,fingerprint:current.alert.fingerprint,acknowledged:true});
- f.remote.dispositionProbes.clear();await f.remote.observeExecutorDispositions();claims=(await f.settings.projectSnapshot()).viewContext.unresolvedClaims;assert.equal(claims.find(c=>c.runId==='current').alert.acknowledged,true,'observedAt does not change the acknowledgement fingerprint');
+ for(const row of f.store.claimHeaders())f.store.markDispositionProbe(`claim:${row.commandId}`,0);await f.remote.observeExecutorDispositions();claims=(await f.settings.projectSnapshot()).viewContext.unresolvedClaims;assert.equal(claims.find(c=>c.runId==='current').alert.acknowledged,true,'observedAt does not change the acknowledgement fingerprint');
  f.store.saveOutbound('unreadable',{operation:'claim',payload:{runId:'unreadable'},state:'uncertain',endpoint:'https://current.invalid/',audience:'current'});
- f.remote.coordinatorLedger.executionDisposition=async()=>{throw Error('unsupported or disconnected authority');};f.remote.dispositionProbes.clear();await f.remote.observeExecutorDispositions();
+ f.remote.coordinatorLedger.executionDisposition=async()=>{throw Error('unsupported or disconnected authority');};for(const row of f.store.claimHeaders())f.store.markDispositionProbe(`claim:${row.commandId}`,0);await f.remote.observeExecutorDispositions();
  const unknown=(await f.settings.projectSnapshot()).viewContext.unresolvedClaims.find(c=>c.runId==='unreadable');assert.equal(unknown.resolved,false);assert.equal(unknown.alert.canAcknowledge,false);assert.equal(f.store.executionObservation('claim:unreadable'),undefined);
 
 });
@@ -102,4 +103,17 @@ test('new same-Run claim remains visible beside a previously confirmed attempt, 
  assert.deepEqual(f.store.dispatchAuthority('run','attempt'),{endpoint:'https://old.invalid/',audience:'old'});
  assert.equal(f.store.dispatchAuthority('run','different-attempt'),undefined);
  const view=await f.settings.projectSnapshot();assert.equal(view.viewContext.unresolvedClaims.length,1);assert.equal(view.viewContext.unresolvedClaims[0].commandId,'new-retry-claim');assert.equal(view.viewContext.unresolvedClaims[0].alert.acknowledged,false);assert.equal(view.viewContext.unresolvedClaims[0].alert.canAcknowledge,false);
+});
+
+test('legacy acknowledgements retain exact long error fingerprints in bounded read products',async t=>{
+ const f=panel(t),record={...f.record(),detail:'D'.repeat(501)};f.store.createDispatch(record);
+ const legacy=(await f.settings.projectSnapshot({view:'executor'})).tasks[0].alert;
+ f.store.executorAlerts.set(legacy.recordId,legacy.fingerprint,true);
+ const page=await f.settings.taskPage({view:'executor',presentation:'all',pageSize:5});
+ assert.equal(page.items[0].alert.fingerprint,legacy.fingerprint);assert.equal(page.items[0].alert.acknowledged,true);assert.equal(f.remote.executorReadAlert(legacy.recordId,f.ledger).fingerprint,legacy.fingerprint);
+ f.store.saveOutbound('long-claim',{operation:'claim',payload:{runId:'long-run'},state:'uncertain',endpoint:'https://old.invalid/',audience:'old',receipt:{result:{claimRejected:{code:'REJECTED',message:'M'.repeat(2001)}}}});
+ const claim=(await f.settings.projectSnapshot({view:'executor'})).viewContext.unresolvedClaims.find(row=>row.commandId==='long-claim');
+ f.store.executorAlerts.set(claim.alert.recordId,claim.alert.fingerprint,true);
+ const claims=await f.settings.executorClaimsPage({view:'executor'}),current=claims.items.find(row=>row.commandId==='long-claim');
+ assert.equal(current.alert.fingerprint,claim.alert.fingerprint);assert.equal(current.alert.acknowledged,true);
 });

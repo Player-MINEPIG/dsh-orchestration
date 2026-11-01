@@ -68,7 +68,11 @@
     "packages/task-system/test/session-duty-authority.test.mjs",
     "packages/task-system/test/project-sessions.test.mjs",
     "packages/task-system/test/project-session-carrier.test.mjs",
-    "packages/task-system/test/task-checkins.test.mjs"
+    "packages/task-system/test/task-checkins.test.mjs",
+    "packages/task-system/test/demand-ledger-read-index.test.mjs",
+    "packages/task-system/test/demand-products.test.mjs",
+    "packages/task-system/test/executor-demand-reads.test.mjs",
+    "packages/task-system/test/session-demand-reads.test.mjs"
   ],
   "native": [
     "packages/task-system/test/project-native-client.test.mjs",
@@ -123,7 +127,8 @@
     "tests/settings/project-command-feedback.test.mjs",
     "tests/settings/session-task-panel.test.mjs",
     "tests/settings/workflow-editor-host.test.mjs",
-    "packages/task-system/test/project-page-checkins.test.mjs"
+    "packages/task-system/test/project-page-checkins.test.mjs",
+    "packages/task-system/test/demand-read-lifecycle.test.mjs"
   ],
   "official": [
     "packages/task-system/test/official-activation.test.mjs",

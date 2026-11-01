@@ -69,8 +69,12 @@ export function executorWorkspaces(
 }
 
 export type Role = 'planner' | 'executor' | 'both'
-export const EXECUTOR_OPERATIONS = ['claim', 'renew', 'submit', 'cancel', 'receipt', 'bindSession', 'markRunning', 'getRun', 'executionDisposition', 'getAttempt', 'acknowledgeCancellation', 'listWork', 'observe', 'delegate', 'taskHistory', 'taskWait', 'taskNote', 'taskReport', 'heartbeat', 'nodeStatus', 'retryBeforeEffects', 'offerApproval', 'approvalStatus', 'cancelApproval', 'executorIdentity', 'sessionContext', 'selectTaskSession', 'sessionMessages', 'sessionMessageReply', 'projectSnapshot', 'projectCollaborate', 'executionModelRequests', 'completeExecutionModels', 'executionModelView', 'reportAdmission'] as const
+export const EXECUTOR_OPERATIONS = ['claim', 'renew', 'submit', 'cancel', 'receipt', 'bindSession', 'markRunning', 'getRun', 'executionDisposition', 'getAttempt', 'acknowledgeCancellation', 'listWork', 'observe', 'delegate', 'taskHistory', 'taskWait', 'taskNote', 'taskReport', 'heartbeat', 'nodeStatus', 'retryBeforeEffects', 'offerApproval', 'approvalStatus', 'cancelApproval', 'executorIdentity', 'sessionContext', 'selectTaskSession', 'sessionMessages', 'sessionMessageReply', 'projectSnapshot','demandRead', 'projectCollaborate', 'executionModelRequests', 'completeExecutionModels', 'executionModelView', 'reportAdmission'] as const
 export type Operation = typeof EXECUTOR_OPERATIONS[number]
+/** Named read products narrow the existing public snapshot read capability. */
+export function allowsOperation(operations:readonly Operation[],operation:Operation):boolean {
+  return operations.includes(operation)||(operation==='demandRead'&&operations.includes('projectSnapshot'))
+}
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json }
 export const COMMAND_LANES = ['default', 'project-owner', 'project-application'] as const
 export type CommandLane = typeof COMMAND_LANES[number]
@@ -185,7 +189,7 @@ export function parseCommandEnvelope(body: Uint8Array | string, authMode: AuthMo
   for (const key of ['nodeId', 'audience', 'commandId', 'nonce',...(authMode === 'ed25519' ? ['keyId'] : [])]) insist(identifier(e[key]), `INVALID_${key}`)
   insist(Number.isSafeInteger(e.sequence) && Number(e.sequence) > 0, 'INVALID_SEQUENCE')
   insist(Number.isSafeInteger(e.issuedAt) && Number.isSafeInteger(e.expiresAt), 'INVALID_TIME')
-  insist(['claim','renew','submit','cancel','receipt','bindSession','markRunning','getRun','executionDisposition','getAttempt','acknowledgeCancellation','listWork','observe','delegate','taskHistory','taskWait','taskNote','taskReport','heartbeat','nodeStatus','retryBeforeEffects','offerApproval','approvalStatus','cancelApproval','executorIdentity','sessionContext','selectTaskSession','sessionMessages','sessionMessageReply','projectSnapshot','projectCollaborate','executionModelRequests','completeExecutionModels','executionModelView','reportAdmission'].includes(String(e.operation)), 'UNKNOWN_OPERATION')
+  insist(['claim','renew','submit','cancel','receipt','bindSession','markRunning','getRun','executionDisposition','getAttempt','acknowledgeCancellation','listWork','observe','delegate','taskHistory','taskWait','taskNote','taskReport','heartbeat','nodeStatus','retryBeforeEffects','offerApproval','approvalStatus','cancelApproval','executorIdentity','sessionContext','selectTaskSession','sessionMessages','sessionMessageReply','projectSnapshot','demandRead','projectCollaborate','executionModelRequests','completeExecutionModels','executionModelView','reportAdmission'].includes(String(e.operation)), 'UNKNOWN_OPERATION')
   insist(isRecord(e.payload), 'INVALID_PAYLOAD')
   if (authMode === 'ed25519') insist(typeof e.signature === 'string' && /^[A-Za-z0-9_-]{86}$/.test(e.signature), 'INVALID_SIGNATURE', 401)
   canonical(e)
@@ -217,7 +221,7 @@ export class IdentityVerifier {
     insist(envelope.audience === this.audience && peer.audience === this.audience, 'WRONG_AUDIENCE', 403)
     insist(envelope.issuedAt <= now + this.clockSkewMs && envelope.expiresAt >= now && envelope.issuedAt >= now - this.maxAgeMs && envelope.expiresAt > envelope.issuedAt && envelope.expiresAt - envelope.issuedAt <= this.maxAgeMs, 'STALE_REQUEST', 401)
     insist(verify(null, signingBytes(envelope), peer.key, Buffer.from(envelope.signature, 'base64url')), 'BAD_SIGNATURE', 401)
-    insist(peer.operations.includes(envelope.operation), 'OPERATION_DENIED', 403)
+    insist(allowsOperation(peer.operations,envelope.operation), 'OPERATION_DENIED', 403)
     return peer
   }
 }

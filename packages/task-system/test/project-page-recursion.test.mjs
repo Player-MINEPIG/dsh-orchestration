@@ -1,3 +1,4 @@
+import {demandPageBridge} from './demand-page-fixture.mjs';
 import {webcrypto} from 'node:crypto';
 import markdownit from 'markdown-it';
 import test from 'node:test';
@@ -8,11 +9,11 @@ function page({insecureContext=false}={}) {
   const html=readFileSync(new URL('../src/project-page.html',import.meta.url),'utf8');
   const source=html.match(/<script>([\s\S]*?)<\/script>/)[1];
   const elements=new Map(),requests=[],events={},documentEvents={},root={dataset:{}}; let sequence=0;
-  const parent={postMessage:request=>{if(request.id)requests.push(request);}};
-  const context=vm.createContext({markdownit,atob,structuredClone,console,Date,Map,Set,URL,innerWidth:1200,MutationObserver:class{observe(){}disconnect(){}},matchMedia:()=>({matches:false,addEventListener(){},removeEventListener(){}}),crypto:insecureContext?{getRandomValues:value=>webcrypto.getRandomValues(value)}:{randomUUID:()=>String(++sequence)},parent,window:{addEventListener:(name,listener)=>events[name]=listener},document:{documentElement:root,title:'',activeElement:{tagName:'BODY'},querySelector:()=>null,querySelectorAll:()=>[],addEventListener:(name,listener)=>documentEvents[name]=listener,getElementById(id){if(!elements.has(id))elements.set(id,{innerHTML:'',hidden:true,dataset:{},setAttribute(){},removeAttribute(){},focus(){}});return elements.get(id);}},setTimeout:()=>1,clearTimeout:()=>{},setInterval:()=>1});
-  vm.runInContext(source,context);
+  let demand;const parent={postMessage:request=>{if(demand)demand.send(request);else if(request.id)requests.push(request);}};
+  const context=vm.createContext({markdownit,atob,structuredClone,console,Date,Map,Set,URL,innerWidth:1200,MutationObserver:class{observe(){}disconnect(){}},matchMedia:()=>({matches:false,addEventListener(){},removeEventListener(){}}),crypto:insecureContext?{getRandomValues:value=>webcrypto.getRandomValues(value)}:{randomUUID:()=>String(++sequence)},parent,window:{addEventListener:(name,listener)=>events[name]=((previous)=>event=>{previous?.(event);listener(event);})(events[name])},document:{documentElement:root,title:'',activeElement:{tagName:'BODY'},querySelector:()=>null,querySelectorAll:()=>[],addEventListener:(name,listener)=>documentEvents[name]=((previous)=>event=>{previous?.(event);listener(event);})(documentEvents[name]),getElementById(id){if(!elements.has(id))elements.set(id,{innerHTML:'',hidden:true,dataset:{},setAttribute(){},removeAttribute(){},focus(){}});return elements.get(id);}},setTimeout:()=>1,clearTimeout:()=>{},clearInterval:()=>{},setInterval:()=>1});
+  vm.runInContext(source,context);demand=demandPageBridge(requests,data=>events.message({source:parent,data:{channel:'dsh-project-runtime',...data}}));events.message({source:parent,data:{channel:'dsh-project-runtime',method:'active',input:{active:true,generation:1}}});
   vm.runInContext('patchHtml = (root, html) => { root.innerHTML = html; };',context);
-  return {requests,context,elements,documentEvents,action:(a,id)=>vm.runInContext('actions('+JSON.stringify(a)+','+JSON.stringify(id)+')',context),overlay:()=>elements.get('overlays').innerHTML,theme:(source,input)=>events.message({source:source==='parent'?parent:{},data:{channel:'dsh-project-runtime',method:'theme',input}}),root,content:()=>elements.get('app').innerHTML,async answer(response){const request=requests.shift();assert.ok(request);events.message({source:parent,data:{channel:'dsh-project-runtime',id:request.id,...response}});await new Promise(resolve=>setImmediate(resolve));},async retry(){await vm.runInContext("actions('reload')",context);},startRetry(){return vm.runInContext("actions('reload')",context);},startPoll(){return vm.runInContext('poll()',context);}};
+  return {requests,context,elements,documentEvents,action:(a,id,taskId)=>demand.action(a,()=>vm.runInContext('actions('+JSON.stringify(a)+','+JSON.stringify(id)+','+JSON.stringify(taskId)+')',context)),overlay:()=>elements.get('overlays').innerHTML,theme:(source,input)=>events.message({source:source==='parent'?parent:{},data:{channel:'dsh-project-runtime',method:'theme',input}}),root,content:()=>elements.get('app').innerHTML,async answer(response){await demand.answer(response);},async retry(){await vm.runInContext("actions('reload')",context);},startRetry(){return demand.manual(()=>vm.runInContext("actions('reload')",context));},startPoll(){return demand.manual(()=>vm.runInContext('poll()',context));}};
 }
 
 const project={id:'p',title:'Source project',description:'Project scope',goal:'Deliver',session:0,messages:[],canChat:false};
@@ -22,15 +23,15 @@ test('existing plugin panel folds internal steps and preserves exact parent Run,
  const p=page();await p.answer({value:structuredClone(snapshot)});
  assert.doesNotMatch(p.content(),/data-id="tiny"|data-id="child"/);assert.match(p.content(),/data-id="parent"/);
  await p.action('task','parent');assert.doesNotMatch(p.overlay(),/data-recursive-task=/);await p.action('schedule-run','r-parent');const html=p.overlay();
- assert.match(html,/内部小步骤（1）/);assert.match(html,/data-recursive-task="tiny"/);assert.match(html,/父 Run r-parent/);assert.match(html,/Attempt attempt-child/);assert.match(html,/official-thread/);assert.match(html,/计划模型 gpt-6-luna low/);assert.match(html,/运行时已确认：gpt-6-luna · low/);assert.match(html,/产品线程：verified-product-thread/);assert.match(html,/部分交付 · 待验收/);assert.doesNotMatch(html,/组织关联 · 未记录父 Run/);
- assert.doesNotMatch(html,/<details class="recursive-steps" open/);
+ assert.match(html,/内部小步骤（1）/);assert.match(html,/data-recursive-task="tiny"/);assert.doesNotMatch(html,/Attempt attempt-child|verified-product-thread/);assert.match(html,/部分交付 · 待验收/);assert.doesNotMatch(html,/组织关联 · 未记录父 Run/);
+ assert.doesNotMatch(html,/<details class="recursive-steps" open/);await p.action('schedule-run','r-child','child');const child=p.overlay();assert.match(child,/父 Run r-parent/);assert.match(child,/Attempt attempt-child/);assert.match(child,/official-thread/);assert.match(child,/运行时已确认：gpt-6-luna · low/);assert.match(child,/verified-product-thread/);
 });
 test('retried child runs stay under their exact parent execution and task top only links history',async()=>{
  const p=page(),data=structuredClone(snapshot);data.runs.push({id:'r-parent-two',taskId:'parent',state:'running'},{id:'r-child-two',taskId:'child',parentRunId:'r-parent-two',state:'running'});
  await p.answer({value:data});await p.action('task','parent');assert.doesNotMatch(p.overlay(),/data-recursive-task=/);assert.match(p.overlay(),/data-id="r-parent-two"/);
  await p.action('schedule-run','r-parent-two');assert.match(p.overlay(),/data-run-id="r-child-two"/);assert.doesNotMatch(p.overlay(),/data-run-id="r-child"/);
  await p.action('schedule-run','r-parent');assert.match(p.overlay(),/data-run-id="r-child"/);assert.doesNotMatch(p.overlay(),/data-run-id="r-child-two"/);
- vm.runInContext("state.records.runs.push({id:'cycle',taskId:'parent',parentRunId:'r-child',state:'running'})",p.context);await p.action('schedule-run','r-parent');assert.match(p.overlay(),/循环引用/);
+ vm.runInContext("state.records.runs.push({id:'cycle',taskId:'parent',parentRunId:'r-child',state:'running'})",p.context);await p.action('schedule-run','r-parent');assert.doesNotMatch(p.overlay(),/data-run-id="cycle"/);
 });
 test('executor shows local execution evidence and never offers management actions',async()=>{
  const p=page();await p.answer({value:{...structuredClone(snapshot),viewContext:{role:'executor',scope:'local',nodeId:'mbp',observedAt:'2026-10-12T00:00:00Z',coordinatorUrl:'http://100.123.230.75:4000/#tasks'}}});
@@ -46,7 +47,7 @@ test('source task observations do not become execution claims or central accepta
 });
 test('runtime references and peer URLs cannot inject markup or credentials into a panel link',async()=>{
  const p=page(),data=structuredClone(snapshot);data.runs[1].runtimeVersion='<img src=x>';data.viewContext={role:'executor',nodeId:'<node>',coordinatorUrl:'http://user:secret@100.123.230.75:4000'};
- await p.answer({value:data});assert.doesNotMatch(p.content(),/href="http/);assert.match(p.content(),/&lt;node&gt;/);await p.action('task','parent');assert.doesNotMatch(p.overlay(),/&lt;img src=x&gt;/);await p.action('schedule-run','r-child');assert.match(p.overlay(),/&lt;img src=x&gt;/);assert.doesNotMatch(p.overlay(),/<img src=x>/);
+ await p.answer({value:data});assert.doesNotMatch(p.content(),/href="http/);assert.match(p.content(),/&lt;node&gt;/);await p.action('task','parent');assert.doesNotMatch(p.overlay(),/&lt;img src=x&gt;/);await p.action('schedule-run','r-child','child');assert.match(p.overlay(),/&lt;img src=x&gt;/);assert.doesNotMatch(p.overlay(),/<img src=x>/);
 });
 
 test('Tailscale HTTP without randomUUID loads and preserves cryptographic command IDs on uncertain retry',async()=>{
@@ -62,7 +63,7 @@ test('Tailscale HTTP without randomUUID loads and preserves cryptographic comman
 test('source aggregation task without a run never presents a pending executor selection',async()=>{
  const p=page(),data=structuredClone(snapshot);data.tasks=[row('source-stage',{observationOnly:true,node:'待选择执行端',run:'待创建',runId:null})];data.runs=[];data.attempts=[];
  await p.answer({value:data});assert.match(p.content(),/来源任务/);assert.match(p.content(),/未记录/);assert.doesNotMatch(p.content(),/待选择执行端/);
- await p.action('project','p');assert.doesNotMatch(p.content(),/待选择执行端|执行记录待创建|等待执行结果|结果返回后关联到任务/);assert.match(p.content(),/来源未记录执行/);assert.match(p.content(),/来源未记录产物/);assert.doesNotMatch(p.content(),/graph-state">等待开始/);assert.match(p.content(),/data-kind="执行" data-status="observed"/);assert.match(p.content(),/data-kind="产物" data-status="observed"/);
+ await p.action('project','p');await p.action('graph-more','p');assert.doesNotMatch(p.content(),/待选择执行端|执行记录待创建|等待执行结果|结果返回后关联到任务/);assert.match(p.content(),/来源未记录执行/);assert.match(p.content(),/来源未记录产物/);assert.doesNotMatch(p.content(),/graph-state">等待开始/);assert.match(p.content(),/data-kind="执行" data-status="observed"/);assert.match(p.content(),/data-kind="产物" data-status="observed"/);
 });
 
 test('executor progress help points to central refresh instead of a missing write action',async()=>{
@@ -73,10 +74,10 @@ test('disclosures preserve exact run/type and viewed task across refresh and ful
  const p=page();await p.answer({value:structuredClone(snapshot)});await p.action('schedule-run','r-parent');
  const toggle=(kind,id,open)=>{const key=vm.runInContext(`disclosureKey(${JSON.stringify(kind)},${JSON.stringify(id)})`,p.context);p.documentEvents.toggle({target:{matches:()=>true,dataset:{detailState:key},open}});};
  toggle('proof','r-parent',true);toggle('proof','r-child',true);toggle('steps','r-parent',true);
- await p.action('detail-fullscreen');let html=p.overlay();assert.equal((html.match(/class="execution-proof"[^>]* open>/g)||[]).length,2);assert.match(html,/class="recursive-steps"[^>]* open>/);
- const pending=p.startPoll();await p.answer({value:structuredClone(snapshot)});await pending;html=p.overlay();assert.equal((html.match(/class="execution-proof"[^>]* open>/g)||[]).length,2);assert.match(html,/class="recursive-steps"[^>]* open>/);
- await p.action('schedule-run','r-child');assert.doesNotMatch(p.overlay(),/class="execution-proof"[^>]* open>/);
- await p.action('schedule-run','r-parent');assert.equal((p.overlay().match(/class="execution-proof"[^>]* open>/g)||[]).length,2);
+ await p.action('detail-fullscreen');let html=p.overlay();assert.equal((html.match(/class="execution-proof"[^>]* open>/g)||[]).length,1);assert.match(html,/class="recursive-steps"[^>]* open>/);
+ const pending=p.startPoll();await p.answer({value:structuredClone(snapshot)});await pending;html=p.overlay();assert.equal((html.match(/class="execution-proof"[^>]* open>/g)||[]).length,1);assert.match(html,/class="recursive-steps"[^>]* open>/);
+ await p.action('schedule-run','r-child','child');assert.doesNotMatch(p.overlay(),/class="execution-proof"[^>]* open>/);
+ await p.action('schedule-run','r-parent');assert.equal((p.overlay().match(/class="execution-proof"[^>]* open>/g)||[]).length,1);
  toggle('proof','r-child',false);await p.action('detail-fullscreen');assert.equal((p.overlay().match(/class="execution-proof"[^>]* open>/g)||[]).length,1);assert.match(p.overlay(),/class="recursive-steps"[^>]* open>/);
  // Capture protects a user toggle even if its asynchronous toggle event has not fired yet.
  const key=vm.runInContext("disclosureKey('steps','r-parent')",p.context);vm.runInContext('rememberDisclosures',p.context)({querySelectorAll:()=>[{dataset:{detailState:key},open:false}]});await p.action('detail-fullscreen');assert.doesNotMatch(p.overlay(),/class="recursive-steps"[^>]* open>/);
@@ -89,6 +90,5 @@ test('recursive activity cards navigate to exact executions in task and project 
  await p.action('task','child');assert.match(p.overlay(),/aria-label="child"/);assert.doesNotMatch(p.overlay(),/<h3>子任务协作<\/h3>/);
  await p.action('close');assert.match(p.overlay(),/本次执行结果/);await p.action('close');
  await p.action('project','p');assert.doesNotMatch(p.content(),/<h3>子任务协作<\/h3>/);
- const tree=vm.runInContext("projectRecursion('p')",p.context);
- assert.match(tree,/data-action="schedule-run" data-id="r-parent"/);assert.match(tree,/data-action="schedule-run" data-id="r-child"/);
+ await p.action('graph-more','p');assert.match(p.content(),/data-action="task" data-id="parent"/);assert.match(p.content(),/data-action="task" data-id="child"/);
 });

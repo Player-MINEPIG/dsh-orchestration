@@ -771,7 +771,7 @@
           <option value="single">单设备</option>
           <option value="multi">多设备协作</option>
         </select>
-        <div id="workflow-list" class="list"></div>
+        <div id="workflow-list" class="list"></div><nav id="workflow-pagination" class="row" aria-label="工作流分页"></nav>
       </aside>
       <main>
         <p id="error" role="alert"></p>
@@ -801,7 +801,7 @@
               <label for="history">执行历史</label
               ><select id="history" class="history-select">
                 <option value="">当前定义</option></select
-              ><span id="run-state"></span>
+              ><span id="history-pagination" class="row" aria-label="工作流执行历史分页"></span><span id="run-state"></span>
             </div>
             <div id="definition-editor"></div>
             <details id="start-input">
