@@ -119,7 +119,9 @@ test('unchanged visible polls reuse selected report bodies and run inputs, while
   }};
   p.active(true,1);await p.drain(serve);let pending=p.action('task',task.id);await p.drain(serve);await pending;
   assert.equal(p.reads().filter(row=>row.method==='taskReportDetail').length,1);assert.equal(p.reads().filter(row=>row.method==='taskRunDetail').length,1);
-  pending=p.poll();await p.drain(serve);await pending;
+  pending=p.poll();for(const request of p.reads().slice(-2))await p.answer(request,serve(request));
+  assert.match(p.elements.get('overlays').innerHTML,/overlay task-detail/,'an in-flight poll keeps the cached detail drawer mounted');
+  assert.doesNotMatch(p.elements.get('overlays').innerHTML,/正在读取所选任务/);await p.drain(serve);await pending;
   assert.equal(p.reads().filter(row=>row.method==='taskReportDetail').length,1);assert.equal(p.reads().filter(row=>row.method==='taskRunDetail').length,1);
   version='two';pending=p.poll();await p.drain(serve);await pending;
   assert.equal(p.reads().filter(row=>row.method==='taskReportDetail').length,2);assert.equal(vm.runInContext('reportBodies.size',p.context),1);
