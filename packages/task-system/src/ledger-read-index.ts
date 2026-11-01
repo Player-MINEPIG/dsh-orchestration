@@ -257,10 +257,11 @@ export class DemandReadIndex {
         throw new TaskError("READ_MODEL_UPDATING", "The writable ledger must reconcile changed task metadata before this read");
       return true;
     }
+    if (!this.db.prepare("SELECT 1 FROM demand_source_dirty LIMIT 1").get()) return true;
     this.reconciling = true;
     const ownTransaction = !this.db.isTransaction;
-    if (ownTransaction) this.db.exec("BEGIN IMMEDIATE");
     try {
+      if (ownTransaction) this.db.exec("BEGIN IMMEDIATE");
       const dirty = this.db.prepare("SELECT kind,id,generation FROM demand_source_dirty ORDER BY generation,kind,id LIMIT ?").all(budget);
       const affected = new Set<string>();
       for (const row of dirty) {

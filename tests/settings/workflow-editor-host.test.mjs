@@ -54,6 +54,7 @@ test("workflow navigation stays local to the authenticated iframe and restores p
     window,
     JSON,
     projectMethods: [],
+    watchTaskPanelVisibility(_element,change){change(true);return ()=>change(false);},
     hostTheme: () => "light",
     watchTheme: () => () => {},
     sendTheme() {},
@@ -111,7 +112,7 @@ test("workflow navigation stays local to the authenticated iframe and restores p
   assert.match(rendered.props.srcDoc, /window\.__DSH_WORKFLOW_CONTEXT__=/);
   assert.match(rendered.props.srcDoc, /\\u003c\/script>/);
   assert.doesNotMatch(rendered.props.srcDoc, /<img src=x>/);
-  assert.equal(posted[0].id, "open");
+  assert.equal(posted.find(message=>message.id==="open").id, "open");
   await listeners.get("message")({
     source: frameWindow,
     data: {

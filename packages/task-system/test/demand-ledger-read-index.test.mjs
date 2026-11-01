@@ -162,3 +162,22 @@ test('unchanged paused deadline maintenance never rereads queued message or acti
  assert.ok(observed.reads.every(([kind,,bytes])=>['taskCheckin','taskResponsibility','task-attention'].includes(kind)&&bytes<4000),JSON.stringify(observed.reads));
  observed.dispose();assert.equal(f.l.getSessionMessage(messageId).state,'queued');
 });
+
+
+test('clean facts remain readable under an independent authority lock and dirty lock failures retry safely',t=>{
+ const f=fixture(t),db=f.l.managementDatabase();put(f,'task',task('locked'));f.drain();
+ db.exec('PRAGMA busy_timeout=0');const lock=new DatabaseSync(f.file);
+ try {
+  lock.exec('BEGIN IMMEDIATE');
+  assert.equal(f.l.demandReads.fact('task','locked').title,'locked');
+  assert.equal(f.l.checkins.view('locked').category,'needs_owner');
+  lock.exec('ROLLBACK');
+  db.prepare("UPDATE entities SET data=json_set(data,'$.title','changed') WHERE kind='task' AND id='locked'").run();
+  lock.exec('BEGIN IMMEDIATE');
+  assert.throws(()=>f.l.demandReads.fact('task','locked'),/locked/);
+  assert.equal(db.prepare("SELECT json_extract(data,'$.title') title FROM demand_entity_facts WHERE kind='task' AND id='locked'").get().title,'locked');
+  assert.ok(db.prepare('SELECT 1 FROM demand_source_dirty LIMIT 1').get(),'failed reconciliation retains dirty work');
+  lock.exec('ROLLBACK');
+  assert.equal(f.l.demandReads.fact('task','locked').title,'changed','a failed BEGIN cannot leave reconciling stuck');
+ } finally {if(lock.isTransaction)lock.exec('ROLLBACK');lock.close();}
+});

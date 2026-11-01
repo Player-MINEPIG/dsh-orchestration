@@ -147,3 +147,16 @@ test('session delivery and legacy workspace matching select exact headers before
  const contextual=f.dispatch('context','context',{sessionId:'context-session'});contextual.claim.run.projectContext={version:1,schedulerId:'s',project:null};f.store.saveDispatch(contextual);
  assert.equal(f.store.hasLegacySessionMapping('context-session','context','worker'),false);
 });
+
+
+test('excluding handled executor reminders applies before page totals and board facets',t=>{
+ const f=fixture(t);f.queue([
+  {taskId:'handled',runId:'handled-run',title:'Handled',description:'',state:'failed',source:'local-queue',nodeId:'worker',time:at,sessionIds:[],alert:{acknowledged:true,canAcknowledge:true,fingerprint:'handled'}},
+  {taskId:'queued',runId:'queued-run',title:'Queued',description:'',state:'queued',source:'local-queue',nodeId:'worker',time:at,sessionIds:[]}
+ ]);
+ assert.equal(f.read('taskPage',{}).total,2);
+ const page=f.read('taskPage',{excludeHandled:true,pageSize:1});
+ assert.equal(page.total,1);assert.equal(page.items[0].id,'queued');assert.equal(page.counts.byStatus.handled,0);
+ const board=f.read('taskBoard',{excludeHandled:true,columns:[{status:'queued',page:0},{status:'handled',page:0}],pageSize:1});
+ assert.equal(board.counts.baseTotal,1);assert.equal(board.columns.queued.total,1);assert.equal(board.columns.handled.total,0);
+});

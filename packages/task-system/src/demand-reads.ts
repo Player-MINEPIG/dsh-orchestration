@@ -24,7 +24,7 @@ export interface ViewContext {
 export interface TaskQuery {
   view?: ReadView; project?: ProjectSelector; presentation?: "coordinator" | "execution" | "all";
   status?: "all" | TaskStatus; responsibility?: "all" | Responsibility;
-  unreadCompletedOnly?: boolean; search?: string; order?: "updated-desc";
+  unreadCompletedOnly?: boolean; excludeHandled?: boolean; search?: string; order?: "updated-desc";
 }
 export type TaskCard = Pick<LegacyTask,
   "id" | "showInCoordinator" | "kind" | "parentTaskId" | "parentRunId" | "delegationDisplay" |

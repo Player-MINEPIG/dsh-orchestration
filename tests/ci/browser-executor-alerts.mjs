@@ -44,45 +44,31 @@ export async function testExecutorAlerts(browser, { output } = {}) {
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     await page.goto(`http://127.0.0.1:${server.address().port}/`);
     const frame = page.frameLocator('iframe');
-    const card = title => frame.locator('.local-executor-card').filter({ has: frame.getByRole('heading', { name: title, exact: true }) });
-    const historical = card('历史受阻分析');
-    await historical.locator('summary').click();
-    assert.equal(await historical.locator('.local-executor-body > .record-body').filter({ hasText: '保留的原始结果' }).count(), 1);
-    for (const title of ['正在执行的本机任务', '结果等待回传']) {
-      const active = card(title); await active.locator('summary').click();
-      assert.equal(await active.getByRole('button', { name: '确认本机提醒', exact: true }).count(), 0);
+    const card=title=>frame.locator('[data-action="task"]').filter({has:frame.getByRole('heading',{name:title,exact:true})});
+    const open=async title=>{await card(title).first().click();return frame.getByRole('dialog');};
+    const close=async()=>frame.getByRole('button',{name:'关闭详情',exact:true}).click();
+    const historical=card('历史受阻分析');
+    let detail=await open('历史受阻分析');
+    await detail.getByText('保留的原始结果',{exact:true}).waitFor();
+    await close();
+    for(const title of ['正在执行的本机任务','结果等待回传']){
+      detail=await open(title);assert.equal(await detail.getByRole('button',{name:'确认本机提醒',exact:true}).count(),0);await close();
     }
-    assert.equal(await frame.getByRole('heading', { name: '领取记录提醒', exact: true }).count(), 1);
-    const snapshot = await settings.projectSnapshot({ view: 'executor' });
-    assert.equal(snapshot.viewContext.unresolvedClaims[0].alert.canAcknowledge, true, 'an orphaned claim from a former authority can only clear its local reminder');
-    for (const run of snapshot.runs.filter(run => run.id !== 'run-blocked')) {
-      await assert.rejects(settings.setExecutorAlertDisposition({ recordId: run.alert.recordId, fingerprint: run.alert.fingerprint, acknowledged: true }), error => error.details.reason === 'ALERT_STILL_ACTIVE');
-    }
-    await historical.getByRole('button', { name: '确认本机提醒', exact: true }).click();
-    const dialog = frame.getByRole('dialog');
-    await dialog.getByRole('button', { name: '关闭窗口', exact: true }).click();
-    assert.equal(calls.filter(call => call.method === 'setExecutorAlertDisposition').length, 0, 'closing confirmation does not submit');
-    await historical.getByRole('button', { name: '确认本机提醒', exact: true }).click();
-    await dialog.getByRole('button', { name: '确认', exact: true }).click();
-    await historical.waitFor({ state: 'detached' });
-    assert.deepEqual(store.dispatch('blocked'), original, 'acknowledgement preserves original execution and receipt');
-    assert.equal(calls.filter(call => call.method === 'setExecutorAlertDisposition').length, 1);
-    store.close(); store = new RecoveryStore(join(dir, 'recovery.sqlite')); remote.store = store;
-    await page.reload();
-    await frame.getByRole('heading', { name: '查看本机正在处理的工作', exact: true }).waitFor();
-    assert.equal(await historical.count(), 0, 'confirmation survives durable store reopen and browser reload');
-    await frame.getByRole('button', { name: '查看已处理历史', exact: true }).click();
-    await historical.locator('summary').click();
-    await historical.getByText(/本机提醒已确认于/).waitFor();
-    await historical.getByRole('button', { name: '撤销本机确认', exact: true }).click();
-    await dialog.getByRole('button', { name: '确认', exact: true }).click();
-    await historical.getByRole('button', { name: '确认本机提醒', exact: true }).waitFor();
-    await frame.getByRole('button', { name: '隐藏已处理历史', exact: true }).click();
-    await page.reload();
-    await historical.locator('summary').click();
-    await historical.getByRole('button', { name: '确认本机提醒', exact: true }).waitFor();
-    assert.deepEqual(store.dispatch('blocked'), original);
-    assert.deepEqual(calls.filter(call => call.method === 'setExecutorAlertDisposition').map(call => call.input.acknowledged), [true, false]);
+    assert.equal(await frame.getByRole('heading',{name:'本机领取记录提醒',exact:true}).count(),1);
+    const snapshot=await settings.projectSnapshot({view:'executor'});
+    assert.equal(snapshot.viewContext.unresolvedClaims[0].alert.canAcknowledge,true);
+    for(const run of snapshot.runs.filter(run=>run.id!=='run-blocked'))await assert.rejects(settings.setExecutorAlertDisposition({recordId:run.alert.recordId,fingerprint:run.alert.fingerprint,acknowledged:true}),error=>error.details.reason==='ALERT_STILL_ACTIVE');
+    detail=await open('历史受阻分析');await detail.getByRole('button',{name:'确认本机提醒',exact:true}).click();
+    const dialog=frame.getByRole('dialog');await dialog.getByRole('button',{name:'关闭窗口',exact:true}).click();
+    assert.equal(calls.filter(call=>call.method==='setExecutorAlertDisposition').length,0);
+    detail=await open('历史受阻分析');await detail.getByRole('button',{name:'确认本机提醒',exact:true}).click();await dialog.getByRole('button',{name:'确认',exact:true}).click();
+    await historical.waitFor({state:'detached'});assert.deepEqual(store.dispatch('blocked'),original);assert.equal(calls.filter(call=>call.method==='setExecutorAlertDisposition').length,1);
+    store.close();store=new RecoveryStore(join(dir,'recovery.sqlite'));remote.store=store;await page.reload();
+    await frame.getByRole('heading',{name:/本机执行记录/}).waitFor();assert.equal(await historical.count(),0);
+    await frame.getByRole('button',{name:'查看已处理历史',exact:true}).click();detail=await open('历史受阻分析');await detail.getByText(/本机提醒已确认于/).waitFor();await detail.getByRole('button',{name:'撤销本机确认',exact:true}).click();await dialog.getByRole('button',{name:'确认',exact:true}).click();
+    detail=await open('历史受阻分析');await detail.getByRole('button',{name:'确认本机提醒',exact:true}).waitFor();await close();
+    await frame.getByRole('button',{name:'隐藏已处理历史',exact:true}).click();await page.reload();detail=await open('历史受阻分析');await detail.getByRole('button',{name:'确认本机提醒',exact:true}).waitFor();
+    assert.deepEqual(store.dispatch('blocked'),original);assert.deepEqual(calls.filter(call=>call.method==='setExecutorAlertDisposition').map(call=>call.input.acknowledged),[true,false]);
     assert.deepEqual(errors, []);
     return { name: 'executor alerts', persistentConfirmation: true, reversible: true, activeAndUndeliveredBlocked: true, originalEvidencePreserved: true };
   } catch (error) {

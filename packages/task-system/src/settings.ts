@@ -1,3 +1,4 @@
+import { ExecutorDemandReads } from "./remote/executor-reads.js";
 import { demandReadInputs, parseDemandRead } from "./demand-read-inputs.js";
 import type { DemandReadMethod } from "./demand-reads.js";
 import { ProtocolError } from "./remote/protocol.js";
@@ -588,6 +589,18 @@ export class TaskPluginSettings extends TypertRemoteService {
       return detail;
     });
   }
+  private localExecutorReads: {ledger:TaskSystemService['ledger'];reads:ExecutorDemandReads}|undefined;
+  private localExecutorProduct(method:DemandReadMethod,input:import('./demand-reads.js').DemandReadInputs[DemandReadMethod],task:TaskSystemService):unknown {
+    if(this.localExecutorReads?.ledger!==task.ledger){
+      this.localExecutorReads?.reads.close();
+      this.localExecutorReads={ledger:task.ledger,reads:new ExecutorDemandReads({ledger:task.ledger,nodeId:task.config.nodeId,
+        queue:()=>({revision:'none',records:[]}),pending:()=>task.results?.pendingHeaders?.()??[],pendingDetail:commandId=>task.results?.get(commandId),
+        decorate:row=>row,decorateClaim:()=>{throw new TaskError('NOT_FOUND','Remote recovery is not configured');},
+        context:()=>({queueObservedAt:null,pollState:'never',connection:null,heartbeat:null})})};
+      this.ctx.effect?.(()=>()=>{this.localExecutorReads?.reads.close();this.localExecutorReads=undefined;},'ledger-only executor read products');
+    }
+    return task.ledger.demandReads.withFacts(()=>this.localExecutorReads!.reads.read(method,input));
+  }
   private async demandProduct(method:DemandReadMethod,input:unknown):Promise<unknown> {
     return this.projectOperation(async()=>{
       const parsed=parseDemandRead(method,input),task=this.ctx.get('taskSystem') as TaskSystemService|undefined;
@@ -597,8 +610,7 @@ export class TaskPluginSettings extends TypertRemoteService {
       const view=parsed.view??(task.config.centralMode===undefined&&task.config.role==='executor'?'executor':'planner');
       if(view==='executor') {
         if(remote)return remote.executorDemandRead(method,parsed,task.ledger);
-        if(task.projects)return task.projects.demandRead(method,parsed,{kind:'node',nodeId:task.config.nodeId});
-        throw new TaskError('PROJECT_UNAVAILABLE','Local task view unavailable');
+        return this.localExecutorProduct(method,parsed,task);
       }
       if(deploymentPolicy(task.config).centralMode==='remote') {
         if(!remote?.coordinatorLedger?.projectDemandRead||remote.settingsSnapshot().paused)throw new TaskError('CENTRAL_UNAVAILABLE','Central task center unavailable');
@@ -617,7 +629,7 @@ export class TaskPluginSettings extends TypertRemoteService {
     const policy=deploymentPolicy(task.config);
     const localSource:SessionTaskHeaderSource={readHeaders:async query=>{
       const request={sessionId,rootTaskIds:roots,...query};
-      const value=remote?remote.executorDemandRead('sessionTaskPage',request,task.ledger):task.projects?.demandRead('sessionTaskPage',request,{kind:'node',nodeId:task.config.nodeId});
+      const value=remote?remote.executorDemandRead('sessionTaskPage',request,task.ledger):this.localExecutorProduct('sessionTaskPage',request,task);
       if(!value)throw new TaskError('PROJECT_UNAVAILABLE','Local task view unavailable');
       const result=parseSessionHeaderSlice(value);
       return {...result,viewContext:{role:'executor',scope:'local',nodeId:task.config.nodeId,observedAt:result.sampledAt}};

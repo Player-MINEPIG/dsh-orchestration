@@ -193,7 +193,7 @@ test('hiding an in-flight HTML preview releases loading so the restored panel ca
 test('a session query changed during a poll schedules the new query and ignores stale completion',async()=>{
  let ui;vm.runInNewContext(readFileSync(new URL('../src/settings-client.js',import.meta.url),'utf8'),{structuredClone,window:{__ModuleLoader__:{load(row){ui=row.factory(()=>({}));}}}});
  const requests=[],scheduled=[],monitor=new ui.SessionTaskMonitor((method,input)=>new Promise(resolve=>requests.push({method,input,resolve})),'s');monitor.active=true;monitor.onSettled=delay=>scheduled.push(delay);
- const first=monitor.load();monitor.setQuery({status:'error'});assert.equal(requests.length,2);assert.equal(requests[1].input.status,'error');
+ const first=monitor.load();monitor.setQuery({status:'error',search:'executor-session',page:1});assert.equal(requests.length,2);assert.equal(requests[1].method,'sessionTaskPage');assert.equal(requests[1].input.status,'error');assert.equal(requests[1].input.search,'executor-session');assert.equal(requests[1].input.page,1);
  requests[1].resolve({sessionId:'s',items:[],counts:{all:9,error:2},page:0,pages:0,total:0});await new Promise(resolve=>setImmediate(resolve));assert.deepEqual(scheduled,[5000]);
  requests[0].resolve({sessionId:'s',items:[{id:'stale'}],counts:{all:1}});await first;
  assert.equal(monitor.state.value.counts.all,9);assert.equal(monitor.state.value.tasks.length,0);assert.deepEqual(scheduled,[5000]);monitor.dispose();
@@ -216,4 +216,15 @@ test('executor claims use the bounded product envelope and later pages remain re
  const next=p.action('executor-claims-page',JSON.stringify({delta:1}));await p.drain(respond);await next;
  assert.match(p.elements.get('app').innerHTML,/claim-1/);assert.doesNotMatch(p.elements.get('app').innerHTML,/claim-0/);
  assert.equal(p.reads().find(request=>request.method==='executorClaimsPage').input.page,1);p.dispose();
+});
+
+test('executor task details retain local reminder controls and history filters before paging',async()=>{
+ const p=fixture();vm.runInContext("state.taskView='executor'",p.context);
+ const card={id:'alert-task',title:'Local exception',status:'error',project:'unassigned',alert:{recordId:'record',fingerprint:'f',canAcknowledge:true,acknowledged:false}},empty={items:[],total:0,pages:0,page:0,pageSize:5},context={...snapshot.viewContext,role:'executor',scope:'local'};
+ const serve=request=>request.method==='readBootstrap'?{...snapshot,viewContext:context}:request.method==='taskDetail'?{task:card,runs:empty,reports:empty,childAttention:empty}:{...board(request,[card],1),viewContext:context};
+ p.active(true);await p.drain(serve);assert.equal(p.reads().find(row=>row.method==='taskBoard').input.excludeHandled,true);
+ let pending=p.action('task',card.id);await p.drain(serve);await pending;assert.match(p.elements.get('overlays').innerHTML,/确认本机提醒/);
+ card.alert={...card.alert,acknowledged:true,acknowledgedAt:'2026-11-01T00:00:00Z'};pending=p.poll();await p.drain(serve);await pending;assert.match(p.elements.get('overlays').innerHTML,/撤销本机确认/);
+ pending=p.action('executor-alert-history');await p.drain(serve);await pending;
+ const query=p.reads().filter(row=>row.method==='taskBoard').at(-1).input;assert.equal(query.excludeHandled,false);assert.ok(query.columns.some(column=>column.status==='handled'));p.dispose();
 });

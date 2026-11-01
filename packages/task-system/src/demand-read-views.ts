@@ -82,6 +82,7 @@ export class DemandTaskViews {
     else if(query.project?.kind==='project') {parts.push('d.project=?');args.push(query.project.projectId);}
     const presentation=query.presentation??'coordinator';
     if(presentation!=='all') {parts.push('d.coordinator=?');args.push(Number(presentation==='coordinator'));}
+    if(query.excludeHandled)parts.push("d.status<>'handled'");
     if(!facets) {
       if(query.status&&query.status!=='all') {if(!statuses.includes(query.status))throw new TaskError('INVALID','Invalid status');parts.push('d.status=?');args.push(query.status);}
       if(query.responsibility&&query.responsibility!=='all') {if(!responsibilities.includes(query.responsibility))throw new TaskError('INVALID','Invalid responsibility');parts.push('d.responsibility=?');args.push(query.responsibility);}

@@ -3772,7 +3772,7 @@ h(
               detail?.runs?.pages>1&&h("div",null,h("button",{disabled:detail.runs.page===0,onClick:()=>monitor.loadTask(task.id,detail.runs.page-1)},"较新执行"),h("span",null,` ${detail.runs.page+1} / ${detail.runs.pages} `),h("button",{disabled:detail.runs.page+1>=detail.runs.pages,onClick:()=>monitor.loadTask(task.id,detail.runs.page+1)},"更早执行"))));
         })),
         value?.pages>1&&h("nav",{"aria-label":"会话任务分页"},h("button",{disabled:loading||value.page===0,onClick:()=>monitor.setQuery({page:value.page-1})},"上一页"),h("span",null,` ${value.page+1} / ${value.pages} `),h("button",{disabled:loading||value.page+1>=value.pages,onClick:()=>monitor.setQuery({page:value.page+1})},"下一页")),
-        !visible.length && h("div", { className: "stm-empty" }, !value ? (loading ? "正在读取任务…" : "读取失败，请重试") : tasks.length ? "当前筛选没有任务" : local ? "当前会话尚无本机执行记录" : "当前会话尚无执行任务"),
+        !visible.length && h("div", { className: "stm-empty" }, !value ? (loading ? "正在读取任务…" : "读取失败，请重试") : (counts.all??value.total??tasks.length)>0 ? "当前筛选没有任务" : local ? "当前会话尚无本机执行记录" : "当前会话尚无执行任务"),
         evidence([["来源会话", sessionId]]),
         local && context.pollState && h("p", { className: "stm-muted" }, `本机队列轮询：${({ never: "尚未观测", ready: "最近一次观测成功", failed: "最近一次观测失败，保留已有执行记录", paused: "已暂停，保留上次观测记录" })[context.pollState] || "状态待核实"}。队列观测与结果回传状态分别记录。`),
         (context?.observedAt || value?.sampledAt) && h("p", { className: "stm-muted" }, `更新于 ${formatTime(context?.observedAt || value?.sampledAt)}${context?.queueObservedAt ? " · 队列观测于 " + formatTime(context.queueObservedAt) : ""} · 每 5 秒自动刷新`));

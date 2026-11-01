@@ -189,6 +189,7 @@ export class ExecutorDemandReads {
   private taskWhere(q:TaskQuery&{sessionId?:string}){const parts=['1'],args:SQLInputValue[]=[];
     if(q.project?.kind==='project'){parts.push('project=?');args.push(q.project.projectId);}else if(q.project?.kind==='unassigned')parts.push("project='unassigned'");
     if(q.sessionId){parts.push("EXISTS(SELECT 1 FROM runs rr WHERE rr.task_id=tasks.task_id AND EXISTS(SELECT 1 FROM json_each(json_extract(rr.data,'$.sessionIds')) WHERE value=?))");args.push(q.sessionId);}
+    if(q.excludeHandled)parts.push("status<>'handled'");
     const base={where:parts.join(' AND '),args:[...args]};
     if(q.status&&q.status!=='all'){parts.push('status=?');args.push(q.status);}if(q.responsibility&&q.responsibility!=='all'&&q.responsibility!=='none')parts.push('0');if(q.unreadCompletedOnly)parts.push('0');
     if(q.search){parts.push('instr(lower(title),lower(?))>0');args.push(q.search);}

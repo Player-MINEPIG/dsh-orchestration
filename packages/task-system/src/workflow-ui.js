@@ -104,7 +104,7 @@
   const run = () =>
     loadedRuns.get(state.runId) ||
     state.snapshot?.runs.find((row) => row.workflowRunId === state.runId);
-  const definition = () => (run() ? normalized(run().definition) : state.draft);
+  const definition = () => (run()?.definition ? normalized(run().definition) : state.draft);
   const selectedStep = () =>
     definition()?.steps.find((row) => row.stepId === state.stepId);
   const nodeStatus = (nodeId) =>
@@ -404,6 +404,7 @@
     applyViewport();
   }
   function graph() {
+    if(run()&&!run().definition){$("device-graph").innerHTML="<p class=\"hint\">正在加载所选执行的历史拓扑…</p>";return;}
     const def = definition();
     if (!def) return;
     if (!def.stages.some((stage) => stage.stageId === state.stageId))
@@ -622,10 +623,11 @@
   function renderStepResult() {
     const step = selectedStep(),
       view = run()?.steps.find((row) => row.stepId === step?.stepId);
-    if (!step || !view) return;
-    if (!loadedRuns.has(run().workflowRunId) || !stepProducts.has(JSON.stringify([run().workflowRunId,step.stepId]))) {
+    if (!step || !run()) return;
+    if(!view&&loadedRuns.has(run().workflowRunId)){$("step-detail").innerHTML="<p class=\"hint\">本次执行未包含此步骤记录。</p>";return;}
+    if (!view || !loadedRuns.has(run().workflowRunId) || !stepProducts.has(JSON.stringify([run().workflowRunId,step.stepId]))) {
       if(loadedRuns.has(run().workflowRunId))void readSelectedStep();
-      $("step-detail").innerHTML = `<h3>${esc(step.title)}</h3>${badge(view.state)}<p class="hint">正在加载本次执行详情。连接失败时可点击刷新重试。</p>`;
+      $("step-detail").innerHTML = `<h3>${esc(step.title)}</h3>${badge(view?.state||run().state)}<p class="hint">正在加载本次执行详情。连接失败时可点击刷新重试。</p>`;
       return;
     }
     const dispatches = (run().dispatches || []).filter(
@@ -693,7 +695,7 @@
     if(!chosen)return {definitions:workflowPage.items,runs:[],nodes:[],workspaces:[],programs:[],models:[],taskBindings:[],workflowPage};
     const [detail,historyPage]=await Promise.all([api("workflowDetail",{workflowId:chosen}),api("workflowRunPage",{workflowId:chosen,page:state.historyPage,pageSize:20})]);
     if(!current())throw Error("读取已结束");
-    const snapshot={...detail,definitions:workflowPage.items.map(row=>row.workflowId===chosen?detail.definition:row),runs:historyPage.items,workflowPage,historyPage};
+    const snapshot={...detail,definitions:workflowPage.items.map(row=>row.workflowId===chosen?detail.definition:row),runs:historyPage.items.map(row=>({...row,steps:[],dispatches:[]})),workflowPage,historyPage};
     if(!snapshot.definitions.some(row=>row.workflowId===chosen))snapshot.definitions.push(detail.definition);
     if(workflowRunId){const exact=await api("workflowRunDetail",{workflowRunId});if(!current())throw Error("读取已结束");const run={...exact.run,definition:exact.definition||exact.run.definition};snapshot.runs=snapshot.runs.filter(row=>row.workflowRunId!==run.workflowRunId);snapshot.runs.push(run);const stepId=state.stepId||context.stepId;if(stepId){const step=await api("workflowStepDetail",{workflowRunId:run.workflowRunId,stepId});run.steps=run.steps.map(row=>row.stepId===stepId?{...row,...step}:row);snapshot.stepProduct={workflowRunId:run.workflowRunId,stepId,step};}}
     return snapshot;
@@ -738,6 +740,8 @@
           return;
         }
         await selectWorkflow(chosen.workflowId,{loaded:true});
+        if(workflowRunId){const exact=snapshot.runs.find(row=>row.workflowRunId===workflowRunId||row.runId===workflowRunId);if(exact)loadedRuns.set(exact.workflowRunId,exact);}
+        if(snapshot.stepProduct)stepProducts.set(JSON.stringify([snapshot.stepProduct.workflowRunId,snapshot.stepProduct.stepId]),snapshot.stepProduct.step);
         const selectedRun = snapshot.runs.find(
           (row) =>
             row.workflowRunId === context.runId || row.runId === context.runId,

@@ -330,7 +330,7 @@ export class ExecutorWorker {
       lastPoll = this.now();
       this.polling = (async () => {
         if (!recovered) {
-          await this.recoverResults();
+          await this.recoverPendingResults();
           recovered = true;
         }
         if (!this.active) return [];
@@ -843,6 +843,10 @@ export class ExecutorWorker {
     }
   }
   async recoverResults(): Promise<DispatchRecord[]> {
+    await this.recoverPendingResults();
+    return this.options.store.dispatches();
+  }
+  private async recoverPendingResults(): Promise<void> {
     insist(this.runs.size === 0, "RECOVERY_REQUIRES_IDLE", 409);
     const records = this.options.store.recoverDispatches();
     for (const record of records) {
@@ -853,7 +857,6 @@ export class ExecutorWorker {
         await this.requestRetry(record);
     }
     await this.reconcileUncertain();
-    return records.flatMap(record=>{const current=this.options.store.dispatch(record.attemptId);return current?[current]:[];});
   }
   private async confirmCancellation(
     record: DispatchRecord,
