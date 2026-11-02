@@ -2248,7 +2248,7 @@ export class ProjectRuntime {
             model:t.dispatchOrigin.composition?.model??null,reasoningEffort:t.dispatchOrigin.composition?.reasoningEffort??null,preset:t.dispatchOrigin.composition?.preset??null}
           : t.dispatchOrigin ? {kind:"system",nodeId:t.dispatchOrigin.nodeId} : null,returnDelivery:resultReturn ? {messageId:resultReturn.messageId,state:resultReturn.state,reason:resultReturn.reply ?? "原会话回信需处理",nextAttemptAt:resultReturn.nextAttemptAt ?? null} : null,
         responsibility:{state:requiresUser || cancellationBlocker?"needs_user":responsibility?.state??(capabilityBlocked?"needs_user":status==="error"?"unreviewed":"none"),
-          summary:requiresUser?"等待你的执行授权或结果审核":cancellationBlocker?cancellationReason:responsibility?.summary??(capabilityBlocked?resultReturn?.reply??checkin.reason:status==="error"?"执行有异常，尚无负责会话对当前证据的处理声明":""),
+          summary:requiresUser?"":cancellationBlocker?cancellationReason:responsibility?.summary??(capabilityBlocked?resultReturn?.reply??checkin.reason:status==="error"?"执行有异常，尚无负责会话对当前证据的处理声明":""),
           at:responsibility?.at??null,nodeId:responsibility?.nodeId??null,sessionId:responsibility?.sessionId??null}},
         actionVersion: attention.version,
         dispatchIssue: run?.dispatchIssue ?? null,
