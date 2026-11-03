@@ -35,6 +35,7 @@ function client(primitives = {}, react = {}) {
             module = row.factory((name) =>
               name === "react"
                 ? {
+                    createContext: () => ({}),
                     useRef: (initial) => ({ current: initial }),
                     useCallback: callback => callback,
                     createElement: (type, props, ...children) => ({
@@ -233,6 +234,8 @@ test("browser companion registers the shared persistent task settings surface an
       };
     },
     slots: {
+      entriesOfSlot: () => [],
+      subscribe: () => () => {},
       inject: (name, callback) => callback(),
       register: (options, component) => (
         registrations.push({ options, component }),

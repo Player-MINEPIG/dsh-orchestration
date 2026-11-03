@@ -29,6 +29,8 @@ export class StewardConversations {
       WHERE json_extract(data,'$.role')='user' AND json_extract(data,'$.state.kind') NOT IN ('completed','rejected','stopped','released');
       CREATE INDEX IF NOT EXISTS steward_scope_latest ON steward_messages(conversation,json_extract(data,'$.scope.kind'),json_extract(data,'$.scope.projectId'),seq);
       CREATE INDEX IF NOT EXISTS steward_native_source ON steward_sources(json_extract(data,'$.binding.sessionId'),json_extract(data,'$.binding.nodeId'));`);
+    this.db.exec("CREATE INDEX IF NOT EXISTS steward_message_activity ON steward_messages(conversation,json_extract(data,'$.createdAt'))");
+    this.db.exec("CREATE INDEX IF NOT EXISTS steward_task_origin_task ON steward_task_origins(task)");
   }
   observeRequest(input: StewardRequestObservation) {
     const value = stewardRequestObservation.parse(input);
@@ -122,6 +124,26 @@ export class StewardConversations {
     const row = this.db.prepare("SELECT scope FROM steward_conversations WHERE id=?").get(conversationId);
     return stewardScope.parse(JSON.parse(String(row?.scope)));
   }
+  topicActivity(conversationId: string, projects: { projectId: string; title: string; createdAt: string }[], activeDays: number, observedAt = new Date().toISOString()) {
+    const cutoffAt = new Date(Date.parse(observedAt) - activeDays * 86400000).toISOString();
+    const topics = new Map<string, { scope: StewardScope; title: string; lastActiveAt: string }>();
+    const titles = new Map(projects.map(project => [project.projectId, project.title]));
+    for (const project of projects) if (project.createdAt >= cutoffAt && project.createdAt <= observedAt)
+      topics.set(project.projectId, { scope: { kind: "project", projectId: project.projectId }, title: project.title, lastActiveAt: project.createdAt });
+    const rows = this.db.prepare("SELECT json_extract(data,'$.scope') AS scope,MAX(json_extract(data,'$.createdAt')) AS active FROM steward_messages WHERE conversation=? AND json_extract(data,'$.createdAt')>=? AND json_extract(data,'$.createdAt')<=? GROUP BY json_extract(data,'$.scope')").all(conversationId, cutoffAt, observedAt);
+    for (const row of rows) {
+      const scope = stewardScope.parse(JSON.parse(String(row.scope)));
+      const title = scope.kind === "personal" ? "闲聊" : titles.get(scope.projectId);
+      if (title === undefined) continue;
+      const key = scope.kind === "personal" ? "" : scope.projectId, lastActiveAt = String(row.active);
+      const previous = topics.get(key);
+      if (!previous || previous.lastActiveAt < lastActiveAt) topics.set(key, { scope, title, lastActiveAt });
+    }
+    const items = [...topics.values()].sort((a,b) => b.lastActiveAt.localeCompare(a.lastActiveAt) || canonical(a.scope).localeCompare(canonical(b.scope)));
+    const latest = this.db.prepare("SELECT id,json_extract(data,'$.scope') AS scope,json_extract(data,'$.createdAt') AS created FROM steward_messages WHERE conversation=? ORDER BY seq DESC LIMIT 1").get(conversationId);
+    return { activeDays, cutoffAt, observedAt, items: items.slice(0,100), hasMore: items.length > 100,
+      latestMessage: latest ? { id: String(latest.id), scope: stewardScope.parse(JSON.parse(String(latest.scope))), createdAt: String(latest.created) } : null };
+  }
   resolveScope(request: StewardSend): StewardScope {
     this.ensure(request.conversationId);
     const replied = request.replyTo ? this.message(request.replyTo) : undefined;
@@ -214,6 +236,18 @@ export class StewardConversations {
   taskOrigin(conversationId: string, taskId: string): StewardMessage | undefined {
     const row = this.db.prepare("SELECT message FROM steward_task_origins WHERE conversation=? AND task=?").get(conversationId, taskId);
     return row ? this.message(String(row.message)) : undefined;
+  }
+  isStewardTask(taskId: string): boolean {
+    if (!this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='entities'").get()) return false;
+    const ancestry = "WITH RECURSIVE ancestry(id) AS (SELECT ? UNION SELECT json_extract(e.data,'$.parentTaskId') FROM entities e JOIN ancestry a ON e.id=a.id WHERE e.kind='task' AND json_extract(e.data,'$.parentTaskId') IS NOT NULL)";
+    if (this.db.prepare(`${ancestry} SELECT 1 FROM steward_task_origins o JOIN ancestry a ON a.id=o.task LIMIT 1`).get(taskId)) return true;
+    if (!this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='pr_dispatch'").get()) return false;
+    return !!this.db.prepare(`${ancestry} SELECT 1 FROM ancestry a JOIN pr_dispatch d ON d.task=a.id
+      JOIN pr_turns t ON t.command=substr(d.decision,17)
+      JOIN steward_messages m ON m.id=substr(t.command,9)
+      WHERE d.decision='project-message:'||t.command AND t.command='steward-'||m.id
+      AND json_extract(m.data,'$.role')='user' AND json_extract(m.data,'$.scope.kind')='project'
+      AND json_extract(m.data,'$.scope.projectId')=t.owner AND json_extract(m.data,'$.source.sessionId')=t.session LIMIT 1`).get(taskId);
   }
   resolutionReplay(input: z.infer<typeof stewardResolve>): StewardMessage | undefined {
     const row = this.db.prepare("SELECT digest,message FROM steward_resolutions WHERE command=?").get(input.commandId);

@@ -1,7 +1,7 @@
 import { ExecutorDemandReads } from "./remote/executor-reads.js";
 import { demandReadInputs, parseDemandRead } from "./demand-read-inputs.js";
 import type { DemandReadMethod } from "./demand-reads.js";
-import { stewardRead, stewardSend, stewardResolve, stewardGateRead, stewardGateArm, stewardGateDecide, stewardGateAmend, stewardGateContinue, stewardGateAcceptContinue, stewardGateIndependent } from "./steward-contracts.js";
+import { stewardSourceSession, stewardRead, stewardSend, stewardResolve, stewardGateRead, stewardGateArm, stewardGateDecide, stewardGateAmend, stewardGateContinue, stewardGateAcceptContinue, stewardGateIndependent } from "./steward-contracts.js";
 import { stewardMemoryRead, stewardMemoryConfigure } from "./steward-memory.js";
 import { ProtocolError } from "./remote/protocol.js";
 import { ExpectedExecutionMs } from "./execution-expectation.js";
@@ -366,6 +366,7 @@ export function hasTaskConfigOverride(patches: readonly unknown[]): boolean {
 
 const projectInputs = {
   ...demandReadInputs,
+  stewardSourceSession,
   stewardSnapshot: stewardRead,
   stewardSend,
   stewardReconcile: stewardRead,
@@ -687,6 +688,7 @@ export class TaskPluginSettings extends TypertRemoteService {
       throw error;
     }
   }
+  async stewardSourceSession(input: unknown) { return this.stewardOperation(() => this.stewardService().sourceSession(stewardSourceSession.parse(input))); }
   async stewardSnapshot(input: unknown) { return this.stewardOperation(() => this.stewardService().snapshot(stewardRead.parse(input))); }
   async stewardSend(input: unknown) {
     return this.stewardOperation(async () => {

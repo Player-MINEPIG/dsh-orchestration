@@ -1,7 +1,8 @@
 import type { Context } from "@deepseek-ai/cordis";
 import type { Agent } from "@deepseek-ai/dsh-agent";
 import { createUserMessage, ReasoningEffortId, type GenerateOptions } from "@deepseek-ai/dsh-llm";
-import { SessionId, SessionLogOffset } from "@deepseek-ai/dsh-session";
+import { Session, SessionId, SessionLogOffset, SESSION_FORMAT_VERSION } from "@deepseek-ai/dsh-session";
+import { SessionAlreadyExistsError } from "@deepseek-ai/dsh-session-persistence";
 import { createHash } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -12,7 +13,8 @@ import { StewardConversations, stewardBindingKey, type StewardCursor } from "./s
 import { StewardMemoryBridge, stewardMemoryRead, stewardMemoryConfigure } from "./steward-memory.js";
 import { StewardRecall } from "./steward-recall.js";
 import { resolveStewardRoute, createStewardClassifier } from "./steward-routing.js";
-import { STEWARD_PERSONA, STEWARD_PERSONA_TEXT, stewardBinding, stewardRead, stewardSend, stewardResolve,
+import { initializeTaskSessionTitle } from "./session-titles.js";
+import { STEWARD_PERSONA, STEWARD_PERSONA_TEXT, stewardBinding, stewardRead, stewardSend, stewardResolve, stewardSourceSession,
   stewardGateRead, stewardGateArm, stewardGateDecide, stewardGateAmend, stewardGateContinue, stewardGateAcceptContinue, stewardGateIndependent,
   type StewardBinding, type StewardMessage, type StewardScope, type StewardSend, type StewardSnapshot, type StewardQuote } from "./steward-contracts.js";
 
@@ -45,6 +47,8 @@ export class StewardRuntime {
   private readonly reads = new Map<string, Promise<void>>();
   private conversationAfter = "";
   private readonly sourceAfter = new Map<string, string>();
+  private readonly sourceCreations = new Map<string, Promise<void>>();
+  private readonly sourceJobs = new Set<Promise<{ scope: StewardScope; binding: StewardBinding }>>();
   private readonly handles = new Map<string, Awaited<ReturnType<Context["agents"]["create"]>>>();
   private readonly personalJobs = new Set<Promise<void>>();
   private readonly memoryJobs = new Set<Promise<unknown>>();
@@ -64,7 +68,7 @@ export class StewardRuntime {
       return project;
     });
   }
-  get active(): boolean { return this.sends.size > 0 || this.personalJobs.size > 0 || this.memoryJobs.size > 0; }
+  get active(): boolean { return this.sends.size > 0 || this.sourceJobs.size > 0 || this.sourceCreations.size > 0 || this.personalJobs.size > 0 || this.memoryJobs.size > 0; }
   bindContext(ctx: Context) {
     this.ctx = ctx;
     this.promptDisposer?.();
@@ -107,11 +111,85 @@ export class StewardRuntime {
     return { authorityId: this.task.ledger.schedulerIdentity(), conversationId: request.conversationId,
       currentScope: this.store.current(request.conversationId), persona: STEWARD_PERSONA,
       ...page, attention: this.store.attention(request.conversationId), commandMessage: request.commandId ? this.store.commandMessage(request.conversationId, request.commandId) : null, projects: this.projects(),
+      topicActivity: this.store.topicActivity(request.conversationId, this.task.projects!.chatProjectActivity(), this.task.config.stewardActiveDays),
       lastSeq: page.page.lastStoredSeq, limitations, routing: { auto: !!this.task.config.projectAgentOptions && !!this.ctx.get("llm") },
       context: this.memory.capability(),
       requests: this.store.requests(request.conversationId),
       requestObservation: { kind: this.requestDiagnostic || !this.requestDisposer ? "unavailable" : "active", reason: this.requestDiagnostic },
       sources: this.store.cursors(request.conversationId).map(cursor => ({ source: cursor.binding, status: cursor.status })) };
+  }
+  sourceSession(input: unknown): Promise<{ scope: StewardScope; binding: StewardBinding }> {
+    const job = this.openSourceSession(input).finally(() => this.sourceJobs.delete(job));
+    this.sourceJobs.add(job);
+    return job;
+  }
+  private async openSourceSession(input: unknown): Promise<{ scope: StewardScope; binding: StewardBinding }> {
+    this.ready();
+    this.task.assertConversationAdmission();
+    const request = stewardSourceSession.parse(input);
+    if (!this.ctx.get("sessionPersistence")) throw new TaskError("UNAVAILABLE", "Native session persistence is unavailable");
+    const binding = request.scope.kind === "personal" ? this.personalBinding(request.conversationId)
+      : await this.resolveBinding(request.scope, request.conversationId);
+    if (binding.nodeId !== this.task.config.nodeId)
+      throw new TaskError("UNAVAILABLE", "Open this source session on its native owner");
+    const sessionId = SessionId(binding.sessionId), persistence = this.ctx.sessionPersistence;
+    if (binding.kind === "personal") await this.ensurePersonalSource(binding);
+    const stored = await persistence.stat(sessionId);
+    if (!stored) throw new TaskError("UNAVAILABLE", "The native source session is not available");
+    if (stored.header.id !== sessionId || stored.header.cwd !== binding.cwd)
+      throw new TaskError("FORBIDDEN", "Native source metadata does not match its authorized binding");
+    await this.borrowSourceAgent(binding, request.conversationId, true);
+    this.ready();
+    if (request.scope.kind === "project") {
+      const current = await this.resolveBinding(request.scope, request.conversationId);
+      if (stewardBindingKey(current) !== stewardBindingKey(binding))
+        throw new TaskError("CONFLICT", "Project generation changed while opening its source session");
+    }
+    this.ready();
+    return { scope: request.scope, binding };
+  }
+  private async borrowSourceAgent(binding: StewardBinding, conversationId: string, viewing: boolean): Promise<Agent | undefined> {
+    const controller = this.ctx.get("sessionController");
+    if (!controller) return undefined;
+    const id = SessionId(binding.sessionId), live = this.ctx.agents.get(id);
+    if (live) {
+      if (live.session.header.cwd !== binding.cwd) throw new TaskError("FORBIDDEN", "Native source workspace changed");
+      return live;
+    }
+    if (viewing && this.store.activeMessage(conversationId, binding))
+      throw new TaskError("UNAVAILABLE", "The original native wait must be reconciled before activating this source");
+    const query = this.ctx.get("sessionQuery");
+    if (!query) throw new TaskError("UNAVAILABLE", "Native source observation is unavailable");
+    const observation = await query.observeSession(id);
+    try {
+      const inbox = z.object({ "next-turn": z.array(z.unknown()), "next-step": z.array(z.unknown()) }).safeParse(observation.projections?.values.inbox);
+      const reader = await this.ctx.sessionPersistence.open(id, "read");
+      let tail;
+      try { tail = (await reader.read(Math.max(0, Number(observation.cursor) - 199), 200)).events; }
+      finally { await reader.close(); }
+      const boundary = tail.findLast(event => event.type === "turn/start" || event.type === "turn/end");
+      if (!inbox.success || inbox.data["next-turn"].length || inbox.data["next-step"].length ||
+          boundary?.type === "turn/start" || !boundary && observation.cursor >= 200)
+        throw new TaskError("UNAVAILABLE", "This cold source has pending or uncertain native work; inspect the original session before activating it");
+      const current = await this.ctx.sessionPersistence.stat(id);
+      if (current && observation.revision !== undefined && current.revision !== observation.revision) {
+        this.ready();
+        const activated = this.ctx.agents.get(id);
+        if (activated) {
+          if (activated.session.header.cwd !== binding.cwd) throw new TaskError("FORBIDDEN", "Native source workspace changed");
+          return activated;
+        }
+      }
+      if (!current || observation.revision !== undefined && current.revision !== observation.revision)
+        throw new TaskError("UNAVAILABLE", "The native source changed during its idle check; retry the source view");
+      this.ready();
+      const result = await controller.resolveAgent(id);
+      this.ready();
+      if ("error" in result) throw new TaskError("UNAVAILABLE", result.error.message);
+      if (result.agent.id !== id || result.agent.session.header.cwd !== binding.cwd)
+        throw new TaskError("FORBIDDEN", "Native source no longer matches its authorized binding");
+      return result.agent;
+    } finally { observation[Symbol.dispose](); }
   }
   private observeRequest(options: GenerateOptions) {
     if (!options.sessionId || !Object.isFrozen(options)) return;
@@ -340,25 +418,61 @@ export class StewardRuntime {
     if (binding.kind === "managed") this.task.projects!.resumeConversationQueue();
     return this.snapshot({ conversationId: request.conversationId });
   }
+  private personalBinding(conversationId: string): Extract<StewardBinding, { kind: "personal" }> {
+    const key = hash(this.task.ledger.schedulerIdentity() + ":" + conversationId);
+    return { kind: "personal", nodeId: this.task.config.nodeId, sessionId: `steward-personal-${key}`,
+      generation: 1, cwd: join(dirname(resolve(this.task.config.databasePath)), "steward", key) };
+  }
+  private ensurePersonalSource(binding: Extract<StewardBinding, { kind: "personal" }>): Promise<void> {
+    const active = this.sourceCreations.get(binding.sessionId);
+    if (active) return active;
+    const create = async () => {
+      const sessionId = SessionId(binding.sessionId), persistence = this.ctx.sessionPersistence;
+      if (!await persistence.stat(sessionId)) {
+        mkdirSync(binding.cwd, { recursive: true, mode: 0o700 });
+        try {
+          const handle = await persistence.create({ version: SESSION_FORMAT_VERSION, id: sessionId,
+            createdAt: Date.now(), cwd: binding.cwd, isSeeded: false, delegationDepth: 0 });
+          try {
+            const session = Session.create(sessionId, undefined, handle.header, undefined, this.ctx.sessions.messageProjections);
+            initializeTaskSessionTitle(session, "管家 · 闲聊");
+            await handle.append(session.snapshotEvents());
+            await handle.flush();
+            await this.ctx.get("sessionProjectionCache")?.write(session);
+          } finally { await handle.close(); }
+        } catch (error) { if (!(error instanceof SessionAlreadyExistsError)) throw error; }
+      }
+      const stored = await persistence.stat(sessionId);
+      if (!stored || stored.header.id !== sessionId || stored.header.cwd !== binding.cwd)
+        throw new TaskError("FORBIDDEN", "Native source metadata does not match its authorized binding");
+      const registry = this.ctx.get("workspaceRegistry");
+      if (registry) {
+        const workspace = await registry.create(binding.cwd, "管家 · 闲聊");
+        await workspace.attachSession(sessionId);
+      }
+    };
+    const job = create().finally(() => this.sourceCreations.delete(binding.sessionId));
+    this.sourceCreations.set(binding.sessionId, job);
+    return job;
+  }
   private async resolveBinding(scope: StewardScope, conversationId: string): Promise<StewardBinding> {
     if (!this.ctx.get("agents") || !this.ctx.get("sessions") || !this.ctx.get("sessionPersistence"))
       throw new TaskError("UNAVAILABLE", "Native session services are unavailable");
     if (scope.kind === "personal") {
       if (!this.task.config.projectAgentOptions) throw new TaskError("CONFIGURATION", "Configure the conversation model first");
-      const key = hash(this.task.ledger.schedulerIdentity() + ":" + conversationId);
-      return { kind: "personal", nodeId: this.task.config.nodeId, sessionId: `steward-personal-${key}`,
-        generation: 1, cwd: join(dirname(resolve(this.task.config.databasePath)), "steward", key) };
+      return this.personalBinding(conversationId);
     }
     if (!this.projects().some(project => project.projectId === scope.projectId))
       throw new TaskError("FORBIDDEN", "Project is not available to this conversation");
     return this.task.sessionPortal.bindingForRead(scope.projectId);
   }
   private async submit(request: StewardSend): Promise<StewardSnapshot> {
+    const quote = await this.prepareQuote(request);
     let scope = this.store.resolveScope(request);
     if (request.routingMode === "auto") {
       const replyScope = request.replyTo ? this.store.message(request.replyTo).scope : undefined;
       const options = this.task.config.projectAgentOptions;
-      const result = await resolveStewardRoute({ text: request.text, projects: this.projects(),
+      const result = await resolveStewardRoute({ text: request.text, projects: this.projects().map(({ projectId, title }) => ({ projectId, title })),
         previousScope: this.store.current(request.conversationId), explicitTarget: request.target, replyScope,
         ...(options && this.ctx.get("llm") ? { classify: createStewardClassifier(this.ctx, options) } : {}) });
       if (result.kind === "clarification") throw new TaskError("CLARIFICATION", result.question);
@@ -366,7 +480,6 @@ export class StewardRuntime {
     }
     const binding = await this.resolveBinding(scope, request.conversationId);
     const initialSeq = await this.initialSeq(binding);
-    const quote = await this.prepareQuote(request);
     // Awaiting native reads can overlap another send; acceptance and the attempted marker are synchronous.
     if (this.store.replay(request)) return this.reconcile({ conversationId: request.conversationId, commandId: request.commandId });
     if (this.memoryScopes.has(stewardBindingKey(binding))) throw new TaskError("BUSY", "This scope's memory policy is being changed; wait before sending");
@@ -448,6 +561,29 @@ export class StewardRuntime {
       projectId: binding.projectId, generation: binding.generation, operation: { kind: "session-projections" } })).asOfSeq;
   }
   private async promptPersonal(binding: Extract<StewardBinding, { kind: "personal" }>, message: StewardMessage) {
+    await this.ensurePersonalSource(binding);
+    const borrowed = await this.borrowSourceAgent(binding, message.conversationId, false);
+    if (borrowed) {
+      let scope: ReturnType<Context["plugin"]> | undefined;
+      let handedOff = false;
+      try {
+        await borrowed.runMaintenance(async () => {
+          if (borrowed.status !== "idle" || borrowed.inbox.nextTurn.length || borrowed.inbox.nextStep.length)
+            throw new TaskError("BUSY", "The original native session has pending work");
+          scope = borrowed.ctx.plugin({ name: "steward-personal-turn", inject: ["tools"],
+            apply: ctx => { ctx.tools.restrict({ allow: ["steward_recall"] }); } });
+          await scope;
+          borrowed.followup(createUserMessage({ source: { kind: "user", rpcId: this.store.requestId(message.id) },
+            content: [{ type: "text", text: this.promptText(message) }] }));
+        });
+        const done = borrowed.whenIdle().then(() => this.ctx.sessions.flush(borrowed.session)).then(() => {}).catch(() => {})
+          .finally(async () => { await scope?.dispose(); this.personalJobs.delete(done); });
+        this.personalJobs.add(done);
+        handedOff = true;
+        await this.ctx.sessions.flush(borrowed.session);
+        return;
+      } catch (error) { if (!handedOff) await scope?.dispose(); throw error; }
+    }
     let handle = this.handles.get(binding.sessionId);
     if (!handle) {
       const selected = this.task.config.projectAgentOptions;
@@ -455,11 +591,7 @@ export class StewardRuntime {
       const { reasoningEffort, ...selection } = selected;
       const agentOptions = { ...selection, ...(reasoningEffort ? { reasoningEffort: ReasoningEffortId(reasoningEffort) } : {}) };
       const setup = (ctx: Context, _agent: Agent) => { ctx.tools.restrict({ allow: ["steward_recall"] }); };
-      mkdirSync(binding.cwd, { recursive: true, mode: 0o700 });
-      const stored = await this.ctx.sessionPersistence.stat(SessionId(binding.sessionId));
-      handle = stored
-        ? await this.ctx.agents.resume({ resumeSessionId: SessionId(binding.sessionId), agentOptions, setup })
-        : await this.ctx.agents.create({ sessionId: SessionId(binding.sessionId), meta: { cwd: binding.cwd }, agentOptions, setup });
+      handle = await this.ctx.agents.resume({ resumeSessionId: SessionId(binding.sessionId), agentOptions, setup });
       this.handles.set(binding.sessionId, handle);
     }
     handle.agent.followup(createUserMessage({ source: { kind: "user", rpcId: this.store.requestId(message.id) },
@@ -634,7 +766,7 @@ export class StewardRuntime {
     clearInterval(this.timer);
     this.promptDisposer?.();
     this.requestDisposer?.();
-    await Promise.allSettled([...this.sends.values(), ...this.reads.values(), ...this.memoryJobs]);
+    await Promise.allSettled([...this.sends.values(), ...this.reads.values(), ...this.sourceJobs, ...this.sourceCreations.values(), ...this.memoryJobs]);
     this.memory.close();
     for (const handle of this.handles.values()) handle.agent.cancel({ kind: "hook", reason: "Steward personal session is stopping" });
     await Promise.allSettled([...this.handles.values()].map(handle => handle.dispose()));

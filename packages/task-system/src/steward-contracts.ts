@@ -8,6 +8,7 @@ export const stewardScope = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("project"), projectId: key }),
 ]);
 export type StewardScope = z.infer<typeof stewardScope>;
+export const stewardSourceSession = z.strictObject({ conversationId: key, scope: stewardScope });
 export const stewardQuoteInput = z.strictObject({
   messageId: key, expectedRevision: z.number().int().nonnegative(),
   excerpt: z.string().min(1).max(2000).refine(text => text.trim().length > 0),
@@ -18,8 +19,8 @@ export const stewardSend = z.strictObject({
   routingMode: z.literal("auto").optional(),
   quote: stewardQuoteInput.optional(),
 }).superRefine((value, ctx) => {
-  if (value.quote && (!value.target || value.replyTo || value.routingMode))
-    ctx.addIssue({ code: "custom", path: ["quote"], message: "A quotation requires an explicit destination and cannot be combined with reply or automatic routing" });
+  if (value.quote && value.replyTo)
+    ctx.addIssue({ code: "custom", path: ["quote"], message: "A quotation cannot be combined with a reply" });
 });
 export const stewardRead = z.strictObject({
   conversationId: key, afterSeq: z.number().int().nonnegative().optional(),
@@ -129,7 +130,12 @@ export interface StewardSnapshot {
   references: { id: string; scope: StewardScope; preview: string }[];
   commandMessage: StewardMessage | null;
   page: { firstStoredSeq: number | null; lastStoredSeq: number; firstSeq: number | null; lastSeq: number | null; hasOlder: boolean; hasNewer: boolean; limit: number };
-  projects: { projectId: string; title: string }[];
+  projects: { projectId: string; title: string; bindingToken: string }[];
+  topicActivity: {
+    activeDays: number; cutoffAt: string; observedAt: string;
+    items: { scope: StewardScope; title: string; lastActiveAt: string }[]; hasMore: boolean;
+    latestMessage: { id: string; scope: StewardScope; createdAt: string } | null;
+  };
   lastSeq: number;
   limitations: string[];
   sources: { source: StewardBinding; status: z.infer<typeof stewardSourceStatus> }[];

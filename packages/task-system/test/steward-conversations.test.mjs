@@ -24,6 +24,64 @@ function accept(f, input, scope = personal, source = binding) {
   f.store.resolveScope(input);
   return f.store.accept(input, scope, source, -1);
 }
+test('quotation attaches to the next message with current, explicit, or automatic routing independently of reply', () => {
+  const quote = { messageId: 'source', expectedRevision: 0, excerpt: 'selected text' };
+  for (const destination of [{ target: undefined }, { target: personal }, { target: undefined, routingMode: 'auto' }])
+    assert.deepEqual(request('quote', { ...destination, quote }).quote, quote);
+  assert.throws(() => request('quote-reply', { quote, replyTo: 'source' }), /cannot be combined with a reply/);
+  assert.throws(() => request('quote-over-limit', { quote: { ...quote, excerpt: 'x'.repeat(2001) } }));
+});
+test('topic activity includes creation and exact window boundary, excludes expired/foreign/inaccessible activity, and reports the real latest message independently', () => {
+  const f = fixture();
+  try {
+    const seed = accept(f, request('activity-seed'));
+    const { id, seq, ...base } = seed;
+    const observedAt = '2030-02-01T00:00:00.000Z', cutoffAt = '2030-01-02T00:00:00.000Z';
+    const projects = ['boundary','expired','current','new'].map(projectId => ({ projectId, title: projectId, createdAt: projectId === 'new' ? '2030-01-31T00:00:00.000Z' : '2000-01-01T00:00:00.000Z' }));
+    const add = (projectId, createdAt, conversationId = 'main') => f.store.project({ ...base, conversationId, role: 'notification', commandId: null,
+      scope: { kind: 'project', projectId }, createdAt, state: { kind: 'completed' } }, `activity-${projectId}-${conversationId}`);
+    add('boundary',cutoffAt);add('current','2030-01-30T00:00:00.000Z');
+    add('hidden','2030-01-31T23:00:00.000Z');add('expired','2030-01-31T23:00:00.000Z','foreign');
+    const latest = add('expired','2030-01-01T23:59:59.999Z');
+    const activity = f.store.topicActivity('main',projects,30,observedAt);
+    assert.equal(activity.cutoffAt,cutoffAt);assert.equal(activity.hasMore,false);
+    assert.deepEqual(activity.items.map(item => item.scope.projectId),['new','current','boundary']);
+    assert.equal(activity.items.at(-1).lastActiveAt,cutoffAt);
+    assert.deepEqual(activity.latestMessage,{ id: latest.id, scope: latest.scope, createdAt: latest.createdAt });
+    assert.deepEqual(f.store.current('main'),personal,'Reading browse topics never changes the send destination');
+    assert.equal(f.store.topicActivity('main',projects,1,observedAt).items.length,1);
+    f.restart();assert.deepEqual(f.store.topicActivity('main',projects,30,observedAt),activity);
+  } finally { f.close(); }
+});
+test('topic activity output is bounded and exposes truncation', () => {
+  const f = fixture();
+  try {
+    const projects = Array.from({ length: 101 }, (_,n) => ({ projectId: `p${n}`, title: `Project ${n}`, createdAt: '2030-01-31T00:00:00.000Z' }));
+    const activity = f.store.topicActivity('main',projects,30,'2030-02-01T00:00:00.000Z');
+    assert.equal(activity.items.length,100);assert.equal(activity.hasMore,true);assert.equal(activity.latestMessage,null);
+  } finally { f.close(); }
+});
+test('steward worker provenance follows exact admitted project commands and task ancestors, never a display title', () => {
+  const f = fixture();
+  try {
+    f.db.exec("CREATE TABLE entities(id TEXT PRIMARY KEY,kind TEXT,data TEXT); CREATE TABLE pr_dispatch(task TEXT,decision TEXT); CREATE TABLE pr_turns(command TEXT,owner TEXT,session TEXT)");
+    const scope = { kind: 'project', projectId: 'A' }, source = { ...binding, kind: 'managed', projectId: 'A' };
+    const origin = accept(f, request('worker-origin', { target: scope }), scope, source);
+    for (const [taskId,parentTaskId] of [['root',null],['child','root'],['grandchild','child'],['ordinary',null],['forged',null]])
+      f.db.prepare('INSERT INTO entities VALUES(?,?,?)').run(taskId,'task',JSON.stringify({title:'管家 is only a name',parentTaskId}));
+    f.db.prepare('INSERT INTO pr_dispatch VALUES(?,?)').run('root',`project-message:steward-${origin.id}`);
+    f.db.prepare('INSERT INTO pr_turns VALUES(?,?,?)').run(`steward-${origin.id}`,'A',source.sessionId);
+    assert.equal(f.store.isStewardTask('root'),true);assert.equal(f.store.isStewardTask('grandchild'),true);
+    assert.equal(f.store.isStewardTask('ordinary'),false);
+    f.db.prepare('INSERT INTO pr_dispatch VALUES(?,?)').run('forged','project-message:steward-not-a-canonical-message');
+    assert.equal(f.store.isStewardTask('forged'),false);
+    f.db.prepare("UPDATE pr_turns SET owner='different-project'").run();
+    assert.equal(f.store.isStewardTask('root'),false,'A real command from another project does not establish origin');
+    f.store.bindTask('main','root',origin.id);
+    assert.equal(f.store.isStewardTask('grandchild'),true,'The durable accepted origin continues to prove descendants');
+    f.restart();assert.equal(f.store.isStewardTask('grandchild'),true);
+  } finally { f.close(); }
+});
 test('exact retry remains one durable user message after restart; changed retry rejects', () => {
   const f = fixture();
   try {

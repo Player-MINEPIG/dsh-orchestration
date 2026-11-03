@@ -30,6 +30,7 @@ import { isAbsolute, join, relative, sep } from "node:path";
 import { TaskLedger, TaskError, canonical } from "./ledger.js";
 import { Workbench } from "./workbench.js";
 import { stewardProjectCheckpoint } from "./steward-memory-context.js";
+import { initializeTaskSessionTitle } from "./session-titles.js";
 import { WorkspaceManager } from "./workspaces.js";
 import { ScheduledPlans } from "./scheduled-plans.js";
 import { ExpectedExecutionMs } from "./execution-expectation.js";
@@ -297,8 +298,15 @@ export class ProjectRuntime {
   placementProject(projectId: string) { this.authorize(); return { ...this.project(projectId) }; }
   chatProjects() {
     this.authorize();
-    return this.db.prepare("SELECT id,title FROM pr_projects WHERE state='ready' ORDER BY id").all()
-      .map(row => ({ projectId: String(row.id), title: String(row.title) }));
+    return this.db.prepare("SELECT p.id,p.title,p.session,p.generation,json_extract(l.binding,'$.nodeId') AS owner_node FROM pr_projects p LEFT JOIN pr_session_locations l ON l.session=p.session WHERE p.state='ready' ORDER BY p.id").all()
+      .map(row => ({ projectId: String(row.id), title: String(row.title),
+        bindingToken: digest({ nodeId: String(row.owner_node ?? this.nodeId),
+          sessionId: String(row.session), generation: Number(row.generation) }) }));
+  }
+  chatProjectActivity() {
+    this.authorize();
+    return this.db.prepare("SELECT p.id,p.title,MAX(s.created) AS created FROM pr_projects p JOIN pr_sessions s ON s.owner=p.id WHERE p.state='ready' GROUP BY p.id ORDER BY p.id").all()
+      .map(row => ({ projectId: String(row.id), title: String(row.title), createdAt: String(row.created) }));
   }
   checkPlacement(input: ProjectSessionMove) {
     this.authorize();
@@ -1417,6 +1425,8 @@ export class ProjectRuntime {
       const related = this.coordinatorCheckpoint(p);
       const tools = p.taskId ? TOOLS.filter(name => name !== "task_session_message") : TOOLS;
       const setup = (agentCtx: Context, agent: Agent) => {
+          if (this.ctx.get("taskSystem")?.steward.store.hasSession(p.session, this.nodeId))
+            initializeTaskSessionTitle(agent.session, `管家 · ${p.title}`);
           agentCtx.on("agent/error", () => {
             terminalError = true;
           });

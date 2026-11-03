@@ -112,6 +112,7 @@ export interface Config {
   databasePath: string;
   decisionBindings?: Record<string, string>;
   projectAgentOptions?: ProjectAgentOptions | null;
+  stewardActiveDays?: number;
   nodeId?: string;
   nodeDisplayName?: string;
   role?: Role;
@@ -188,6 +189,7 @@ const PlainConfig: z<Config> = z.object({
     ])
     .default(null),
   databasePath: z.string().default(".dsh-task/tasks.sqlite"),
+  stewardActiveDays: z.number().min(1).max(365).step(1).default(30).description("管家话题选择器显示最近多少天有活动的话题。"),
   nodeId: z.string().default(""),
   nodeDisplayName: z.string().default("").description("本机设备显示名称。留空使用节点 ID，不改变任务路由或设备身份。"),
   role: z
@@ -285,6 +287,7 @@ const PlainConfig: z<Config> = z.object({
 
 /** Only values read at an operation/tick boundary are editable live. */
 export const LIVE_SETTING_KEYS = [
+  "stewardActiveDays",
   "schedulerEnabled",
   "autoExecute",
   "maxConcurrent",
@@ -1650,19 +1653,20 @@ export class NativeExecutionProvider {
   }
 
   private async attachExecutionWorkspace(claim: NativeClaim, path: string, sessionId: string) {
-    if (!claim.run.projectContext ||
-        (claim.run.parentRunId && claim.run.executionParentKind !== "coordinator")) return;
+    const steward = this.owner.steward.store.isStewardTask(claim.task.taskId);
+    if (!steward && (!claim.run.projectContext ||
+        (claim.run.parentRunId && claim.run.executionParentKind !== "coordinator"))) return;
     const registry = this.ctx.get("workspaceRegistry") as unknown as
       {create(path: string,title?: string): Promise<{attachSession(id: SessionId): Promise<void>}>} | undefined;
     if (registry) {
-      const workspace = await registry.create(path, claim.run.projectContext.project?.title ?? "temporary-tasks");
+      const workspace = await registry.create(path, claim.run.projectContext?.project?.title ?? (steward ? "管家 · 执行任务" : "temporary-tasks"));
       await workspace.attachSession(SessionId(sessionId));
     }
   }
 
   private initializeSessionTitle(agent: Agent, claim: NativeClaim) {
     const title = claim.executionContext?.sessionTitle ?? taskSessionTitle({ title: claim.run.intentSnapshot?.title ?? claim.task.title, configuration: claim.run.configuration });
-    initializeTaskSessionTitle(agent.session, title);
+    initializeTaskSessionTitle(agent.session, this.owner.steward.store.isStewardTask(claim.task.taskId) ? `管家 · ${title}` : title);
   }
   private async drive(
     owned: OwnedAttempt,
