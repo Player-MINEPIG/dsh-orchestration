@@ -4,6 +4,7 @@ import { chromium } from 'playwright';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
+import { testNativeSteward } from './browser-native-steward.mjs';
 import { testNativeProject } from './browser-native-project.mjs';
 import { testSettings } from './browser-settings.mjs';
 import { testExecutorAlerts } from './browser-executor-alerts.mjs';
@@ -15,7 +16,7 @@ const browser = await chromium.launch({ headless: true, ...(process.env.DSH_BROW
 const results = [];
 console.log(`Browser evidence: ${output}`);
 try {
-  for (const [name, run] of [['settings', testSettings], ['executor alerts', testExecutorAlerts], ['responsible task check-ins', testTaskCheckins], ['task center polling selection', testTaskCenterSelection], ['production native project conversation', testNativeProject], ['steward delayed scope responses', testStewardScopeResponses]]) {
+  for (const [name, run] of [['settings', testSettings], ['executor alerts', testExecutorAlerts], ['responsible task check-ins', testTaskCheckins], ['task center polling selection', testTaskCenterSelection], ['production native project conversation', testNativeProject], ['steward delayed scope responses', testStewardScopeResponses], ['native steward conversation', testNativeSteward]]) {
     try {
       const result = await run(browser, { output });
       results.push({ name, status: 'passed', result });

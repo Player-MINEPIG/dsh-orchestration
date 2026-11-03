@@ -11,7 +11,7 @@ import { ScriptedModel } from '../dsh/scripted-model.mjs';
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 
-async function startHost() {
+export async function startHost() {
   const runtimeRoot = process.env.DSH_OFFICIAL_ROOT ?? ensureOfficialRuntime().root;
   const require = createRequire(join(runtimeRoot, 'package.json'));
   const directory = realpathSync(mkdtempSync(join(tmpdir(), 'dsh-project-native-browser-')));

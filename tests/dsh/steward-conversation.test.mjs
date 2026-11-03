@@ -122,7 +122,15 @@ test('a recreated host restores the canonical log without replay and old project
       taskIds.push(task.taskId);h.ctx.taskSystem.projects.linkTask(reply.source.sessionId,task.taskId);
       h.ledger.appendReport(`large-continuation-report-${i}`,{taskId:task.taskId,title:`Prior result ${i}`,body:'PRIVATE_FULL_REPORT_BODY_'.repeat(500)});
     }
-    await h.ctx.taskSystem.projects.handoff(projectId);
+    let handedOff=false;
+    for(let attempt=0;attempt<10&&!handedOff;attempt++) {
+      try { await h.ctx.taskSystem.projects.handoff(projectId);handedOff=true; }
+      catch(error) {
+        assert.equal(error.code,'READ_MODEL_UPDATING');
+        assert.equal(h.ctx.taskSystem.projects.placementProject(projectId).generation,1,'A bounded read retry does not advance coordinator authority');
+      }
+    }
+    assert.equal(handedOff,true,'Bounded read materialization converges before the handoff');
     const binding=h.ctx.taskSystem.projects.placementProject(projectId);
     const summary=String(h.ledger.managementDatabase().prepare('SELECT summary FROM pr_sessions WHERE session=?').get(binding.session).summary);
     assert.ok(summary.length<=24000,'A large project continuation has a hard serialized-character budget');

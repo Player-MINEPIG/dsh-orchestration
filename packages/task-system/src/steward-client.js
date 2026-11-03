@@ -73,12 +73,33 @@ function createStewardClient(React) {
         h("label",null,"工作流根任务 ID",h("input",{"aria-label":"验收根任务ID",value:rootTask,onChange:event=>setRootTask(event.target.value)})),h("label",null,"修复任务 ID（逗号或换行分隔）",h("input",{"aria-label":"修复任务ID",value:repairs,onChange:event=>setRepairs(event.target.value)})),h("label",null,"已声明后续任务 ID（可空）",h("input",{"aria-label":"后续任务ID",value:downstream,onChange:event=>setDownstream(event.target.value)})),h("label",null,"验收要求",h("textarea",{"aria-label":"验收要求",value:instruction,onChange:event=>setInstruction(event.target.value)})),
         h("button",{disabled:working||!!pending||!rootTask.trim()||!ids(repairs).length||!instruction.trim(),onClick:()=>run("stewardGateArm",{conversationId,commandId:crypto.randomUUID(),instruction,gate:{gateId:crypto.randomUUID(),projectId,workstreamTaskId:rootTask.trim(),upstreamTaskIds:ids(repairs),downstreamTaskIds:ids(downstream),upstreamSteps:[],downstreamSteps:[]}})},"确认设置验收点")));
   }
-  const styles = `.steward{height:100%;box-sizing:border-box;display:flex;flex-direction:column;max-width:980px;margin:auto;padding:24px;color:var(--dsw-alias-label-primary,#ddd);font:14px/1.6 system-ui}.steward header{display:flex;justify-content:space-between;gap:20px;align-items:center}.steward h1{font-size:22px;margin:0}.steward small,.steward .muted{color:var(--dsw-alias-label-secondary,#888)}.steward button,.steward select,.steward textarea{font:inherit;color:inherit;background:var(--dsw-alias-bg-base,#25272b);border:1px solid var(--dsw-alias-border-l2,#555);border-radius:8px;padding:7px 11px}.steward button{cursor:pointer}.steward button:disabled{opacity:.5;cursor:default}.steward-log{flex:1;min-height:180px;overflow:auto;padding:20px 0}.steward-message{padding:14px 17px;border:1px solid var(--dsw-alias-border-l2,#444);border-radius:12px;margin:12px 0;overflow-wrap:anywhere}.steward-message[data-role=user]{margin-left:12%;background:#398c8c12}.steward-message[data-role=notification]{border-left:3px solid #c4a25e}.steward-message p{white-space:pre-wrap;margin:9px 0}.steward-meta{display:flex;flex-wrap:wrap;align-items:center;gap:10px;font-size:12px}.steward-meta button{padding:1px 8px;font-size:12px}.steward form{display:flex;flex-direction:column;gap:9px;padding-top:12px;border-top:1px solid var(--dsw-alias-border-l2,#444)}.steward textarea{min-height:90px;resize:vertical}.steward-controls{display:flex;justify-content:space-between;gap:10px;align-items:center}.steward-alert{padding:10px 13px;border:1px solid #bd8e57;border-radius:8px;margin:9px 0;background:#bd8e5711}.steward details{font-size:12px}.steward pre{white-space:pre-wrap;overflow-wrap:anywhere}@media(max-width:640px){.steward{padding:14px}.steward header{align-items:flex-start}.steward-message[data-role=user]{margin-left:4%}.steward-controls{align-items:stretch;flex-direction:column}}`;
-  function StewardPanel({ invoke, openSession = () => {}, conversationId = "main", demoLabel }) {
+  const styles = `.steward{height:100%;box-sizing:border-box;display:flex;flex-direction:column;max-width:980px;margin:auto;padding:24px;color:var(--dsw-alias-label-primary,#ddd);font:14px/1.6 system-ui}.steward header{display:flex;justify-content:space-between;gap:20px;align-items:center}.steward h1{font-size:22px;margin:0}.steward small,.steward .muted{color:var(--dsw-alias-label-secondary,#888)}.steward:not(.steward-native) button,.steward-routing button,.steward-meta button,.steward select,.steward textarea{font:inherit;color:inherit;background:var(--dsw-alias-bg-base,#25272b);border:1px solid var(--dsw-alias-border-l2,#555);border-radius:8px;padding:7px 11px}.steward:not(.steward-native) button{cursor:pointer}.steward button:disabled{opacity:.5;cursor:default}.steward-log{flex:1;min-height:180px;overflow:auto;padding:20px 0}.steward-message{padding:14px 17px;border:1px solid var(--dsw-alias-border-l2,#444);border-radius:12px;margin:12px 0;overflow-wrap:anywhere}.steward-message[data-role=user]{margin-left:12%;background:#398c8c12}.steward-message[data-role=notification]{border-left:3px solid #c4a25e}.steward-message p{white-space:pre-wrap;margin:9px 0}.steward-meta{display:flex;flex-wrap:wrap;align-items:center;gap:10px;font-size:12px}.steward-meta button{padding:1px 8px;font-size:12px}.steward form{display:flex;flex-direction:column;gap:9px;padding-top:12px;border-top:1px solid var(--dsw-alias-border-l2,#444)}.steward textarea{min-height:90px;resize:vertical}.steward-controls{display:flex;justify-content:space-between;gap:10px;align-items:center}.steward-alert{padding:10px 13px;border:1px solid #bd8e57;border-radius:8px;margin:9px 0;background:#bd8e5711}.steward details{font-size:12px}.steward-native{max-width:none;padding:12px 20px}.steward-native header{padding-bottom:8px}.steward-native .steward-routing{display:flex;flex-wrap:wrap;align-items:center;gap:8px}.steward-native .steward-routing small{width:100%}.steward-native .steward-meta{padding:4px 0 12px}.steward pre{white-space:pre-wrap;overflow-wrap:anywhere}@media(max-width:640px){.steward{padding:14px}.steward header{align-items:flex-start}.steward-message[data-role=user]{margin-left:4%}.steward-controls{align-items:stretch;flex-direction:column}}`;
+  function NativeConversation({ nativeClient, view, handle }) {
+    const container = React.useRef(null), state = React.useRef(view), listeners = React.useRef(new Set());
+    state.current = view;
+    const bridge = React.useMemo(() => ({
+      getSnapshot: () => state.current,
+      subscribe: listener => { listeners.current.add(listener); return () => listeners.current.delete(listener); },
+      prepare: (...args) => state.current.prepare(...args), submit: (...args) => state.current.submit(...args), onDraft: text => state.current.onDraft(text), loadOlder: () => state.current.loadOlder(),
+      notice: message => state.current.notice(message),
+    }), []);
+    React.useLayoutEffect(() => { for (const listener of listeners.current) listener(); }, [view]);
+    React.useEffect(() => {
+      const lifetime = new AbortController(); let mounted;
+      nativeClient.mount(container.current, bridge, { signal: lifetime.signal, onState: message => state.current.setStatus(message) })
+        .then(value => { if (lifetime.signal.aborted) void value.dispose(); else { mounted = value; handle.current = value; } })
+        .catch(error => { if (!lifetime.signal.aborted) state.current.notice(error.message ?? String(error)); });
+      return () => { lifetime.abort(); handle.current = null; if (mounted) void mounted.dispose(); };
+    }, [nativeClient, view.authorityId, view.conversationId]);
+    return h("div", { ref: container, style: { flex: 1, minHeight: 0 }, "data-steward-native-host": "" });
+  }
+  function StewardPanel({ invoke, openSession = () => {}, conversationId = "main", demoLabel, nativeClient }) {
     const [snapshot, setSnapshot] = React.useState(null), [text, setText] = React.useState("");
     const [selected, setSelected] = React.useState("personal"), [reply, setReply] = React.useState(null);
     const [busy, setBusy] = React.useState(false), [error, setError] = React.useState("");
     const [refreshError, setRefreshError] = React.useState("");
+    const [nativeStatus, setNativeStatus] = React.useState("");
+    const nativeHandle = React.useRef(null);
     const [pending, setPending] = React.useState([]);
     const pendingRequests = React.useRef([]), inFlight = React.useRef(new Set()), activeConversation = React.useRef(conversationId);
     activeConversation.current = conversationId;
@@ -91,7 +112,7 @@ function createStewardClient(React) {
     const savePending = update => {
       const value = update(pendingRequests.current);
       pendingRequests.current = value; setPending(value);
-      try { if (pendingKey) { if (value.length) localStorage.setItem(pendingKey, JSON.stringify(value)); else localStorage.removeItem(pendingKey); } } catch {}
+      try { if (!pendingKey) return false; if (value.length) localStorage.setItem(pendingKey, JSON.stringify(value)); else localStorage.removeItem(pendingKey); return true; } catch { return false; }
     };
     const updatePending = (request, status, reason = "") => savePending(items => {
       const entry = { request, status, reason };
@@ -105,7 +126,8 @@ function createStewardClient(React) {
       (!request.quote || snapshot?.messages.some(message => message.id === request.quote.messageId));
     function restorePending(request) {
       if (!sourceAvailable(request)) return;
-      setText(request.text);
+      if (nativeClient && (!nativeHandle.current || nativeHandle.current.getDraft().trim())) { setError("原生输入框尚未就绪或已有草稿，请保留草稿后再恢复原文。"); return; }
+      if (nativeClient) nativeHandle.current?.setDraft(request.text); else setText(request.text);
       if (request.target) setSelected(scopeKey(request.target)); else setSelected("auto");
       setReply(request.replyTo ? snapshot.messages.find(message => message.id === request.replyTo) : null);
       setQuote(request.quote ? { ...request.quote, scope: snapshot.messages.find(message => message.id === request.quote.messageId).scope } : null);
@@ -121,7 +143,7 @@ function createStewardClient(React) {
         return;
       }
       const merged = new Map((mode === "latest" ? [] : previous?.messages ?? []).map(message => [message.id, message]));
-      if (value.commandMessage && !value.messages?.some(message=>message.id===value.commandMessage.id)) {
+      if (!nativeClient && value.commandMessage && !value.messages?.some(message=>message.id===value.commandMessage.id)) {
         sentFocus.current=value.commandMessage.id;follow.current=false;
       }
       for (const message of [...(value.messages ?? []), ...(value.commandMessage?[{...value.commandMessage,receiptOnly:!value.messages?.some(item=>item.id===value.commandMessage.id)}]:[])]) {
@@ -209,7 +231,7 @@ function createStewardClient(React) {
       try {
         const value = await invoke("stewardSend", request);
         if (!sameAuthority(request, authorityId, value)) return;
-        accept(value, "append"); removePending(request.commandId);
+        accept(value, "append"); removePending(request.commandId); return true;
       } catch (failure) { if (sameAuthority(request, authorityId)) {
         const rejected = failure.details?.admission === "not-admitted" || (failure.details?.reason ?? failure.code) === "CLARIFICATION";
         updatePending(request, rejected ? "not-admitted" : "unknown", rejected
@@ -217,6 +239,7 @@ function createStewardClient(React) {
           : `尚未确认发送结果：${failureText(failure)}。可核实或重试原请求，不会自动重发。`);
       } }
       finally { inFlight.current.delete(request.commandId); }
+      return false;
     }
     async function reconcilePending(request) {
       if (inFlight.current.has(request.commandId)) return;
@@ -238,7 +261,37 @@ function createStewardClient(React) {
       catch (failure) { setError(`结束等待尚未确认：${failure.details?.detail ?? failure.message ?? String(failure)}。刷新核实后，可重试同一操作。`); }
       finally { setBusy(false); }
     }
-    return h("section", { className: "steward", "aria-label": "管家对话" },
+    const chooseReply = message => { setReply(message); setQuote(null); setError(""); };
+    const chooseQuote = message => { setQuote({ messageId: message.id, expectedRevision: message.revision, excerpt: message.text.slice(0, 2000), scope: message.scope }); setReply(null); setSelected(""); setError(""); };
+    const renderRouting = () => h("div", { className: "steward-routing" },
+      snapshot?.messages.length >= 300 && h("small", null, "已载入 300 条消息；更早记录保留在服务器。"),
+      hasOlder && h("button", { type: "button", disabled: loadingOlder, onClick: loadOlder }, loadingOlder ? "正在载入…" : "载入更早消息"),
+      hasUnseen && h("button", { type: "button", onClick: latest }, "返回最新"),
+      h("small", null, "当前仅支持文字；附件请在对应原会话中发送。"),
+      reply && h("div", null, `回复 ${label(reply.scope)}：「${reply.text.slice(0, 90)}」`, " ", h("button", { type: "button", onClick: () => setReply(null) }, "取消回复")),
+      quote && h("div", null, h("p", null, `明确分享 ${label(quote.scope)} 的连续原文到所选目标`), h("textarea", { "aria-label": "引用原文片段", value: quote.excerpt, maxLength: 2000, onChange: event => setQuote({ ...quote, excerpt: event.target.value }) }), h("button", { type: "button", onClick: () => setQuote(null) }, "取消引用")),
+      h("label", null, "本条对话对象 ", h("select", { "aria-label": "本条对话对象", value: reply ? scopeKey(reply.scope) : selected, disabled: !!reply, onChange: event => setSelected(event.target.value) },
+        quote && h("option", { value: "" }, "请选择引用目标"), snapshot?.routing?.auto && !quote && h("option", { value: "auto" }, "自动判断 · 不明确时询问"), h("option", { value: "personal" }, "闲聊"), ...projects.map(project => h("option", { key: project.projectId, value: `project:${project.projectId}` }, project.title)))));
+    const renderReceipt = message => h("div", { className: "steward-meta", "data-message-id": message.id, "data-role": message.role, "data-scope": scopeKey(message.scope) },
+      h("span", null, `${message.role === "notification" ? "项目通知 · " : ""}${label(message.scope)}`), message.role === "user" && h("span", { "data-state": stateKind(message.state) }, stateLabels[stateKind(message.state)] ?? "未核实"),
+      message.quote && h("small", null, `明确引用自 ${label(message.quote.scope)}：「${message.quote.excerpt}」`),
+      h("button", { type: "button", onClick: () => chooseReply(message) }, "回复"), h("button", { type: "button", onClick: () => chooseQuote(message) }, "引用到…"),
+      message.gate && message.scope.kind === "project" && h("button", { type: "button", onClick: () => { setGateProject(message.scope.projectId); setGateNotice(message.gate); } }, "打开这次验收候选"),
+      message.role === "user" && ["accepted", "admitted", "needs-reconciliation"].includes(stateKind(message.state)) && h("button", { type: "button", onClick: () => setRecovery({ conversationId, messageId: message.id, commandId: crypto.randomUUID(), expectedRevision: message.revision, expectedState: stateKind(message.state), confirm: true }) }, "结束等待并继续"),
+      h("details", null, h("summary", null, "本条依据"), h("p", null, `消息：${message.id} · 第 ${message.revision} 版`), message.replyTo && h("p", null, `回复：${message.replyTo}`), message.state?.reason && h("p", null, message.state.reason), message.resolution && h("p", null, "你曾结束对此条消息的等待；后续证据仍会继续核实。"), h("p", null, `原会话：${message.source.nodeId} / ${message.source.sessionId}`), h("button", { type: "button", onClick: () => openSession(message.source.sessionId) }, "打开原会话"), message.quote && h("pre", null, JSON.stringify(message.quote, null, 2))));
+    function prepareNative(text, commandId) {
+      if (!text.trim() || text.trim().length > 16000) throw new Error("消息需为 1–16000 字文字。");
+      if (quote && (!selected || selected === "auto" || !quote.excerpt.trim())) throw new Error("请为引用明确选择目标和连续原文片段。");
+      const request = { conversationId, commandId, text: text.trim(), ...(reply ? { replyTo: reply.id } : selected === "auto" ? { routingMode: "auto" } : { target: fromKey(selected) }), ...(quote ? { quote: { messageId: quote.messageId, expectedRevision: quote.expectedRevision, excerpt: quote.excerpt } } : {}) };
+      if (!updatePending(request, "sending", "本机保留原请求；尚未确认服务器登记或投递。不会自动重发。")) {
+        updatePending(request, "not-admitted", "浏览器未能保存原请求；本条尚未发往服务器。请保留原文后重试。");
+        throw new Error("浏览器未能保存原请求，本条尚未发送。请保留原文后重试。");
+      }
+      setReply(null); setQuote(null); setError("");
+      return request;
+    }
+    async function submitNative(request) { await transmit(request); }
+    return h("section", { className: `steward${nativeClient ? " steward-native" : ""}`, "aria-label": "管家对话" },
       h("style", null, styles),
       h("header", null, h("div", null, h("h1", null, "管家"), h("small", null, "一个窗口 · 闲聊与各项目独立会话")),
         h("details", null, h("summary", null, "身份与来源"), h("p", null, `身份 ${snapshot?.persona?.id ?? "读取中"} · 版本 ${snapshot?.persona?.version ?? "—"}`), h("p", null, `对话 ${conversationId}`), snapshot?.sources?.map(item => h("p", { key: `${item.source.nodeId}:${item.source.sessionId}` }, `${item.source.sessionId}：${({ ready: "已读取", unchecked: "未核查", unavailable: "暂不可读" })[item.status?.kind] ?? "未核实"}`)), snapshot?.limitations?.map(item => h("p", { key: item }, item)), demoLabel && h("p", null, demoLabel))),
@@ -263,7 +316,7 @@ function createStewardClient(React) {
       snapshot?.attention?.items?.some(item => !snapshot.messages.some(message => message.id === item.id)) && h("details", { open: true, className: "steward-alert" }, h("summary", null, "较早的消息仍需核实"),
         snapshot.attention.items.filter(item => !snapshot.messages.some(message => message.id === item.id)).map(item => h("p", { key: item.id }, `${label(item.scope)} · ${stateLabels[item.state.kind] ?? "未核实"} · ${item.preview}`, " ", h("button", { disabled: busy || !!recovery, onClick: () => setRecovery({ conversationId, messageId: item.id, commandId: crypto.randomUUID(), expectedRevision: item.revision, expectedState: item.state.kind, confirm: true }) }, "结束此条等待"))),
         snapshot.attention.hasMore && h("small", null, "仅显示最早 20 条待核实消息，处理后可继续查看。")),
-      h("div", { className: "steward-log", role: "log", "aria-label": "对话记录", ref: log, onScroll: event => { const element = event.currentTarget; follow.current = element.scrollHeight - element.scrollTop - element.clientHeight < 80; } },
+      nativeClient ? (snapshot ? h(NativeConversation, { nativeClient, handle: nativeHandle, view: { ...snapshot, hasOlder, draft: text, renderControls: renderRouting, renderReceipt, prepare: prepareNative, submit: submitNative, onDraft: setText, loadOlder, notice: setError, setStatus: setNativeStatus } }) : h("p", null, "正在恢复对话…")) : h("div", { className: "steward-log", role: "log", "aria-label": "对话记录", ref: log, onScroll: event => { const element = event.currentTarget; follow.current = element.scrollHeight - element.scrollTop - element.clientHeight < 80; } },
         hasOlder && h("button", { disabled: loadingOlder, onClick: loadOlder }, loadingOlder ? "正在载入…" : "载入更早消息"),
         snapshot && h("small", { className: "muted" }, ` 当前保留 ${snapshot.messages.length} 条，最多 300 条。原始记录保存在服务器，可继续分页。`),
         !snapshot ? h("p", { className: "muted" }, "正在恢复对话…") : !snapshot.messages.length ? h("p", { className: "muted" }, "从闲聊开始，或选择一个项目。回复旧消息会回到它所属的项目。") : snapshot.messages.map(message => {
@@ -282,7 +335,8 @@ function createStewardClient(React) {
               h("details", null, h("summary", null, "本条依据"), h("p", null, `范围：${label(message.scope)}`), h("p", null, `消息：${message.id}`), message.replyTo && h("p", null, `被回复消息：${message.replyTo}`), message.source && h("p", null, `原会话：${message.source.nodeId ?? "local"} / ${message.source.sessionId} · 第 ${message.source.generation ?? 0} 代`), message.source?.sessionId && h("button", { onClick: () => openSession(message.source.sessionId) }, "打开原会话"), message.quote && h("pre", null, JSON.stringify(message.quote, null, 2)), message.manifest && h("pre", null, JSON.stringify(message.manifest, null, 2)))));
         })),
       hasUnseen && h("button", { onClick: latest }, "有较新消息 · 返回最新"),
-      h("form", { onSubmit: event => { event.preventDefault(); if (busy || !text.trim() || (quote && (!selected || selected === "auto" || !quote.excerpt.trim()))) return; const request = { conversationId, commandId: crypto.randomUUID(), text: text.trim(), ...(reply ? { replyTo: reply.id } : selected === "auto" ? { routingMode: "auto" } : { target: fromKey(selected) }), ...(quote ? { quote: { messageId: quote.messageId, expectedRevision: quote.expectedRevision, excerpt: quote.excerpt } } : {}) }; setText(""); setReply(null); setQuote(null); setError(""); void transmit(request); } },
+      nativeStatus && h("p", { role: "status" }, nativeStatus),
+      !nativeClient && h("form", { onSubmit: event => { event.preventDefault(); if (busy || !text.trim() || (quote && (!selected || selected === "auto" || !quote.excerpt.trim()))) return; const request = { conversationId, commandId: crypto.randomUUID(), text: text.trim(), ...(reply ? { replyTo: reply.id } : selected === "auto" ? { routingMode: "auto" } : { target: fromKey(selected) }), ...(quote ? { quote: { messageId: quote.messageId, expectedRevision: quote.expectedRevision, excerpt: quote.excerpt } } : {}) }; setText(""); setReply(null); setQuote(null); setError(""); void transmit(request); } },
         replyMessage && h("div", { className: "steward-alert" }, `回复 ${label(replyMessage.scope)}：「${replyMessage.text.slice(0, 90)}」`, " ", h("button", { type: "button", onClick: () => setReply(null) }, "取消回复")),
         quote && h("div", { className: "steward-alert" }, h("p", null, `分享一段 ${label(quote.scope)} 原文到明确选择的目标。只分享下面的连续原文片段，不转移其他历史。`), h("textarea", { "aria-label": "引用原文片段", value: quote.excerpt, maxLength: 2000, disabled: busy, onChange: event => setQuote({ ...quote, excerpt: event.target.value }) }), h("small", null, `来源 ${quote.messageId} · 版本 ${quote.expectedRevision} · 最多 2000 字；可删选连续片段，不可改写原文。`), " ", h("button", { type: "button", onClick: () => setQuote(null) }, "取消引用")),
         h("label", null, "本条对话对象 ", h("select", { "aria-label": "本条对话对象", value: replyMessage ? scopeKey(replyMessage.scope) : selected, disabled: busy || !!reply, onChange: event => setSelected(event.target.value) }, quote && h("option", { value: "" }, "请选择引用目标"), snapshot?.routing?.auto && !quote && h("option", { value: "auto" }, "自动判断 · 不明确时询问"), h("option", { value: "personal" }, "闲聊"), ...projects.map(project => h("option", { key: project.projectId, value: `project:${project.projectId}` }, project.title)))),

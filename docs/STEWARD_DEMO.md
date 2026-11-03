@@ -2,6 +2,16 @@
 
 The existing task plugin now provides one canonical chat backed by separate personal and per-project native DSH sessions. A single window routes each turn without a compulsory steward model hop. It uses the real Loader, AgentLoop, session persistence, SQLite task authority and local native executor. The default demo uses explicitly labeled offline model responses; a separate live mode can reuse an existing supported provider configuration in process memory.
 
+## Use the official DSH conversation interface
+
+Installed hosts open **管家** in the official DSH shell. The panel embeds the official `conversation.content` factory and native Chat renderers through an isolated browser client. Canonical history supplies display events only. Personal and project inference sessions still receive their own scoped inputs.
+
+Routing, reply, explicit quotation, queue receipts, memory controls and acceptance gates remain backed by the task service. The browser freezes each original command before the native composer yields its first paint. An uncertain acknowledgment stays in a local recovery card with the same command ID. A display acknowledgment does not establish server admission, model delivery or task completion. Reload never resends it automatically.
+
+The current intake accepts text only. Send attachments from the corresponding original session. The native history window holds at most 300 canonical messages. Older/latest navigation replaces only the display journal; the native editor, selection and pending submissions stay mounted. Synthetic display turns expose no execution durations, counters, Stop or model-selection controls.
+
+`tests/ci/browser-native-steward.mjs` starts an isolated official WebHost with a scripted model and verifies these interactions. The standalone fixture below retains its small test composer for historical fixture coverage.
+
 ## Start a local demo
 
 Use Node 24 in this branch worktree:

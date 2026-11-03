@@ -16,6 +16,7 @@ window.__ModuleLoader__.load({
     const { Context: ClientContext } = require("@deepseek-ai/cordis");
     /*__PROJECT_NATIVE_CLIENT__*/
     /*__STEWARD_CLIENT__*/
+    /*__STEWARD_NATIVE_CLIENT__*/
     const keys = [
       "schedulerEnabled",
       "autoExecute",
@@ -3894,6 +3895,7 @@ h(
       const projectNavigation = new ProjectNavigation();
       const projectNativeClient = createProjectNativeClient({ React, Context: ClientContext, modules: ctx.modules });
       const { StewardPanel } = createStewardClient(React);
+      const stewardNativeClient = createStewardNativeClient({ React, Context: ClientContext, modules: ctx.modules });
       const projectDirectoryApi = {
         openSession: sessionId => {const service=ctx.get("uiWorkspace");if(!service)throw Error("DSH 会话导航服务尚未加载");return service.openSession(sessionId);},
         list: path => {const service=ctx.get("uiWorkspace");if(!service)throw Error("DSH 目录浏览服务尚未加载，请稍后重试");return service.listDirectory(path);},
@@ -3902,7 +3904,7 @@ h(
         openModels: () => openModels(ctx),
       };
       ctx.effect(() => {
-        const offMain = ctx.slots.inject("main", () => ctx.slots.register({ name: "main", key: "dsh-steward", inject: () => ({ invoke, openSession: projectDirectoryApi.openSession }) }, StewardPanel));
+        const offMain = ctx.slots.inject("main", () => ctx.slots.register({ name: "main", key: "dsh-steward", inject: () => ({ invoke, openSession: projectDirectoryApi.openSession, nativeClient: stewardNativeClient }) }, StewardPanel));
         const offNav = ctx.slots.inject("sidebar.panellist", () => ctx.slots.register({ name: "sidebar.panellist", id: "dsh-steward", order: 19, label: () => "管家" }, ProjectIcon));
         return () => { offNav(); offMain(); };
       }, "steward conversation");
