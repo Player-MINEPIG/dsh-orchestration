@@ -119,10 +119,18 @@ export class StewardConversations {
     if (!row) throw new TaskError("NOT_FOUND", "Conversation message does not exist");
     return stewardMessage.parse(JSON.parse(String(row.data)));
   }
+  previousCreationMessages(message: Pick<StewardMessage, "conversationId" | "seq">): StewardMessage[] {
+    return this.db.prepare("SELECT data FROM steward_messages WHERE conversation=? AND seq<? AND json_extract(data,'$.role')='user' ORDER BY seq DESC LIMIT 5")
+      .all(message.conversationId, message.seq).map(row => stewardMessage.parse(JSON.parse(String(row.data))));
+  }
   current(conversationId: string): StewardScope {
     this.ensure(conversationId);
     const row = this.db.prepare("SELECT scope FROM steward_conversations WHERE id=?").get(conversationId);
     return stewardScope.parse(JSON.parse(String(row?.scope)));
+  }
+  selectCreatedProject(conversationId: string, projectId: string, messageId: string) {
+    this.db.prepare("UPDATE steward_conversations SET scope=? WHERE id=? AND json_extract(scope,'$.kind')='personal' AND ?=(SELECT id FROM steward_messages WHERE conversation=? AND json_extract(data,'$.role')='user' ORDER BY seq DESC LIMIT 1)")
+      .run(canonical({ kind: "project", projectId }), conversationId, messageId, conversationId);
   }
   topicActivity(conversationId: string, projects: { projectId: string; title: string; createdAt: string }[], activeDays: number, observedAt = new Date().toISOString()) {
     const cutoffAt = new Date(Date.parse(observedAt) - activeDays * 86400000).toISOString();
@@ -160,7 +168,7 @@ export class StewardConversations {
     return this.message(String(row.message));
   }
   requestId(messageId: string): string { return `steward-${messageId}`; }
-  accept(request: StewardSend, scope: StewardScope, binding: StewardBinding, afterSeq: number, quote: StewardQuote | null = null, delivery?: Pick<StewardMessage, "content" | "selection">, bindUploads?: (messageId: string) => void): StewardMessage {
+  accept(request: StewardSend, scope: StewardScope, binding: StewardBinding, afterSeq: number, quote: StewardQuote | null = null, delivery?: Pick<StewardMessage, "content" | "selection" | "permission">, bindUploads?: (messageId: string) => void): StewardMessage {
     this.db.exec("BEGIN IMMEDIATE");
     try {
       const previous = this.replay(request);

@@ -3291,7 +3291,7 @@ h(
     const openPlugins = (ctx) => openSettingsSection(ctx, "plugins");
     const openModels = (ctx) => openSettingsSection(ctx, "models");
     const projectMethods = [
-      "stewardUpload", "stewardUploadRead", "stewardAttachmentRead", "stewardModelCatalog", "stewardValidateModel", "stewardSourceSession", "stewardSnapshot", "stewardSend", "stewardReconcile", "stewardResolve",
+      "stewardUpload", "stewardUploadRead", "stewardAttachmentRead", "stewardModelCatalog", "stewardValidateModel", "stewardPermissionCatalog", "stewardValidatePermission", "stewardSourceSession", "stewardSnapshot", "stewardSend", "stewardReconcile", "stewardResolve",
       "stewardMemoryRead", "stewardMemoryConfigure",
       "stewardGateRead", "stewardGateArm", "stewardGateDecide", "stewardGateAmend", "stewardGateContinue", "stewardGateAcceptContinue",
       "stewardGateIndependent",

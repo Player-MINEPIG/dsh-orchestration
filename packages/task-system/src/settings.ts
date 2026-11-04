@@ -366,7 +366,7 @@ export function hasTaskConfigOverride(patches: readonly unknown[]): boolean {
 
 const projectInputs = {
   ...demandReadInputs,
-  stewardUpload, stewardUploadRead, stewardAttachmentRead, stewardValidateModel: stewardSelection, stewardModelCatalog: z.strictObject({}),
+  stewardUpload, stewardUploadRead, stewardAttachmentRead, stewardValidateModel: stewardSelection, stewardModelCatalog: z.strictObject({}), stewardPermissionCatalog: z.strictObject({}), stewardValidatePermission: z.strictObject({preset:z.string().min(1).max(160)}),
   stewardSourceSession,
   stewardSnapshot: stewardRead,
   stewardSend,
@@ -692,6 +692,8 @@ export class TaskPluginSettings extends TypertRemoteService {
   async stewardUpload(input: unknown) { return this.stewardOperation(() => this.stewardService().upload(input)); }
   async stewardUploadRead(input: unknown) { return this.stewardOperation(() => this.stewardService().uploadRead(input)); }
   async stewardAttachmentRead(input: unknown) { return this.stewardOperation(() => this.stewardService().attachmentRead(input)); }
+  async stewardPermissionCatalog() { return this.stewardOperation(() => this.stewardService().permissions.catalog()); }
+  async stewardValidatePermission(input: unknown) { const value=z.strictObject({preset:z.string().min(1).max(160)}).parse(input);return this.stewardOperation(() => this.stewardService().permissions.resolve(value.preset)); }
   async stewardModelCatalog() { return this.stewardOperation(() => this.stewardService().modelCatalog()); }
   async stewardValidateModel(input: unknown) { return this.stewardOperation(() => this.stewardService().validateModel(input)); }
   async stewardSourceSession(input: unknown) { return this.stewardOperation(() => this.stewardService().sourceSession(stewardSourceSession.parse(input))); }

@@ -20,6 +20,7 @@ function createStewardDisplayJournal() {
     return result;
   }
   return {
+    appendPermission(preset) { const record = { type: "event", event: { type: "permission/preset", seq: nextSeq++, time: Date.now(), data: { preset } } }; records.push(record); for (const listener of listeners) listener([record]); },
     appendModel(selection) { const record = { type: "event", event: { type: "model/selection", seq: nextSeq++, time: Date.now(), data: selection } }; records.push(record); for (const listener of listeners) listener([record]); },
     sync(messages) {
       messages = [...messages].sort((a, b) => a.seq - b.seq).slice(-300);
@@ -176,6 +177,9 @@ function createStewardNativeClient({ React, Context, modules, hostContext, creat
       let selectedModel = followTarget;
       try { const stored = JSON.parse(localStorage.getItem(modelKey) ?? 'null'); if (stored && typeof stored.provider === 'string' && typeof stored.model === 'string') selectedModel = stored; } catch {}
       const setModel = selection => { localStorage.setItem(modelKey, JSON.stringify(selection)); selectedModel = selection; journal.appendModel(selection); for (const listener of controls) listener(); };
+      const followPermission = 'steward-follow-target';
+      let selectedPermission = followPermission;
+      const setPermission = preset => { selectedPermission = preset; journal.appendPermission(preset); for (const listener of controls) listener(); };
       const capturedInvoke = snapshot.invoke;
       const assertAuthority = () => { aborted(lifetime.signal); if (`${bridge.getSnapshot().authorityId}:${bridge.getSnapshot().conversationId}` !== identity) throw new Error('管家权限来源已变化；原请求保留在原来源，未继续发送。'); };
       const invoke = async (method, input) => { assertAuthority(); const value = await capturedInvoke(method, input); assertAuthority(); return value; };
@@ -209,7 +213,7 @@ function createStewardNativeClient({ React, Context, modules, hostContext, creat
       }
       let browseHadComposerFocus = false, sourceHadComposerFocus = false;
       let DisplayCarrierError;
-      const projections = () => ({ asOfSeq: journal.cursor, values: { inbox: emptyInbox, modelSelection: { lastUsed: null, next: selectedModel }, ...(snapshot.media?.imageLimits ? { imageLimits: snapshot.media.imageLimits } : {}) } });
+      const projections = () => ({ asOfSeq: journal.cursor, values: { inbox: emptyInbox, permissions: {currentValue:selectedPermission}, modelSelection: { lastUsed: null, next: selectedModel }, ...(snapshot.media?.imageLimits ? { imageLimits: snapshot.media.imageLimits } : {}) } });
       const summary = () => ({ sessionId, updatedAt: Date.now(), agentAvailable: false, running: false, blank: journal.records.length === 0 });
       const sync = () => {
         if (`${bridge.getSnapshot().authorityId}:${bridge.getSnapshot().conversationId}` !== identity) return;
@@ -228,6 +232,8 @@ function createStewardNativeClient({ React, Context, modules, hostContext, creat
             const request = payload?.args?.request;
             let value;
             switch (endpoint) {
+              case "permissionPresets/catalog": { const catalog=await invoke('stewardPermissionCatalog',{});value={...catalog,options:[{value:followPermission,name:'本次权限：跟随目标',description:'仅下一条请求；分流后沿用实际目标会话的权限，不改变默认设置。'},...catalog.options.map(option=>({...option,description:`仅下一条请求；${option.description??option.name}`}))]};break; }
+              case "commands/execute": { const args=payload?.args,match=typeof args?.line==='string'&&/^\/permission\s+([^\s]+)\s*$/.exec(args.line);if(args?.agentId!==sessionId||!match||args.submittedAttachments?.length)return unsupported(endpoint);if(match[1]!==followPermission)await invoke('stewardValidatePermission',{preset:match[1]});setPermission(match[1]);value={matched:true};break; }
               case "session/modelCatalog": { const catalog = await invoke('stewardModelCatalog', {}); value = { ...catalog, default: followTarget, routableProviders: ['steward-target', ...catalog.routableProviders], groups: [{ id: 'steward-target', name: '管家', models: [{ id: 'follow', name: '跟随目标会话', description: '消息分流后使用实际目标会话的模型' }] }, ...catalog.groups] }; break; }
               case "session/selectModel": { if (request?.sessionId !== sessionId) return unsupported(endpoint); const selection = request.provider === followTarget.provider && request.model === followTarget.model ? followTarget : await invoke('stewardValidateModel', { provider: request.provider, model: request.model, ...(request.reasoningEffort ? { reasoningEffort: request.reasoningEffort } : {}) }); setModel(selection); value = { selected: selection }; break; }
               case "session/attachment": { const message = bridge.getSnapshot().messages.find(message => message.content?.some(part => part.type === 'image' && part.attachment.attachmentId === request?.attachmentId)); if (!message) throw new Error('附件不属于当前可读取消息。'); const read = await readChunks('stewardAttachmentRead', { messageId: message.id, attachmentId: request.attachmentId }); value = { attachment: read.content.attachment, data: read.data }; break; }
@@ -276,7 +282,7 @@ function createStewardNativeClient({ React, Context, modules, hostContext, creat
           if (channel !== "/api") throw new Error("Unsupported display channel");
           switch (endpoint) {
             case "$events": yield { type: "ready", clientId: sessionId, host: { home: "/steward-display" } }; break;
-            case "remoteAccess/follow": yield { type: "baseline", owner: false, grants: [{ resource: { kind: "global" }, actions: ["session/list", "session/control", "session/modelCatalog"] }, { resource: { kind: "session", id: sessionId }, actions: ["session/prompt", "session/follow", "session/page", "session/projections", "session/selectModel", "session/attachment"] }] }; break;
+            case "remoteAccess/follow": yield { type: "baseline", owner: false, grants: [{ resource: { kind: "global" }, actions: ["session/list", "session/control", "session/modelCatalog", "permissionPresets/catalog"] }, { resource: { kind: "session", id: sessionId }, actions: ["session/prompt", "session/follow", "session/page", "session/projections", "session/selectModel", "session/attachment", "commands/execute"] }] }; break;
             case "workspace/follow": yield { type: "baseline", value: { items: [], archivedSessionIds: [], pinnedSessionIds: [] } }; break;
             case "session/control": {
               let wake, changed = false; const off = () => { changed = true; wake?.(); }; controls.add(off); const cancel = () => wake?.(); signal.addEventListener('abort', cancel);
@@ -351,12 +357,12 @@ function createStewardNativeClient({ React, Context, modules, hostContext, creat
           for (const id of prepared.keys()) if (!active.has(id)) prepared.delete(id);
           for (const item of pending) {
             if (prepared.has(item.requestId)) continue;
-            try { prepared.set(item.requestId, { request: bridge.prepare(item.text, item.requestId, { attachmentCount: item.attachments?.length ?? 0, ...(selectedModel.provider !== followTarget.provider ? { selection: { ...selectedModel } } : {}) }) }); }
+            try { prepared.set(item.requestId, { request: bridge.prepare(item.text, item.requestId, { attachmentCount: item.attachments?.length ?? 0, ...(selectedModel.provider !== followTarget.provider ? { selection: { ...selectedModel } } : {}), ...(selectedPermission!==followPermission?{permissionPreset:selectedPermission}:{}) }) }); if(selectedPermission!==followPermission)setPermission(followPermission); }
             catch (error) { prepared.set(item.requestId, { error }); }
           }
         };
         offSubmissions = binding.session.subscribe(capture);
-        for (const name of ["dsh-client-ui-renderer", "dsh-client-locale", "dsh-client-shortcuts", "dsh-client-ui-session", "dsh-client-ui-workspace", "dsh-client-ui-settings", "dsh-client-ui-conversation", "dsh-client-ui-chat", "dsh-client-ui-attachment", "dsh-client-ui-model-selection", "dsh-client-ui-tool", "dsh-client-ui-sidebar-right", "dsh-client-resources", "dsh-client-ui-input-trigger", "dsh-client-ui-commands"])
+        for (const name of ["dsh-client-ui-renderer", "dsh-client-locale", "dsh-client-shortcuts", "dsh-client-ui-session", "dsh-client-ui-workspace", "dsh-client-ui-settings", "dsh-client-ui-conversation", "dsh-client-ui-chat", "dsh-client-ui-attachment", "dsh-client-ui-model-selection", "dsh-client-ui-tool", "dsh-client-ui-sidebar-right", "dsh-client-resources", "dsh-client-ui-input-trigger", "dsh-client-ui-commands", "dsh-client-ui-permission-presets"])
           { const plugin = await load(name); aborted(lifetime.signal); ctx.plugin(plugin); }
         onState?.("正在初始化原生组件…");
         await waitFor(service(ctx, "slots"), Boolean, lifetime.signal);
@@ -406,7 +412,7 @@ function createStewardNativeClient({ React, Context, modules, hostContext, creat
         aborted(lifetime.signal);
         unmount = ctx.uiRenderer.mount(container);
         onState?.("");
-        return { dispose, async restoreRequest(request) { const before = input.state.getSnapshot(); if (before.draft.trim() || before.attachmentIds.length || before.phase !== 'plain') throw new Error('输入框已有文字或附件，请保留当前草稿后再恢复。'); const files = []; for (const uploadId of request.uploads ?? []) { const read = await readChunks('stewardUploadRead', { uploadId }), part = read.content, bytes = Uint8Array.from(atob(read.data), value => value.charCodeAt(0)); files.push(new File([bytes], part.attachment.name ?? 'attachment', {type: part.type === 'image' ? part.attachment.mediaType : 'application/octet-stream'})); } const current = input.state.getSnapshot(); if (current.draftRev !== before.draftRev || current.attachmentIds.length || current.phase !== 'plain') throw new Error('读取附件时草稿已变化，原请求仍保留。'); setModel(request.selection ?? followTarget); const drafts = files.length ? ctx.conversation.createDrafts(sessionId, files) : []; input.setDraft(request.text); if (drafts.length && !input.addAttachments(drafts.map(draft => draft.id))) throw new Error('原生输入框无法恢复附件。'); input.focus(); }, rememberSourceFocus() { sourceHadComposerFocus = !!placement.getSnapshot().composer?.contains(document.activeElement); }, rememberBrowseFocus() { browseHadComposerFocus = !!placement.getSnapshot().composer?.contains(document.activeElement); }, restoreBrowseFocus() { if (browseHadComposerFocus || sourceHadComposerFocus) { browseHadComposerFocus = false; sourceHadComposerFocus = false; input.focus(); } }, openTopics(kind) { const scope = ctx.sessions.scope(sessionId); return ctx.inputTriggers.sessionOf(scope).adjudicate(kind === 'browse' ? '/steward_browse' : '/steward_topic', lifetime.signal, { attachments: 0 }).catch(error => bridge.notice(error.message ?? String(error))); }, getDraft: () => input.state.getSnapshot().draft, hasAttachments: () => input.state.getSnapshot().attachmentIds.length > 0, setDraft(text) { const scope = ctx.sessions.scope(sessionId); ctx.conversation.input.for(scope).setDraft(text); ctx.conversation.input.for(scope).focus(); } };
+        return { dispose, async restoreRequest(request) { const before = input.state.getSnapshot(); if (before.draft.trim() || before.attachmentIds.length || before.phase !== 'plain') throw new Error('输入框已有文字或附件，请保留当前草稿后再恢复。'); const files = []; for (const uploadId of request.uploads ?? []) { const read = await readChunks('stewardUploadRead', { uploadId }), part = read.content, bytes = Uint8Array.from(atob(read.data), value => value.charCodeAt(0)); files.push(new File([bytes], part.attachment.name ?? 'attachment', {type: part.type === 'image' ? part.attachment.mediaType : 'application/octet-stream'})); } const current = input.state.getSnapshot(); if (current.draftRev !== before.draftRev || current.attachmentIds.length || current.phase !== 'plain') throw new Error('读取附件时草稿已变化，原请求仍保留。'); setModel(request.selection ?? followTarget); setPermission(request.permissionPreset ?? followPermission); const drafts = files.length ? ctx.conversation.createDrafts(sessionId, files) : []; input.setDraft(request.text); if (drafts.length && !input.addAttachments(drafts.map(draft => draft.id))) throw new Error('原生输入框无法恢复附件。'); input.focus(); }, rememberSourceFocus() { sourceHadComposerFocus = !!placement.getSnapshot().composer?.contains(document.activeElement); }, rememberBrowseFocus() { browseHadComposerFocus = !!placement.getSnapshot().composer?.contains(document.activeElement); }, restoreBrowseFocus() { if (browseHadComposerFocus || sourceHadComposerFocus) { browseHadComposerFocus = false; sourceHadComposerFocus = false; input.focus(); } }, openTopics(kind) { const scope = ctx.sessions.scope(sessionId); return ctx.inputTriggers.sessionOf(scope).adjudicate(kind === 'browse' ? '/steward_browse' : '/steward_topic', lifetime.signal, { attachments: 0 }).catch(error => bridge.notice(error.message ?? String(error))); }, getDraft: () => input.state.getSnapshot().draft, hasAttachments: () => input.state.getSnapshot().attachmentIds.length > 0, setDraft(text) { const scope = ctx.sessions.scope(sessionId); ctx.conversation.input.for(scope).setDraft(text); ctx.conversation.input.for(scope).focus(); } };
       } catch (error) { await dispose(); throw error; }
     },
   };

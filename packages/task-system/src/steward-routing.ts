@@ -3,6 +3,7 @@ import { createUserMessage, ReasoningEffortId } from "@deepseek-ai/dsh-llm";
 import { z } from "zod";
 import type { ProjectAgentOptions } from "./project-runtime.js";
 import { stewardScope, type StewardScope } from "./steward-contracts.js";
+import { requestsNewProject } from "./steward-project-creation.js";
 
 declare module "@deepseek-ai/dsh-llm" {
   interface MessageSourceMap {
@@ -49,6 +50,7 @@ export async function resolveStewardRoute(input: StewardRouteInput & {
     : clarify("该项目当前不可用，请重新选择可访问的项目。");
   if (!bounded({ text: input.text, projects: input.projects, previousScope: input.previousScope }))
     return clarify("自动分流输入超出范围，请直接选择对话对象。");
+  if (requestsNewProject(input.text)) return { kind: "route", target: { kind: "personal" }, provenance: "explicit" };
   const matches = input.projects.filter(project => addressed(input.text, project.title) || addressed(input.text, project.projectId));
   if (matches.length > 1) return clarify("这条消息提到了多个项目，请选择本条消息要交给的项目。");
   const [match] = matches;

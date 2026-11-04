@@ -33,6 +33,7 @@ import { TaskLedger, TaskError, canonical } from "./ledger.js";
 import { Workbench } from "./workbench.js";
 import { stewardProjectCheckpoint } from "./steward-memory-context.js";
 import { initializeTaskSessionTitle } from "./session-titles.js";
+import { stewardPermission, type StewardPermission } from "./steward-turn-permission.js";
 import { pinStewardTurnSelection, type StewardTurnSelection } from "./steward-turn-selection.js";
 import { WorkspaceManager } from "./workspaces.js";
 import { ScheduledPlans } from "./scheduled-plans.js";
@@ -65,6 +66,7 @@ const queuedContent = z.array(z.discriminatedUnion("type", [
 interface ProjectTurnContent {
   content?: AdmittedPromptContentPart[];
   selection?: StewardTurnSelection;
+  permission?: StewardPermission;
 }
 const text = (v: unknown, limit: number) => {
   if (typeof v !== "string" || !v.trim() || v.length > limit)
@@ -107,7 +109,7 @@ export type ProjectWorkspaceSelection =
   | { kind: "registered"; nodeId: string; workspaceId: string }
   | { kind: "directory"; nodeId: string; path: string };
 type ProjectWorkspaceBinding = { workspaceId: string; nodeId: string; path: string; scope?: "coordinator" };
-interface ProjectCreateInput { commandId: string; title: string; goal: string; selection?: ProjectAgentOptions; workspace?: ProjectWorkspaceSelection }
+interface ProjectCreateInput { stewardOrigin?: string; commandId: string; title: string; goal: string; selection?: ProjectAgentOptions; workspace?: ProjectWorkspaceSelection }
 
 export interface ProjectAgentOptions {
   provider: string;
@@ -155,6 +157,7 @@ export class ProjectRuntime {
     this.db
       .exec(`CREATE TABLE IF NOT EXISTS pr_settings(id INTEGER PRIMARY KEY CHECK(id=1),root TEXT,revision INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS pr_project_workspaces(project TEXT PRIMARY KEY,workspace TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS pr_steward_project_sources(project TEXT PRIMARY KEY,message TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS pr_session_locations(session TEXT PRIMARY KEY,project TEXT NOT NULL,generation INTEGER NOT NULL,binding TEXT NOT NULL,operation TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS pr_task_presentation(task TEXT PRIMARY KEY,visibility TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS pr_report_reads(report TEXT NOT NULL,version TEXT NOT NULL,read_at TEXT NOT NULL,PRIMARY KEY(report,version));
@@ -171,7 +174,7 @@ export class ProjectRuntime {
     this.demandViews = new DemandTaskViews(this.db, ledger, nodeId, taskId => this.projectTaskCard(taskId),(taskId,scope)=>this.childAttentionRows(taskId,0,1,scope).total);
     if (!this.db.prepare("PRAGMA table_info(pr_turns)").all().some(column => column.name === "native_admission"))
       this.db.exec("ALTER TABLE pr_turns ADD COLUMN native_admission TEXT NOT NULL DEFAULT 'unknown'");
-    for (const column of ["content", "selection"]) {
+    for (const column of ["content", "selection", "permission"]) {
       if (!this.db.prepare("PRAGMA table_info(pr_turns)").all().some(row => row.name === column))
         this.db.exec(`ALTER TABLE pr_turns ADD COLUMN ${column} TEXT`);
     }
@@ -667,7 +670,12 @@ export class ProjectRuntime {
     const command = text(input.commandId, 200),
       title = text(input.title, 500),
       goal = text(input.goal, 20000);
-    const hash = digest({ title, goal, ...(input.selection ? {selection: input.selection} : {}), ...(input.workspace ? {workspace:input.workspace} : {}) });
+    if (input.stewardOrigin) {
+      const original = this.ctx.get("taskSystem")?.steward.store.message(input.stewardOrigin);
+      if (!original || original.role !== "user" || original.source.kind !== "personal" || original.source.nodeId !== this.nodeId || command !== `steward-create:${original.id}`)
+        throw new TaskError("FORBIDDEN", "Steward project provenance requires its canonical personal creation request");
+    }
+    const hash = digest({ title, goal, ...(input.stewardOrigin ? {stewardOrigin:input.stewardOrigin} : {}), ...(input.selection ? {selection: input.selection} : {}), ...(input.workspace ? {workspace:input.workspace} : {}) });
     let p = this.db
       .prepare("SELECT * FROM pr_projects WHERE command=?")
       .get(command) as unknown as ProjectRow | undefined;
@@ -694,6 +702,7 @@ export class ProjectRuntime {
       try {
         this.db.prepare("INSERT INTO pr_projects VALUES(?,?,?,?,?,?,?,?,1,?)")
           .run(id, command, hash, root, cwd, title, goal, session, "creating");
+        if (input.stewardOrigin) this.db.prepare("INSERT INTO pr_steward_project_sources VALUES(?,?)").run(id,input.stewardOrigin);
         if (binding) this.db.prepare("INSERT INTO pr_project_workspaces VALUES(?,?)").run(id, canonical(binding));
         if (input.selection) this.db.prepare("INSERT INTO pr_models VALUES(?,?,?)").run(id, canonical(input.selection), 1);
         this.db.exec("COMMIT");
@@ -765,6 +774,8 @@ export class ProjectRuntime {
         agentOptions: this.options(p.id),
       });
       try {
+        if (this.db.prepare("SELECT 1 FROM pr_steward_project_sources WHERE project=?").get(p.id))
+          initializeTaskSessionTitle(handle.agent.session, `管家 · ${title}`);
         await (this.ctx.get("sessions") as Context["sessions"]).flush(
           handle.agent.session,
         );
@@ -1360,6 +1371,7 @@ export class ProjectRuntime {
     if (this.nativeSession(p.session)) throw new TaskError("FORBIDDEN", "Use the native owner conversation for this project session");
     const content = rich.content === undefined ? undefined : queuedContent.parse(rich.content);
     const selection = rich.selection === undefined ? undefined : queuedSelection.parse(rich.selection);
+    const permission = rich.permission === undefined ? undefined : stewardPermission.parse(rich.permission);
     const message = content && contents.trim().length === 0 ? "" : text(contents, 20000),
       command = text(commandId, 200);
     if (!selection) this.options(p.id);
@@ -1369,7 +1381,7 @@ export class ProjectRuntime {
       { ...(p.taskId
         ? { taskId: p.taskId, text: message }
         : { projectId: p.id, text: message }),
-        ...(content === undefined ? {} : { content }), ...(selection === undefined ? {} : { selection }) },
+        ...(content === undefined ? {} : { content }), ...(selection === undefined ? {} : { selection }), ...(permission === undefined ? {} : { permission }) },
     );
     const existing = this.db
       .prepare("SELECT * FROM pr_turns WHERE command=?")
@@ -1380,8 +1392,8 @@ export class ProjectRuntime {
       return { commandId: command, state: existing.state };
     }
     this.db
-      .prepare("INSERT INTO pr_turns(command,digest,owner,session,text,state,error,created,native_admission,content,selection) VALUES(?,?,?,?,?,?,NULL,?,'not-started',?,?)")
-      .run(command, hash, p.id, p.session, message, "queued", now(), content === undefined ? null : canonical(content), selection === undefined ? null : canonical(selection));
+      .prepare("INSERT INTO pr_turns(command,digest,owner,session,text,state,error,created,native_admission,content,selection,permission) VALUES(?,?,?,?,?,?,NULL,?,'not-started',?,?,?)")
+      .run(command, hash, p.id, p.session, message, "queued", now(), content === undefined ? null : canonical(content), selection === undefined ? null : canonical(selection), permission === undefined ? null : canonical(permission));
     this.drainConversation(p);
     return { commandId: command, state: "queued" };
   }
@@ -1404,11 +1416,12 @@ export class ProjectRuntime {
     if (p.state !== "ready" || this.nativeSession(p.session) || [...this.jobs.values()].some(job => job.owner === p.id && job.session === p.session) || this.db.prepare("SELECT 1 FROM pr_turns WHERE owner=? AND session=? AND state IN ('running','interrupted') LIMIT 1").get(p.id, p.session)) return;
     const agents = this.ctx.get("agents"), live = agents?.get(SessionId(p.session));
     if (!agents || live && (live.status !== "idle" || live.inbox.nextTurn.length || live.inbox.nextStep.length)) return;
-    const row = this.db.prepare("SELECT command,text,content,selection FROM pr_turns WHERE owner=? AND session=? AND state='queued' ORDER BY rowid LIMIT 1").get(p.id, p.session);
+    const row = this.db.prepare("SELECT command,text,content,selection,permission FROM pr_turns WHERE owner=? AND session=? AND state='queued' ORDER BY rowid LIMIT 1").get(p.id, p.session);
     if (!row) return;
     let agentOptions: ReturnType<ProjectRuntime["options"]>;
     const selection = row.selection === null ? undefined : queuedSelection.parse(JSON.parse(String(row.selection)));
     const content = row.content === null ? undefined : queuedContent.parse(JSON.parse(String(row.content)));
+    const permission = row.permission === null ? undefined : stewardPermission.parse(JSON.parse(String(row.permission)));
     try { agentOptions = selection ? { provider: selection.provider, model: selection.model,
       ...(selection.reasoningEffort === undefined ? {} : { reasoningEffort: ReasoningEffortId(selection.reasoningEffort) }) } : this.options(p.id); }
     catch { return; }
@@ -1417,7 +1430,7 @@ export class ProjectRuntime {
     const admitted = this.db.prepare("UPDATE pr_turns SET state='running' WHERE command=? AND state='queued' AND NOT EXISTS(SELECT 1 FROM pr_turns WHERE owner=? AND session=? AND state IN ('running','interrupted'))").run(command, p.id, p.session);
     if (!admitted.changes) return;
     const abort = new AbortController();
-    const done = this.respond(p, command, message, abort.signal, agentOptions, { content, selection })
+    const done = this.respond(p, command, message, abort.signal, agentOptions, { content, selection, permission })
       .catch(() => {
         this.db
           .prepare(
@@ -1513,6 +1526,11 @@ export class ProjectRuntime {
         agent?.cancel({ kind: "hook", reason: "Project turn stopped" });
       combined.addEventListener("abort", cancel, { once: true });
       if (selection) unpin = pinStewardTurnSelection(agent, command, selection);
+      if (rich.permission) {
+        const permissions = this.ctx.get("taskSystem")?.steward.permissions;
+        if (!permissions) throw new TaskError("UNAVAILABLE", "Request permission service is unavailable");
+        permissions.arm(agent, command, rich.permission);
+      }
       nativeAdmitted = true;
       this.db.prepare("UPDATE pr_turns SET native_admission='started' WHERE command=? AND state='running'").run(command);
       agent.followup(

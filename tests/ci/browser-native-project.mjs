@@ -11,7 +11,7 @@ import { ScriptedModel } from '../dsh/scripted-model.mjs';
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 
-export async function startHost({ memoryManagerPath, viewProbe = false } = {}) {
+export async function startHost({ memoryManagerPath, viewProbe = false, permissionPresets } = {}) {
   const runtimeRoot = process.env.DSH_OFFICIAL_ROOT ?? ensureOfficialRuntime().root;
   const require = createRequire(join(runtimeRoot, 'package.json'));
   const directory = realpathSync(mkdtempSync(join(tmpdir(), 'dsh-project-native-browser-')));
@@ -45,6 +45,7 @@ export async function startHost({ memoryManagerPath, viewProbe = false } = {}) {
   writeFileSync(patch, JSON.stringify([
     { id: 'webserver', config: { host: '127.0.0.1', port: 0, compression: 'none' } },
     { id: 'session-title-llm', disabled: true },
+    ...(permissionPresets ? [{id:'permission',config:{presets:permissionPresets}}] : []),
     { id: 'agent-default-model', config: { provider: 'test-offline', model: 'script' } },
     { insert: [
       ...plugins,

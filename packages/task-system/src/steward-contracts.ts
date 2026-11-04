@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { stewardPermission } from "./steward-turn-permission.js";
 import { AttachmentId } from "@deepseek-ai/dsh-attachment";
 import { projectSessionReference } from "./project-session-protocol.js";
 import { ArmAcceptanceGate, AmendAcceptanceGate } from "./acceptance-gates.js";
@@ -28,7 +29,7 @@ export const stewardUploadRead = z.strictObject({ conversationId: key, uploadId:
 export const stewardAttachmentRead = z.strictObject({ conversationId: key, messageId: key, attachmentId: z.string().min(1).max(200), offset: z.number().int().nonnegative().default(0) });
 export const stewardSend = z.strictObject({
   conversationId: key, commandId: key, text: z.string().trim().max(16000),
-  uploads: z.array(key).max(32).optional(), selection: stewardSelection.optional(),
+  uploads: z.array(key).max(32).optional(), selection: stewardSelection.optional(), permissionPreset: key.optional(),
   target: stewardScope.optional(), replyTo: key.optional(),
   routingMode: z.literal("auto").optional(),
   quote: stewardQuoteInput.optional(),
@@ -104,7 +105,7 @@ export const stewardManifest = z.strictObject({
 });
 export const stewardMessage = z.strictObject({
   id: key, seq: z.number().int().positive(), conversationId: key,
-  role: z.enum(["user", "assistant", "notification"]), text: z.string(), content: stewardContent.optional(), selection: stewardSelection.optional(), commandId: key.nullable().default(null),
+  role: z.enum(["user", "assistant", "notification"]), text: z.string(), content: stewardContent.optional(), selection: stewardSelection.optional(), permission: stewardPermission.optional(), commandId: key.nullable().default(null),
   scope: stewardScope, replyTo: key.nullable(), createdAt: z.string(),
   source: stewardBinding, nativeSeq: z.number().int().nonnegative().nullable(),
   provenance: z.strictObject({ kind: z.literal("ledger"), eventId: key, eventType: key, taskId: key, runId: key.nullable() }).nullable().default(null),

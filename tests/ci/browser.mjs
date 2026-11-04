@@ -4,6 +4,7 @@ import { chromium } from 'playwright';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
+import {testStewardProjectPermissions} from './browser-steward-project-permissions.mjs';
 import { testNativeStewardMedia } from './browser-native-steward-media.mjs';
 import { testNativeSteward } from './browser-native-steward.mjs';
 import { testNativeProject } from './browser-native-project.mjs';
@@ -17,7 +18,7 @@ const browser = await chromium.launch({ headless: true, ...(process.env.DSH_BROW
 const results = [];
 console.log(`Browser evidence: ${output}`);
 try {
-  for (const [name, run] of [['settings', testSettings], ['executor alerts', testExecutorAlerts], ['responsible task check-ins', testTaskCheckins], ['task center polling selection', testTaskCenterSelection], ['production native project conversation', testNativeProject], ['steward delayed scope responses', testStewardScopeResponses], ['native steward conversation', testNativeSteward], ['native steward models and media',testNativeStewardMedia]]) {
+  for (const [name, run] of [['settings', testSettings], ['executor alerts', testExecutorAlerts], ['responsible task check-ins', testTaskCheckins], ['task center polling selection', testTaskCenterSelection], ['production native project conversation', testNativeProject], ['steward delayed scope responses', testStewardScopeResponses], ['native steward conversation', testNativeSteward], ['native steward models and media',testNativeStewardMedia], ['steward project creation and request permissions',testStewardProjectPermissions]]) {
     try {
       const result = await run(browser, { output });
       results.push({ name, status: 'passed', result });
