@@ -25,8 +25,8 @@ export async function testNativeSteward(browser, { output } = {}) {
     assert.equal(await page.locator('.steward-log').count(), 0);
     assert.equal(await page.locator('textarea[aria-label="消息"]').count(), 0);
     assert.equal(await native.locator('[data-composer-card]:visible').count(), 1);
-    assert.equal(await native.getByRole('button', { name: /选择模型|停止|重试|撤销/ }).count(), 0);
-    await native.getByText('仅文字', { exact: true }).waitFor();
+    assert.equal(await native.getByRole('button', { name: /停止|重试|撤销/ }).count(), 0);
+    await native.getByRole('button',{name:/选择模型/}).waitFor();
     const target = {async selectOption(key){await native.getByRole('button',{name:/^本条话题：/}).click();const option=page.getByRole('option',{name:new RegExp('^'+names.get(key))});await option.waitFor({state:'visible'});await option.click();await native.getByRole('button',{name:`本条话题：${names.get(key)}`,exact:true}).waitFor();},async inputValue(){const name=await native.getByRole('button',{name:/^本条话题：/}).getAttribute('aria-label');return [...names].find(([,label])=>name===`本条话题：${label}`)?.[0];}};
     const browse = async key => {await native.getByRole('button',{name:'浏览话题',exact:true}).click();await page.getByRole('option',{name:key==='latest'?'跟随最新话题':new RegExp(`^${names.get(key)}(?: 最新)?$`)}).click();};
     await target.selectOption('personal');
@@ -179,13 +179,6 @@ export async function testNativeSteward(browser, { output } = {}) {
     const classifier=host.model.requests.findLast(request=>request.messages[0]?.source?.kind==='dsh-steward-route-classifier');
     assert.ok(classifier);
     assert.equal(JSON.stringify(classifier.messages).includes('ALPHA_PRIVATE_FIRST'),false,'Quote source text never enters the route classifier');
-
-    await editor.fill('preserve draft on unsupported attachment');
-    await editor.evaluate(element => { const transfer = new DataTransfer(); transfer.items.add(new File(["unsupported"], "unsupported.txt", { type: "text/plain" })); element.dispatchEvent(new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData: transfer })); });
-    await page.getByRole('alert').filter({ hasText: '管家目前仅接收文字' }).waitFor();
-    assert.equal(await editor.innerText(), 'preserve draft on unsupported attachment');
-    assert.equal(calls.some(call => call.text === 'preserve draft on unsupported attachment'), false);
-    await editor.fill('');
 
     let loseAck = true;
     await page.route('**/api/taskPluginSettings/stewardSend', async route => {

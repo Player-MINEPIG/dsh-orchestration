@@ -10,7 +10,7 @@ function createStewardDisplayJournal() {
     const result = [event("turn/start", { turn }), event("step/start", { turn, step: 0 })];
     if (message.role === "user") result.push(event("user/message", {
       id: message.id, role: "user", source: { kind: "user", ...(message.commandId ? { rpcId: message.commandId } : {}) },
-      content: [{ type: "text", text: message.text }],
+      content: message.content ?? [{ type: "text", text: message.text }],
     }, "append"));
     else result.push(event("assistant/message", { turn, step: 0, message: {
       id: message.id, role: "assistant", source: { kind: "model", provider: "steward-display", model: "canonical-history" },
@@ -20,6 +20,7 @@ function createStewardDisplayJournal() {
     return result;
   }
   return {
+    appendModel(selection) { const record = { type: "event", event: { type: "model/selection", seq: nextSeq++, time: Date.now(), data: selection } }; records.push(record); for (const listener of listeners) listener([record]); },
     sync(messages) {
       messages = [...messages].sort((a, b) => a.seq - b.seq).slice(-300);
       const incoming = [...messages].sort((a, b) => a.seq - b.seq).filter(message => !rows.has(message.id));
@@ -169,10 +170,46 @@ function createStewardNativeClient({ React, Context, modules, hostContext, creat
       const snapshot = bridge.getSnapshot(), identity = `${snapshot.authorityId}:${snapshot.conversationId}`;
       const sessionId = `steward-display:${identity}`, createdAt = Date.now();
       let reference, unmount, offBridge, offSubmissions, offInput;
-      const prepared = new Map();
+      const prepared = new Map(), controls = new Set();
+      const followTarget = { provider: 'steward-target', model: 'follow' };
+      const modelKey = `dsh-steward-model:${identity}`;
+      let selectedModel = followTarget;
+      try { const stored = JSON.parse(localStorage.getItem(modelKey) ?? 'null'); if (stored && typeof stored.provider === 'string' && typeof stored.model === 'string') selectedModel = stored; } catch {}
+      const setModel = selection => { localStorage.setItem(modelKey, JSON.stringify(selection)); selectedModel = selection; journal.appendModel(selection); for (const listener of controls) listener(); };
+      const capturedInvoke = snapshot.invoke;
+      const assertAuthority = () => { aborted(lifetime.signal); if (`${bridge.getSnapshot().authorityId}:${bridge.getSnapshot().conversationId}` !== identity) throw new Error('管家权限来源已变化；原请求保留在原来源，未继续发送。'); };
+      const invoke = async (method, input) => { assertAuthority(); const value = await capturedInvoke(method, input); assertAuthority(); return value; };
+      async function stageBytes(bytes, name, mediaType, signal, progress, onStart) {
+        if (bytes.length > 8388608) throw new Error('附件不能超过 8 MiB。');
+        let uploadId;
+        try {
+          const start = await invoke('stewardUpload', { kind: 'start', conversationId: snapshot.conversationId, commandId: crypto.randomUUID?.() ?? `upload-${Date.now()}-${Math.random()}`, bytes: bytes.length, name: name || 'attachment', ...(mediaType ? { mediaType } : {}) });
+          uploadId = start.uploadId; onStart?.(uploadId);
+          if (!start.completed) for (let offset = 0, index = 0; offset < bytes.length; offset += 24576, index++) {
+            aborted(signal ?? lifetime.signal);
+            const chunk = bytes.subarray(offset, offset + 24576);
+            const receipt = await invoke('stewardUpload', { kind: 'part', conversationId: snapshot.conversationId, uploadId, index, data: btoa(String.fromCharCode(...chunk)) });
+            if (receipt.nextIndex !== index + 1) throw new Error('附件上传进度无效。');
+            progress?.({loaded: offset + chunk.length, total: bytes.length});
+          }
+          return await invoke('stewardUpload', { kind: 'finish', conversationId: snapshot.conversationId, uploadId });
+        } catch (error) { if (uploadId) void invoke('stewardUpload', { kind: 'abort', conversationId: snapshot.conversationId, uploadId }).catch(() => {}); throw error; }
+      }
+      async function readChunks(method, input) {
+        let offset = 0, metadata; const chunks = [];
+        while (true) {
+          const leaf = await invoke(method, { conversationId: snapshot.conversationId, ...input, offset });
+          if (leaf.offset !== offset || leaf.totalBytes > 8388608 || typeof leaf.data !== 'string') throw new Error('附件读取进度无效。');
+          metadata = leaf.content;
+          const decoded = atob(leaf.data); chunks.push(decoded); offset += decoded.length;
+          if (leaf.eof) { if (offset !== leaf.totalBytes) throw new Error('附件内容不完整。'); break; }
+          if (!decoded.length) throw new Error('附件读取未推进。');
+        }
+        return { content: metadata, data: btoa(chunks.join('')) };
+      }
       let browseHadComposerFocus = false, sourceHadComposerFocus = false;
       let DisplayCarrierError;
-      const projections = () => ({ asOfSeq: journal.cursor, values: { inbox: emptyInbox } });
+      const projections = () => ({ asOfSeq: journal.cursor, values: { inbox: emptyInbox, modelSelection: { lastUsed: null, next: selectedModel }, ...(snapshot.media?.imageLimits ? { imageLimits: snapshot.media.imageLimits } : {}) } });
       const summary = () => ({ sessionId, updatedAt: Date.now(), agentAvailable: false, running: false, blank: journal.records.length === 0 });
       const sync = () => {
         if (`${bridge.getSnapshot().authorityId}:${bridge.getSnapshot().conversationId}` !== identity) return;
@@ -191,6 +228,9 @@ function createStewardNativeClient({ React, Context, modules, hostContext, creat
             const request = payload?.args?.request;
             let value;
             switch (endpoint) {
+              case "session/modelCatalog": { const catalog = await invoke('stewardModelCatalog', {}); value = { ...catalog, default: followTarget, routableProviders: ['steward-target', ...catalog.routableProviders], groups: [{ id: 'steward-target', name: '管家', models: [{ id: 'follow', name: '跟随目标会话', description: '消息分流后使用实际目标会话的模型' }] }, ...catalog.groups] }; break; }
+              case "session/selectModel": { if (request?.sessionId !== sessionId) return unsupported(endpoint); const selection = request.provider === followTarget.provider && request.model === followTarget.model ? followTarget : await invoke('stewardValidateModel', { provider: request.provider, model: request.model, ...(request.reasoningEffort ? { reasoningEffort: request.reasoningEffort } : {}) }); setModel(selection); value = { selected: selection }; break; }
+              case "session/attachment": { const message = bridge.getSnapshot().messages.find(message => message.content?.some(part => part.type === 'image' && part.attachment.attachmentId === request?.attachmentId)); if (!message) throw new Error('附件不属于当前可读取消息。'); const read = await readChunks('stewardAttachmentRead', { messageId: message.id, attachmentId: request.attachmentId }); value = { attachment: read.content.attachment, data: read.data }; break; }
               case "commands/list": value = []; break;
               case "session/list": value = { items: [summary()] }; break;
               case "session/projections": value = { kind: "sequenced", ...projections() }; break;
@@ -204,15 +244,24 @@ function createStewardNativeClient({ React, Context, modules, hostContext, creat
                 break;
               }
               case "session/prompt": {
-                if (request?.sessionId !== sessionId || request.mode !== "queue" || !Array.isArray(request.content) || !request.content.length || request.content.some(part => part.type !== "text"))
-                  throw new Error("管家目前仅接收文字；附件请在对应原会话中发送。");
-                const text = request.content.map(part => part.text).join("\n");
+                if (request?.sessionId !== sessionId || request.mode !== "queue" || !Array.isArray(request.content) || !request.content.length || request.content.some(part => !['text', 'image', 'file'].includes(part.type))) throw new Error('不支持的原生消息内容。');
+                const text = request.content.filter(part => part.type === 'text').map(part => part.text).join("\n");
                 if (`${bridge.getSnapshot().authorityId}:${bridge.getSnapshot().conversationId}` !== identity) throw new Error("管家权限来源已变化；请核对原请求。");
                 const captured = prepared.get(request.requestId);
                 if (!captured) throw new Error("本条消息的目标快照缺失，请核对原请求后重试。");
                 if (captured.error) throw captured.error;
                 if (captured.request.text !== text.trim()) throw new Error("原生消息与已保存的原请求不一致。");
-                const trackedOriginal = bridge.submit(captured.request);
+                const uploads = [];
+                try {
+                for (const part of request.content) {
+                  if (part.type === 'file') { uploads.push(part.receiptId); captured.request = bridge.stage(captured.request, [...uploads]); }
+                  else if (part.type === 'image') { const decoded = atob(part.data), bytes = Uint8Array.from(decoded, value => value.charCodeAt(0)); const staged = await stageBytes(bytes, part.name, part.mediaType, signal, undefined, uploadId => { captured.request = bridge.stage(captured.request, [...uploads, uploadId]); }); uploads.push(staged.receiptId); }
+                }
+                } catch (error) { if (`${bridge.getSnapshot().authorityId}:${bridge.getSnapshot().conversationId}` === identity) bridge.preparationFailed(captured.request, error); throw error; }
+                aborted(signal); assertAuthority();
+                const original = bridge.complete(captured.request, uploads);
+                aborted(signal); assertAuthority();
+                const trackedOriginal = bridge.submit(original);
                 await trackedOriginal;
                 sync(); const displayReceipt = { accepted: true }; value = displayReceipt; break;
               }
@@ -227,9 +276,13 @@ function createStewardNativeClient({ React, Context, modules, hostContext, creat
           if (channel !== "/api") throw new Error("Unsupported display channel");
           switch (endpoint) {
             case "$events": yield { type: "ready", clientId: sessionId, host: { home: "/steward-display" } }; break;
-            case "remoteAccess/follow": yield { type: "baseline", owner: false, grants: [{ resource: { kind: "global" }, actions: ["session/list", "session/control"] }, { resource: { kind: "session", id: sessionId }, actions: ["session/prompt", "session/follow", "session/page", "session/projections"] }] }; break;
+            case "remoteAccess/follow": yield { type: "baseline", owner: false, grants: [{ resource: { kind: "global" }, actions: ["session/list", "session/control", "session/modelCatalog"] }, { resource: { kind: "session", id: sessionId }, actions: ["session/prompt", "session/follow", "session/page", "session/projections", "session/selectModel", "session/attachment"] }] }; break;
             case "workspace/follow": yield { type: "baseline", value: { items: [], archivedSessionIds: [], pinnedSessionIds: [] } }; break;
-            case "session/control": yield { type: "baseline", value: { projections: { [sessionId]: projections() } } }; break;
+            case "session/control": {
+              let wake, changed = false; const off = () => { changed = true; wake?.(); }; controls.add(off); const cancel = () => wake?.(); signal.addEventListener('abort', cancel);
+              try { yield { type: 'baseline', value: { projections: { [sessionId]: projections() } } }; while (!signal.aborted) { await new Promise(resolve => { wake = resolve; if (changed || signal.aborted) resolve(); }); wake = undefined; if (changed && !signal.aborted) { changed = false; yield { type: 'projection', sessionId, key: 'modelSelection', value: { lastUsed: null, next: selectedModel }, seq: journal.cursor }; } } }
+              finally { controls.delete(off); signal.removeEventListener('abort', cancel); } return;
+            }
             case "session/follow": {
               if (payload?.args?.request?.address?.sessionId !== sessionId) throw new Error("Display session identity changed");
               const pending = []; let wake, replace = false;
@@ -258,22 +311,8 @@ function createStewardNativeClient({ React, Context, modules, hostContext, creat
       };
       const dispose = async () => {
         lifetime.abort(); offBridge?.(); offSubmissions?.(); offInput?.(); signal?.removeEventListener("abort", cancel);
-        for (const event of ["paste", "drop", "dragover", "change"]) eventRoot.removeEventListener(event, denyFiles, true);
         await Promise.resolve(); unmount?.(); reference?.release(); await ctx.fiber.dispose();
       };
-      function denyFiles(event) {
-        if (placement && !event.target?.closest?.("[data-steward-router-composer]")) return;
-        if (event.type === "change" && event.target instanceof HTMLInputElement && event.target.type === "file" && event.target.files?.length) {
-          event.preventDefault(); event.stopImmediatePropagation(); event.target.value = "";
-          bridge.notice("管家目前仅接收文字；附件请在对应原会话中发送。"); return;
-        }
-        const transfer = event.clipboardData ?? event.dataTransfer;
-        if (transfer && (transfer.files?.length || Array.from(transfer.items ?? []).some(item => item.kind === "file") || Array.from(transfer.types ?? []).includes("Files"))) {
-          event.preventDefault(); event.stopImmediatePropagation();
-          bridge.notice("管家目前仅接收文字；附件请在对应原会话中发送。");
-        }
-      }
-      for (const event of ["paste", "drop", "dragover", "change"]) eventRoot.addEventListener(event, denyFiles, true);
       try {
         onState?.("正在加载 DSH 原生对话…");
         aborted(lifetime.signal);
@@ -287,7 +326,15 @@ function createStewardNativeClient({ React, Context, modules, hostContext, creat
         const panelInfo = { getSnapshot: () => panelSnapshot, subscribe: () => () => {} };
         ctx.reflect.provide("layout", { panelInfo, selectPanel() {}, beginNavigation: () => lifetime.signal,
           toggleSidebar() {}, openRightbar() {}, closeRightbar() {} });
-        ctx.reflect.provide("fileUpload", { upload: async () => unsupported("fileUploads/upload") });
+        ctx.reflect.provide('fileUpload', { async upload(target, data, name, signal, progress) {
+          try { if (target !== sessionId) throw new Error('附件目标已变化。'); const source = data instanceof Blob ? data.stream() : data instanceof Uint8Array ? new Blob([data]).stream() : new Response(data).body;
+            if (!source) throw new Error('附件内容不可读。');
+            const reader = source.getReader(), chunks = []; let bytes = 0;
+            try { for (;;) { aborted(signal); const part = await reader.read(); if (part.done) break; bytes += part.value.byteLength; if (bytes > 8388608) throw new Error('附件不能超过 8 MiB。'); chunks.push(part.value); } }
+            finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
+            const staged = await stageBytes(new Uint8Array(await new Blob(chunks).arrayBuffer()), name, undefined, signal, progress); return { ok: true, value: { receiptId: staged.receiptId, file: staged.content.attachment } }; }
+          catch (error) { return { ok: false, error: {code:'steward/upload',message:error.message??String(error)} }; }
+        } });
         const plugins = ["dsh-typert-registry", "dsh-api-gateway", "dsh-api-remotes", "dsh-api-remote-access", "dsh-api-session-controller", "dsh-api-workspace-controller"];
         for (const name of plugins) { const plugin = await load(name); aborted(lifetime.signal); ctx.plugin(plugin); }
         onState?.("正在初始化会话服务…");
@@ -304,12 +351,12 @@ function createStewardNativeClient({ React, Context, modules, hostContext, creat
           for (const id of prepared.keys()) if (!active.has(id)) prepared.delete(id);
           for (const item of pending) {
             if (prepared.has(item.requestId)) continue;
-            try { prepared.set(item.requestId, { request: bridge.prepare(item.text, item.requestId) }); }
+            try { prepared.set(item.requestId, { request: bridge.prepare(item.text, item.requestId, { attachmentCount: item.attachments?.length ?? 0, ...(selectedModel.provider !== followTarget.provider ? { selection: { ...selectedModel } } : {}) }) }); }
             catch (error) { prepared.set(item.requestId, { error }); }
           }
         };
         offSubmissions = binding.session.subscribe(capture);
-        for (const name of ["dsh-client-ui-renderer", "dsh-client-locale", "dsh-client-shortcuts", "dsh-client-ui-session", "dsh-client-ui-workspace", "dsh-client-ui-settings", "dsh-client-ui-conversation", "dsh-client-ui-chat", "dsh-client-ui-tool", "dsh-client-ui-sidebar-right", "dsh-client-resources", "dsh-client-ui-input-trigger", "dsh-client-ui-commands"])
+        for (const name of ["dsh-client-ui-renderer", "dsh-client-locale", "dsh-client-shortcuts", "dsh-client-ui-session", "dsh-client-ui-workspace", "dsh-client-ui-settings", "dsh-client-ui-conversation", "dsh-client-ui-chat", "dsh-client-ui-attachment", "dsh-client-ui-model-selection", "dsh-client-ui-tool", "dsh-client-ui-sidebar-right", "dsh-client-resources", "dsh-client-ui-input-trigger", "dsh-client-ui-commands"])
           { const plugin = await load(name); aborted(lifetime.signal); ctx.plugin(plugin); }
         onState?.("正在初始化原生组件…");
         await waitFor(service(ctx, "slots"), Boolean, lifetime.signal);
@@ -331,7 +378,7 @@ function createStewardNativeClient({ React, Context, modules, hostContext, creat
           const message = state.messages.find(message => message.seq === turn);
           if (!message) return null;
           return h('article', { className: 'steward-native-user', 'data-message-id': message.id, 'data-role': 'user', 'data-scope': state.scopeKey(message.scope) },
-            h('div', { style: { display: 'flex', justifyContent: 'flex-end', width: '100%' } }, renderFactorySlot('conversation.chat.user.content', { content: { text: message.text, attachments: [], extraBlocks: [] }, facts: {}, loadImage })),
+            h('div', { style: { display: 'flex', justifyContent: 'flex-end', width: '100%' } }, renderFactorySlot('conversation.chat.user.content', { content: { text: message.text, attachments: (message.content ?? []).filter(part => part.type !== 'text').map(part => part.type === 'image' ? { type: 'image', image: { attachment: part.attachment } } : { type: 'file', file: part.attachment }), extraBlocks: [] }, facts: {}, loadImage })),
             h('div', { className: 'steward-icon-row' }, state.renderActions(message, true)));
         }
         ctx.slots.register({ name: "root", children: { main: { kind: "keyed", scope: "root" }, "shell.overlay": { kind: "list", scope: "root" }, "steward.native.conversation": { kind: "single", scope: "session" } } },
@@ -359,7 +406,7 @@ function createStewardNativeClient({ React, Context, modules, hostContext, creat
         aborted(lifetime.signal);
         unmount = ctx.uiRenderer.mount(container);
         onState?.("");
-        return { dispose, rememberSourceFocus() { sourceHadComposerFocus = !!placement.getSnapshot().composer?.contains(document.activeElement); }, rememberBrowseFocus() { browseHadComposerFocus = !!placement.getSnapshot().composer?.contains(document.activeElement); }, restoreBrowseFocus() { if (browseHadComposerFocus || sourceHadComposerFocus) { browseHadComposerFocus = false; sourceHadComposerFocus = false; input.focus(); } }, openTopics(kind) { const scope = ctx.sessions.scope(sessionId); return ctx.inputTriggers.sessionOf(scope).adjudicate(kind === 'browse' ? '/steward_browse' : '/steward_topic', lifetime.signal, { attachments: 0 }).catch(error => bridge.notice(error.message ?? String(error))); }, getDraft: () => input.state.getSnapshot().draft, setDraft(text) { const scope = ctx.sessions.scope(sessionId); ctx.conversation.input.for(scope).setDraft(text); ctx.conversation.input.for(scope).focus(); } };
+        return { dispose, async restoreRequest(request) { const before = input.state.getSnapshot(); if (before.draft.trim() || before.attachmentIds.length || before.phase !== 'plain') throw new Error('输入框已有文字或附件，请保留当前草稿后再恢复。'); const files = []; for (const uploadId of request.uploads ?? []) { const read = await readChunks('stewardUploadRead', { uploadId }), part = read.content, bytes = Uint8Array.from(atob(read.data), value => value.charCodeAt(0)); files.push(new File([bytes], part.attachment.name ?? 'attachment', {type: part.type === 'image' ? part.attachment.mediaType : 'application/octet-stream'})); } const current = input.state.getSnapshot(); if (current.draftRev !== before.draftRev || current.attachmentIds.length || current.phase !== 'plain') throw new Error('读取附件时草稿已变化，原请求仍保留。'); setModel(request.selection ?? followTarget); const drafts = files.length ? ctx.conversation.createDrafts(sessionId, files) : []; input.setDraft(request.text); if (drafts.length && !input.addAttachments(drafts.map(draft => draft.id))) throw new Error('原生输入框无法恢复附件。'); input.focus(); }, rememberSourceFocus() { sourceHadComposerFocus = !!placement.getSnapshot().composer?.contains(document.activeElement); }, rememberBrowseFocus() { browseHadComposerFocus = !!placement.getSnapshot().composer?.contains(document.activeElement); }, restoreBrowseFocus() { if (browseHadComposerFocus || sourceHadComposerFocus) { browseHadComposerFocus = false; sourceHadComposerFocus = false; input.focus(); } }, openTopics(kind) { const scope = ctx.sessions.scope(sessionId); return ctx.inputTriggers.sessionOf(scope).adjudicate(kind === 'browse' ? '/steward_browse' : '/steward_topic', lifetime.signal, { attachments: 0 }).catch(error => bridge.notice(error.message ?? String(error))); }, getDraft: () => input.state.getSnapshot().draft, hasAttachments: () => input.state.getSnapshot().attachmentIds.length > 0, setDraft(text) { const scope = ctx.sessions.scope(sessionId); ctx.conversation.input.for(scope).setDraft(text); ctx.conversation.input.for(scope).focus(); } };
       } catch (error) { await dispose(); throw error; }
     },
   };

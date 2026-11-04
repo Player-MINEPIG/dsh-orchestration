@@ -366,8 +366,9 @@ export class ProjectRuntime {
     const handle = await this.agents().resume({ resumeSessionId: SessionId(binding.sessionId),
       agentOptions: recorded ? { provider: recorded.config.provider, model: recorded.config.model, ...(recorded.config.reasoningEffort ? { reasoningEffort: recorded.config.reasoningEffort } : {}) } : this.options(project.id),
       setup: (agentCtx, agent) => {
-        agentCtx.tools.restrict({ allow: TOOLS });
-        agentCtx.tools.guard(exec => exec.agent === agent && TOOLS.includes(exec.name) ? undefined : "Project dispatch tools only");
+        agentCtx.tools.restrict({ allow: [...TOOLS, ...(agentCtx.tools.get("read", agent) ? ["read"] : [])] });
+        agentCtx.tools.guard(exec => exec.agent === agent && (TOOLS.includes(exec.name) || exec.name === "read" &&
+          this.ctx.get("taskSystem")?.steward.canReadAttachmentFile(binding.sessionId, exec.arguments)) ? undefined : "Project dispatch tools only");
       },
     });
     this.placementHandles.add(handle);
@@ -1480,9 +1481,9 @@ export class ProjectRuntime {
               throw new TaskError("LIMIT", "Project turn step limit");
             return await next();
           });
-          agentCtx.tools.restrict({ allow: tools });
+          agentCtx.tools.restrict({ allow: [...tools, ...(agentCtx.tools.get("read", agent) ? ["read"] : [])] });
           agentCtx.tools.guard((exec) =>
-            exec.agent === agent && tools.includes(exec.name)
+            exec.agent === agent && (tools.includes(exec.name) || exec.name === "read" && this.ctx.get("taskSystem")?.steward.canReadAttachmentFile(p.session, exec.arguments))
               ? undefined
               : "Project dispatch tools only",
           );

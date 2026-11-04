@@ -141,7 +141,7 @@ test('one-column admission migration preserves legacy unknown rows across repeat
     const {runtime,a}=await projects(h),owner=runtime.placementProject(a.projectId);
     h.ledger.managementDatabase().prepare("INSERT INTO pr_turns(command,digest,owner,session,text,state,error,created,native_admission) VALUES('legacy-running','fixture',?,?,'Legacy unknown','running',NULL,?,'unknown')").run(a.projectId,owner.session,new Date().toISOString());
     await h.dispose();
-    const old=new DatabaseSync(join(dir,'tasks.sqlite'));try{old.exec('ALTER TABLE pr_turns DROP COLUMN native_admission');assert.equal(old.prepare('PRAGMA table_info(pr_turns)').all().length,8);}finally{old.close();}
+    const old=new DatabaseSync(join(dir,'tasks.sqlite'));try{old.exec('ALTER TABLE pr_turns DROP COLUMN native_admission');assert.equal(old.prepare('PRAGMA table_info(pr_turns)').all().some(column=>column.name==='native_admission'),false);}finally{old.close();}
     for(let restart=0;restart<2;restart++){
       h=await createNativeHarness({dir,config});const db=h.ledger.managementDatabase();
       assert.equal(db.prepare('PRAGMA table_info(pr_turns)').all().filter(column=>column.name==='native_admission').length,1);

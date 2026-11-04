@@ -160,7 +160,7 @@ export class StewardConversations {
     return this.message(String(row.message));
   }
   requestId(messageId: string): string { return `steward-${messageId}`; }
-  accept(request: StewardSend, scope: StewardScope, binding: StewardBinding, afterSeq: number, quote: StewardQuote | null = null): StewardMessage {
+  accept(request: StewardSend, scope: StewardScope, binding: StewardBinding, afterSeq: number, quote: StewardQuote | null = null, delivery?: Pick<StewardMessage, "content" | "selection">, bindUploads?: (messageId: string) => void): StewardMessage {
     this.db.exec("BEGIN IMMEDIATE");
     try {
       const previous = this.replay(request);
@@ -179,9 +179,10 @@ export class StewardConversations {
       }
       const value = this.insert({ conversationId: request.conversationId, role: "user", text: request.text, commandId: request.commandId,
         scope, replyTo: request.replyTo ?? null, createdAt: new Date().toISOString(), source: binding,
-        nativeSeq: null, provenance: null, state: { kind: "accepted" }, revision: 0, resolution: null, quote,
+        nativeSeq: null, provenance: null, state: { kind: "accepted" }, revision: 0, resolution: null, quote, ...delivery,
         manifest: { persona: STEWARD_PERSONA, scope, history: "scope-native-session", evidence: "selection-only",
           resources: [{ id: STEWARD_PERSONA.id, version: STEWARD_PERSONA.version }, ...(quote ? [{ id: `quote:${quote.messageId}`, version: `${quote.revision}:${quote.excerptHash}` }] : [])] } });
+      bindUploads?.(value.id);
       this.db.prepare("INSERT INTO steward_commands VALUES(?,?,?)").run(request.commandId, digest(request), value.id);
       this.db.prepare("UPDATE steward_conversations SET scope=? WHERE id=?").run(canonical(scope), request.conversationId);
       this.db.prepare("INSERT OR IGNORE INTO steward_sources VALUES(?,?,?)")

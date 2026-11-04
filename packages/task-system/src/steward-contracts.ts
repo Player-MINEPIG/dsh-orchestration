@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { AttachmentId } from "@deepseek-ai/dsh-attachment";
 import { projectSessionReference } from "./project-session-protocol.js";
 import { ArmAcceptanceGate, AmendAcceptanceGate } from "./acceptance-gates.js";
 
@@ -13,12 +14,26 @@ export const stewardQuoteInput = z.strictObject({
   messageId: key, expectedRevision: z.number().int().nonnegative(),
   excerpt: z.string().min(1).max(2000).refine(text => text.trim().length > 0),
 });
+export const stewardSelection = z.strictObject({ provider: key, model: z.string().min(1).max(500), reasoningEffort: key.optional() });
+const fileRef = z.strictObject({ attachmentId: z.string().min(1).max(200).transform(AttachmentId), name: z.string().min(1).max(500), bytes: z.number().int().nonnegative() });
+const imageRef = fileRef.omit({ name: true }).extend({ name: z.string().max(500).optional(), mediaType: z.enum(["image/png", "image/jpeg", "image/webp", "image/gif"]), width: z.number().int().positive(), height: z.number().int().positive(), originalDimensions: z.strictObject({ width: z.number().int().positive(), height: z.number().int().positive() }).optional() });
+export const stewardContent = z.array(z.discriminatedUnion("type", [z.strictObject({ type: z.literal("text"), text: z.string() }), z.strictObject({ type: z.literal("image"), attachment: imageRef }), z.strictObject({ type: z.literal("file"), attachment: fileRef })])).max(100);
+export const stewardUpload = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("start"), conversationId: key, commandId: key, bytes: z.number().int().nonnegative().max(8388608), name: z.string().min(1).max(500), mediaType: z.enum(["image/png", "image/jpeg", "image/webp", "image/gif"]).optional() }),
+  z.strictObject({ kind: z.literal("part"), conversationId: key, uploadId: key, index: z.number().int().nonnegative(), data: z.string().min(4).max(32768) }),
+  z.strictObject({ kind: z.literal("finish"), conversationId: key, uploadId: key }),
+  z.strictObject({ kind: z.literal("abort"), conversationId: key, uploadId: key }),
+]);
+export const stewardUploadRead = z.strictObject({ conversationId: key, uploadId: key, offset: z.number().int().nonnegative().default(0) });
+export const stewardAttachmentRead = z.strictObject({ conversationId: key, messageId: key, attachmentId: z.string().min(1).max(200), offset: z.number().int().nonnegative().default(0) });
 export const stewardSend = z.strictObject({
-  conversationId: key, commandId: key, text: z.string().trim().min(1).max(16000),
+  conversationId: key, commandId: key, text: z.string().trim().max(16000),
+  uploads: z.array(key).max(32).optional(), selection: stewardSelection.optional(),
   target: stewardScope.optional(), replyTo: key.optional(),
   routingMode: z.literal("auto").optional(),
   quote: stewardQuoteInput.optional(),
 }).superRefine((value, ctx) => {
+  if (!value.text && !value.uploads?.length) ctx.addIssue({ code: "custom", path: ["text"], message: "A message requires text or an attachment" });
   if (value.quote && value.replyTo)
     ctx.addIssue({ code: "custom", path: ["quote"], message: "A quotation cannot be combined with a reply" });
 });
@@ -45,15 +60,15 @@ const { instructionRef: _amendReference, ...amendFields } = AmendAcceptanceGate.
 export const stewardGateArm = z.strictObject({ conversationId: key, commandId: key,
   gate: z.strictObject(armFields), instruction: z.string().trim().min(1).max(1500) });
 export const stewardGateDecide = z.strictObject({ conversationId: key, commandId: key, gateId: key,
-  expectedRevision: z.number().int().positive(), candidateDigest: z.string().regex(/^[a-f0-9]{64}$/),
+  expectedRevision: z.number().int().positive(), candidateDigest: z.string().min(1).max(200),
   decision: z.enum(["accept", "request-repair"]), comment: z.string().max(1500).default("") });
 export const stewardGateAmend = z.strictObject({ conversationId: key, commandId: key,
   change: z.strictObject(amendFields), comment: z.string().trim().min(1).max(1500) });
 export const stewardGateContinue = z.strictObject({ conversationId: key, commandId: key, gateId: key,
-  expectedRevision: z.number().int().positive(), candidateDigest: z.string().regex(/^[a-f0-9]{64}$/), text: z.string().trim().min(1).max(16000) });
+  expectedRevision: z.number().int().positive(), candidateDigest: z.string().min(1).max(200), text: z.string().trim().min(1).max(16000) });
 export const stewardGateAcceptContinue = stewardGateContinue.extend({ commandId: key.max(140), comment: z.string().max(1000).default("") });
 export const stewardGateIndependent = z.strictObject({ conversationId: key, commandId: key.max(140), projectId: key, backlogId: key,
-  title: z.string().trim().min(1).max(500), description: z.string().max(8000).default(""), gateSnapshotDigest: z.string().regex(/^[a-f0-9]{64}$/) });
+  title: z.string().trim().min(1).max(500), description: z.string().max(8000).default(""), gateSnapshotDigest: z.string().min(1).max(200) });
 export const stewardBinding = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("personal"), nodeId: key, sessionId: key,
     generation: z.literal(1), cwd: z.string().min(1) }),
@@ -89,7 +104,7 @@ export const stewardManifest = z.strictObject({
 });
 export const stewardMessage = z.strictObject({
   id: key, seq: z.number().int().positive(), conversationId: key,
-  role: z.enum(["user", "assistant", "notification"]), text: z.string(), commandId: key.nullable().default(null),
+  role: z.enum(["user", "assistant", "notification"]), text: z.string(), content: stewardContent.optional(), selection: stewardSelection.optional(), commandId: key.nullable().default(null),
   scope: stewardScope, replyTo: key.nullable(), createdAt: z.string(),
   source: stewardBinding, nativeSeq: z.number().int().nonnegative().nullable(),
   provenance: z.strictObject({ kind: z.literal("ledger"), eventId: key, eventType: key, taskId: key, runId: key.nullable() }).nullable().default(null),
@@ -123,6 +138,7 @@ export interface StewardSnapshot {
   authorityId: string;
   conversationId: string;
   currentScope: StewardScope;
+  media?: { imageLimits: import("@deepseek-ai/dsh-attachment").ImageAttachmentLimits; maxFileBytes: number; chunkBytes: number };
   persona: typeof STEWARD_PERSONA;
   messages: StewardMessage[];
   updates: StewardMessageUpdate[];
