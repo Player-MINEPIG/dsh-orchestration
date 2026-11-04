@@ -8,6 +8,8 @@ import type { ProjectSessionMove } from "./project-sessions.js";
 import { temporaryTaskDirectory,temporaryTaskMetadata } from "./remote/project-workspace.js";
 import type { TaskSystemService } from "./dsh-plugin.js";
 import type { Agent } from "@deepseek-ai/dsh-agent";
+import { AttachmentId, type AdmittedPromptContentPart } from "@deepseek-ai/dsh-attachment";
+import { z } from "zod";
 import type {} from "@deepseek-ai/dsh-session-persistence-jsonl";
 import { Context } from "@deepseek-ai/cordis";
 import {
@@ -31,6 +33,7 @@ import { TaskLedger, TaskError, canonical } from "./ledger.js";
 import { Workbench } from "./workbench.js";
 import { stewardProjectCheckpoint } from "./steward-memory-context.js";
 import { initializeTaskSessionTitle } from "./session-titles.js";
+import { pinStewardTurnSelection, type StewardTurnSelection } from "./steward-turn-selection.js";
 import { WorkspaceManager } from "./workspaces.js";
 import { ScheduledPlans } from "./scheduled-plans.js";
 import { ExpectedExecutionMs } from "./execution-expectation.js";
@@ -47,6 +50,22 @@ const reportHtmlPresentation = (report: Report) => {
 };
 const reportReadingVersion = (report: Report) => {const presentation=reportHtmlPresentation(report);return digest({title:report.title,body:report.body,revision:report.revision,artifactIds:report.artifactIds,...(presentation?{presentation}:{})});};
 const now = () => new Date().toISOString();
+const queuedSelection = z.strictObject({ provider: z.string().min(1), model: z.string().min(1), reasoningEffort: z.string().min(1).optional() });
+const queuedFile = z.strictObject({ attachmentId: z.string().min(1).transform(AttachmentId), name: z.string(), bytes: z.number().int().nonnegative() });
+const queuedImage = queuedFile.omit({ name: true }).extend({ name: z.string().optional(),
+  mediaType: z.enum(["image/png", "image/jpeg", "image/webp", "image/gif"]),
+  width: z.number().int().positive(), height: z.number().int().positive(),
+  originalDimensions: z.strictObject({ width: z.number().int().positive(), height: z.number().int().positive() }).optional(),
+});
+const queuedContent = z.array(z.discriminatedUnion("type", [
+  z.strictObject({ type: z.literal("text"), text: z.string() }),
+  z.strictObject({ type: z.literal("file"), attachment: queuedFile }),
+  z.strictObject({ type: z.literal("image"), attachment: queuedImage }),
+])).min(1).max(100).refine(parts => parts.some(part => part.type !== "text" || part.text.trim().length > 0));
+interface ProjectTurnContent {
+  content?: AdmittedPromptContentPart[];
+  selection?: StewardTurnSelection;
+}
 const text = (v: unknown, limit: number) => {
   if (typeof v !== "string" || !v.trim() || v.length > limit)
     throw new TaskError("INVALID", "Invalid text length");
@@ -152,6 +171,10 @@ export class ProjectRuntime {
     this.demandViews = new DemandTaskViews(this.db, ledger, nodeId, taskId => this.projectTaskCard(taskId),(taskId,scope)=>this.childAttentionRows(taskId,0,1,scope).total);
     if (!this.db.prepare("PRAGMA table_info(pr_turns)").all().some(column => column.name === "native_admission"))
       this.db.exec("ALTER TABLE pr_turns ADD COLUMN native_admission TEXT NOT NULL DEFAULT 'unknown'");
+    for (const column of ["content", "selection"]) {
+      if (!this.db.prepare("PRAGMA table_info(pr_turns)").all().some(row => row.name === column))
+        this.db.exec(`ALTER TABLE pr_turns ADD COLUMN ${column} TEXT`);
+    }
     // Existing project sessions keep their IDs; the column now names the
     // conversation owner, which can be a real project or a temporary task.
     for (const table of ["pr_sessions", "pr_turns"]) {
@@ -581,6 +604,10 @@ export class ProjectRuntime {
         input.expectedRevision + 1,
       );
     return this.modelSelection(p.id);
+  }
+  conversationModel(projectId: string) {
+    this.authorize();
+    return this.options(this.project(projectId).id);
   }
   private options(owner?: string) {
     const selected =
@@ -1318,26 +1345,30 @@ export class ProjectRuntime {
     const row=this.db.prepare("SELECT id FROM demand_entity_facts WHERE kind='run' AND task_id=? ORDER BY seq DESC LIMIT 1").get(taskId);
     return row?this.ledger.getRun(String(row.id)):undefined;
   }
-  send(input: { projectId: string; commandId: string; text: string }) {
+  send(input: { projectId: string; commandId: string; text: string } & ProjectTurnContent) {
     this.authorize();
     this.agents();
     return this.sendOwned(
       this.project(input.projectId),
       input.commandId,
       input.text,
+      input,
     );
   }
-  private sendOwned(p: ProjectRow, commandId: string, contents: string) {
+  private sendOwned(p: ProjectRow, commandId: string, contents: string, rich: ProjectTurnContent = {}) {
     if (this.nativeSession(p.session)) throw new TaskError("FORBIDDEN", "Use the native owner conversation for this project session");
-    const message = text(contents, 20000),
+    const content = rich.content === undefined ? undefined : queuedContent.parse(rich.content);
+    const selection = rich.selection === undefined ? undefined : queuedSelection.parse(rich.selection);
+    const message = content && contents.trim().length === 0 ? "" : text(contents, 20000),
       command = text(commandId, 200);
-    this.options(p.id);
+    if (!selection) this.options(p.id);
     if (p.state !== "ready")
       throw new TaskError("CONFLICT", "Project is not ready");
     const hash = digest(
-      p.taskId
+      { ...(p.taskId
         ? { taskId: p.taskId, text: message }
-        : { projectId: p.id, text: message },
+        : { projectId: p.id, text: message }),
+        ...(content === undefined ? {} : { content }), ...(selection === undefined ? {} : { selection }) },
     );
     const existing = this.db
       .prepare("SELECT * FROM pr_turns WHERE command=?")
@@ -1348,8 +1379,8 @@ export class ProjectRuntime {
       return { commandId: command, state: existing.state };
     }
     this.db
-      .prepare("INSERT INTO pr_turns(command,digest,owner,session,text,state,error,created,native_admission) VALUES(?,?,?,?,?,?,NULL,?,'not-started')")
-      .run(command, hash, p.id, p.session, message, "queued", now());
+      .prepare("INSERT INTO pr_turns(command,digest,owner,session,text,state,error,created,native_admission,content,selection) VALUES(?,?,?,?,?,?,NULL,?,'not-started',?,?)")
+      .run(command, hash, p.id, p.session, message, "queued", now(), content === undefined ? null : canonical(content), selection === undefined ? null : canonical(selection));
     this.drainConversation(p);
     return { commandId: command, state: "queued" };
   }
@@ -1372,17 +1403,20 @@ export class ProjectRuntime {
     if (p.state !== "ready" || this.nativeSession(p.session) || [...this.jobs.values()].some(job => job.owner === p.id && job.session === p.session) || this.db.prepare("SELECT 1 FROM pr_turns WHERE owner=? AND session=? AND state IN ('running','interrupted') LIMIT 1").get(p.id, p.session)) return;
     const agents = this.ctx.get("agents"), live = agents?.get(SessionId(p.session));
     if (!agents || live && (live.status !== "idle" || live.inbox.nextTurn.length || live.inbox.nextStep.length)) return;
-    const row = this.db.prepare("SELECT command,text FROM pr_turns WHERE owner=? AND session=? AND state='queued' ORDER BY rowid LIMIT 1").get(p.id, p.session);
+    const row = this.db.prepare("SELECT command,text,content,selection FROM pr_turns WHERE owner=? AND session=? AND state='queued' ORDER BY rowid LIMIT 1").get(p.id, p.session);
     if (!row) return;
     let agentOptions: ReturnType<ProjectRuntime["options"]>;
-    try { agentOptions = this.options(p.id); }
+    const selection = row.selection === null ? undefined : queuedSelection.parse(JSON.parse(String(row.selection)));
+    const content = row.content === null ? undefined : queuedContent.parse(JSON.parse(String(row.content)));
+    try { agentOptions = selection ? { provider: selection.provider, model: selection.model,
+      ...(selection.reasoningEffort === undefined ? {} : { reasoningEffort: ReasoningEffortId(selection.reasoningEffort) }) } : this.options(p.id); }
     catch { return; }
     if (!this.ctx.get("llm")?.listProviders().some(provider => provider.id === agentOptions.provider)) return;
     const command = String(row.command), message = String(row.text);
     const admitted = this.db.prepare("UPDATE pr_turns SET state='running' WHERE command=? AND state='queued' AND NOT EXISTS(SELECT 1 FROM pr_turns WHERE owner=? AND session=? AND state IN ('running','interrupted'))").run(command, p.id, p.session);
     if (!admitted.changes) return;
     const abort = new AbortController();
-    const done = this.respond(p, command, message, abort.signal, agentOptions)
+    const done = this.respond(p, command, message, abort.signal, agentOptions, { content, selection })
       .catch(() => {
         this.db
           .prepare(
@@ -1408,15 +1442,25 @@ export class ProjectRuntime {
     message: string,
     signal: AbortSignal,
     agentOptions: ReturnType<ProjectRuntime["options"]>,
+    rich: ProjectTurnContent = {},
   ) {
     let terminalError = false;
     let agent: Agent | undefined;
     let binding: ReturnType<Context["plugin"]> | undefined;
     let nativeAdmitted = false;
+    let unpin: (() => void) | undefined;
     let handle: Awaited<ReturnType<Context["agents"]["resume"]>> | undefined;
     const timeout = AbortSignal.timeout(120000),
       combined = AbortSignal.any([signal, timeout]);
     try {
+      const selection = rich.selection;
+      if (selection) {
+        const llm = this.ctx.get("llm");
+        if (!llm || !(await llm.listModels(selection.provider)).some(model => model.id === selection.model))
+          throw new TaskError("CONFIGURATION", "The queued conversation model is unavailable");
+        await llm.resolveCallConfig({ provider: selection.provider, model: selection.model,
+          ...(selection.reasoningEffort === undefined ? {} : { reasoningEffort: ReasoningEffortId(selection.reasoningEffort) }) }, combined);
+      }
       const summary = (
         this.db
           .prepare("SELECT summary FROM pr_sessions WHERE session=?")
@@ -1467,12 +1511,13 @@ export class ProjectRuntime {
       const cancel = () =>
         agent?.cancel({ kind: "hook", reason: "Project turn stopped" });
       combined.addEventListener("abort", cancel, { once: true });
+      if (selection) unpin = pinStewardTurnSelection(agent, command, selection);
       nativeAdmitted = true;
       this.db.prepare("UPDATE pr_turns SET native_admission='started' WHERE command=? AND state='running'").run(command);
       agent.followup(
         createUserMessage({
           source: { kind: "user", rpcId: command },
-          content: [{ type: "text", text: message }],
+          content: rich.content ?? [{ type: "text", text: message }],
         }),
       );
       try {
@@ -1507,6 +1552,7 @@ export class ProjectRuntime {
           command,
         );
     } finally {
+      unpin?.();
       if (agent) {
         try {
           await (this.ctx.get("sessions") as Context["sessions"]).flush(
