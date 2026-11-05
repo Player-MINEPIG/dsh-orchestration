@@ -672,7 +672,7 @@ export class ProjectRuntime {
       goal = text(input.goal, 20000);
     if (input.stewardOrigin) {
       const original = this.ctx.get("taskSystem")?.steward.store.message(input.stewardOrigin);
-      if (!original || original.role !== "user" || original.source.kind !== "personal" || original.source.nodeId !== this.nodeId || command !== `steward-create:${original.id}`)
+      if (!original || original.role !== "user" || (original.source.kind !== "personal" && original.source.kind !== "workbench") || original.source.nodeId !== this.nodeId || command !== `steward-create:${original.id}`)
         throw new TaskError("FORBIDDEN", "Steward project provenance requires its canonical personal creation request");
     }
     const hash = digest({ title, goal, ...(input.stewardOrigin ? {stewardOrigin:input.stewardOrigin} : {}), ...(input.selection ? {selection: input.selection} : {}), ...(input.workspace ? {workspace:input.workspace} : {}) });

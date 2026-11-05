@@ -33,10 +33,11 @@ test('bounded classifier handles casual return; malformed, ambiguous and unknown
   const result=await resolveStewardRoute({...input,text:'先不聊项目，今天散散心',classify:async value=>{seen=value;return {kind:'route',target:personal};}});
   assert.deepEqual(result,{kind:'route',target:personal,provenance:'classifier'});
   assert.deepEqual(seen,{text:'先不聊项目，今天散散心',projects,previousScope:a});
-  for(const output of [{kind:'route',target:{kind:'project',projectId:'hidden'}},{kind:'route',target:a,extra:'bad'},{kind:'clarification',question:'请明确项目'},'not json',null]) {
-    assert.equal((await resolveStewardRoute({...input,classify:async()=>output})).kind,'clarification');
+  for(const output of [{kind:'route',target:a,extra:'bad'},{kind:'clarification',question:'请明确项目'},'not json',null]) {
+    assert.equal((await resolveStewardRoute({...input,classify:async()=>output})).target.kind,'workbench');
   }
-  assert.equal((await resolveStewardRoute({...input,classify:async()=>{throw Error('provider unavailable');}})).kind,'clarification');
+  assert.equal((await resolveStewardRoute({...input,classify:async()=>{throw Error('provider unavailable');}})).receipt.reason,'provider');
+  assert.equal((await resolveStewardRoute({...input,classify:async()=>({kind:'route',target:{kind:'project',projectId:'hidden'}})})).kind,'clarification');
 });
 test('public LLM adapter emits one bounded auxiliary request with provenance and no project transcripts',async()=>{
   let request;

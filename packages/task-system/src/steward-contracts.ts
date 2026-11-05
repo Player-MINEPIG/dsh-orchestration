@@ -7,6 +7,7 @@ import { ArmAcceptanceGate, AmendAcceptanceGate } from "./acceptance-gates.js";
 const key = z.string().min(1).max(160);
 export const stewardScope = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("personal") }),
+  z.strictObject({ kind: z.literal("workbench") }),
   z.strictObject({ kind: z.literal("project"), projectId: key }),
 ]);
 export type StewardScope = z.infer<typeof stewardScope>;
@@ -73,6 +74,8 @@ export const stewardGateIndependent = z.strictObject({ conversationId: key, comm
 export const stewardBinding = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("personal"), nodeId: key, sessionId: key,
     generation: z.literal(1), cwd: z.string().min(1) }),
+  z.strictObject({ kind: z.literal("workbench"), nodeId: key, sessionId: key,
+    generation: z.literal(1), cwd: z.string().min(1) }),
   ...projectSessionReference.options,
 ]);
 export type StewardBinding = z.infer<typeof stewardBinding>;
@@ -106,7 +109,8 @@ export const stewardManifest = z.strictObject({
 export const stewardMessage = z.strictObject({
   id: key, seq: z.number().int().positive(), conversationId: key,
   role: z.enum(["user", "assistant", "notification"]), text: z.string(), content: stewardContent.optional(), selection: stewardSelection.optional(), permission: stewardPermission.optional(), commandId: key.nullable().default(null),
-  scope: stewardScope, replyTo: key.nullable(), createdAt: z.string(),
+  creationContext: z.strictObject({ instructionId: key, messageIds: z.array(key).min(1).max(11) }).optional(),
+  scope: stewardScope, route: z.strictObject({ reason: z.enum(["unassigned", "clarification", "unavailable", "timeout", "provider", "invalid-output"]), notice: z.string().max(500) }).optional(), replyTo: key.nullable(), createdAt: z.string(),
   source: stewardBinding, nativeSeq: z.number().int().nonnegative().nullable(),
   provenance: z.strictObject({ kind: z.literal("ledger"), eventId: key, eventType: key, taskId: key, runId: key.nullable() }).nullable().default(null),
   state: stewardState, manifest: stewardManifest,

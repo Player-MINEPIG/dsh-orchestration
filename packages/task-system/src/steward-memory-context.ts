@@ -19,7 +19,7 @@ export function installStewardMemoryIndexes(ledger: Pick<TaskLedger, "management
 }
 
 /** Bounded current authority references, not a new content store or semantic recall algorithm. */
-export function stewardProjectCheckpoint(task: Pick<TaskSystemService, "projects" | "ledger">, binding: Exclude<StewardBinding, { kind: "personal" }>) {
+export function stewardProjectCheckpoint(task: Pick<TaskSystemService, "projects" | "ledger">, binding: Extract<StewardBinding, { kind: "managed" | "native" }>) {
   const projects = task.projects;
   if (!projects) throw new TaskError("UNAVAILABLE", "Project authority unavailable");
   const project = projects.placementProject(binding.projectId), db = task.ledger.managementDatabase();

@@ -64,7 +64,7 @@ export class StewardMemoryBridge {
     db.exec("CREATE TABLE IF NOT EXISTS steward_memory_delegation (id INTEGER PRIMARY KEY CHECK(id=1))");
     this.delegated = !!db.prepare("SELECT 1 FROM steward_memory_delegation WHERE id=1").get();
     this.settings = new StewardMemorySettings(task, ctx, binding => this.checkBinding(binding),
-      binding => binding.kind === "personal" ? [STEWARD_PERSONA.id] : [STEWARD_PERSONA.id, `steward.project.${binding.projectId}`],
+      binding => (binding.kind === "personal" || binding.kind === "workbench") ? [STEWARD_PERSONA.id] : [STEWARD_PERSONA.id, `steward.project.${binding.projectId}`],
       () => this.delegated, () => this.registered && !this.disposed);
     ctx.inject(["dshMemoryManager"], scope => scope.effect(() => {
       if (this.disposed) return () => {};
@@ -141,7 +141,7 @@ export class StewardMemoryBridge {
     this.assertStewardReader(sessionId);
     const candidates = this.store.sourcesForSession(sessionId, this.task.config.nodeId).map(source => source.binding);
     const live = candidates.filter(binding => {
-      if (binding.kind === "personal") return true;
+      if ((binding.kind === "personal" || binding.kind === "workbench")) return true;
       try {
         const current = this.task.projects?.placementProject(binding.projectId);
         return current?.session === binding.sessionId && current.generation === binding.generation && current.cwd === binding.cwd;
@@ -160,7 +160,7 @@ export class StewardMemoryBridge {
   private checkBinding(binding: StewardBinding) {
     if (this.disposed) throw new TaskError("UNAVAILABLE", "Steward memory source is stopping");
     this.assertStewardReader(binding.sessionId);
-    if (binding.kind === "personal") {
+    if ((binding.kind === "personal" || binding.kind === "workbench")) {
       if (binding.nodeId !== this.task.config.nodeId) throw new TaskError("FORBIDDEN", "Personal scope must use its local native owner");
       return;
     }
@@ -173,7 +173,7 @@ export class StewardMemoryBridge {
     const persona: Resource = { id: STEWARD_PERSONA.id, type: "persona", name: "Steward persona",
       revision: STEWARD_PERSONA.version, content: `[persona ${STEWARD_PERSONA.id}@${STEWARD_PERSONA.version}]\n${STEWARD_PERSONA_TEXT}`,
       authority: STEWARD_MEMORY_SOURCE, capabilities: { edit: false, copy: false } };
-    if (binding.kind === "personal") return [persona];
+    if ((binding.kind === "personal" || binding.kind === "workbench")) return [persona];
     const project = this.task.projects?.placementProject(binding.projectId);
     if (!project) throw new TaskError("UNAVAILABLE", "Project authority unavailable");
     const facts = stewardProjectCheckpoint(this.task, binding);

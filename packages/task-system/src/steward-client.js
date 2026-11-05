@@ -1,7 +1,7 @@
 function createStewardClient(React) {
   const h = React.createElement;
-  const scopeKey = scope => scope?.kind === "project" ? `project:${scope.projectId}` : "personal";
-  const fromKey = key => key.startsWith("project:") ? { kind: "project", projectId: key.slice(8) } : { kind: "personal" };
+  const scopeKey = scope => scope?.kind === "project" ? `project:${scope.projectId}` : scope?.kind === "workbench" ? "workbench" : "personal";
+  const fromKey = key => key.startsWith("project:") ? { kind: "project", projectId: key.slice(8) } : key === "workbench" ? { kind: "workbench" } : { kind: "personal" };
   const stateKind = state => typeof state === "string" ? state : state?.kind ?? "unknown";
   const stateLabels = { queued: "已排队", accepted: "已登记", admitted: "会话已接收", completed: "本轮已回复", stopped: "本轮已中断", released: "已结束等待 · 原结果未知", unknown: "未核实", "needs-reconciliation": "发送结果待核实", rejected: "未接收", failed: "处理失败", pending: "等待回复" };
   const failureText = failure => failure.details?.detail ?? failure.message ?? String(failure);
@@ -206,7 +206,7 @@ function createStewardClient(React) {
       } else if (follow.current) log.current.scrollTop = log.current.scrollHeight;
     }, [snapshot?.messages]);
     const projects = snapshot?.projects ?? [];
-    const label = scope => scope?.kind === "project" ? projects.find(project => project.projectId === scope.projectId)?.title ?? scope.projectId : "闲聊";
+    const label = scope => scope?.kind === "project" ? projects.find(project => project.projectId === scope.projectId)?.title ?? scope.projectId : scope?.kind === "workbench" ? "管家工作区" : "闲聊";
     const replyMessage = reply;
     const effectiveScope = replyMessage?.scope ?? (selected && selected !== "auto" ? fromKey(selected) : snapshot?.currentScope ?? {kind:"personal"});
     const pageFirst = snapshot?.messages.find(message=>!message.receiptOnly)?.seq ?? snapshot?.page?.firstSeq;
@@ -279,7 +279,7 @@ function createStewardClient(React) {
       reply && h("div", null, `回复 ${label(reply.scope)}：「${reply.text.slice(0, 90)}」`, " ", h("button", { type: "button", onClick: () => setReply(null) }, "取消回复")),
       quote && h("div", null, h("p", null, `明确分享 ${label(quote.scope)} 的连续原文到所选目标`), h("textarea", { "aria-label": "引用原文片段", value: quote.excerpt, maxLength: 2000, onChange: event => setQuote({ ...quote, excerpt: event.target.value }) }), h("button", { type: "button", onClick: () => setQuote(null) }, "取消引用")),
       h("label", null, "本条对话对象 ", h("select", { "aria-label": "本条对话对象", value: reply ? scopeKey(reply.scope) : selected, disabled: !!reply, onChange: event => setSelected(event.target.value) },
-        quote && h("option", { value: "" }, "请选择引用目标"), snapshot?.routing?.auto && !quote && h("option", { value: "auto" }, "自动判断 · 不明确时询问"), h("option", { value: "personal" }, "闲聊"), ...projects.map(project => h("option", { key: project.projectId, value: `project:${project.projectId}` }, project.title)))));
+        quote && h("option", { value: "" }, "请选择引用目标"), snapshot?.routing?.auto && !quote && h("option", { value: "auto" }, "自动判断 · 不明确时询问"), h("option", { value: "workbench" }, "管家工作区"), h("option", { value: "personal" }, "闲聊"), ...projects.map(project => h("option", { key: project.projectId, value: `project:${project.projectId}` }, project.title)))));
     const renderReceipt = message => h("div", { className: "steward-meta", "data-message-id": message.id, "data-role": message.role, "data-scope": scopeKey(message.scope) },
       h("span", null, `${message.role === "notification" ? "项目通知 · " : ""}${label(message.scope)}`), message.role === "user" && h("span", { "data-state": stateKind(message.state) }, stateLabels[stateKind(message.state)] ?? "未核实"),
       message.quote && h("small", null, `明确引用自 ${label(message.quote.scope)}：「${message.quote.excerpt}」`),
@@ -308,10 +308,10 @@ function createStewardClient(React) {
     }
     async function submitNative(request) { await transmit(request); }
     const chooseTopic = value => { setSelected(value); setReply(null); };
-    const latestScope = snapshot?.topicActivity?.latestMessage?.scope ?? snapshot?.currentScope ?? { kind: 'personal' };
+    const latestScope = snapshot?.topicActivity?.latestMessage?.scope ?? snapshot?.currentScope ?? { kind: 'workbench' };
     const sourceScope = inspectionScope ?? latestScope;
     const activeTopics = snapshot?.topicActivity?.items ?? [{ scope: { kind: 'personal' }, title: '闲聊' }, ...projects.map(project => ({ scope: { kind: 'project', projectId: project.projectId }, title: project.title }))];
-    const topicMap = new Map([['personal', { id: 'personal', label: '闲聊' }], ...activeTopics.map(item => [scopeKey(item.scope), { id: scopeKey(item.scope), label: item.title }])]);
+    const topicMap = new Map([['workbench', { id: 'workbench', label: '管家工作区' }], ['personal', { id: 'personal', label: '闲聊' }], ...activeTopics.map(item => [scopeKey(item.scope), { id: scopeKey(item.scope), label: item.title }])]);
     for (const scope of [sourceScope, ...(selected !== 'auto' ? [fromKey(selected)] : [])]) if (!topicMap.has(scopeKey(scope))) topicMap.set(scopeKey(scope), { id: scopeKey(scope), label: label(scope), detail: '当前保留的话题' });
     const topicOptions = [{ id: 'auto', label: '自动选择', detail: `按本条文字判断；最近 ${snapshot?.topicActivity?.activeDays ?? 30} 天话题${snapshot?.topicActivity?.hasMore ? '，仅列最近 100 个' : ''}`, active: selected === 'auto' }, ...[...topicMap.values()].map(item => ({ ...item, active: item.id === selected }))];
     const browseOptions = [{ id: 'latest', label: '跟随最新话题', active: inspectionScope === null }, ...[...topicMap.values()].map(item => ({ ...item, badge: item.id === scopeKey(latestScope) ? '最新' : undefined, active: inspectionScope !== null && item.id === scopeKey(inspectionScope) }))];
@@ -325,7 +325,7 @@ function createStewardClient(React) {
     const icon = kind => h('svg', { width: 18, height: 18, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.6, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true }, h('path', { d: paths[kind] }));
     const action = (name, kind, onClick) => h('button', { type: 'button', className: 'steward-icon-button', 'aria-label': name, title: name, onClick }, icon(kind));
     const renderActions = (message, copy) => h(React.Fragment, null,
-      h('span', { className: 'steward-message-scope', title: `原会话 ${message.source.sessionId}`, 'data-message-id': copy ? undefined : message.id, 'data-role': message.role, 'data-scope': scopeKey(message.scope) }, label(message.scope), message.role === 'user' && ` · ${stateLabels[stateKind(message.state)] ?? '待核实'}`),
+      h('span', { className: 'steward-message-scope', title: `原会话 ${message.source.sessionId}`, 'data-message-id': copy ? undefined : message.id, 'data-role': message.role, 'data-scope': scopeKey(message.scope) }, label(message.scope), message.route && h('span', { title: message.route.notice, 'data-route-reason': message.route.reason }, ` · ${message.route.notice}`), message.creationContext && h('span', { title: '仅承接这一项未完成创建请求及相关追问；旧消息保留原来源。' }, ' · 已承接建项上下文'), message.role === 'user' && ` · ${stateLabels[stateKind(message.state)] ?? '待核实'}`),
       copy && action('复制', 'copy', () => { void navigator.clipboard.writeText(message.text).catch(failure => setError(failure.message)); }),
       action('回复', 'reply', () => chooseReply(message)), action('引用', 'quote', () => chooseQuote(message)), action('跳转原会话', 'source', () => openSession(message.source.sessionId)));
     const nativeControls = () => h('div', { className: 'steward-composer-context' },
@@ -391,7 +391,7 @@ function createStewardClient(React) {
       !nativeClient && h("form", { onSubmit: event => { event.preventDefault(); if (busy || !text.trim() || (quote && (!selected || selected === "auto" || !quote.excerpt.trim()))) return; const request = { conversationId, commandId: crypto.randomUUID(), text: text.trim(), ...(reply ? { replyTo: reply.id } : selected === "auto" ? { routingMode: "auto" } : { target: fromKey(selected) }), ...(quote ? { quote: { messageId: quote.messageId, expectedRevision: quote.expectedRevision, excerpt: quote.excerpt } } : {}) }; setText(""); setReply(null); setQuote(null); setError(""); void transmit(request); } },
         replyMessage && h("div", { className: "steward-alert" }, `回复 ${label(replyMessage.scope)}：「${replyMessage.text.slice(0, 90)}」`, " ", h("button", { type: "button", onClick: () => setReply(null) }, "取消回复")),
         quote && h("div", { className: "steward-alert" }, h("p", null, `分享一段 ${label(quote.scope)} 原文到明确选择的目标。只分享下面的连续原文片段，不转移其他历史。`), h("textarea", { "aria-label": "引用原文片段", value: quote.excerpt, maxLength: 2000, disabled: busy, onChange: event => setQuote({ ...quote, excerpt: event.target.value }) }), h("small", null, `来源 ${quote.messageId} · 版本 ${quote.expectedRevision} · 最多 2000 字；可删选连续片段，不可改写原文。`), " ", h("button", { type: "button", onClick: () => setQuote(null) }, "取消引用")),
-        h("label", null, "本条对话对象 ", h("select", { "aria-label": "本条对话对象", value: replyMessage ? scopeKey(replyMessage.scope) : selected, disabled: busy || !!reply, onChange: event => setSelected(event.target.value) }, quote && h("option", { value: "" }, "请选择引用目标"), snapshot?.routing?.auto && !quote && h("option", { value: "auto" }, "自动判断 · 不明确时询问"), h("option", { value: "personal" }, "闲聊"), ...projects.map(project => h("option", { key: project.projectId, value: `project:${project.projectId}` }, project.title)))),
+        h("label", null, "本条对话对象 ", h("select", { "aria-label": "本条对话对象", value: replyMessage ? scopeKey(replyMessage.scope) : selected, disabled: busy || !!reply, onChange: event => setSelected(event.target.value) }, quote && h("option", { value: "" }, "请选择引用目标"), snapshot?.routing?.auto && !quote && h("option", { value: "auto" }, "自动判断 · 不明确时询问"), h("option", { value: "workbench" }, "管家工作区"), h("option", { value: "personal" }, "闲聊"), ...projects.map(project => h("option", { key: project.projectId, value: `project:${project.projectId}` }, project.title)))),
         h("textarea", { "aria-label": "消息", value: text, disabled: busy, placeholder: "发送消息…", onChange: event => setText(event.target.value), onKeyDown: event => { if ((event.metaKey || event.ctrlKey) && event.key === "Enter") event.currentTarget.form?.requestSubmit(); } }),
         h("div", { className: "steward-controls" }, h("small", null, reply ? "按被回复消息的范围发送；不会切换其他项目。" : quote ? "确认后将选定原文明确分享至本条对话对象。" : "每个项目保留自己的历史。后台通知不会改变当前对话对象。"), h("button", { type: "submit", disabled: busy || !snapshot || !text.trim() || (quote && (!selected || selected === "auto" || !quote.excerpt.trim())) }, busy ? "正在登记…" : quote ? "分享引用并发送" : "发送"))));
   }

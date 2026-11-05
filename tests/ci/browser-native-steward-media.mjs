@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import {TaskError} from '../../packages/task-system/dist/ledger.js';
 import {join} from 'node:path';
 import {writeFileSync} from 'node:fs';
 import {startHost} from './browser-native-project.mjs';
@@ -24,7 +25,8 @@ export async function testNativeStewardMedia(browser,{output}={}) {
     const message=host.ctx.taskSystem.steward.store.commandMessage('main',calls[0].commandId);assert.deepEqual(message.content.map(part=>part.type),['image','file']);
     await page.reload();await page.getByRole('button',{name:'管家',exact:true}).click();await editor.waitFor();await native.getByText('MEDIA_CHOSEN_OK',{exact:true}).waitFor();assert.equal(calls.length,1);await native.getByRole('button',{name:/选择模型.*Chosen fixture/}).waitFor();assert.equal(await native.getByText('proof.txt',{exact:true}).count(),1);
     await model('跟随目标会话');await topic();await input.setInputFiles(file('only.txt','FILE_ONLY'));host.model.script.push('FILE_ONLY_OK');await native.getByRole('button',{name:'发送消息',exact:true}).click();await native.getByText('FILE_ONLY_OK',{exact:true}).waitFor();assert.equal(calls.at(-1).selection,undefined);assert.equal(calls.at(-1).uploads.length,1);
-    // Auto cannot infer a destination from an attachment alone. Preserve original bytes and original follow-target intent.
+    // A definitive pre-admission failure preserves original bytes and follow-target intent, independently of routing defaults.
+    const service=host.ctx.taskSystem.steward,originalSend=service.send.bind(service);service.send=async request=>{service.send=originalSend;throw new TaskError('CLARIFICATION','Scripted definitive non-admission');};
     await input.setInputFiles(file('ambiguous.txt','ORIGINAL_AUTO_FILE'));await native.getByRole('button',{name:'发送消息',exact:true}).click();await native.getByRole('button',{name:'恢复原文到输入框',exact:true}).waitFor();
     await input.setInputFiles(file('current.txt','CURRENT_UNSENT_FILE'));await native.getByRole('button',{name:'恢复原文到输入框',exact:true}).click();await native.getByText(/已有草稿/).waitFor();await native.getByText('current.txt',{exact:true}).waitFor();
     // Reload discards the explicitly unsent current draft, while the original immutable pending request remains recoverable.

@@ -241,19 +241,20 @@ test('default native PM checkpoint and read-only recall include current human ga
 
 test('direct native ingress during asynchronous public configuration prevents preset mutation without interrupting the real turn', options, async () => {
   const h = await fixture();
-  let handle;
+  let handle, agent;
   try {
     const scope = h.scope(h.a.projectId);
     await h.send('idle-config-warmup', scope);
     const project = h.projects.placementProject(h.a.projectId);
-    handle = await h.ctx.agents.resume({ resumeSessionId: SessionId(project.session), agentOptions: { provider: 'test-offline', model: 'script' } });
+    agent = h.ctx.agents.get(SessionId(project.session));
+    if (!agent) { handle = await h.ctx.agents.resume({ resumeSessionId: SessionId(project.session), agentOptions: { provider: 'test-offline', model: 'script' } }); agent = handle.agent; }
     const current = await h.read(scope);
     const binding = { kind: 'managed', projectId: h.a.projectId, nodeId: 'local', sessionId: project.session, generation: project.generation, cwd: project.cwd };
     const request = { conversationId: 'main', scope, commandId: 'native-ingress-config-race', expectedRevision: current.revision,
       expectedSelectionHash: current.selectionHash, mode: 'manager', presetId, initializeMissingRules: true, inheritProjectGenerations: true };
     const changing = h.service.memory.configure(request, binding);
     h.adapter.script.push('hang');
-    handle.agent.followup(createUserMessage({ source: { kind: 'user', rpcId: 'synthetic-direct-native-user' }, content: [{ type: 'text', text: 'DIRECT_NATIVE_INGRESS_DURING_CONFIG' }] }));
+    agent.followup(createUserMessage({ source: { kind: 'user', rpcId: 'synthetic-direct-native-user' }, content: [{ type: 'text', text: 'DIRECT_NATIVE_INGRESS_DURING_CONFIG' }] }));
     await assert.rejects(changing, { code: 'BUSY' });
     assert.equal(h.ctx.dshPromptAssembler.store.selection(project.session), null, 'New input stops configuration before selecting the preset');
     assert.equal((await h.read(scope)).pendingChange.commandId, request.commandId);
@@ -262,7 +263,8 @@ test('direct native ingress during asynchronous public configuration prevents pr
     assert.equal(h.adapter.requests.length, 2);
     assert.equal(h.adapter.requests.at(-1).signal.aborted, false, 'Configuration guard did not cancel the native turn');
   } finally {
-    if (handle) { handle.agent.cancel({ kind: 'hook', reason: 'Owned synthetic native race fixture cleanup' }); await handle.agent.whenIdle(); await handle.dispose(); }
+    if (agent) { agent.cancel({ kind: 'hook', reason: 'Synthetic native race fixture cleanup' }); await agent.whenIdle(); }
+    await handle?.dispose();
     await h.dispose();
   }
 });

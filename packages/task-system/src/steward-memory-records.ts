@@ -10,7 +10,7 @@ export const stewardRecordRead = z.object({
 });
 export type StewardProjectReader = (projectId: string) => { id?: string; title: string; goal: string };
 export function readStewardRecord(ledger: TaskLedger, binding: StewardBinding, input: z.infer<typeof stewardRecordRead>, projectReader?: StewardProjectReader) {
-  if (binding.kind === "personal") throw new TaskError("FORBIDDEN", "Personal history cannot read project authority records");
+  if ((binding.kind === "personal" || binding.kind === "workbench")) throw new TaskError("FORBIDDEN", "Personal history cannot read project authority records");
   const ownsTask = (taskId: string) => {
     if (ledger.projectForTask(taskId) !== binding.projectId) throw new TaskError("FORBIDDEN", "Record does not belong to the current project");
   };

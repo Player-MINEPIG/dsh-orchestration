@@ -136,7 +136,7 @@ test('a concurrent source view borrows the matching Agent activated after its re
     const agent=h.ctx.agents.get(source.binding.sessionId);await h.ctx.sessions.flush(agent.session);
     secondRelease.resolve();assert.deepEqual(await second,source);
     assert.equal(h.ctx.agents.get(source.binding.sessionId),agent);assert.equal(created,1);assert.equal(h.adapter.requests.length,0);
-    assert.deepEqual(service.store.current('main'),{kind:'personal'});
+    assert.deepEqual(service.store.current('main'),{kind:'workbench'});
   }finally{firstRelease.resolve();secondRelease.resolve();await h.dispose();}
 });
 
@@ -618,7 +618,7 @@ test('automatic quotation routes the next text to B without sharing the source h
   }finally{await h.dispose();}
 });
 
-test('ambiguous quotation waits without admission and retains the exact quote on destination clarification; invalid sources never reach routing', {timeout:15000}, async()=>{
+test('ambiguous quotation is received by the workbench with only its explicit excerpt; invalid sources never reach routing', {timeout:15000}, async()=>{
   const h=await createNativeHarness({config:{role:'both',schedulerEnabled:false,projectAgentOptions:{provider:'test-offline',model:'script'}}});
   try {
     const projects=h.ctx.taskSystem.projects,service=h.ctx.taskSystem.steward;
@@ -632,17 +632,18 @@ test('ambiguous quotation waits without admission and retains the exact quote on
     const input={conversationId:'main',commandId:'ambiguous-quote-send',text:'请核对这份资料。',routingMode:'auto',
       quote:{messageId:source.id,expectedRevision:source.revision,excerpt:'WAITING_QUOTE_EXCERPT'}};
     const before=h.adapter.requests.length;
-    h.adapter.script.push(JSON.stringify({kind:'clarification',question:'交给哪个项目？'}));
-    await assert.rejects(service.send(input),{code:'CLARIFICATION'});
-    assert.equal(service.commandStatus('main',input.commandId),'not-admitted');
-    assert.equal(service.store.commandMessage('main',input.commandId),null);
-    assert.deepEqual(service.store.current('main'),{kind:'project',projectId:a.projectId});
-    assert.equal(h.adapter.requests.length,before+1,'Ambiguity invokes only the classifier, never the source native turn');
+    h.adapter.script.push(JSON.stringify({kind:'clarification',question:'交给哪个项目？'}),'Workbench received exact excerpt');
+    await service.send(input);
+    await waitFor(service,s=>s.messages.some(message=>message.text==='Workbench received exact excerpt'));
+    const received=service.store.commandMessage('main',input.commandId);assert.equal(received.scope.kind,'workbench');assert.equal(received.route.reason,'clarification');assert.equal(received.quote.messageId,input.quote.messageId);assert.equal(received.quote.excerpt,input.quote.excerpt);
+    assert.deepEqual(service.store.current('main'),{kind:'workbench'});
+    assert.equal(h.adapter.requests.length,before+2,'Ambiguity invokes the classifier then workbench, never the source project turn');
+    assert.doesNotMatch(requestText(h.adapter.requests.at(-1)),/PRIVATE_AMBIGUOUS_/);
     h.adapter.script.push('Clarified B received excerpt');
-    const clarified={...input,target:{kind:'project',projectId:b.projectId}};
+    const clarified={...input,commandId:'ambiguous-quote-selected-b',target:{kind:'project',projectId:b.projectId}};
     await service.send(clarified);
     const snapshot=await waitFor(service,s=>s.messages.some(message=>message.text==='Clarified B received excerpt'));
-    const shared=snapshot.messages.find(message=>message.commandId===input.commandId);
+    const shared=snapshot.messages.find(message=>message.commandId===clarified.commandId);
     assert.deepEqual(shared.scope,clarified.target);assert.equal(shared.quote.excerpt,input.quote.excerpt);
     assert.equal(shared.quote.messageId,source.id);assert.equal(shared.quote.revision,source.revision);
     assert.match(requestText(h.adapter.requests.at(-1)),/WAITING_QUOTE_EXCERPT/);assert.doesNotMatch(requestText(h.adapter.requests.at(-1)),/PRIVATE_AMBIGUOUS_/);

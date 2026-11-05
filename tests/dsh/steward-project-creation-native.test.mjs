@@ -35,7 +35,7 @@ test('imperative new-project routing is side effect free and quoted, casual, que
  const route=await resolveStewardRoute({text,projects:[],previousScope:{kind:'project',projectId:'old'},classify:()=>{throw Error('No classifier needed');}});
  for(const value of ["我想新建一个叫天气助手的项目，目标整理每天的天气", "能帮我创建项目天气助手，目标整理每天的天气吗？", "请帮我创建项目天气助手，目标整理每天的天气"])assert.equal(requestsNewProject(value),true,value);
  assert.equal(requestsNewProject("管家是否能创建项目？"),false);
- assert.deepEqual(route,{kind:'route',target:{kind:'personal'},provenance:'explicit'});
+ assert.deepEqual(route,{kind:'route',target:{kind:'workbench'},provenance:'explicit'});
  for(const value of ['如何新建项目？','他说“帮我新建一个项目，名称：天气助手，目标：整理每天的天气”','我想了解新建项目','新建项目怎么操作','> 新建项目：天气助手','Create a new project?']){
   assert.equal(requestsNewProject(value),false,value);
   assert.throws(()=>authorizedProjectInput(value,args),{code:'FORBIDDEN'});
@@ -49,7 +49,7 @@ test('imperative new-project routing is side effect free and quoted, casual, que
  assert.deepEqual(authorizedProjectInput(text,args),args);
 });
 
-test('actual personal tool creates one durable project, native sidebar title and workspace, immediate topic and follow-up scope; duplicate result and restart replay converge',{timeout:30000},async()=>{
+test('actual workbench tool creates one durable project, native sidebar title and workspace, immediate topic and follow-up scope; duplicate result and restart replay converge',{timeout:30000},async()=>{
  const dir=mkdtempSync(join(tmpdir(),'steward-create-native-'));let h=await setup(dir);
  try{
   const s=h.ctx.taskSystem.steward,request={conversationId:'main',commandId:'create-weather',text,routingMode:'auto'};
@@ -60,7 +60,7 @@ test('actual personal tool creates one durable project, native sidebar title and
   await s.send(request);const snapshot=await done(h,request.commandId);
   const projects=h.ctx.taskSystem.projects.snapshot().projects;assert.equal(projects.length,1);
   const project=projects[0],scope={kind:'project',projectId:project.id};
-  assert.equal(snapshot.commandMessage.scope.kind,'personal','Creation never rewrites the source scope');
+  assert.equal(snapshot.commandMessage.scope.kind,'workbench','Creation never rewrites the source scope');
   assert.deepEqual(snapshot.currentScope,scope);assert.ok(snapshot.topicActivity.items.some(item=>item.scope.projectId===project.id));
   assert.ok(existsSync(join(project.workspace,'PROJECT.md')));
   assert.ok(h.ctx.workspaceRegistry.list().some(workspace=>workspace.sessionIds.includes(project.sessionId)));
@@ -86,8 +86,8 @@ test('actual personal tool creates one durable project, native sidebar title and
 test('read-only native policy denies before project rows and files; untrusted text cannot grant creation even under writable policy',{timeout:30000},async()=>{
  for(const [index,body,mode] of [[0,text,'read-only'],[1,'我只是提到创建项目，不要新建天气助手；整理每天的天气','workspace-write']]){
   const h=await setup(undefined,{mode});try{
-   h.adapter.script.push({name:'steward_create_project',args},options=>{assert.match(toolResult(options),index===0?/read-only|permission preset does not allow/:/explicit current user instruction/);return '未创建项目';});
-   await h.ctx.taskSystem.steward.send({conversationId:'main',commandId:'denied-'+index,text:body,target:{kind:'personal'}});await done(h,'denied-'+index);
+   h.adapter.script.push({name:'steward_create_project',args},options=>{assert.match(toolResult(options),index===0?/read-only|permission preset does not allow/:/explicit.*instruction/);return '未创建项目';});
+   await h.ctx.taskSystem.steward.send({conversationId:'main',commandId:'denied-'+index,text:body,target:{kind:'workbench'}});await done(h,'denied-'+index);
    assert.equal(h.ctx.taskSystem.projects.snapshot().projects.length,0);
    assert.equal(h.ledger.managementDatabase().prepare('SELECT COUNT(*) AS n FROM pr_projects').get().n,0);
   }finally{await h.dispose();}
@@ -97,7 +97,7 @@ test('read-only native policy denies before project rows and files; untrusted te
 test('missing configured root surfaces the actual error without creating a row or inventing a root',{timeout:20000},async()=>{
  const h=await setup(undefined,{root:false});try{
   h.adapter.script.push({name:'steward_create_project',args},options=>{assert.match(toolResult(options),/Set the project root first/);return '请先配置项目根目录';});
-  await h.ctx.taskSystem.steward.send({conversationId:'main',commandId:'missing-root',text,target:{kind:'personal'}});await done(h,'missing-root');
+  await h.ctx.taskSystem.steward.send({conversationId:'main',commandId:'missing-root',text,target:{kind:'workbench'}});await done(h,'missing-root');
   assert.equal(h.ctx.taskSystem.projects.settings().root,null);assert.equal(h.ctx.taskSystem.projects.snapshot().projects.length,0);
  }finally{await h.dispose();}
 });
@@ -118,10 +118,10 @@ test('missing title and goal clarify without effects; bounded metadata replies c
   assert.equal(h.ctx.taskSystem.projects.snapshot().projects.length,1);
   assert.equal(h.ledger.managementDatabase().prepare('SELECT command FROM pr_projects').get().command,'steward-create:'+origin.id);
   for(const [commandId,body] of [['cancel-intent','帮我新建一个项目'],['cancel-draft','取消刚才的创建，先聊别的']]){
-   h.adapter.script.push('收到');await h.ctx.taskSystem.steward.send({conversationId:'main',commandId,text:body,target:{kind:'personal'}});await done(h,commandId);
+   h.adapter.script.push('收到');await h.ctx.taskSystem.steward.send({conversationId:'main',commandId,text:body,target:{kind:'workbench'}});await done(h,commandId);
   }
-  h.adapter.script.push({name:'steward_create_project',args},options=>{assert.match(toolResult(options),/explicit current user instruction/);return '请重新明确创建要求';});
-  await h.ctx.taskSystem.steward.send({conversationId:'main',commandId:'after-cancel',text:'叫天气助手，目标整理每天的天气',target:{kind:'personal'}});await done(h,'after-cancel');
+  h.adapter.script.push({name:'steward_create_project',args},options=>{assert.match(toolResult(options),/explicit.*instruction/);return '请重新明确创建要求';});
+  await h.ctx.taskSystem.steward.send({conversationId:'main',commandId:'after-cancel',text:'叫天气助手，目标整理每天的天气',target:{kind:'workbench'}});await done(h,'after-cancel');
   assert.equal(h.ctx.taskSystem.projects.snapshot().projects.length,1);
  }finally{await h.dispose();rmSync(dir,{recursive:true,force:true});}
 });

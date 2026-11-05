@@ -43,7 +43,7 @@ export class StewardConversations {
   ensure(conversationId: string) {
     const latest = this.db.prepare("SELECT MAX(seq) AS seq FROM events").get();
     this.db.prepare("INSERT OR IGNORE INTO steward_conversations VALUES(?,?,?)")
-      .run(conversationId, canonical({ kind: "personal" }), Number(latest?.seq ?? 0));
+      .run(conversationId, canonical({ kind: "workbench" }), Number(latest?.seq ?? 0));
   }
   conversationIds(): string[] {
     return this.db.prepare("SELECT id FROM steward_conversations").all().map(row => String(row.id));
@@ -123,13 +123,17 @@ export class StewardConversations {
     return this.db.prepare("SELECT data FROM steward_messages WHERE conversation=? AND seq<? AND json_extract(data,'$.role')='user' ORDER BY seq DESC LIMIT 5")
       .all(message.conversationId, message.seq).map(row => stewardMessage.parse(JSON.parse(String(row.data))));
   }
+  creationRange(conversationId: string, firstSeq: number, beforeSeq: number): StewardMessage[] {
+    return this.db.prepare("SELECT data FROM steward_messages WHERE conversation=? AND seq>=? AND seq<? ORDER BY seq LIMIT 12")
+      .all(conversationId, firstSeq, beforeSeq).map(row => stewardMessage.parse(JSON.parse(String(row.data))));
+  }
   current(conversationId: string): StewardScope {
     this.ensure(conversationId);
     const row = this.db.prepare("SELECT scope FROM steward_conversations WHERE id=?").get(conversationId);
     return stewardScope.parse(JSON.parse(String(row?.scope)));
   }
   selectCreatedProject(conversationId: string, projectId: string, messageId: string) {
-    this.db.prepare("UPDATE steward_conversations SET scope=? WHERE id=? AND json_extract(scope,'$.kind')='personal' AND ?=(SELECT id FROM steward_messages WHERE conversation=? AND json_extract(data,'$.role')='user' ORDER BY seq DESC LIMIT 1)")
+    this.db.prepare("UPDATE steward_conversations SET scope=? WHERE id=? AND json_extract(scope,'$.kind') IN ('personal','workbench') AND ?=(SELECT id FROM steward_messages WHERE conversation=? AND json_extract(data,'$.role')='user' ORDER BY seq DESC LIMIT 1)")
       .run(canonical({ kind: "project", projectId }), conversationId, messageId, conversationId);
   }
   topicActivity(conversationId: string, projects: { projectId: string; title: string; createdAt: string }[], activeDays: number, observedAt = new Date().toISOString()) {
@@ -141,9 +145,9 @@ export class StewardConversations {
     const rows = this.db.prepare("SELECT json_extract(data,'$.scope') AS scope,MAX(json_extract(data,'$.createdAt')) AS active FROM steward_messages WHERE conversation=? AND json_extract(data,'$.createdAt')>=? AND json_extract(data,'$.createdAt')<=? GROUP BY json_extract(data,'$.scope')").all(conversationId, cutoffAt, observedAt);
     for (const row of rows) {
       const scope = stewardScope.parse(JSON.parse(String(row.scope)));
-      const title = scope.kind === "personal" ? "闲聊" : titles.get(scope.projectId);
+      const title = scope.kind === "personal" ? "闲聊" : scope.kind === "workbench" ? "管家工作区" : titles.get(scope.projectId);
       if (title === undefined) continue;
-      const key = scope.kind === "personal" ? "" : scope.projectId, lastActiveAt = String(row.active);
+      const key = scope.kind === "project" ? scope.projectId : scope.kind, lastActiveAt = String(row.active);
       const previous = topics.get(key);
       if (!previous || previous.lastActiveAt < lastActiveAt) topics.set(key, { scope, title, lastActiveAt });
     }
@@ -168,7 +172,7 @@ export class StewardConversations {
     return this.message(String(row.message));
   }
   requestId(messageId: string): string { return `steward-${messageId}`; }
-  accept(request: StewardSend, scope: StewardScope, binding: StewardBinding, afterSeq: number, quote: StewardQuote | null = null, delivery?: Pick<StewardMessage, "content" | "selection" | "permission">, bindUploads?: (messageId: string) => void): StewardMessage {
+  accept(request: StewardSend, scope: StewardScope, binding: StewardBinding, afterSeq: number, quote: StewardQuote | null = null, delivery?: Pick<StewardMessage, "content" | "selection" | "permission" | "route" | "creationContext">, bindUploads?: (messageId: string) => void): StewardMessage {
     this.db.exec("BEGIN IMMEDIATE");
     try {
       const previous = this.replay(request);
@@ -214,6 +218,10 @@ export class StewardConversations {
   cursors(conversationId: string): StewardCursor[] {
     return this.db.prepare("SELECT data FROM steward_sources WHERE conversation=? ORDER BY rowid DESC LIMIT 100").all(conversationId)
       .map(row => cursor.parse(JSON.parse(String(row.data))));
+  }
+  registerSource(conversationId: string, binding: StewardBinding) {
+    this.ensure(conversationId);
+    this.db.prepare("INSERT OR IGNORE INTO steward_sources VALUES(?,?,?)").run(conversationId, stewardBindingKey(binding), canonical({ binding, afterSeq: -1, currentUser: null, pendingUsers: [], status: { kind: "unchecked" } }));
   }
   saveCursor(conversationId: string, value: StewardCursor) {
     this.db.prepare("UPDATE steward_sources SET data=? WHERE conversation=? AND session=?")

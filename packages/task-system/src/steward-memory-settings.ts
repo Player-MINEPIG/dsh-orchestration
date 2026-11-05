@@ -16,7 +16,7 @@ export const stewardMemoryConfigure = stewardMemoryRead.extend({ commandId: key,
 });
 export type StewardMemoryConfigure = z.infer<typeof stewardMemoryConfigure>;
 export const memoryHash = (value: unknown) => createHash("sha256").update(canonical(value)).digest("hex");
-export const scopeKey = (binding: StewardBinding) => binding.kind === "personal" ? `personal:${binding.sessionId}` : `project:${binding.projectId}`;
+export const scopeKey = (binding: StewardBinding) => (binding.kind === "personal" || binding.kind === "workbench") ? `${binding.kind}:${binding.sessionId}` : `project:${binding.projectId}`;
 export const memoryPreset = z.object({ id: z.string(), name: z.string(), backend: z.literal("native"),
   rules: z.array(z.object({ kind: z.string(), enabled: z.boolean(), role: z.string() }).passthrough()),
 }).passthrough();
@@ -35,7 +35,7 @@ export const STEWARD_NATIVE_PRESET = {
 export interface StewardMemoryConfiguration {
   revision: number; selectionHash: string; mode: "native" | "manager"; available: boolean; readOnly: boolean;
   selectionObserved: boolean;
-  sourceRegistered: boolean; scope: { kind: "personal" } | { kind: "project"; projectId: string };
+  sourceRegistered: boolean; scope: { kind: "personal" | "workbench" } | { kind: "project"; projectId: string };
   session: { sessionId: string; generation: number; nodeId: string }; currentPresetId: string | null;
   presets: { id: string; name: string }[]; missingResourceIds: string[]; diagnostics: string[];
   inheritAuthorized: boolean; pendingChange: { commandId: string; request: StewardMemoryConfigure } | null;
@@ -86,7 +86,7 @@ export class StewardMemorySettings {
     const agent = this.ctx.get("agents")?.get(SessionId(binding.sessionId));
     if (agent && (agent.status !== "idle" || agent.inbox.nextTurn.length || agent.inbox.nextStep.length))
       throw new TaskError("BUSY", "Native input arrived during memory configuration; inspect the pending change after that turn finishes");
-    if (binding.kind !== "personal" && this.db.prepare("SELECT 1 FROM pr_turns WHERE owner=? AND state IN ('queued','running') LIMIT 1").get(binding.projectId))
+    if ((binding.kind !== "personal" && binding.kind !== "workbench") && this.db.prepare("SELECT 1 FROM pr_turns WHERE owner=? AND state IN ('queued','running') LIMIT 1").get(binding.projectId))
       throw new TaskError("BUSY", "The project PM has a queued or active turn; memory configuration remains pending");
   }
   configuration(binding: StewardBinding): StewardMemoryConfiguration {
@@ -115,7 +115,7 @@ export class StewardMemorySettings {
     const outstanding = pendingRow ? { id: String(pendingRow.id), value: pending.parse(JSON.parse(String(pendingRow.data))) } : null;
     if (!selectionObserved) diagnostics.push("实际预设状态未知；显式恢复原生所有权不会覆盖已有预设或Manager规则。");
     return { revision: saved?.revision ?? 0, selectionHash: selectionObserved ? memoryHash(selection) : memoryHash({ selection: "unavailable" }), mode, available, readOnly: !local,
-      sourceRegistered: this.registered(), selectionObserved, scope: binding.kind === "personal" ? { kind: "personal" } : { kind: "project", projectId: binding.projectId },
+      sourceRegistered: this.registered(), selectionObserved, scope: (binding.kind === "personal" || binding.kind === "workbench") ? { kind: binding.kind } : { kind: "project", projectId: binding.projectId },
       session: { sessionId: binding.sessionId, generation: binding.generation, nodeId: binding.nodeId },
       currentPresetId: memoryPreset.safeParse(selection).data?.id ?? null, presets, missingResourceIds: missing, diagnostics,
       inheritAuthorized: saved?.inherit ?? false, pendingChange: outstanding ? { commandId: outstanding.id, request: outstanding.value.request } : null };
@@ -132,7 +132,7 @@ export class StewardMemorySettings {
   }
   private async change(request: StewardMemoryConfigure, binding: StewardBinding, digest: string) {
     this.checkBinding(binding);
-    const actualScope = binding.kind === "personal" ? { kind: "personal" } : { kind: "project", projectId: binding.projectId };
+    const actualScope = (binding.kind === "personal" || binding.kind === "workbench") ? { kind: binding.kind } : { kind: "project", projectId: binding.projectId };
     if (canonical(request.scope) !== canonical(actualScope)) throw new TaskError("FORBIDDEN", "Configuration scope differs from its trusted native binding");
     if (binding.nodeId !== this.task.config.nodeId) throw new TaskError("UNAVAILABLE", "Configure memory on the actual native owner; no remote owner adapter is available");
     this.assertMutationIdle(binding);
@@ -187,7 +187,7 @@ export class StewardMemorySettings {
     }
     this.checkBinding(binding);
     const prior = this.saved(binding), next = { revision: (prior?.revision ?? 0) + 1, mode: request.mode,
-      binding, selectionHash: memoryHash(assembler.store.selection(binding.sessionId)), inherit: request.mode === "manager" && binding.kind !== "personal" && request.inheritProjectGenerations };
+      binding, selectionHash: memoryHash(assembler.store.selection(binding.sessionId)), inherit: request.mode === "manager" && (binding.kind !== "personal" && binding.kind !== "workbench") && request.inheritProjectGenerations };
     this.db.exec("BEGIN IMMEDIATE");
     try {
       this.db.prepare("INSERT INTO steward_memory_scopes VALUES(?,?) ON CONFLICT(scope) DO UPDATE SET data=excluded.data").run(key, canonical(next));
@@ -238,7 +238,7 @@ export class StewardMemorySettings {
         throw new TaskError("CONFLICT", "The selected native preset changed after authorization; choose the current memory policy explicitly");
       return;
     }
-    if (binding.kind === "personal" || saved.binding.kind === "personal" || binding.projectId !== saved.binding.projectId || !saved.inherit)
+    if ((binding.kind === "personal" || binding.kind === "workbench") || (saved.binding.kind === "personal" || saved.binding.kind === "workbench") || binding.projectId !== saved.binding.projectId || !saved.inherit)
       throw new TaskError("CONFIGURATION", "This native generation has not been authorized to inherit memory policy");
     if (assembler.store.hasSelection(binding.sessionId)) {
       if (memoryHash(assembler.store.selection(binding.sessionId)) !== saved.selectionHash)
