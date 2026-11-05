@@ -31,7 +31,7 @@ export const stewardAttachmentRead = z.strictObject({ conversationId: key, messa
 export const stewardSend = z.strictObject({
   conversationId: key, commandId: key, text: z.string().trim().max(16000),
   uploads: z.array(key).max(32).optional(), selection: stewardSelection.optional(), permissionPreset: key.optional(),
-  target: stewardScope.optional(), replyTo: key.optional(),
+  target: stewardScope.optional(), replyTo: key.optional(), contextAnchor: z.discriminatedUnion("kind", [z.strictObject({ kind: z.literal("canonical"), messageId: key, throughSeq: z.number().int().nonnegative() }), z.strictObject({ kind: z.literal("predecessor"), commandId: key })]).optional(),
   routingMode: z.literal("auto").optional(),
   quote: stewardQuoteInput.optional(),
 }).superRefine((value, ctx) => {
@@ -110,7 +110,7 @@ export const stewardMessage = z.strictObject({
   id: key, seq: z.number().int().positive(), conversationId: key,
   role: z.enum(["user", "assistant", "notification"]), text: z.string(), content: stewardContent.optional(), selection: stewardSelection.optional(), permission: stewardPermission.optional(), commandId: key.nullable().default(null),
   creationContext: z.strictObject({ instructionId: key, messageIds: z.array(key).min(1).max(11) }).optional(),
-  scope: stewardScope, route: z.strictObject({ reason: z.enum(["unassigned", "clarification", "unavailable", "timeout", "provider", "invalid-output"]), notice: z.string().max(500) }).optional(), replyTo: key.nullable(), createdAt: z.string(),
+  scope: stewardScope, route: z.strictObject({ reason: z.enum(["unassigned", "clarification", "unavailable", "timeout", "provider", "invalid-output", "continuation"]), notice: z.string().max(500), anchorMessageId: key.optional(), responseMessageId: key.optional() }).optional(), replyTo: key.nullable(), createdAt: z.string(),
   source: stewardBinding, nativeSeq: z.number().int().nonnegative().nullable(),
   provenance: z.strictObject({ kind: z.literal("ledger"), eventId: key, eventType: key, taskId: key, runId: key.nullable() }).nullable().default(null),
   state: stewardState, manifest: stewardManifest,
@@ -160,7 +160,7 @@ export interface StewardSnapshot {
   lastSeq: number;
   limitations: string[];
   sources: { source: StewardBinding; status: z.infer<typeof stewardSourceStatus> }[];
-  routing: { auto: boolean };
+  routing: { auto: boolean; anchorMessageId?: string };
   context: { mode: string; sourceRegistered: boolean; assemblerVersion: string | null; diagnostic: string | null };
   requests: StewardRequestObservation[];
   requestObservation: { kind: "active" | "unavailable"; reason: string | null };

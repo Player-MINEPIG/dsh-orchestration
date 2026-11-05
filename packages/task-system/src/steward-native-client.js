@@ -1,5 +1,5 @@
 function createStewardDisplayJournal() {
-  const rows = new Map(), listeners = new Set();
+  const rows = new Map(), pendingPhases = new Map(), listeners = new Set();
   let nextSeq = 0;
   const records = [];
   function encode(message, start) {
@@ -20,6 +20,16 @@ function createStewardDisplayJournal() {
     return result;
   }
   return {
+    syncPending(pending, nativePending, messages) {
+      const active = new Set(pending.map(item => item.request.commandId)), native = new Set(nativePending.map(item => item.requestId));
+      for (const id of new Set([...pendingPhases.keys(), ...active, ...native])) {
+        const phase = active.has(id) ? messages.some(message => message.role === 'user' && message.commandId === id) ? 'canonical' : 'pending' : native.has(id) ? 'hidden' : 'done';
+        if (pendingPhases.get(id) === phase) continue;
+        if (phase === 'done') pendingPhases.delete(id); else pendingPhases.set(id, phase);
+        const record = { type: 'event', event: { type: 'plugin:steward/routing', seq: nextSeq++, time: Date.now(), ignorable: true, data: { requestId: id, phase } } };
+        records.push(record); for (const listener of listeners) listener([record]);
+      }
+    },
     appendPermission(preset) { const record = { type: "event", event: { type: "permission/preset", seq: nextSeq++, time: Date.now(), data: { preset } } }; records.push(record); for (const listener of listeners) listener([record]); },
     appendModel(selection) { const record = { type: "event", event: { type: "model/selection", seq: nextSeq++, time: Date.now(), data: selection } }; records.push(record); for (const listener of listeners) listener([record]); },
     sync(messages) {
@@ -31,7 +41,7 @@ function createStewardDisplayJournal() {
       if (appended.length) for (const listener of listeners) listener(appended);
     },
     replace(messages) {
-      rows.clear(); records.length = 0;
+      rows.clear(); pendingPhases.clear(); records.length = 0;
       for (const message of [...messages].sort((a, b) => a.seq - b.seq).slice(-300)) {
         const encoded = encode(message, nextSeq); nextSeq += encoded.length; rows.set(message.id, message); records.push(...encoded);
       }
@@ -171,6 +181,7 @@ function createStewardNativeClient({ React, Context, modules, hostContext, creat
       const snapshot = bridge.getSnapshot(), identity = `${snapshot.authorityId}:${snapshot.conversationId}`;
       const sessionId = `steward-display:${identity}`, createdAt = Date.now();
       let reference, unmount, offBridge, offSubmissions, offInput;
+      let pendingReady = false, nativePending = [];
       const prepared = new Map(), controls = new Set();
       const followTarget = { provider: 'steward-target', model: 'follow' };
       const modelKey = `dsh-steward-model:${identity}`;
@@ -223,6 +234,7 @@ function createStewardNativeClient({ React, Context, modules, hostContext, creat
         if (ids.length && (ids.some(id => !next.has(id)) || newBeforeTail)) {
           journal.replace(messages);
         } else journal.sync(messages);
+        if (pendingReady) journal.syncPending(bridge.getSnapshot().pending ?? [], nativePending, messages);
       };
       sync(); offBridge = bridge.subscribe(sync);
       const rpc = {
@@ -352,7 +364,7 @@ function createStewardNativeClient({ React, Context, modules, hostContext, creat
         onState?.("正在恢复原生历史…");
         const binding = await reference.ready;
         const capture = () => {
-          const pending = binding.session.getSnapshot().pendingSubmissions;
+          const pending = binding.session.getSnapshot().pendingSubmissions; nativePending = pending;
           const active = new Set(pending.map(item => item.requestId));
           for (const id of prepared.keys()) if (!active.has(id)) prepared.delete(id);
           for (const item of pending) {
@@ -360,6 +372,7 @@ function createStewardNativeClient({ React, Context, modules, hostContext, creat
             try { prepared.set(item.requestId, { request: bridge.prepare(item.text, item.requestId, { attachmentCount: item.attachments?.length ?? 0, ...(selectedModel.provider !== followTarget.provider ? { selection: { ...selectedModel } } : {}), ...(selectedPermission!==followPermission?{permissionPreset:selectedPermission}:{}) }) }); if(selectedPermission!==followPermission)setPermission(followPermission); }
             catch (error) { prepared.set(item.requestId, { error }); }
           }
+          if (pendingReady) sync();
         };
         offSubmissions = binding.session.subscribe(capture);
         for (const name of ["dsh-client-ui-renderer", "dsh-client-locale", "dsh-client-shortcuts", "dsh-client-ui-session", "dsh-client-ui-workspace", "dsh-client-ui-settings", "dsh-client-ui-conversation", "dsh-client-ui-chat", "dsh-client-ui-attachment", "dsh-client-ui-model-selection", "dsh-client-ui-tool", "dsh-client-ui-sidebar-right", "dsh-client-resources", "dsh-client-ui-input-trigger", "dsh-client-ui-commands", "dsh-client-ui-permission-presets"])
@@ -370,6 +383,32 @@ function createStewardNativeClient({ React, Context, modules, hostContext, creat
         ctx.slots.provideRoot({ hooks: { panelInfo } });
         function useBridge() { return React.useSyncExternalStore(bridge.subscribe, bridge.getSnapshot, bridge.getSnapshot); }
         function Controls() { const state = useBridge(); return state.renderControls(); }
+        const { TextShimmer, IconThinkOutlineRegular } = await load('dsh-client-ui-primitives');
+        aborted(lifetime.signal);
+        // Display-only input identity suppresses the native echo without retiring its real submission.
+        // A materialized Definition keeps its key: done becomes hidden; unresolved native echoes keep a visible empty tombstone.
+        ctx.uiConversation.events.register({
+          kind: 'steward-routing', target: 'chat',
+          match: { 'plugin:steward/routing': event => ({ id: event.data.requestId, role: 'start', exclusive: true }) },
+          start: (_context, match) => ({ ...match.event.data, anchorSeq: match.event.seq }),
+          update: ({ state }, match) => ({ ...state, ...match.event.data, ...(state.phase !== match.event.data.phase ? { anchorSeq: match.event.seq } : {}) }),
+          buildViewNode: ({ state, key, id }) => ({ key, kind: 'steward-routing', id, target: 'chat', anchorSeq: state.anchorSeq, location: { kind: 'session' }, visibility: state.phase === 'done' ? 'hidden' : 'visible', groupTree: 'input', data: { requestId: id, source: { kind: 'user', rpcId: id } } }),
+        });
+        function RoutingPending({ node, renderFactorySlot, loadImage }) {
+          const state = useBridge(), item = state.pending?.find(item => item.request.commandId === node.data.requestId);
+          if (!item) return null;
+          const echo = nativePending.find(pending => pending.requestId === item.request.commandId);
+          const attachments = (echo?.attachments ?? []).map(part => part.type === 'image' ? { type: 'image', image: { preview: { url: part.value.previewUrl, ...part.value } } } : { type: 'file', file: part.value });
+          const canonical = state.messages.find(message => message.role === 'user' && message.commandId === item.request.commandId);
+          const running = !canonical && ['preparing', 'sending', 'checking'].includes(item.status);
+          const label = item.status === 'preparing' ? '正在保存附件…' : item.status === 'checking' ? '正在核实原请求…' : '正在发送或分流…';
+          return h('div', { 'data-pending-command': item.request.commandId, 'data-pending-phase': item.status, 'data-display-only': true },
+            !canonical && h('div', { style: { display: 'flex', justifyContent: 'flex-end' } }, renderFactorySlot('conversation.chat.user.content', { content: { text: item.request.text, attachments, extraBlocks: [] }, facts: {}, loadImage })),
+            running ? h('div', { className: 'steward-routing-row', role: 'status', title: '尚未确认服务器登记；这是发送/分流状态，并非项目已开始执行。' }, h(IconThinkOutlineRegular, { width: 18, height: 18, 'aria-hidden': true }), h(TextShimmer, null, label)) :
+              h('div', { className: 'steward-routing-recovery', role: 'status' }, h('p', null, canonical ? '服务器已登记原请求；原回执仍待核实，不会自动重发。' : item.reason), !echo && item.request.uploads?.length > 0 && h('small', null, `原请求保留 ${item.request.uploads.length} 个附件。`), state.renderPendingRecovery(item)));
+        }
+        ctx.slots.inject('conversation.chat.node', () => ctx.slots.register({ name: 'conversation.chat.node', key: 'steward-routing' }, RoutingPending));
+        pendingReady = true; capture(); sync();
         function DisplayViews({ renderSlot }) {
           const seats = React.useSyncExternalStore(placement.subscribe, placement.getSnapshot, placement.getSnapshot);
           return seats.chat ? createPortal(renderSlot('conversation.session', { view: 'chat' }), seats.chat) : null;
@@ -383,7 +422,7 @@ function createStewardNativeClient({ React, Context, modules, hostContext, creat
           const state = useBridge(), turn = node.location.kind === 'turn' || node.location.kind === 'step' ? node.location.turn.turn : null;
           const message = state.messages.find(message => message.seq === turn);
           if (!message) return null;
-          return h('article', { className: 'steward-native-user', 'data-message-id': message.id, 'data-role': 'user', 'data-scope': state.scopeKey(message.scope) },
+          return h('article', { className: 'steward-native-user', 'data-message-id': message.id, 'data-role': 'user', 'data-scope': state.scopeKey(message.scope), 'data-actions-reveal': state.messages.filter(item => item.role === 'user').at(-1)?.id === message.id ? 'always' : 'hover' },
             h('div', { style: { display: 'flex', justifyContent: 'flex-end', width: '100%' } }, renderFactorySlot('conversation.chat.user.content', { content: { text: message.text, attachments: (message.content ?? []).filter(part => part.type !== 'text').map(part => part.type === 'image' ? { type: 'image', image: { attachment: part.attachment } } : { type: 'file', file: part.attachment }), extraBlocks: [] }, facts: {}, loadImage })),
             h('div', { className: 'steward-icon-row' }, state.renderActions(message, true)));
         }

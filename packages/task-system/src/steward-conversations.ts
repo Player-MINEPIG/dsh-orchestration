@@ -29,6 +29,7 @@ export class StewardConversations {
       WHERE json_extract(data,'$.role')='user' AND json_extract(data,'$.state.kind') NOT IN ('completed','rejected','stopped','released');
       CREATE INDEX IF NOT EXISTS steward_scope_latest ON steward_messages(conversation,json_extract(data,'$.scope.kind'),json_extract(data,'$.scope.projectId'),seq);
       CREATE INDEX IF NOT EXISTS steward_native_source ON steward_sources(json_extract(data,'$.binding.sessionId'),json_extract(data,'$.binding.nodeId'));`);
+    this.db.exec("CREATE INDEX IF NOT EXISTS steward_message_reply ON steward_messages(conversation,json_extract(data,'$.replyTo'),seq)");
     this.db.exec("CREATE INDEX IF NOT EXISTS steward_message_activity ON steward_messages(conversation,json_extract(data,'$.createdAt'))");
     this.db.exec("CREATE INDEX IF NOT EXISTS steward_task_origin_task ON steward_task_origins(task)");
   }
@@ -122,6 +123,23 @@ export class StewardConversations {
   previousCreationMessages(message: Pick<StewardMessage, "conversationId" | "seq">): StewardMessage[] {
     return this.db.prepare("SELECT data FROM steward_messages WHERE conversation=? AND seq<? AND json_extract(data,'$.role')='user' ORDER BY seq DESC LIMIT 5")
       .all(message.conversationId, message.seq).map(row => stewardMessage.parse(JSON.parse(String(row.data))));
+  }
+  routingWindow(conversationId: string, throughSeq = Number.MAX_SAFE_INTEGER, anchorId?: string): StewardMessage[] {
+    const rows: StewardMessage[] = [];
+    let row = anchorId ? this.db.prepare("SELECT data FROM steward_messages WHERE conversation=? AND id=? AND seq<=?").get(conversationId, anchorId, throughSeq)
+      : this.db.prepare("SELECT data FROM steward_messages WHERE conversation=? AND json_extract(data,'$.role')='user' AND seq<=? ORDER BY seq DESC LIMIT 1").get(conversationId, throughSeq);
+    for (let count = 0; count < 3 && row; count++) {
+      const user = stewardMessage.parse(JSON.parse(String(row.data)));
+      const responses = this.db.prepare("SELECT data FROM steward_messages WHERE conversation=? AND json_extract(data,'$.replyTo')=? AND json_extract(data,'$.role')='assistant' AND seq<=? ORDER BY seq DESC LIMIT 2")
+        .all(conversationId, user.id, throughSeq).reverse().map(item => stewardMessage.parse(JSON.parse(String(item.data))));
+      rows.unshift(user, ...responses);
+      row = this.db.prepare("SELECT data FROM steward_messages WHERE conversation=? AND json_extract(data,'$.role')='user' AND seq<? ORDER BY seq DESC LIMIT 1").get(conversationId, user.seq);
+    }
+    return rows;
+  }
+  latestUserId(conversationId: string): string | undefined {
+    const row = this.db.prepare("SELECT id FROM steward_messages WHERE conversation=? AND json_extract(data,'$.role')='user' ORDER BY seq DESC LIMIT 1").get(conversationId);
+    return row ? String(row.id) : undefined;
   }
   creationRange(conversationId: string, firstSeq: number, beforeSeq: number): StewardMessage[] {
     return this.db.prepare("SELECT data FROM steward_messages WHERE conversation=? AND seq>=? AND seq<? ORDER BY seq LIMIT 12")

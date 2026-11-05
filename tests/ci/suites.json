@@ -132,6 +132,7 @@
     "tests/dsh/steward-media-queue-native.test.mjs",
     "tests/dsh/steward-project-creation-native.test.mjs",
     "tests/dsh/steward-workbench-native.test.mjs",
+    "tests/dsh/steward-continuity-native.test.mjs",
     "tests/dsh/steward-permission-native.test.mjs"
   ],
   "ui": [

@@ -17,6 +17,7 @@ import { resolveStewardRoute, createStewardClassifier } from "./steward-routing.
 import { StewardAttachments } from "./steward-attachments.js";
 import { pinStewardTurnSelection } from "./steward-turn-selection.js";
 import { authorizedProjectInput, requestsNewProject, suppliesProjectDetails, delegatesProjectDetails, cancelsProjectCreation } from "./steward-project-creation.js";
+import { isProjectContinuation, projectContinuity } from "./steward-continuity.js";
 import { workbenchFileAllowed } from "./steward-workbench.js";
 import { StewardTurnPermissions } from "./steward-turn-permission.js";
 import type { AdmittedPromptContentPart } from "@deepseek-ai/dsh-attachment";
@@ -140,7 +141,7 @@ export class StewardRuntime {
       currentScope: this.store.current(request.conversationId), ...(attachments ? { media: { imageLimits: attachments.imageLimits, maxFileBytes: 8388608, chunkBytes: 24576 } } : {}), persona: STEWARD_PERSONA,
       ...page, attention: this.store.attention(request.conversationId), commandMessage: request.commandId ? this.store.commandMessage(request.conversationId, request.commandId) : null, projects: this.projects(),
       topicActivity: this.store.topicActivity(request.conversationId, this.task.projects!.chatProjectActivity(), this.task.config.stewardActiveDays),
-      lastSeq: page.page.lastStoredSeq, limitations, routing: { auto: !!this.task.config.projectAgentOptions && !!this.ctx.get("llm") },
+      lastSeq: page.page.lastStoredSeq, limitations, routing: { auto: !!this.task.config.projectAgentOptions && !!this.ctx.get("llm"), anchorMessageId: this.store.latestUserId(request.conversationId) },
       context: this.memory.capability(),
       requests: this.store.requests(request.conversationId),
       requestObservation: { kind: this.requestDiagnostic || !this.requestDisposer ? "unavailable" : "active", reason: this.requestDiagnostic },
@@ -652,18 +653,38 @@ export class StewardRuntime {
       }
     }
     if (creation.length) scope = { kind: "workbench" };
+    let continuity: ReturnType<typeof projectContinuity>;
+    let continuityBinding: StewardBinding | undefined;
+    if (!request.target && !request.replyTo && !request.quote && request.routingMode === "auto" && isProjectContinuation(request.text)) {
+      const captured = request.contextAnchor;
+      const contextAnchor = captured?.kind === "canonical" ? this.store.message(captured.messageId) : captured?.kind === "predecessor" ? this.store.commandMessage(request.conversationId, captured.commandId) : undefined;
+      if (captured?.kind === "predecessor" && (!contextAnchor || contextAnchor.state.kind !== "completed"))
+        throw new TaskError("CLARIFICATION", "前一条请求尚未确认完成分流或登记，请先核实或明确本条项目；不会按更早的话题启动工作。");
+      if (contextAnchor && (contextAnchor.conversationId !== request.conversationId || contextAnchor.role !== "user" || captured?.kind === "canonical" && captured.throughSeq < contextAnchor.seq))
+        throw new TaskError("FORBIDDEN", "The routing context anchor does not belong to this conversation");
+      const window = this.store.routingWindow(request.conversationId, captured?.kind === "canonical" ? captured.throughSeq : undefined, contextAnchor?.id);
+      continuity = projectContinuity(window, contextAnchor?.id);
+      if (captured?.kind === "predecessor" && !continuity)
+        throw new TaskError("CLARIFICATION", "前一条请求尚未形成唯一的项目回合，请明确本条要继续的项目。");
+      if (continuity && this.projects().some(project => project.projectId === continuity?.scope.projectId)) {
+        const current = await this.resolveBinding(continuity.scope, request.conversationId);
+        continuityBinding = current;
+        if (stewardBindingKey(current) !== stewardBindingKey(continuity.anchor.source))
+          throw new TaskError("CLARIFICATION", "上一轮项目原会话已变化；请明确当前项目后再继续，不能用旧回合代替当前执行授权。");
+      } else continuity = undefined;
+    }
     if (request.routingMode === "auto") {
       const replyScope = request.replyTo ? this.store.message(request.replyTo).scope : undefined;
       const options = this.task.config.projectAgentOptions;
       const continuingCreation = creation.length > 0;
-      const result = !request.text ? { kind: "route" as const, target: { kind: "workbench" as const }, receipt: { reason: "unassigned" as const, notice: "未指定项目的附件资料已由管家工作区承接，未调用图片或文件内容分流。" } } : continuingCreation ? { kind: "route" as const, target: { kind: "workbench" as const } } : await resolveStewardRoute({ text: request.text, projects: this.projects().map(({ projectId, title }) => ({ projectId, title })),
+      const result = continuity ? { kind: "route" as const, target: continuity.scope, receipt: { reason: "continuation" as const, anchorMessageId: continuity.anchor.id, responseMessageId: continuity.response.id, notice: "根据你在该项目的上一轮对话继续交给原项目PM；是否开工及具体操作仍由PM核对当前账本。" } } : !request.text ? { kind: "route" as const, target: { kind: "workbench" as const }, receipt: { reason: "unassigned" as const, notice: "未指定项目的附件资料已由管家工作区承接，未调用图片或文件内容分流。" } } : continuingCreation ? { kind: "route" as const, target: { kind: "workbench" as const } } : await resolveStewardRoute({ text: request.text, projects: this.projects().map(({ projectId, title }) => ({ projectId, title })),
         previousScope: this.store.current(request.conversationId), explicitTarget: request.target, replyScope,
         ...(options && this.ctx.get("llm") ? { classify: createStewardClassifier(this.ctx, options) } : {}) });
       if (result.kind === "clarification") throw new TaskError("CLARIFICATION", result.question);
       scope = result.target;
       if ("receipt" in result) route = result.receipt;
     }
-    const binding = await this.resolveBinding(scope, request.conversationId);
+    const binding = continuityBinding ?? await this.resolveBinding(scope, request.conversationId);
     if (binding.nodeId !== this.task.config.nodeId && (request.uploads?.length || request.selection || request.permissionPreset)) throw new TaskError("UNAVAILABLE", "该远端原会话暂不支持管家附件、逐条模型选择或单次权限；请打开原会话发送。");
     const selection = await this.selectionFor(binding, request.selection);
     const permission = request.permissionPreset ? this.permissions.resolve(request.permissionPreset) : undefined;
@@ -685,6 +706,11 @@ export class StewardRuntime {
       const sourceScope = source.scope;
       if (sourceScope.kind === "project" && !this.projects().some(project => project.projectId === sourceScope.projectId))
         throw new TaskError("FORBIDDEN", "Quotation source is no longer accessible");
+    }
+    if (continuity) {
+      const current = this.task.projects!.placementProject(continuity.scope.projectId);
+      if (stewardBindingKey(binding) !== stewardBindingKey(continuity.anchor.source) || current.session !== binding.sessionId || current.generation !== binding.generation || current.cwd !== binding.cwd)
+        throw new TaskError("CLARIFICATION", "上一轮项目原会话已变化，请明确当前项目后再继续。");
     }
     const message = this.store.accept(request, scope, binding, initialSeq, quote, { content, selection, permission, route, ...(creation.length ? { creationContext: { instructionId: creation.find(item => requestsNewProject(item.text))?.id ?? creation[0]!.id, messageIds: creation.map(item => item.id) } } : {}) }, id => this.media.bind(request.conversationId, request.uploads ?? [], id));
     try { this.memory.prepare(binding); }
