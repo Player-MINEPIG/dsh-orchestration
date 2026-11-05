@@ -124,19 +124,7 @@ export class StewardConversations {
     return this.db.prepare("SELECT data FROM steward_messages WHERE conversation=? AND seq<? AND json_extract(data,'$.role')='user' ORDER BY seq DESC LIMIT 5")
       .all(message.conversationId, message.seq).map(row => stewardMessage.parse(JSON.parse(String(row.data))));
   }
-  routingWindow(conversationId: string, throughSeq = Number.MAX_SAFE_INTEGER, anchorId?: string): StewardMessage[] {
-    const rows: StewardMessage[] = [];
-    let row = anchorId ? this.db.prepare("SELECT data FROM steward_messages WHERE conversation=? AND id=? AND seq<=?").get(conversationId, anchorId, throughSeq)
-      : this.db.prepare("SELECT data FROM steward_messages WHERE conversation=? AND json_extract(data,'$.role')='user' AND seq<=? ORDER BY seq DESC LIMIT 1").get(conversationId, throughSeq);
-    for (let count = 0; count < 3 && row; count++) {
-      const user = stewardMessage.parse(JSON.parse(String(row.data)));
-      const responses = this.db.prepare("SELECT data FROM steward_messages WHERE conversation=? AND json_extract(data,'$.replyTo')=? AND json_extract(data,'$.role')='assistant' AND seq<=? ORDER BY seq DESC LIMIT 2")
-        .all(conversationId, user.id, throughSeq).reverse().map(item => stewardMessage.parse(JSON.parse(String(item.data))));
-      rows.unshift(user, ...responses);
-      row = this.db.prepare("SELECT data FROM steward_messages WHERE conversation=? AND json_extract(data,'$.role')='user' AND seq<? ORDER BY seq DESC LIMIT 1").get(conversationId, user.seq);
-    }
-    return rows;
-  }
+
   latestUserId(conversationId: string): string | undefined {
     const row = this.db.prepare("SELECT id FROM steward_messages WHERE conversation=? AND json_extract(data,'$.role')='user' ORDER BY seq DESC LIMIT 1").get(conversationId);
     return row ? String(row.id) : undefined;
@@ -190,7 +178,7 @@ export class StewardConversations {
     return this.message(String(row.message));
   }
   requestId(messageId: string): string { return `steward-${messageId}`; }
-  accept(request: StewardSend, scope: StewardScope, binding: StewardBinding, afterSeq: number, quote: StewardQuote | null = null, delivery?: Pick<StewardMessage, "content" | "selection" | "permission" | "route" | "creationContext">, bindUploads?: (messageId: string) => void): StewardMessage {
+  accept(request: StewardSend, scope: StewardScope, binding: StewardBinding, afterSeq: number, quote: StewardQuote | null = null, delivery?: Pick<StewardMessage, "content" | "selection" | "permission" | "route" | "creationContext" | "routingClarification">, bindUploads?: (messageId: string) => void): StewardMessage {
     this.db.exec("BEGIN IMMEDIATE");
     try {
       const previous = this.replay(request);

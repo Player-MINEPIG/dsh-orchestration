@@ -14,6 +14,7 @@ export class StewardAttachments {
   private readonly db: ReturnType<TaskLedger["managementDatabase"]>;
   constructor(private readonly ctx: Context, ledger: TaskLedger) {
     this.db = ledger.managementDatabase();
+    this.db.exec("CREATE TABLE IF NOT EXISTS steward_router_uploads(upload TEXT PRIMARY KEY,command TEXT NOT NULL,conversation TEXT NOT NULL)");
     this.db.exec("CREATE TABLE IF NOT EXISTS steward_uploads(id TEXT PRIMARY KEY,command TEXT UNIQUE NOT NULL,conversation TEXT NOT NULL,data TEXT NOT NULL,created TEXT NOT NULL); CREATE INDEX IF NOT EXISTS steward_upload_file_path ON steward_uploads(json_extract(data,'$.filePath'))");
   }
   get active() { for (const [id, upload] of this.incoming) if (!upload.finishing && Date.now() - upload.touched > 120000) this.incoming.delete(id); return this.incoming.size > 0; }
@@ -23,7 +24,7 @@ export class StewardAttachments {
     const request = stewardUpload.parse(input), files = this.ctx.get("attachments");
     if (!files) throw new TaskError("UNAVAILABLE", "Native attachment storage is unavailable");
     for (const [id, upload] of this.incoming) if (!upload.finishing && Date.now() - upload.touched > 120000) this.incoming.delete(id);
-    this.db.prepare("DELETE FROM steward_uploads WHERE json_extract(data,'$.messageId') IS NULL AND created<?").run(new Date(Date.now() - 86400000).toISOString());
+    this.db.prepare("DELETE FROM steward_uploads WHERE json_extract(data,'$.messageId') IS NULL AND created<? AND NOT EXISTS(SELECT 1 FROM steward_router_uploads r WHERE r.upload=steward_uploads.id)").run(new Date(Date.now() - 86400000).toISOString());
     if (request.kind === "start") {
       const prior = this.db.prepare("SELECT id,data FROM steward_uploads WHERE command=? AND conversation=?").get(request.commandId, request.conversationId);
       if (prior) { const value = readyUpload.parse(JSON.parse(String(prior.data))); if (value.bytes !== request.bytes || value.name !== request.name || value.mediaType !== request.mediaType) throw new TaskError("CONFLICT", "Upload command changed"); return { uploadId: String(prior.id), chunkBytes: 24576, completed: value.content[0] }; }
@@ -36,7 +37,7 @@ export class StewardAttachments {
     const row = this.db.prepare("SELECT data FROM steward_uploads WHERE id=? AND conversation=?").get(request.uploadId, request.conversationId);
     if (!row) throw new TaskError("FORBIDDEN", "Attachment upload is not owned by this conversation");
     const saved = readyUpload.parse(JSON.parse(String(row.data)));
-    if (request.kind === "abort") { if (this.incoming.get(request.uploadId)?.finishing) throw new TaskError("BUSY", "Attachment storage is finishing"); if (saved.messageId) throw new TaskError("CONFLICT", "An admitted attachment cannot be removed"); this.incoming.delete(request.uploadId); this.db.prepare("DELETE FROM steward_uploads WHERE id=?").run(request.uploadId); return { aborted: true }; }
+    if (request.kind === "abort") { if (this.incoming.get(request.uploadId)?.finishing) throw new TaskError("BUSY", "Attachment storage is finishing"); if (saved.messageId || this.db.prepare("SELECT 1 FROM steward_router_uploads WHERE upload=?").get(request.uploadId)) throw new TaskError("CONFLICT", "An admitted attachment cannot be removed"); this.incoming.delete(request.uploadId); this.db.prepare("DELETE FROM steward_uploads WHERE id=?").run(request.uploadId); return { aborted: true }; }
     if (saved.content.length) return request.kind === "finish" ? { receiptId: request.uploadId, content: saved.content[0] } : { nextIndex: request.index + 1, receivedBytes: saved.bytes };
     const upload = this.incoming.get(request.uploadId);
     if (!upload) throw new TaskError("UPLOAD_RESET", "The unfinished upload expired; attach the file again");
@@ -60,6 +61,10 @@ export class StewardAttachments {
       return { receiptId: request.uploadId, content: parsed[0] };
     })().catch(error => { upload.finishing = undefined; throw error; });
     return upload.finishing;
+  }
+  retainForRouter(conversationId:string,commandId:string,ids:readonly string[]) {
+    this.resolve(conversationId,ids);
+    for(const id of ids){const previous=this.db.prepare("SELECT command,conversation FROM steward_router_uploads WHERE upload=?").get(id);if(previous && (previous.command!==commandId||previous.conversation!==conversationId))throw new TaskError("CONFLICT","Attachment already belongs to another router request");this.db.prepare("INSERT OR IGNORE INTO steward_router_uploads VALUES(?,?,?)").run(id,commandId,conversationId);}
   }
   authorizedFileMessages(path: string): string[] {
     const rows = this.db.prepare("SELECT data FROM steward_uploads WHERE json_extract(data,'$.filePath')=? AND json_extract(data,'$.messageId') IS NOT NULL").all(path);
@@ -109,6 +114,6 @@ export class StewardAttachments {
     return this.read(part, offset);
   }
   bind(conversationId: string, ids: readonly string[], messageId: string) {
-    for (const id of ids) { const result = this.db.prepare("UPDATE steward_uploads SET data=json_set(data,'$.messageId',?) WHERE id=? AND conversation=? AND json_extract(data,'$.messageId') IS NULL").run(messageId, id, conversationId); if (result.changes !== 1) throw new TaskError("CONFLICT", "Attachment was already admitted elsewhere"); }
+    for (const id of ids) { const held=this.db.prepare("SELECT command FROM steward_router_uploads WHERE upload=?").get(id);if(held){const message=this.db.prepare("SELECT json_extract(data,'$.commandId') command FROM steward_messages WHERE id=? AND conversation=?").get(messageId,conversationId);if(!message || message.command!==held.command)throw new TaskError("CONFLICT","Attachment is reserved for its immutable router request");} const result = this.db.prepare("UPDATE steward_uploads SET data=json_set(data,'$.messageId',?) WHERE id=? AND conversation=? AND json_extract(data,'$.messageId') IS NULL").run(messageId, id, conversationId); if (result.changes !== 1) throw new TaskError("CONFLICT", "Attachment was already admitted elsewhere"); this.db.prepare("DELETE FROM steward_router_uploads WHERE upload=?").run(id); }
   }
 }

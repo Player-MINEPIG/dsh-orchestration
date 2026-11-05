@@ -1,3 +1,4 @@
+import { topicListInput, topicDetailInput, topicSourceInput } from "./steward-topic-types.js";
 import { ExecutorDemandReads } from "./remote/executor-reads.js";
 import { demandReadInputs, parseDemandRead } from "./demand-read-inputs.js";
 import type { DemandReadMethod } from "./demand-reads.js";
@@ -368,6 +369,7 @@ const projectInputs = {
   ...demandReadInputs,
   stewardUpload, stewardUploadRead, stewardAttachmentRead, stewardValidateModel: stewardSelection, stewardModelCatalog: z.strictObject({}), stewardPermissionCatalog: z.strictObject({}), stewardValidatePermission: z.strictObject({preset:z.string().min(1).max(160)}),
   stewardSourceSession,
+  stewardTopics: topicListInput, stewardTopic: topicDetailInput, stewardTopicSource: topicSourceInput,
   stewardSnapshot: stewardRead,
   stewardSend,
   stewardReconcile: stewardRead,
@@ -697,6 +699,9 @@ export class TaskPluginSettings extends TypertRemoteService {
   async stewardModelCatalog() { return this.stewardOperation(() => this.stewardService().modelCatalog()); }
   async stewardValidateModel(input: unknown) { return this.stewardOperation(() => this.stewardService().validateModel(input)); }
   async stewardSourceSession(input: unknown) { return this.stewardOperation(() => this.stewardService().sourceSession(stewardSourceSession.parse(input))); }
+  async stewardTopics(input: unknown) { return this.stewardOperation(() => this.stewardService().topicList(input)); }
+  async stewardTopic(input: unknown) { return this.stewardOperation(() => this.stewardService().topicDetail(input)); }
+  async stewardTopicSource(input: unknown) { return this.stewardOperation(() => this.stewardService().topicSource(input)); }
   async stewardSnapshot(input: unknown) { return this.stewardOperation(() => this.stewardService().snapshot(stewardRead.parse(input))); }
   async stewardSend(input: unknown) {
     return this.stewardOperation(async () => {

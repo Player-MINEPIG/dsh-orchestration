@@ -76,7 +76,10 @@
     "packages/task-system/test/steward-conversations.test.mjs",
     "packages/task-system/test/steward-routing.test.mjs",
     "packages/task-system/test/acceptance-gates.test.mjs",
-    "packages/task-system/test/steward-pagination.test.mjs"
+    "packages/task-system/test/steward-pagination.test.mjs",
+    "packages/task-system/test/steward-router.test.mjs",
+    "packages/task-system/test/steward-topic-cards.test.mjs",
+    "packages/task-system/test/steward-topic-overview.test.mjs"
   ],
   "native": [
     "packages/task-system/test/project-native-client.test.mjs",
@@ -133,7 +136,8 @@
     "tests/dsh/steward-project-creation-native.test.mjs",
     "tests/dsh/steward-workbench-native.test.mjs",
     "tests/dsh/steward-continuity-native.test.mjs",
-    "tests/dsh/steward-permission-native.test.mjs"
+    "tests/dsh/steward-permission-native.test.mjs",
+    "tests/dsh/steward-topic-router-native.test.mjs"
   ],
   "ui": [
     "packages/task-system/test/executor-alerts.test.mjs",

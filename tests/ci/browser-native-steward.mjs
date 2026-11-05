@@ -166,7 +166,7 @@ export async function testNativeSteward(browser, { output } = {}) {
     assert.equal(calls.at(-1).replyTo, alphaMessage.id);
     await native.locator(`[data-message-id="${alphaMessage.id}"]`).getByRole('button', { name: '引用', exact: true }).click();
     assert.equal(await target.inputValue(),'auto','Quote keeps automatic routing available');
-    host.model.script.push(JSON.stringify({kind:'route',target:{kind:'project',projectId:second.projectId}}),'Beta explicit quotation response');
+    host.model.script.push(JSON.stringify({kind:'search',queries:['Steward Beta']}),JSON.stringify({kind:'route',target:{kind:'project',projectId:second.projectId}}),'Beta explicit quotation response');
     await editor.fill('Discuss this explicitly shared excerpt');
     await native.getByRole('button', { name: '发送消息', exact: true }).click();
     await native.getByText('Beta explicit quotation response', { exact: true }).waitFor();

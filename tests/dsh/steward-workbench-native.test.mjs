@@ -5,23 +5,13 @@ import { join } from 'node:path';
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import { startHost } from '../ci/browser-native-project.mjs';
-import { resolveStewardRoute, createStewardClassifier } from '../../packages/task-system/dist/steward-routing.js';
 import { workbenchFileAllowed } from '../../packages/task-system/dist/steward-workbench.js';
 import { delegatesProjectDetails, authorizedProjectInput } from '../../packages/task-system/dist/steward-project-creation.js';
 const presets={'read-only':{sandbox:'read-only',approval:'never'},'workspace-write':{sandbox:'workspace-write',approval:'ask'},'danger-full-access':{sandbox:'danger-full-access',approval:'never'}};
 async function fixture(){const h=await startHost({permissionPresets:presets});try{const req=createRequire(join(process.env.DSH_OFFICIAL_ROOT,'package.json'));await h.ctx.loader.create({id:'workbench-native-files',name:pathToFileURL(req.resolve('@deepseek-ai/dsh-tool-fs')).href,config:{read:true,write:true,edit:true,readImage:true}});await h.ctx.loader.await();return h;}catch(error){await h.close();throw error;}}
 async function done(h,id){for(let n=0;n<400;n++){const value=await h.ctx.taskSystem.steward.reconcile({conversationId:'main',commandId:id});if(value.commandMessage?.state.kind==='completed')return value;await new Promise(r=>setTimeout(r,10));}throw Error('workbench turn did not complete');}
 
-test('classifier exceptions, malformed output and uncertainty are distinct honest workbench receipts without leaking errors',async()=>{
- const input={text:'需要筹备一项研究',projects:[],previousScope:{kind:'personal'}};
- for(const [classify,reason] of [[async()=>{throw new DOMException('secret-token','TimeoutError')},'provider'],[async()=>{throw Error('secret-token')},'provider'],[async()=>{throw new SyntaxError('secret-token')},'invalid-output'],[async()=>({bad:'secret-token'}),'invalid-output'],[undefined,'unavailable']]){
-  const result=await resolveStewardRoute({...input,classify});assert.equal(result.kind,'route');assert.deepEqual(result.target,{kind:'workbench'});assert.equal(result.receipt.reason,reason);assert.ok(!JSON.stringify(result).includes('secret-token'));
- }
- const classify=createStewardClassifier({llm:{async *stream(){yield {type:'text-delta',text:'```json\n{}\n```'};}}},{provider:'fixture',model:'fixture'});
- assert.equal((await resolveStewardRoute({...input,classify})).receipt.reason,'invalid-output');
- const failed=createStewardClassifier({llm:{async *stream(){yield {type:'finish',reason:{kind:'error',failure:{code:'PROVIDER_ERROR',message:'secret-token'}}};}}},{provider:'fixture',model:'fixture'});assert.equal((await resolveStewardRoute({...input,classify:failed})).receipt.reason,'provider');
- assert.equal((await resolveStewardRoute({...input,classify:async()=>({kind:'clarification',question:'需要先整理需求吗？'})})).receipt.reason,'clarification');
- assert.deepEqual((await resolveStewardRoute({...input,explicitTarget:{kind:'personal'}})).target,{kind:'personal'});
+test('bounded project-detail delegation preserves explicit requirements',()=>{
  assert.deepEqual(authorizedProjectInput('创建一个项目，目标：检查天气，名称：天气助手',{title:'天气助手',goal:'检查天气'}),{title:'天气助手',goal:'检查天气'});
  assert.equal(delegatesProjectDetails('你自己写即可'),true);assert.equal(delegatesProjectDetails('他说“你自己写即可”'),false);
  assert.throws(()=>authorizedProjectInput('创建一个新项目，'+ '原'.repeat(7900),{title:'拟定',goal:'目'.repeat(1000)},true),{code:'CLARIFICATION'});
@@ -52,8 +42,8 @@ test('legacy personal creation clarification bridges only that explicit intent o
   h.model.script.push('PERSONAL_SECRET');await s.send({conversationId:'main',commandId:'unrelated-casual',text:'我的无关闲聊秘密',target:{kind:'personal'}});await done(h,'unrelated-casual');
   h.model.script.push('请提供新项目的标题和目标原文。');await s.send({conversationId:'main',commandId:'legacy-create',text:original,target:{kind:'personal'}});const old=await done(h,'legacy-create');
   const before=h.model.requests.length,request={conversationId:'main',commandId:'same-local-not-admitted-id',text:'你自己写即可',routingMode:'auto'};
-  h.model.script.push(options=>{const data=JSON.stringify(options.messages);assert.match(data,/去搜索并推测gpt6.2/);assert.ok(!data.includes('PERSONAL_SECRET'));assert.ok(!data.includes('无关闲聊秘密'));return {name:'steward_create_project',args:{title:'GPT6.2发布时间研究',goal:'搜索可信信息并形成有依据的发布时间推测'}};},'已创建研究项目');
-  await s.send(request);const next=await done(h,request.commandId);assert.equal(h.model.requests.length,before+2,'No extra classifier invocation for the bounded continuation');
+  h.model.script.push(JSON.stringify({kind:'new-work',question:'要将这项待创建项目需求交给管家工作区吗？'}),options=>{const data=JSON.stringify(options.messages);assert.match(data,/去搜索并推测gpt6.2/);assert.ok(!data.includes('PERSONAL_SECRET'));assert.ok(!data.includes('无关闲聊秘密'));return {name:'steward_create_project',args:{title:'GPT6.2发布时间研究',goal:'搜索可信信息并形成有依据的发布时间推测'}};},'已创建研究项目');
+  const routing=await s.send(request),question=routing.router.find(item=>item.commandId===request.commandId);assert.equal(question.executorAdmitted,false);await s.send({conversationId:'main',commandId:'legacy-confirm-workbench',text:'确认',routeQuestionId:question.questionId,target:{kind:'workbench'}});const next=await done(h,request.commandId);assert.equal(h.model.requests.length,before+3,'Independent routing confirmation precedes the real bounded creation tool turn');
   assert.equal(next.commandMessage.scope.kind,'workbench');assert.equal(s.store.message(old.commandMessage.id).scope.kind,'personal');assert.equal(next.commandMessage.creationContext.instructionId,old.commandMessage.id);
   const project=h.runtime.snapshot().projects.find(p=>p.title==='GPT6.2发布时间研究');assert.ok(project);assert.ok(project.goal.includes(original));
   const count=h.model.requests.length;await s.send(request);assert.equal(h.model.requests.length,count);assert.equal(h.runtime.snapshot().projects.filter(p=>p.title==='GPT6.2发布时间研究').length,1);
@@ -80,7 +70,7 @@ test('creation authority freezes exact reply anchor, rejects quote bridging and 
   const cancelledQuestion=s.store.messages('main').find(item=>item.text==='请确认这个待创建项目的名称');h.model.script.push('已取消创建');await s.send({conversationId:'main',commandId:'cancelled-reply-stop',text:'取消刚才的创建',target:{kind:'workbench'}});await done(h,'cancelled-reply-stop');
   const beforeReply=h.model.requests.length;await assert.rejects(s.send({conversationId:'main',commandId:'reply-after-cancel',text:'你自己写即可',replyTo:cancelledQuestion.id}),{code:'CLARIFICATION'});assert.equal(h.model.requests.length,beforeReply);
   h.model.script.push('澄清'.repeat(6500));await s.send({conversationId:'main',commandId:'bounded-intent',text:'创建一个新项目，研究上下文边界',target:{kind:'workbench'}});await done(h,'bounded-intent');
-  const count=h.model.requests.length;await assert.rejects(s.send({conversationId:'main',commandId:'bounded-answer',text:'你自己写即可',routingMode:'auto'}),{code:'CLARIFICATION'});assert.equal(h.model.requests.length,count);assert.equal(s.store.commandMessage('main','bounded-answer'),null);
+  const count=h.model.requests.length;await assert.rejects(s.send({conversationId:'main',commandId:'bounded-answer',text:'你自己写即可',target:{kind:'workbench'}}),{code:'CLARIFICATION'});assert.equal(h.model.requests.length,count);assert.equal(s.store.commandMessage('main','bounded-answer'),null);
  }finally{await h.close();}
 });
 

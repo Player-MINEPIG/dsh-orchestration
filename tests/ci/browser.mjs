@@ -1,3 +1,4 @@
+import {testStewardTopicRouter} from './browser-steward-topic-router.mjs';
 import { testTaskCheckins } from "./browser-task-checkins.mjs";
 import { testStewardScopeResponses } from "./browser-steward.mjs";
 import { chromium } from 'playwright';
@@ -20,7 +21,7 @@ const browser = await chromium.launch({ headless: true, ...(process.env.DSH_BROW
 const results = [];
 console.log(`Browser evidence: ${output}`);
 try {
-  for (const [name, run] of [['settings', testSettings], ['executor alerts', testExecutorAlerts], ['responsible task check-ins', testTaskCheckins], ['task center polling selection', testTaskCenterSelection], ['production native project conversation', testNativeProject], ['steward delayed scope responses', testStewardScopeResponses], ['native steward conversation', testNativeSteward], ['native steward models and media',testNativeStewardMedia], ['steward project creation and request permissions',testStewardProjectPermissions], ['steward independent workbench',testStewardWorkbench], ['steward continuity and pending presentation',testStewardContinuity]]) {
+  for (const [name, run] of [['settings', testSettings], ['executor alerts', testExecutorAlerts], ['responsible task check-ins', testTaskCheckins], ['task center polling selection', testTaskCenterSelection], ['production native project conversation', testNativeProject], ['steward delayed scope responses', testStewardScopeResponses], ['native steward conversation', testNativeSteward], ['native steward models and media',testNativeStewardMedia], ['steward project creation and request permissions',testStewardProjectPermissions], ['steward independent workbench',testStewardWorkbench], ['steward continuity and pending presentation',testStewardContinuity], ['steward semantic topic router and overview',testStewardTopicRouter]]) {
     try {
       const result = await run(browser, { output });
       results.push({ name, status: 'passed', result });

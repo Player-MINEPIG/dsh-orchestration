@@ -502,9 +502,9 @@ test('auto routing uses bounded classifier requests for casual turns, direct add
     const service=h.ctx.taskSystem.steward,projects=h.ctx.taskSystem.projects;
     projects.saveSettings({root:join(h.dir,'projects'),expectedRevision:0});
     const a=await projects.create({commandId:'auto-a',title:'Alpha 项目',goal:'SECRET_A_GOAL'});
-    await projects.create({commandId:'auto-b',title:'Beta 项目',goal:'SECRET_B_GOAL'});
+    const b=await projects.create({commandId:'auto-b',title:'Beta 项目',goal:'SECRET_B_GOAL'});
     async function send(commandId,text,response,classify,replyTo) {
-      if(classify)h.adapter.script.push(JSON.stringify(classify));h.adapter.script.push(response);
+      if(!replyTo){const desired=classify?.target ?? (text.startsWith('Alpha')?{kind:'project',projectId:a.projectId}:{kind:'project',projectId:b.projectId});const latest=service.snapshot({conversationId:'main'}).topicActivity.latestMessage?.scope ?? service.store.current('main');if(JSON.stringify(latest)!==JSON.stringify(desired))h.adapter.script.push(JSON.stringify({kind:'search',queries:[desired.kind==='personal'?'闲聊':desired.projectId===a.projectId?'Alpha':'Beta']}));h.adapter.script.push(JSON.stringify({kind:'route',target:desired}));}h.adapter.script.push(response);
       await service.send({conversationId:'main',commandId,text,routingMode:'auto',...(replyTo?{replyTo}:{})});
       return waitFor(service,s=>s.messages.some(message=>message.text===response));
     }
@@ -516,11 +516,11 @@ test('auto routing uses bounded classifier requests for casual turns, direct add
     snapshot=await send('auto-old-reply','Beta 项目只是引用，继续旧问题','alpha reply',null,oldA.id);
     assert.deepEqual(snapshot.messages.find(message=>message.commandId==='auto-old-reply').scope,{kind:'project',projectId:a.projectId});
     const classifiers=h.adapter.requests.filter(request=>request.messages[0]?.source?.kind==='dsh-steward-route-classifier');
-    assert.equal(classifiers.length,2);assert.ok(classifiers.every(request=>request.messages.length===1));
-    for(const request of classifiers)assert.doesNotMatch(requestText(request),/SECRET_A_GOAL|SECRET_B_GOAL|A_AUTO_MARKER|B_AUTO_MARKER/);
+    assert.equal(classifiers.length,8);assert.ok(classifiers.every(request=>request.messages.length===1));
+    for(const request of classifiers){assert.deepEqual(request.tools,[]);assert.ok(Buffer.byteLength(JSON.stringify(request))<=32768);}
     const before=snapshot.messages.length,requestsBefore=h.adapter.requests.length;
     h.adapter.script.push(JSON.stringify({kind:'route',target:{kind:'project',projectId:'UNKNOWN_PROJECT'}}));
-    await assert.rejects(service.send({conversationId:'main',commandId:'auto-unknown',text:'不明确的话题',routingMode:'auto'}),{code:'CLARIFICATION'});
+    const uncertain=await service.send({conversationId:'main',commandId:'auto-unknown',text:'不明确的话题',routingMode:'auto'});assert.equal(uncertain.router.find(item=>item.commandId==='auto-unknown').phase,'clarifying');
     assert.equal(service.snapshot({conversationId:'main'}).messages.length,before,'Unknown target has no canonical admission or PM dispatch');
     assert.equal(h.adapter.requests.length,requestsBefore+1,'Only classification ran, no destination model');
   }finally{await h.dispose();}
@@ -598,16 +598,16 @@ test('automatic quotation routes the next text to B without sharing the source h
     const source=initial.messages.find(message=>message.role==='assistant');
     const input={conversationId:'main',commandId:'auto-quote-send',text:'请交给另一个项目核对这份资料。',routingMode:'auto',
       quote:{messageId:source.id,expectedRevision:source.revision,excerpt:'AUTO_QUOTE_SHARED_EXCERPT'}};
-    h.adapter.script.push(JSON.stringify({kind:'route',target:{kind:'project',projectId:b.projectId}}),'Auto B received excerpt');
+    h.adapter.script.push(JSON.stringify({kind:'search',queries:['Auto quote B']}),JSON.stringify({kind:'route',target:{kind:'project',projectId:b.projectId}}),'Auto B received excerpt');
     await service.send(input);
     const snapshot=await waitFor(service,s=>s.messages.some(message=>message.text==='Auto B received excerpt'));
     const shared=snapshot.messages.find(message=>message.commandId===input.commandId);
     assert.deepEqual(shared.scope,{kind:'project',projectId:b.projectId});assert.equal(shared.replyTo,null);
     assert.equal(shared.quote.messageId,source.id);assert.deepEqual(shared.quote.scope,{kind:'project',projectId:a.projectId});
-    const classifier=h.adapter.requests.find(request=>request.messages[0]?.source?.kind==='dsh-steward-route-classifier');
+    const classifier=h.adapter.requests.findLast(request=>request.messages[0]?.source?.kind==='dsh-steward-route-classifier');
     assert.ok(classifier);assert.equal(classifier.messages.length,1);
     const classificationInput=JSON.parse(classifier.messages[0].content[0].text);
-    assert.equal(classificationInput.text,input.text);assert.deepEqual(Object.keys(classificationInput).sort(),['previousScope','projects','text']);
+    assert.equal(classificationInput.text,input.text);assert.deepEqual(Object.keys(classificationInput).sort(),['candidates','stage','text']);
     assert.doesNotMatch(requestText(classifier),/AUTO_QUOTE_SHARED_EXCERPT|AUTO_A_PRIVATE_/);
     assert.match(requestText(h.adapter.requests.at(-1)),/AUTO_QUOTE_SHARED_EXCERPT/);
     assert.doesNotMatch(requestText(h.adapter.requests.at(-1)),/AUTO_A_PRIVATE_/);
@@ -618,7 +618,7 @@ test('automatic quotation routes the next text to B without sharing the source h
   }finally{await h.dispose();}
 });
 
-test('ambiguous quotation is received by the workbench with only its explicit excerpt; invalid sources never reach routing', {timeout:15000}, async()=>{
+test('ambiguous quotation stays router-only with its exact excerpt frozen; invalid sources never reach routing', {timeout:15000}, async()=>{
   const h=await createNativeHarness({config:{role:'both',schedulerEnabled:false,projectAgentOptions:{provider:'test-offline',model:'script'}}});
   try {
     const projects=h.ctx.taskSystem.projects,service=h.ctx.taskSystem.steward;
@@ -632,18 +632,14 @@ test('ambiguous quotation is received by the workbench with only its explicit ex
     const input={conversationId:'main',commandId:'ambiguous-quote-send',text:'请核对这份资料。',routingMode:'auto',
       quote:{messageId:source.id,expectedRevision:source.revision,excerpt:'WAITING_QUOTE_EXCERPT'}};
     const before=h.adapter.requests.length;
-    h.adapter.script.push(JSON.stringify({kind:'clarification',question:'交给哪个项目？'}),'Workbench received exact excerpt');
+    h.adapter.script.push(JSON.stringify({kind:'clarification',question:'交给哪个项目？'}));
     await service.send(input);
-    await waitFor(service,s=>s.messages.some(message=>message.text==='Workbench received exact excerpt'));
-    const received=service.store.commandMessage('main',input.commandId);assert.equal(received.scope.kind,'workbench');assert.equal(received.route.reason,'clarification');assert.equal(received.quote.messageId,input.quote.messageId);assert.equal(received.quote.excerpt,input.quote.excerpt);
-    assert.deepEqual(service.store.current('main'),{kind:'workbench'});
-    assert.equal(h.adapter.requests.length,before+2,'Ambiguity invokes the classifier then workbench, never the source project turn');
-    assert.doesNotMatch(requestText(h.adapter.requests.at(-1)),/PRIVATE_AMBIGUOUS_/);
+    const pending=service.snapshot({conversationId:'main'}).router.find(item=>item.commandId===input.commandId);assert.equal(pending.phase,'clarifying');assert.equal(pending.question,'交给哪个项目？');assert.equal(service.store.commandMessage('main',input.commandId),null);assert.equal(h.adapter.requests.length,before+1,'Ambiguity stays in the router, without workbench or PM execution');
     h.adapter.script.push('Clarified B received excerpt');
-    const clarified={...input,commandId:'ambiguous-quote-selected-b',target:{kind:'project',projectId:b.projectId}};
+    const clarified={conversationId:'main',commandId:'ambiguous-quote-selected-b',text:'选择B',routeQuestionId:pending.questionId,target:{kind:'project',projectId:b.projectId}};
     await service.send(clarified);
     const snapshot=await waitFor(service,s=>s.messages.some(message=>message.text==='Clarified B received excerpt'));
-    const shared=snapshot.messages.find(message=>message.commandId===clarified.commandId);
+    const shared=snapshot.messages.find(message=>message.commandId===input.commandId);
     assert.deepEqual(shared.scope,clarified.target);assert.equal(shared.quote.excerpt,input.quote.excerpt);
     assert.equal(shared.quote.messageId,source.id);assert.equal(shared.quote.revision,source.revision);
     assert.match(requestText(h.adapter.requests.at(-1)),/WAITING_QUOTE_EXCERPT/);assert.doesNotMatch(requestText(h.adapter.requests.at(-1)),/PRIVATE_AMBIGUOUS_/);
