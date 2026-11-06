@@ -45,7 +45,15 @@ for (const kind of ['personal', 'managed-current', 'managed-retired']) test(`Tas
       handles.push(handle); agent = handle.agent;
     }
     assert.equal(service.recall.read(sessionId, {query: secret}).items.length, 1);
-    if (kind === 'managed-retired') await projects.handoff(target.projectId);
+    if (kind === 'managed-retired') {
+      await agent.whenIdle();
+      const deadline = Date.now() + 5000, command = service.store.requestId(user.id);
+      while (h.ledger.managementDatabase().prepare("SELECT state FROM pr_turns WHERE command=?").get(command)?.state !== 'completed') {
+        assert.ok(Date.now() < deadline, 'Canonical completion preceded durable managed-queue settlement');
+        await new Promise(done => setImmediate(done));
+      }
+      await projects.handoff(target.projectId);
+    }
     await agent.whenIdle(); assert.equal(agent.status, 'idle');
     await h.ctx.sessions.flush(agent.session);
     const originalHistory = await events(h, sessionId), requests = h.adapter.requests.length;

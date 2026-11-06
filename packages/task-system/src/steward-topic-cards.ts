@@ -57,8 +57,8 @@ function sourcedSummary(facts: TopicFact[]): string {
 function mark(card: TopicCard, freshness: TopicCard["freshness"], coverageReason: string): TopicCard {
   return version({ ...card, freshness, coverageReason });
 }
-function compactItem(card: TopicCard, lastTriggeredAt: string | null): TopicListItem {
-  return { topic: card.topic, version: card.version, title: card.title, summary: card.summary, freshness: card.freshness, lastTriggeredAt,
+function compactItem(card: TopicCard, lastDiscussion: TopicListItem["lastDiscussion"]): TopicListItem {
+  return { topic: card.topic, version: card.version, title: card.title, summary: card.summary, freshness: card.freshness, lastDiscussion,
     ...(card.coverageReason ? { coverageReason: card.coverageReason } : {}) };
 }
 
@@ -68,6 +68,7 @@ export class StewardTopicCards implements TopicCardsPort {
   private readonly jobs = new Map<string, Promise<void>>();
   constructor(ledger: Pick<TaskLedger, "managementDatabase">, private readonly host: TopicHostReads) {
     this.db = ledger.managementDatabase();
+    this.db.exec(`CREATE INDEX IF NOT EXISTS steward_topic_discussion_latest ON steward_messages(conversation,json_extract(data,'$.scope.kind'),json_extract(data,'$.scope.projectId'),seq DESC) WHERE json_extract(data,'$.role') IN ('user','assistant')`);
     this.db.exec(`CREATE TABLE IF NOT EXISTS steward_topic_cards(topic_key TEXT PRIMARY KEY,conversation TEXT NOT NULL,scope TEXT NOT NULL,data TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS steward_topic_card_conversation ON steward_topic_cards(conversation,topic_key);
       CREATE TABLE IF NOT EXISTS steward_topic_terms(conversation TEXT NOT NULL,term TEXT NOT NULL,topic_key TEXT NOT NULL,PRIMARY KEY(conversation,term,topic_key));`);
@@ -277,8 +278,13 @@ export class StewardTopicCards implements TopicCardsPort {
       ...(history.count || omittedGoal ? { coverageReason: omittedGoal ? "目标较长，请展开读取完整原文。" : "尚未整理全部历史，可查看相关原文。" } : {}), sources }), historyStamp: digest(this.history(topic, 0)) };
   }
   private async overview(topic: TopicRef, authority: Authority): Promise<TopicListItem> {
-    const last = this.db.prepare(`SELECT MAX(json_extract(data,'$.createdAt')) AS at FROM steward_messages WHERE ${visible} AND json_extract(data,'$.role')='user'`).get(topic.conversationId, ...scopeArgs(topic.scope));
-    return compactItem(this.snapshot(topic, authority, Number.MAX_SAFE_INTEGER).card, last?.at === null || last?.at === undefined ? null : String(last.at));
+    const last = this.db.prepare(`SELECT json_extract(data,'$.role') AS role,json_extract(data,'$.createdAt') AS at,
+      substr(json_extract(data,'$.text'),1,161) AS excerpt,
+      EXISTS(SELECT 1 FROM json_each(json_extract(data,'$.content')) WHERE json_extract(value,'$.type') IN ('file','image')) AS attachments
+      FROM steward_messages WHERE ${visible} AND json_extract(data,'$.role') IN ('user','assistant') ORDER BY seq DESC LIMIT 1`).get(topic.conversationId, ...scopeArgs(topic.scope));
+    const value = last ? z.object({role:z.enum(["user","assistant"]),at:z.string(),excerpt:z.string(),attachments:z.number()}).parse(last) : null;
+    const characters = value ? Array.from(value.excerpt) : [];
+    return compactItem(this.snapshot(topic, authority, Number.MAX_SAFE_INTEGER).card, value ? {role:value.role,at:value.at,excerpt:characters.slice(0,160).join(""),hasAttachments:!!value.attachments,truncated:characters.length>160} : null);
   }
   private sourcesCurrent(topic: TopicRef, sources: TopicSource[]): boolean {
     for (const source of sources) {
