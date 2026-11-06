@@ -31,8 +31,8 @@ function fixture(invoke) {
   const props = { invoke: (method, input) => { calls.push({ method, input }); return invoke(method, input); }, conversationId: "main", initialScope: project("a"), onApply: scope => applied.push(scope), onClose: () => { closed++; } };
   let closed = 0;
   const render = () => { cursor = 0; effects = []; tree = Component(props); const pending = effects; effects = []; pending.forEach(effect => effect()); return tree; };
-  const all = (predicate, node = tree) => !node || typeof node !== "object" ? [] : [...(predicate(node) ? [node] : []), ...(node.children ?? []).flatMap(child => all(predicate, child))];
-  const text = (node = tree) => typeof node === "string" || typeof node === "number" ? String(node) : (node?.children ?? []).filter(child => child?.type !== "style").map(child => text(child)).join(" ");
+  const all = (predicate, node = tree) => !node || typeof node !== "object" ? [] : [...(predicate(node) ? [node] : []), ...(node.children ?? []).filter(child=>child!==undefined).flatMap(child => all(predicate, child))];
+  const text = (node = tree) => typeof node === "string" || typeof node === "number" ? String(node) : (node?.children ?? []).filter(child => child!==undefined && child?.type !== "style").map(child => text(child)).join(" ");
   const button = label => all(node => node.type === "button" && text(node) === label)[0];
   const toggle = id => all(node => node.type === "button" && node.props.className === "sto-card-toggle" && text(node).includes(`话题 ${id}`))[0];
   const settle = async () => { for (let i = 0; i < 8; i++) { await Promise.resolve(); render(); } };
@@ -53,13 +53,13 @@ test("overview stays compact; expansion and exact-version source pagination are 
   assert.match(f.text(), /详细目标 a/); assert.match(f.text(), /明确记录/); assert.match(f.text(), /原文摘录 · 已被替代/);
   assert.match(f.text(), /已覆盖至 #4 \/ 已观察至 #6/); assert.match(f.text(), /用于下一条消息/);
   assert.doesNotMatch(f.text(), /原文内容/); assert.equal(f.applied.length, 0);
-  f.all(node => node.type === "button" && node.props["aria-label"] === "查看项目目标 · 版本 revision-7原文")[0].props.onClick(); await f.settle();
+  f.all(node => node.type === "button" && node.props["aria-label"] === "查看引用 1：项目目标")[0].props.onClick(); await f.settle();
   assert.deepEqual(plain(f.calls.at(-1)), { method: "stewardTopicSource", input: { conversationId: "main", ref, offset: 0 } });
   assert.match(f.text(), /原文内容 0/);
-  f.button("下一页原文").props.onClick(); await f.settle();
+  f.button("下一段原文").props.onClick(); await f.settle();
   assert.equal(f.calls.at(-1).input.offset, 2000); assert.match(f.text(), /原文内容 2000/);
-  assert.equal(f.button("下一页原文").props.disabled, true);
-  f.button("上一页原文").props.onClick(); await f.settle(); assert.equal(f.calls.at(-1).input.offset, 0);
+  assert.equal(f.button("下一段原文").props.disabled, true);
+  f.button("上一段原文").props.onClick(); await f.settle(); assert.equal(f.calls.at(-1).input.offset, 0);
   f.button("应用到管家").props.onClick(); f.render();
   assert.deepEqual(plain(f.applied), [project("a")]);
   assert.equal(f.calls.some(call => !["stewardTopics", "stewardTopic", "stewardTopicSource"].includes(call.method)), false);
@@ -72,7 +72,7 @@ test("switching and collapsing discard in-flight details and original pages", as
   await f.settle(); f.toggle("a").props.onClick(); f.render(); f.toggle("b").props.onClick(); f.render();
   a.resolve(card("a")); await f.settle(); assert.doesNotMatch(f.text(), /详细目标 a/);
   b.resolve(card("b")); await f.settle(); assert.match(f.text(), /详细目标 b/);
-  f.all(node => node.type === "button" && node.props["aria-label"]?.startsWith("查看项目目标"))[0].props.onClick(); f.render();
+  f.all(node => node.type === "button" && node.props["aria-label"]?.startsWith("查看引用"))[0].props.onClick(); f.render();
   f.toggle("b").props.onClick(); f.render(); source.resolve(original()); await f.settle();
   assert.doesNotMatch(f.text(), /详细目标|原文内容|应用到管家/); assert.equal(f.applied.length, 0);
 });
@@ -91,14 +91,14 @@ test("search supersedes earlier list reads and page navigation preserves the que
 test("source revision conflict keeps the cited version visible and requires explicit detail refresh", async () => {
   const f = fixture(async method => { if (method === "stewardTopics") return page(); if (method === "stewardTopic") return card(); throw new Error("引用版本已经变更"); });
   await f.settle(); f.toggle("a").props.onClick(); await f.settle();
-  f.all(node => node.type === "button" && node.props["aria-label"]?.startsWith("查看项目目标"))[0].props.onClick(); await f.settle();
-  assert.match(f.text(), /未能读取所引用版本的原文.*引用版本已经变更/s);
-  assert.match(f.text(), /revision-7/);
+  f.all(node => node.type === "button" && node.props["aria-label"]?.startsWith("查看引用"))[0].props.onClick(); await f.settle();
+  assert.match(f.text(), /这条引用暂不可读取.*引用版本已经变更/s);
+  assert.match(f.text(), /更新|版本/);
   assert.equal(f.calls.filter(call => call.method === "stewardTopic").length, 1);
   f.button("刷新话题并重新选择来源").props.onClick(); await f.settle();
   assert.equal(f.calls.filter(call => call.method === "stewardTopic").length, 2);
   assert.equal(f.calls.filter(call => call.method === "stewardTopicSource").length, 1);
-  assert.doesNotMatch(f.text(), /未能读取所引用版本/);
+  assert.doesNotMatch(f.text(), /暂不可读取/);
 });
 
 test("conversation changes and close prevent late async results from appearing", async () => {
@@ -111,3 +111,5 @@ test("conversation changes and close prevent late async results from appearing",
   other.resolve(page([item("late")])); await f.settle(); assert.doesNotMatch(f.text(), /话题 late/);
   f.unmount();
 });
+
+test('details are a separate dialog; repeated fact citations share one number and the collapsed directory renders only six references per page',async()=>{const many={...card(),sources:[ref,...Array.from({length:20},(_,i)=>({kind:'message',id:'long-message-identifier-'+i,seq:i+1,revision:0,scope:project('a'),binding:{kind:'managed',projectId:'a',sessionId:'source-a',generation:1,nodeId:'host',cwd:'/a'}}))]};const f=fixture(async method=>method==='stewardTopics'?page([{...item(),lastTriggeredAt:'2030-01-01T10:30:00Z'}]):many);await f.settle();assert.equal(f.all(node=>node.type==='dialog').length,0);assert.equal(f.all(node=>node.type==='time')[0].props.dateTime,'2030-01-01T10:30:00Z');f.toggle('a').props.onClick();await f.settle();assert.equal(f.all(node=>node.type==='dialog'&&node.props['aria-label']==='话题详情').length,1);const tiles=f.all(node=>node.type==='article');assert.equal(f.all(node=>node.props.className==='sto-detail',tiles[0]).length,0);assert.equal(f.all(node=>node.props.className==='sto-directory-item').length,6);assert.ok(f.all(node=>node.type==='button'&&node.props['aria-label']==='查看引用 1：项目目标').length>=2);assert.equal(f.all(node=>node.type==='details'&&node.props['aria-label']==='引用目录')[0].props.open,undefined);assert.doesNotMatch(f.text(),/long-message-identifier|revision-7|new-decision/);const calls=f.calls.length;f.button('下一页引用').props.onClick();f.render();assert.equal(f.all(node=>node.props.className==='sto-directory-item').length,6);assert.equal(f.calls.length,calls);f.all(node=>node.type==='button'&&node.props['aria-label']==='关闭话题详情')[0].props.onClick();f.render();assert.equal(f.all(node=>node.type==='dialog').length,0);assert.equal(f.applied.length,0);});

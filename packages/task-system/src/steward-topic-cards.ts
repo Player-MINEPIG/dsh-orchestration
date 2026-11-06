@@ -57,8 +57,8 @@ function sourcedSummary(facts: TopicFact[]): string {
 function mark(card: TopicCard, freshness: TopicCard["freshness"], coverageReason: string): TopicCard {
   return version({ ...card, freshness, coverageReason });
 }
-function compactItem(card: TopicCard): TopicListItem {
-  return { topic: card.topic, version: card.version, title: card.title, summary: card.summary, freshness: card.freshness,
+function compactItem(card: TopicCard, lastTriggeredAt: string | null): TopicListItem {
+  return { topic: card.topic, version: card.version, title: card.title, summary: card.summary, freshness: card.freshness, lastTriggeredAt,
     ...(card.coverageReason ? { coverageReason: card.coverageReason } : {}) };
 }
 
@@ -277,7 +277,8 @@ export class StewardTopicCards implements TopicCardsPort {
       ...(history.count || omittedGoal ? { coverageReason: omittedGoal ? "目标较长，请展开读取完整原文。" : "尚未整理全部历史，可查看相关原文。" } : {}), sources }), historyStamp: digest(this.history(topic, 0)) };
   }
   private async overview(topic: TopicRef, authority: Authority): Promise<TopicListItem> {
-    return compactItem(this.snapshot(topic, authority, Number.MAX_SAFE_INTEGER).card);
+    const last = this.db.prepare(`SELECT MAX(json_extract(data,'$.createdAt')) AS at FROM steward_messages WHERE ${visible} AND json_extract(data,'$.role')='user'`).get(topic.conversationId, ...scopeArgs(topic.scope));
+    return compactItem(this.snapshot(topic, authority, Number.MAX_SAFE_INTEGER).card, last?.at === null || last?.at === undefined ? null : String(last.at));
   }
   private sourcesCurrent(topic: TopicRef, sources: TopicSource[]): boolean {
     for (const source of sources) {

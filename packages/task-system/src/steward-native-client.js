@@ -78,14 +78,14 @@ function createStewardNativeClient({ React, Context, modules, hostContext, creat
   const idle = signal => new Promise(resolve => { if (signal.aborted) resolve(); else signal.addEventListener("abort", resolve, { once: true }); });
   const ShellState = React.createContext(null);
   function createPlacement() {
-    let snapshot = { chat: null, composer: null, view: 'chat' };
+    let snapshot = { chat: null, composer: null, header: null, view: 'chat' };
     const listeners = new Set();
     const set = (key, value) => { if (snapshot[key] === value) return; snapshot = { ...snapshot, [key]: value }; for (const listener of listeners) listener(); };
-    return { getSnapshot: () => snapshot, subscribe: listener => { listeners.add(listener); return () => listeners.delete(listener); }, chat: node => set('chat', node), composer: node => set('composer', node), select: view => set('view', view) };
+    return { getSnapshot: () => snapshot, subscribe: listener => { listeners.add(listener); return () => listeners.delete(listener); }, chat: node => set('chat', node), composer: node => set('composer', node), header: node => set('header',node), select: view => set('view', view) };
   }
   function SourceViews({ renderSlot }) {
-    const { placement, selected } = React.useContext(ShellState);
-    return h('div', { style: { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' } },
+    const { placement, selected, overviewOpen } = React.useContext(ShellState);
+    return h('div', { inert:overviewOpen?'':undefined, style: { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' } },
       h('div', { ref: placement.chat, 'data-steward-unified-chat': '', style: { flex: 1, minHeight: 0, display: selected === 'chat' ? 'flex' : 'none', flexDirection: 'column' } }),
       selected && selected !== 'chat' && renderSlot('conversation.session', { view: selected }));
   }
@@ -107,10 +107,10 @@ function createStewardNativeClient({ React, Context, modules, hostContext, creat
       }, function RouterComposer() { return null; }));
       return off;
     }, [sessionId, placement]);
-    return h(ShellState.Provider, { value: { placement, selected } },
+    return h(ShellState.Provider, { value: { placement, selected, overviewOpen:source.overviewOpen } },
       h('div', { className: 'steward-native-heading', 'data-steward-browse-session': sessionId },
-        h('div', { className: 'steward-native-title-row' }, h('strong', { title: sessionId }, nativeTitle || `管家 · ${source.sourceScopeLabel}`), typeof nativePreset === 'string' && h('span', { title: `原生 Agent 预设 ${nativePreset}` }, nativePreset), source.renderBrowseTopic()),
-        h('div', { role: 'tablist', 'data-conversation-tabs': '' }, tabs.map(tab => h('button', { key: tab.id, type: 'button', role: 'tab', 'aria-selected': selected === tab.id, onClick: () => { hostContext.get('uiConversation').binding(sessionId).activate(tab.id); placement.select(tab.id); } }, tab.label)))),
+        h('div', { ref:placement.header, className: 'steward-native-title-row' }, h('strong', { title: sessionId }, nativeTitle || `管家 · ${source.sourceScopeLabel}`), typeof nativePreset === 'string' && h('span', { title: `原生 Agent 预设 ${nativePreset}` }, nativePreset), source.renderBrowseTopic()),
+        h('div', { inert:source.overviewOpen?'':undefined, role: 'tablist', 'data-conversation-tabs': '' }, tabs.map(tab => h('button', { key: tab.id, type: 'button', role: 'tab', 'aria-selected': selected === tab.id, onClick: () => { hostContext.get('uiConversation').binding(sessionId).activate(tab.id); placement.select(tab.id); } }, tab.label)))),
       blank && selected !== 'chat' && h('p', { role: 'status' }, '该原会话尚无对话轮次，原生页面会在开始对话后显示。'),
       props.renderFactorySlot('conversation.content', { variant: 'embedded', phase: 'active', hero: false }, { slots: sourceContentSlots }));
   }
@@ -131,6 +131,13 @@ function createStewardNativeClient({ React, Context, modules, hostContext, creat
     const mount = React.useRef(null), eventRoot = React.useRef(null), references = React.useRef(new Map()), placement = React.useMemo(createPlacement, []);
     const [source, setSource] = React.useState(null), [sourceRefresh, setSourceRefresh] = React.useState(0), [sourceError, setSourceError] = React.useState(''), [displayStatus, setDisplayStatus] = React.useState('正在加载原生输入框…');
     const view = React.useSyncExternalStore(bridge.subscribe, bridge.getSnapshot, bridge.getSnapshot);
+    const seats=React.useSyncExternalStore(placement.subscribe,placement.getSnapshot,placement.getSnapshot);
+    const [overviewTop,setOverviewTop]=React.useState(56);
+    React.useLayoutEffect(()=>{
+      const header=seats.header,root=eventRoot.current;if(!header||!root)return;
+      const update=()=>setOverviewTop(Math.max(0,header.getBoundingClientRect().bottom-root.getBoundingClientRect().top));update();
+      const observer=new ResizeObserver(update);observer.observe(header);observer.observe(root);return()=>observer.disconnect();
+    },[seats.header,view.overviewOpen]);
     const sourceKey = JSON.stringify(view.sourceScope);
     const sourceToken = view.sourceScope.kind === 'project' ? view.projects?.find(project => project.projectId === view.sourceScope.projectId)?.bindingToken : null;
     React.useEffect(() => {
@@ -161,15 +168,16 @@ function createStewardNativeClient({ React, Context, modules, hostContext, creat
       return () => { lifetime.abort(); handle.current = null; if (mounted) void mounted.dispose(); };
     }, [view.authorityId, view.conversationId]);
     React.useEffect(() => { if (source || sourceError) handle.current?.restoreBrowseFocus(); }, [source, sourceError]);
-    return h('div', { ref: eventRoot, className: 'steward-full-session', 'data-steward-native-host': '', style: { display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 } },
+    return h('div', { ref: eventRoot, className: 'steward-full-session', 'data-steward-native-host': '', style: { position:'relative', display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 } },
       h('div', { ref: mount, style: { display: 'none' } }), displayStatus && h('p', { role: 'status' }, displayStatus),
       source ? h(SessionProvider, { key: source.binding.sessionId, session: source.reference }, renderSlot('steward.session.shell', { bridge, placement })) :
         h('div', { style: { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' } },
-          h('div', { className: 'steward-native-heading' }, h('div', { className: 'steward-native-title-row' }, h('strong', null, '管家'), view.renderBrowseTopic())),
+          h('div', { className: 'steward-native-heading' }, h('div', { ref:placement.header, className: 'steward-native-title-row' }, h('strong', null, '管家'), view.renderBrowseTopic())),
           h('p', { role: sourceError ? 'alert' : 'status' }, sourceError || '正在读取当前话题的原会话…'),
           sourceError && h('button', { type: 'button', onClick: () => setSourceRefresh(value => value + 1) }, '重新读取原会话'),
           h('div', { ref: placement.chat, style: { flex: 1, minHeight: 0 } })),
-      h('div', { ref: placement.composer, 'data-steward-router-composer': '' }));
+      h('div', { ref: placement.composer, inert:view.overviewOpen?'':undefined, 'data-steward-router-composer': '' }),
+      view.overviewOpen && h('div',{'data-steward-overview-layer':'',style:{position:'absolute',top:overviewTop,left:0,right:0,bottom:0,zIndex:30,display:'flex',minHeight:0,background:'var(--dsw-alias-bg-base,#171719)'}},view.renderOverview()));
   }
 
   const api = {
