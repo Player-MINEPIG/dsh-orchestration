@@ -14,7 +14,7 @@ dsh plugin --profile <profile> add <task-system-tarball>
 
 Public entrypoints: `/plugin` (task host), `/remote` (remote host), `/remote/api`
 (protocol/worker API), `/contracts`, `/planning` and `/task-policy`. Task-specific
-finite proposals live here and consume the independent typed-decision contract.
+finite proposals and permission checks live here; optional model calls consume the JEV service.
 See [remote configuration](docs/remote-execution.md) and the
 [package migration](../../docs/PACKAGE-MIGRATION.md).
 

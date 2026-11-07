@@ -15,3 +15,7 @@
 只有用户明确要求正式发布时，才执行版本准备 PR、完整 Linux/macOS 发布验证、真机发布验收与确认，以及 `main` 和版本 tag 的提升。使用 npm 原生命令更新相关包版本及锁文件。固定候选和同一 tarball 完成验收后，取得用户对该候选及 tag 的明确确认，再由受信 `main` 发布工作流校验记录并原子快进和创建 tag。不得用 PR 合并、重打包或伪造验收替代。完整要求见 [正式发布流程](docs/DEVELOPMENT.md#prepare-versions-once-per-release)。
 
 交付时核对本次适用的检查和最终 refs，仅快进主 checkout 到已核实的 `origin/dev`，报告分支、HEAD、WIP 位置及实际部署结果。普通部署和纯开发交付均不得声称已正式发布。
+
+# PC_AU deployment entry
+
+普通部署到 `PC_AU` 时，优先通过[更新本机插件 · PMP_Desktop](codex://threads/01a16e0c-0f3d-7d23-a97e-83ce650fcb7b?hostId=remote-control%3Aenv_e_6a561f1d832c8321baf6cbdfcb1e503f)协调，由该机使用现有 GitHub 认证下载已验证的原始 artifact。下发固定 source SHA、验证 run、artifact ID、各相关包 SHA-256，以及[普通部署流程](docs/DEVELOPMENT.md#deploy-to-devices)要求的真实活动门禁、官方插件管理器安装和激活后回读；忙碌节点跳过。保持包字节不变，不从本机传包、重打包或安装 npm latest。SSH 不可达不代表运行时离线。
