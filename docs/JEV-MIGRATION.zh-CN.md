@@ -5,7 +5,7 @@
 - Fork：https://github.com/Player-MINEPIG/dsh-jev-plugin，版本 0.3.1。
 - 上游：https://github.com/RaulLazaro/dsh-jev-plugin，基于 `0c2dd315a7e4ba85cad638c041985941f088487c`。保留 MIT 许可及原作者版权。
 - 任务插件：`@dsh-task/task-system` 0.2.2，使用 `ctx.decisionModels.ask`。
-- 原 `@dsh-task/typed-decisions` 不再属于活动 workspace 或运行时依赖。源码为回滚及历史测试保留；测试夹具不安装旧服务。
+- 原 `@dsh-task/typed-decisions` 不再属于活动 workspace 或运行时依赖。旧运行包、控制台与安装入口已移除；必要的历史策略回归辅助仅保留在 `tests/fixtures/decision-engine`，不安装旧服务。
 
 ## 职责与接口
 

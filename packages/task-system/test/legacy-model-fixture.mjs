@@ -1,7 +1,7 @@
 // Historic backend fixtures only. Production code never imports the replaced engine.
 // Keep existing policy/staleness regression cases while new integration tests use real JEV.
-import { DecisionEngine as LegacyEngine } from '../../typed-decisions/dist/core.js';
-export {RulesProvider, StructuredModelProvider, JevProvider, AnyJevCompatibleProvider} from '../../typed-decisions/dist/core.js';
+import { DecisionEngine as LegacyEngine } from '../../../.runtime/fixtures/decision-engine/engine.js';
+export { StructuredModelProvider } from '../../../.runtime/fixtures/decision-engine/providers.js';
 let serial=0;
 export class DecisionEngine extends LegacyEngine {
   async ask(input,options={}) {

@@ -76,4 +76,4 @@ Cancelling a run does not cancel other runs of the same task. Cancellation resou
 
 The deliverable is private. Public repository visibility, npm publishing and awesome-list submission are separate actions. Real-browser visual checks, live integrations, remote GitHub CI and OS deployment are reported separately from local code tests; a passing local suite does not imply those checks passed.
 
-The former typed-decisions source is retained for rollback and historical test fixtures, excluded from active workspaces and package dependencies. It is compiled only for those fixtures during unit verification. No old decision service or ordinary-model bridge is installed by the current bundles.
+Historical policy/planning regression helpers live only in `tests/fixtures/decision-engine`; they are compiled into ignored test output and cannot be installed as a plugin. Retired decision UI and prototype entrypoints have been removed. Version validation records remain historical evidence.
