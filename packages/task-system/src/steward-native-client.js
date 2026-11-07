@@ -1,4 +1,6 @@
 function createStewardDisplayJournal() {
+  const groups = groupStewardNotifications;
+  const progressSizes = new Map();
   const rows = new Map(), pendingPhases = new Map(), listeners = new Set();
   let nextSeq = 0;
   const records = [];
@@ -32,19 +34,27 @@ function createStewardDisplayJournal() {
     },
     appendPermission(preset) { const record = { type: "event", event: { type: "permission/preset", seq: nextSeq++, time: Date.now(), data: { preset } } }; records.push(record); for (const listener of listeners) listener([record]); },
     appendModel(selection) { const record = { type: "event", event: { type: "model/selection", seq: nextSeq++, time: Date.now(), data: selection } }; records.push(record); for (const listener of listeners) listener([record]); },
-    sync(messages) {
+    sync(messages, notify = true) {
       messages = [...messages].sort((a, b) => a.seq - b.seq).slice(-300);
-      const incoming = [...messages].sort((a, b) => a.seq - b.seq).filter(message => !rows.has(message.id));
-      if (!incoming.length) return;
-      const appended = incoming.flatMap(message => { const result = encode(message, nextSeq); nextSeq += result.length; rows.set(message.id, message); return result; });
+      const appended = [];
+      for (let group of groups(messages)) {
+        if(group.kind==='message'&&group.message.role==='notification'&&group.message.provenance)group={kind:'progress',id:group.message.id,messages:[group.message]};
+        if (group.kind === 'progress') {
+          if (progressSizes.get(group.id) === group.messages.length) continue;
+          progressSizes.set(group.id, group.messages.length);
+          for (const message of group.messages) rows.set(message.id, message);
+          appended.push({type:'event',event:{type:'plugin:steward/progress',seq:nextSeq++,time:Date.parse(group.messages.at(-1).createdAt),ignorable:true,data:{id:group.id,messageIds:group.messages.map(message=>message.id)}}});
+        } else if (!rows.has(group.message.id)) {
+          const encoded=encode(group.message,nextSeq);nextSeq+=encoded.length;
+          rows.set(group.message.id,group.message);appended.push(...encoded);
+        }
+      }
       records.push(...appended);
-      if (appended.length) for (const listener of listeners) listener(appended);
+      if (notify && appended.length) for (const listener of listeners) listener(appended);
     },
     replace(messages) {
-      rows.clear(); pendingPhases.clear(); records.length = 0;
-      for (const message of [...messages].sort((a, b) => a.seq - b.seq).slice(-300)) {
-        const encoded = encode(message, nextSeq); nextSeq += encoded.length; rows.set(message.id, message); records.push(...encoded);
-      }
+      rows.clear(); pendingPhases.clear(); progressSizes.clear(); records.length = 0;
+      this.sync(messages,false);
       for (const listener of listeners) listener(null);
     },
     get ids() { return [...rows.keys()]; },
@@ -78,10 +88,10 @@ function createStewardNativeClient({ React, Context, modules, hostContext, creat
   const idle = signal => new Promise(resolve => { if (signal.aborted) resolve(); else signal.addEventListener("abort", resolve, { once: true }); });
   const ShellState = React.createContext(null);
   function createPlacement() {
-    let snapshot = { chat: null, composer: null, header: null, view: 'chat' };
+    let snapshot = { chat: null, composer: null, header: null, sidebar:null, sidebarShown:false, sidebarFullscreen:false, view: 'chat' };
     const listeners = new Set();
     const set = (key, value) => { if (snapshot[key] === value) return; snapshot = { ...snapshot, [key]: value }; for (const listener of listeners) listener(); };
-    return { getSnapshot: () => snapshot, subscribe: listener => { listeners.add(listener); return () => listeners.delete(listener); }, chat: node => set('chat', node), composer: node => set('composer', node), header: node => set('header',node), select: view => set('view', view) };
+    return { getSnapshot: () => snapshot, subscribe: listener => { listeners.add(listener); return () => listeners.delete(listener); }, chat: node => set('chat', node), composer: node => set('composer', node), header: node => set('header',node), sidebar:node=>set('sidebar',node), rightbar:(shown,fullscreen=false)=>{set('sidebarShown',shown);set('sidebarFullscreen',fullscreen);}, select: view => set('view', view) };
   }
   function SourceViews({ renderSlot }) {
     const { placement, selected, overviewOpen } = React.useContext(ShellState);
@@ -109,7 +119,7 @@ function createStewardNativeClient({ React, Context, modules, hostContext, creat
     }, [sessionId, placement]);
     return h(ShellState.Provider, { value: { placement, selected, overviewOpen:source.overviewOpen } },
       h('div', { className: 'steward-native-heading', 'data-steward-browse-session': sessionId },
-        h('div', { ref:placement.header, className: 'steward-native-title-row' }, h('strong', { title: sessionId }, nativeTitle || `管家 · ${source.sourceScopeLabel}`), typeof nativePreset === 'string' && h('span', { title: `原生 Agent 预设 ${nativePreset}` }, nativePreset), source.renderBrowseTopic()),
+        h('div', { ref:placement.header, className: 'steward-native-title-row' }, h('strong', { title: sessionId }, nativeTitle || `管家 · ${source.sourceScopeLabel}`), typeof nativePreset === 'string' && h('span', { title: `原生 Agent 预设 ${nativePreset}` }, nativePreset), source.renderBrowseTopic(), h('button',{type:'button',className:'steward-icon-button','aria-label':'打开原生文件侧栏',title:'打开原生文件侧栏',onClick:()=>{void bridge.preview?.openGuide().catch(error=>{if(error.name!=='AbortError')bridge.notice(error.message);});}},h('svg',{width:18,height:18,viewBox:'0 0 24 24',fill:'none',stroke:'currentColor',strokeWidth:1.5,'aria-hidden':true},h('path',{d:'M3 4h18v16H3z M15 4v16'})))),
         h('div', { inert:source.overviewOpen?'':undefined, role: 'tablist', 'data-conversation-tabs': '' }, tabs.map(tab => h('button', { key: tab.id, type: 'button', role: 'tab', 'aria-selected': selected === tab.id, onClick: () => { hostContext.get('uiConversation').binding(sessionId).activate(tab.id); placement.select(tab.id); } }, tab.label)))),
       blank && selected !== 'chat' && h('p', { role: 'status' }, '该原会话尚无对话轮次，原生页面会在开始对话后显示。'),
       props.renderFactorySlot('conversation.content', { variant: 'embedded', phase: 'active', hero: false }, { slots: sourceContentSlots }));
@@ -128,7 +138,7 @@ function createStewardNativeClient({ React, Context, modules, hostContext, creat
     return () => { off(); registration?.(); };
   });
   function SessionShell({ bridge, handle, renderSlot, SessionProvider }) {
-    const mount = React.useRef(null), eventRoot = React.useRef(null), references = React.useRef(new Map()), placement = React.useMemo(createPlacement, []);
+    const mount = React.useRef(null), sidebarMount=React.useRef(null), eventRoot = React.useRef(null), references = React.useRef(new Map()), placement = React.useMemo(createPlacement, []);
     const [source, setSource] = React.useState(null), [sourceRefresh, setSourceRefresh] = React.useState(0), [sourceError, setSourceError] = React.useState(''), [displayStatus, setDisplayStatus] = React.useState('正在加载原生输入框…');
     const view = React.useSyncExternalStore(bridge.subscribe, bridge.getSnapshot, bridge.getSnapshot);
     const seats=React.useSyncExternalStore(placement.subscribe,placement.getSnapshot,placement.getSnapshot);
@@ -138,6 +148,7 @@ function createStewardNativeClient({ React, Context, modules, hostContext, creat
       const update=()=>setOverviewTop(Math.max(0,header.getBoundingClientRect().bottom-root.getBoundingClientRect().top));update();
       const observer=new ResizeObserver(update);observer.observe(header);observer.observe(root);return()=>observer.disconnect();
     },[seats.header,view.overviewOpen]);
+    React.useLayoutEffect(()=>{const binding=source?.binding??null;bridge.previewSource=binding;queueMicrotask(()=>{if(bridge.previewSource===binding)void bridge.preview?.setSource(binding);});return()=>{delete bridge.previewSource;};},[source,bridge]);
     const sourceKey = JSON.stringify(view.sourceScope);
     const sourceToken = view.sourceScope.kind === 'project' ? view.projects?.find(project => project.projectId === view.sourceScope.projectId)?.bindingToken : null;
     React.useEffect(() => {
@@ -162,14 +173,15 @@ function createStewardNativeClient({ React, Context, modules, hostContext, creat
     React.useEffect(() => () => { for (const reference of references.current.keys()) reference.release(); references.current.clear(); }, []);
     React.useEffect(() => {
       const lifetime = new AbortController(); let mounted;
-      api.mount(mount.current, bridge, { signal: lifetime.signal, eventRoot: eventRoot.current, placement, onState: message => { setDisplayStatus(message); bridge.getSnapshot().setStatus(message); } })
+      api.mount(mount.current, bridge, { signal: lifetime.signal, eventRoot: eventRoot.current, sidebarContainer:sidebarMount.current, placement, onState: message => { setDisplayStatus(message); bridge.getSnapshot().setStatus(message); } })
         .then(value => { if (lifetime.signal.aborted) void value.dispose(); else { mounted = value; handle.current = value; } })
         .catch(error => { if (!lifetime.signal.aborted) { setDisplayStatus(error.message ?? String(error)); bridge.notice(error.message ?? String(error)); } });
       return () => { lifetime.abort(); handle.current = null; if (mounted) void mounted.dispose(); };
     }, [view.authorityId, view.conversationId]);
     React.useEffect(() => { if (source || sourceError) handle.current?.restoreBrowseFocus(); }, [source, sourceError]);
-    return h('div', { ref: eventRoot, className: 'steward-full-session', 'data-steward-native-host': '', style: { position:'relative', display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 } },
-      h('div', { ref: mount, style: { display: 'none' } }), displayStatus && h('p', { role: 'status' }, displayStatus),
+    return h('div', { ref: eventRoot, className: 'steward-full-session', 'data-steward-native-host': '', style: { position:'relative', display: 'flex', flexDirection: 'row', flex: 1, minHeight: 0 } },
+      h('div',{style:{display:'flex',flexDirection:'column',flex:1,minWidth:0,minHeight:0}},
+      h('div', { ref: mount, style: { display: 'none' } }),h('div',{ref:sidebarMount,style:{display:'none'}}), displayStatus && h('p', { role: 'status' }, displayStatus),
       source ? h(SessionProvider, { key: source.binding.sessionId, session: source.reference }, renderSlot('steward.session.shell', { bridge, placement })) :
         h('div', { style: { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' } },
           h('div', { className: 'steward-native-heading' }, h('div', { ref:placement.header, className: 'steward-native-title-row' }, h('strong', null, '管家'), view.renderBrowseTopic())),
@@ -177,20 +189,24 @@ function createStewardNativeClient({ React, Context, modules, hostContext, creat
           sourceError && h('button', { type: 'button', onClick: () => setSourceRefresh(value => value + 1) }, '重新读取原会话'),
           h('div', { ref: placement.chat, style: { flex: 1, minHeight: 0 } })),
       h('div', { ref: placement.composer, inert:view.overviewOpen?'':undefined, 'data-steward-router-composer': '' }),
-      view.overviewOpen && h('div',{'data-steward-overview-layer':'',style:{position:'absolute',top:overviewTop,left:0,right:0,bottom:0,zIndex:30,display:'flex',minHeight:0,background:'var(--dsw-alias-bg-base,#171719)'}},view.renderOverview()));
+      view.overviewOpen && h('div',{'data-steward-overview-layer':'',style:{position:'absolute',top:overviewTop,left:0,right:0,bottom:0,zIndex:30,display:'flex',minHeight:0,background:'var(--dsw-alias-bg-base,#171719)'}},view.renderOverview())),
+      h('div',{ref:placement.sidebar,'data-steward-native-rightbar':'',style:{position:seats.sidebarFullscreen?'absolute':'relative',inset:seats.sidebarFullscreen?0:undefined,width:seats.sidebarShown?(seats.sidebarFullscreen?'100%':'min(45%, 720px)'):0,minWidth:0,height:'100%',zIndex:seats.sidebarFullscreen?40:undefined}}));
   }
 
   const api = {
     SessionShell,
-    async mount(container, bridge, { signal, onState, eventRoot = container, placement } = {}) {
+    async mount(container, bridge, { signal, onState, eventRoot = container, sidebarContainer, placement } = {}) {
       const ctx = new Context(), lifetime = new AbortController(), journal = createStewardDisplayJournal();
       const cancel = () => lifetime.abort(signal.reason);
       if (signal?.aborted) cancel(); else signal?.addEventListener("abort", cancel, { once: true });
       const snapshot = bridge.getSnapshot(), identity = `${snapshot.authorityId}:${snapshot.conversationId}`;
       const sessionId = `steward-display:${identity}`, createdAt = Date.now();
-      let reference, unmount, offBridge, offSubmissions, offInput;
+      let reference, unmount, offBridge, offSubmissions, offInput,sidebarReference,sidebarRevision=0,sidebarJob=null;
+      const sidebarBindings=new Map();
+      let sidebarCtx,sidebarUnmount,sidebarSetup,sidebarReady=false,sidebarCommitted=null;
+      const sidebarCommitListeners=new Set();
       let pendingReady = false, nativePending = [];
-      const prepared = new Map(), controls = new Set();
+      const prepared = new Map(), controls = new Set(),fileCapabilities=new Map();
       const followTarget = { provider: 'steward-target', model: 'follow' };
       const modelKey = `dsh-steward-model:${identity}`;
       let selectedModel = followTarget;
@@ -249,6 +265,36 @@ function createStewardNativeClient({ React, Context, modules, hostContext, creat
         async call(channel, endpoint, payload, signal) {
           if (channel !== "/api") return unsupported(endpoint);
           try {
+            if (endpoint.startsWith("workspaceFiles/")) {
+              const args = payload?.args ?? {},
+                method = endpoint.slice("workspaceFiles/".length);
+              if (!["read", "readBytes", "stat", "list"].includes(method)) return unsupported(endpoint);
+              const layoutBinding = sidebarBindings.get(args.workspaceFileScopeId);
+              const target = layoutBinding?.sessionId ?? args.workspaceFileScopeId,
+                source = bridge.previewSource;
+              const capability = fileCapabilities.get(`${target}:${args.path}`);
+              const sourceKey = JSON.stringify(source);
+              if (capability) {
+                const current = await invoke("stewardDocument", capability);
+                aborted(signal);
+                aborted(lifetime.signal);
+                if (current.kind !== "file" || current.sessionId !== target || current.path !== args.path)
+                  throw new Error("文件来源已变化，请重新打开。");
+              } else if (!source || target !== source.sessionId || !layoutBinding)
+                throw new Error("这个文件不属于当前浏览话题或已核实的工作记录。");
+              const remote = hostContext.remote.workspaceFiles;
+              let result;
+              if (method === "read") result = await remote.read(target, args.path, args.range ?? {}, signal);
+              else if (method === "readBytes")
+                result = await remote.readBytes(target, args.path, args.options ?? {}, signal);
+              else if (method === "stat") result = await remote.stat(target, args.path, signal);
+              else result = await remote.list(target, args.path, signal);
+              aborted(signal);
+              aborted(lifetime.signal);
+              if (!capability && JSON.stringify(bridge.previewSource) !== sourceKey)
+                throw new Error("浏览话题已经变化，请重新打开文件。");
+              return result;
+            }
             const request = payload?.args?.request;
             let value;
             switch (endpoint) {
@@ -258,9 +304,11 @@ function createStewardNativeClient({ React, Context, modules, hostContext, creat
               case "session/selectModel": { if (request?.sessionId !== sessionId) return unsupported(endpoint); const selection = request.provider === followTarget.provider && request.model === followTarget.model ? followTarget : await invoke('stewardValidateModel', { provider: request.provider, model: request.model, ...(request.reasoningEffort ? { reasoningEffort: request.reasoningEffort } : {}) }); setModel(selection); value = { selected: selection }; break; }
               case "session/attachment": { const message = bridge.getSnapshot().messages.find(message => message.content?.some(part => part.type === 'image' && part.attachment.attachmentId === request?.attachmentId)); if (!message) throw new Error('附件不属于当前可读取消息。'); const read = await readChunks('stewardAttachmentRead', { messageId: message.id, attachmentId: request.attachmentId }); value = { attachment: read.content.attachment, data: read.data }; break; }
               case "commands/list": value = []; break;
-              case "session/list": value = { items: [summary()] }; break;
+              case "session/list": value = { items: [summary(),...Array.from(sidebarBindings,([id,binding])=>({sessionId:id,cwd:binding.cwd,updatedAt:Date.now(),agentAvailable:false,running:false,blank:false}))] }; break;
               case "session/projections": value = { kind: "sequenced", ...projections() }; break;
               case "session/page": {
+                if(sidebarBindings.has(request?.address?.sessionId)){const binding=sidebarBindings.get(request.address.sessionId);return await hostContext.remote.session.page({...request,address:{...request.address,sessionId:binding.sessionId}},signal);}
+                if(request?.address?.sessionId!==sessionId)throw new Error('这个会话不属于当前文件视图。');
                 if (request?.address?.sessionId !== sessionId) return unsupported(endpoint);
                 const before = request.beforeSeq ?? journal.cursor + 1;
                 if (!journal.page(before).length && bridge.getSnapshot().hasOlder) await bridge.loadOlder();
@@ -300,9 +348,21 @@ function createStewardNativeClient({ React, Context, modules, hostContext, creat
         },
         async *open(channel, endpoint, payload, signal) {
           if (channel !== "/api") throw new Error("Unsupported display channel");
+          if(endpoint==='workspaceFiles/changes'){
+            const args=payload?.args??{},source=bridge.previewSource,layoutBinding=sidebarBindings.get(args.workspaceFileScopeId),target=layoutBinding?.sessionId??args.workspaceFileScopeId;
+            const capability=fileCapabilities.get(`${target}:${args.path}`),sourceKey=JSON.stringify(source);
+            if(capability)await invoke('stewardDocument',capability);
+            else if(!source||target!==source.sessionId||!layoutBinding)throw new Error('文件来源已经变化。');
+            aborted(signal);aborted(lifetime.signal);
+            for await(const frame of hostContext.remote.workspaceFiles.changes(target,args.path,signal)){
+              if(!capability&&JSON.stringify(bridge.previewSource)!==sourceKey)return;
+              yield frame;
+            }
+            return;
+          }
           switch (endpoint) {
             case "$events": yield { type: "ready", clientId: sessionId, host: { home: "/steward-display" } }; break;
-            case "remoteAccess/follow": yield { type: "baseline", owner: false, grants: [{ resource: { kind: "global" }, actions: ["session/list", "session/control", "session/modelCatalog", "permissionPresets/catalog"] }, { resource: { kind: "session", id: sessionId }, actions: ["session/prompt", "session/follow", "session/page", "session/projections", "session/selectModel", "session/attachment", "commands/execute"] }] }; break;
+            case "remoteAccess/follow": yield { type: "baseline", owner: false, grants: [{ resource: { kind: "global" }, actions: ["session/list", "session/control", "session/modelCatalog", "permissionPresets/catalog", "session/follow", "session/page", "session/projections"] }, { resource: { kind: "session", id: sessionId }, actions: ["session/prompt", "session/follow", "session/page", "session/projections", "session/selectModel", "session/attachment", "commands/execute"] }] }; break;
             case "workspace/follow": yield { type: "baseline", value: { items: [], archivedSessionIds: [], pinnedSessionIds: [] } }; break;
             case "session/control": {
               let wake, changed = false; const off = () => { changed = true; wake?.(); }; controls.add(off); const cancel = () => wake?.(); signal.addEventListener('abort', cancel);
@@ -310,6 +370,15 @@ function createStewardNativeClient({ React, Context, modules, hostContext, creat
               finally { controls.delete(off); signal.removeEventListener('abort', cancel); } return;
             }
             case "session/follow": {
+              const realId=payload?.args?.request?.address?.sessionId;
+              if(sidebarBindings.has(realId)){
+                const binding=sidebarBindings.get(realId);
+                for await(const frame of hostContext.remote.session.follow({...payload.args.request,address:{...payload.args.request.address,sessionId:binding.sessionId}},signal)){
+                  if(sidebarBindings.get(realId)!==binding)return;
+                  yield frame.type==='snapshot'?{...frame,header:{...frame.header,id:realId}}:frame;
+                }
+                return;
+              }
               if (payload?.args?.request?.address?.sessionId !== sessionId) throw new Error("Display session identity changed");
               const pending = []; let wake, replace = false;
               const off = journal.subscribe(records => {
@@ -336,8 +405,8 @@ function createStewardNativeClient({ React, Context, modules, hostContext, creat
         },
       };
       const dispose = async () => {
-        lifetime.abort(); offBridge?.(); offSubmissions?.(); offInput?.(); signal?.removeEventListener("abort", cancel);
-        await Promise.resolve(); unmount?.(); reference?.release(); await ctx.fiber.dispose();
+        lifetime.abort(); delete bridge.preview;placement.rightbar(false); offBridge?.(); offSubmissions?.(); offInput?.(); signal?.removeEventListener("abort", cancel);
+        await Promise.resolve(); sidebarRevision++;sidebarReference?.release();sidebarUnmount?.();await sidebarCtx?.fiber.dispose();unmount?.();reference?.release();await ctx.fiber.dispose();
       };
       try {
         onState?.("正在加载 DSH 原生对话…");
@@ -368,7 +437,7 @@ function createStewardNativeClient({ React, Context, modules, hostContext, creat
         onState?.("正在连接原生视图…");
         await waitFor(ctx.connection.generation, value => value !== undefined, lifetime.signal);
         await ctx.sessions.refresh();
-        reference = ctx.sessions.retain(sessionId, { source: "projectConversation", signal: lifetime.signal });
+        reference = ctx.sessions.retain(sessionId, { source: "mainView", signal: lifetime.signal });
         onState?.("正在恢复原生历史…");
         const binding = await reference.ready;
         const capture = () => {
@@ -416,6 +485,27 @@ function createStewardNativeClient({ React, Context, modules, hostContext, creat
               h('div', { className: 'steward-routing-recovery', role: 'status' }, h('p', null, canonical ? '服务器已登记原请求；原回执仍待核实，不会自动重发。' : item.reason), !echo && item.request.uploads?.length > 0 && h('small', null, `原请求保留 ${item.request.uploads.length} 个附件。`), state.renderPendingRecovery(item)));
         }
         ctx.slots.inject('conversation.chat.node', () => ctx.slots.register({ name: 'conversation.chat.node', key: 'steward-routing' }, RoutingPending));
+        const Progress=createStewardProgressRenderer(React);
+        ctx.uiConversation.events.register({
+          kind:'steward-progress',target:'chat',
+          match:{'plugin:steward/progress':event=>({id:event.data.id,role:'start',exclusive:true})},
+          start:(_context,match)=>({...match.event.data,anchorSeq:match.event.seq}),
+          update:({state},match)=>({...state,...match.event.data}),
+          buildViewNode:({state,key,id})=>({key,kind:'steward-progress',id,target:'chat',anchorSeq:state.anchorSeq,location:{kind:'session'},visibility:'visible',data:{messageIds:state.messageIds}}),
+        });
+        function ProgressNode({node}) {
+          const state=useBridge(),ids=new Set(node.data.messageIds),messages=state.messages.filter(message=>ids.has(message.id));
+          return h(Progress,{messages,renderActions:state.renderActions,renderDecision:state.renderDecision,onOpen:async(messageId,targetId)=>{
+            const identity=`${state.authorityId}:${state.conversationId}`;
+            try {
+              const target=await state.invoke('stewardDocument',{conversationId:state.conversationId,messageId,targetId});
+              const latest=bridge.getSnapshot();
+              if(lifetime.signal.aborted||`${latest.authorityId}:${latest.conversationId}`!==identity)return;
+              if(target.kind==='file'){fileCapabilities.set(`${target.sessionId}:${target.path}`,{conversationId:state.conversationId,messageId,targetId});await bridge.preview.open(target);}else latest.openProgressRecord(target);
+            }catch(error){if(!lifetime.signal.aborted)bridge.notice(error.message??String(error));}
+          }});
+        }
+        ctx.slots.inject('conversation.chat.node',()=>ctx.slots.register({name:'conversation.chat.node',key:'steward-progress'},ProgressNode));
         pendingReady = true; capture(); sync();
         function DisplayViews({ renderSlot }) {
           const seats = React.useSyncExternalStore(placement.subscribe, placement.getSnapshot, placement.getSnapshot);
@@ -456,6 +546,225 @@ function createStewardNativeClient({ React, Context, modules, hostContext, creat
         ctx.slots.inject("conversation.composer.dock", function* () {
           for (const id of ["activity", "usage"]) yield ctx.slots.register({ name: "conversation.composer.dock", id, priority: -100 }, HiddenDisplayMetric);
         });
+        const ensureSidebar = () =>
+          (sidebarSetup ??= (async () => {
+            if (!sidebarContainer) throw new Error("当前宿主没有文件侧栏位置。");
+            sidebarCtx = new Context();
+            connectionModule.installConnection(sidebarCtx, {
+              interactions: "answer",
+              transport: { rpc },
+              location: { hostname: "steward-display.invalid" },
+            });
+            sidebarCtx.reflect.provide("layout", {
+              panelInfo,
+              selectPanel() {},
+              beginNavigation: () => lifetime.signal,
+              toggleSidebar() {},
+              openRightbar(_track, fullscreen) {
+                placement.rightbar(true, fullscreen);
+              },
+              closeRightbar() {
+                placement.rightbar(false);
+              },
+            });
+            sidebarCtx.reflect.provide("configForms", hostContext.get("configForms"));
+            sidebarCtx.reflect.provide("fileUpload", ctx.get("fileUpload"));
+            const realResources = hostContext.get("resources");
+            const resourceAddress = (address) => {
+              const prefix = "dsh-resource://file/session/";
+              if (!address.startsWith(prefix)) return address;
+              const boundary = address.indexOf("/", prefix.length);
+              if (boundary < 0) return address;
+              const binding = sidebarBindings.get(
+                decodeURIComponent(address.slice(prefix.length, boundary)),
+              );
+              return binding
+                ? prefix + encodeURIComponent(binding.sessionId) + address.slice(boundary)
+                : address;
+            };
+            sidebarCtx.reflect.provide("resources", {
+              source: (address) => realResources.source(resourceAddress(address)),
+              pin: (address, signal) => realResources.pin(resourceAddress(address), signal),
+              register: (provider) => realResources.register(provider),
+            });
+
+            for (const name of plugins) {
+              sidebarCtx.plugin(await load(name));
+              aborted(lifetime.signal);
+            }
+            for (const name of [
+              "dsh-client-ui-renderer",
+              "dsh-client-locale",
+              "dsh-client-shortcuts",
+              "dsh-client-ui-session",
+              "dsh-client-ui-sidebar-right",
+              "dsh-client-ui-sidebar-documentpreview",
+              "dsh-client-ui-sidebar-files",
+            ]) {
+              sidebarCtx.plugin(await load(name));
+              aborted(lifetime.signal);
+            }
+            await waitFor(service(sidebarCtx, "sessions"), Boolean, lifetime.signal);
+            await waitFor(
+              sidebarCtx.connection.generation,
+              (value) => value !== undefined,
+              lifetime.signal,
+            );
+            await waitFor(service(sidebarCtx, "slots"), Boolean, lifetime.signal);
+            await waitFor(service(sidebarCtx, "sidebarRight"), Boolean, lifetime.signal);
+            sidebarCtx.slots.provideRoot({
+              hooks: { panelInfo },
+              keyedHooks: { resource: (address) => sidebarCtx.resources.source(address) },
+            });
+            sidebarCtx.slots.register(
+              { name: "root", children: { rightbar: { kind: "single", scope: "root" } } },
+              function SidebarRoot({ renderSlot }) {
+                const seats = React.useSyncExternalStore(
+                  placement.subscribe,
+                  placement.getSnapshot,
+                  placement.getSnapshot,
+                );
+                const current = React.useSyncExternalStore(
+                  sidebarCtx.uiSession.adapter.current.subscribe,
+                  sidebarCtx.uiSession.adapter.current.getSnapshot,
+                  sidebarCtx.uiSession.adapter.current.getSnapshot,
+                ).key;
+                React.useEffect(() => {
+                  sidebarCommitted = current;
+                  for (const listener of sidebarCommitListeners) listener();
+                  return () => {
+                    if (sidebarCommitted === current) sidebarCommitted = null;
+                  };
+                }, [current]);
+                const [width, setWidth] = React.useState(eventRoot?.clientWidth ?? 1200);
+                React.useEffect(() => {
+                  if (!eventRoot) return;
+                  const observer = new ResizeObserver(() => setWidth(eventRoot.clientWidth));
+                  observer.observe(eventRoot);
+                  return () => observer.disconnect();
+                }, []);
+                return seats.sidebar
+                  ? createPortal(
+                      renderSlot("rightbar", {
+                        width: Math.min(width * 0.45, 720),
+                        viewportWidth: width,
+                        canShow: true,
+                      }),
+                      seats.sidebar,
+                    )
+                  : null;
+              },
+            );
+            sidebarUnmount = sidebarCtx.uiRenderer.mount(sidebarContainer);
+            sidebarReady = true;
+          })().catch(async (error) => {
+            sidebarReady = false;
+            sidebarUnmount?.();
+            sidebarUnmount = null;
+            await sidebarCtx?.fiber.dispose();
+            sidebarCtx = null;
+            sidebarSetup = null;
+            if (lifetime.signal.aborted) throw lifetime.signal.reason;
+            throw new Error("原生文件侧栏暂不可用，请稍后再试。");
+          }));
+        const switchSidebarSource = async (binding) => {
+          const layoutId = binding
+            ? `${sessionId}:rightbar:${binding.sessionId}:${binding.generation ?? 0}`
+            : null;
+          if (
+            sidebarReference?.sessionId === layoutId &&
+            JSON.stringify(sidebarBindings.get(layoutId)) === JSON.stringify(binding)
+          )
+            return;
+          const revision = ++sidebarRevision,
+            previous = sidebarReference;
+          sidebarReference = null;
+          if (previous && sidebarCtx) {
+            try {
+              for (const tab of sidebarCtx.sidebarRight.openTabs.getSnapshot())
+                if (tab.sessionId === previous.sessionId)
+                  sidebarCtx.sidebarRight.closeIn(previous.sessionId, tab.tabId);
+            } finally {
+              previous.release();
+            }
+          }
+          sidebarBindings.clear();
+          placement.rightbar(false);
+          if (!binding) return;
+          sidebarBindings.set(layoutId, binding);
+          if (!sidebarReady) return;
+          let retained;
+          try {
+            await sidebarCtx.sessions.refresh();
+            aborted(lifetime.signal);
+            if (revision !== sidebarRevision) return;
+            retained = sidebarCtx.sessions.retain(layoutId, {
+              source: "mainView",
+              signal: lifetime.signal,
+            });
+            await retained.ready;
+            aborted(lifetime.signal);
+            if (revision !== sidebarRevision) {
+              retained.release();
+              return;
+            }
+            sidebarReference = retained;
+            await waitFor(
+              {
+                getSnapshot: () => sidebarCommitted === layoutId,
+                subscribe: (listener) => {
+                  sidebarCommitListeners.add(listener);
+                  return () => sidebarCommitListeners.delete(listener);
+                },
+              },
+              Boolean,
+              lifetime.signal,
+            );
+          } catch (error) {
+            retained?.release();
+            if (sidebarReference === retained) sidebarReference = null;
+            if (!lifetime.signal.aborted && revision === sidebarRevision)
+              bridge.notice("原生文件来源暂不可读取，请重新选择浏览话题。");
+          }
+        };
+        bridge.preview = {
+          setSource(binding) {
+            const key = JSON.stringify(binding);
+            if (sidebarJob?.key === key) return sidebarJob.promise;
+            const job = {
+              key,
+              promise: switchSidebarSource(binding).catch((error) => {
+                sidebarBindings.clear();
+                placement.rightbar(false);
+                if (!lifetime.signal.aborted) bridge.notice("文件侧栏暂时无法切换，请重新选择浏览话题。");
+              }),
+            };
+            sidebarJob = job;
+            void job.promise.finally(() => {
+              if (sidebarJob === job) sidebarJob = null;
+            });
+            return job.promise;
+          },
+          async open(target) {
+            await ensureSidebar();
+            await bridge.preview.setSource(bridge.previewSource);
+            aborted(lifetime.signal);
+            if (!sidebarReference) throw new Error("文件栏还在读取当前话题，请稍后再试。");
+            const path = target.path.replace(/\\/g, "/").replace(/^(?:\.\/)+/, "");
+            sidebarCtx.sidebarRight.openResourceIn(
+              sidebarReference.sessionId,
+              `dsh-resource://file/session/${encodeURIComponent(target.sessionId)}/${path.split("/").map(encodeURIComponent).join("/")}`,
+            );
+          },
+          async openGuide() {
+            await ensureSidebar();
+            await bridge.preview.setSource(bridge.previewSource);
+            aborted(lifetime.signal);
+            if (!sidebarReference) throw new Error("文件栏还在读取当前话题，请稍后再试。");
+            sidebarCtx.sidebarRight.openTabIn(sidebarReference.sessionId, "guide");
+          },
+        };
+        void bridge.preview.setSource(bridge.previewSource);
         aborted(lifetime.signal);
         unmount = ctx.uiRenderer.mount(container);
         onState?.("");

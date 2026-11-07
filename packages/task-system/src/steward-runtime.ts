@@ -1,3 +1,4 @@
+import { StewardProgress } from "./steward-progress.js";
 import type { Context } from "@deepseek-ai/cordis";
 import type { Agent } from "@deepseek-ai/dsh-agent";
 import { createUserMessage, ReasoningEffortId, type GenerateOptions } from "@deepseek-ai/dsh-llm";
@@ -56,6 +57,7 @@ export class StewardRuntime {
   readonly permissions: StewardTurnPermissions;
   readonly topics: StewardTopicCards;
   readonly router: StewardRouter;
+  readonly progress: StewardProgress;
   private readonly personalRequests = new WeakMap<Agent, StewardMessage>();
   private ctx: Context;
   private readonly sends = new Map<string, Promise<StewardSnapshot>>();
@@ -78,6 +80,11 @@ export class StewardRuntime {
     this.ctx = ctx;
     this.store = new StewardConversations(task.ledger);
     this.media = new StewardAttachments(ctx, task.ledger);
+    this.progress = new StewardProgress(ctx, task, this.store, projectId => {
+      this.ready();
+      if (!this.projects().some(project => project.projectId === projectId))
+        throw new TaskError('FORBIDDEN', '当前无权查看这个项目的进展。');
+    });
     this.memory = new StewardMemoryBridge(task, this.store, ctx);
     this.recall = new StewardRecall(task.ledger, this.store, sessionId => this.memory.bindingForSession(sessionId), projectId => {
       const project = this.task.projects?.placementProject(projectId);
@@ -115,6 +122,7 @@ export class StewardRuntime {
   get active(): boolean { return this.permissions.active || this.media.active || this.sends.size > 0 || this.sourceJobs.size > 0 || this.sourceCreations.size > 0 || this.personalJobs.size > 0 || this.memoryJobs.size > 0; }
   bindContext(ctx: Context) {
     this.ctx = ctx;
+    this.progress.bindContext(ctx);
     this.promptDisposer?.();
     this.promptDisposer = ctx.systemPrompt.section({
       name: "dsh-steward-persona", order: 10200, interpolate: false,
@@ -1008,21 +1016,21 @@ export class StewardRuntime {
           continue;
         }
       }
-      if (task && subscription && ["run.execution_started", "run.settled", "report.appended", "task.checkin_updated", "task.execution_check_queued", "acceptance.armed", "acceptance.decided", "acceptance.amended", "acceptance.operation_admitted"].includes(event.type)) {
+      if (task && subscription && ["run.execution_started", "run.settled", "run.reconciled", "report.appended", "task.checkin_updated", "task.execution_check_queued", "acceptance.armed", "acceptance.decided", "acceptance.amended", "acceptance.operation_admitted"].includes(event.type)) {
         const detail = z.object({ summary: z.string().optional(), outcome: z.string().optional() }).passthrough().safeParse(event.detail);
         const outcome = detail.success ? detail.data.outcome : undefined;
-        const summary = detail.success ? detail.data.summary?.slice(0, 2000) : undefined;
         const state = gate?.state === "awaiting-acceptance" && ["run.settled", "acceptance.armed"].includes(event.type) ? "修复结果已到，待你验收；下游尚未开始。请打开本次候选核对报告。"
           : event.type === "acceptance.decided" ? gate?.state === "released" ? "本次候选已由你验收通过。是否继续以明确的后续请求与既有授权为准。" : "你要求继续修复；验收点尚未释放。"
           : event.type === "acceptance.amended" ? "修复要求已由你修订，先前验收失效，需要重新核对结果。已准入的历史效果不会自动撤销。"
           : event.type === "acceptance.operation_admitted" ? "本次后续规划请求已获准入；这不表示原生投递已确认或任务已经完成。"
           : event.type === "acceptance.armed" ? "已设置人工验收点：修复结果到达后等待你核对，后续工作不会据普通聊天自动释放。"
           : event.type === "run.execution_started" ? "已开始执行。"
-          : event.type === "run.settled" ? `本次执行已结束（${outcome === "success" ? "成功" : outcome === "failure" ? "失败" : outcome === "partial" ? "部分完成" : outcome === "blocked" ? "受阻" : "结果未知"}）。请查看报告，再决定是否验收或继续。`
-          : event.type === "report.appended" ? "有新报告可查看。请核对其中的进展和结果。"
+          : event.type === "run.settled" ? outcome === "unknown" ? "处理过程被打断，尚未收到正式结果；调度需要核实这次执行是否停止。" : outcome === "success" ? "执行已经结束。是否有正式结果可查看，以对应的结果记录为准；这不表示你已验收。" : outcome === "blocked" ? "工作暂时遇到阻碍，需要核实后续安排。" : "这次没有完成工作，需要核实原因与后续安排。"
+          : event.type === "run.reconciled" ? "调度已核实这次执行停止，已有材料是否完整仍需单独核对。"
+          : event.type === "report.appended" ? "调度补充了工作记录；是否属于正式结果，以记录来源为准。"
           : event.type === "task.checkin_updated" ? "已更新进度检查记录。"
           : "已到预计检查时间，需要核实进度；这不表示执行失败。";
-        this.store.project({ conversationId, role: "notification", commandId: null, text: `「${task.title}」${state}${summary ? "\n记录摘要：" + summary : ""}`,
+        this.store.project({ conversationId, role: "notification", commandId: null, text: `「${task.title}」${state}`,
           scope: subscription.scope, replyTo: origin?.id ?? null, createdAt: event.at, source: subscription.source, nativeSeq: null,
           provenance: { kind: "ledger", eventId: event.eventId, eventType: event.type, taskId: task.id, runId: event.runId ?? null },
           gate, state: { kind: "completed" }, manifest: subscription.manifest }, `ledger:${event.eventId}`);

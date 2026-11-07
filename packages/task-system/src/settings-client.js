@@ -2863,7 +2863,7 @@ h(
     const openPlugins = (ctx) => openSettingsSection(ctx, "plugins");
     const openModels = (ctx) => openSettingsSection(ctx, "models");
     const projectMethods = [
-      "stewardUpload", "stewardUploadRead", "stewardAttachmentRead", "stewardModelCatalog", "stewardValidateModel", "stewardPermissionCatalog", "stewardValidatePermission", "stewardSourceSession", "stewardTopics", "stewardTopic", "stewardTopicSource", "stewardSnapshot", "stewardSend", "stewardReconcile", "stewardResolve",
+      "stewardUpload", "stewardUploadRead", "stewardAttachmentRead", "stewardModelCatalog", "stewardValidateModel", "stewardPermissionCatalog", "stewardValidatePermission", "stewardSourceSession", "stewardTopics", "stewardTopic", "stewardTopicSource", "stewardProgress", "stewardDocument", "stewardSnapshot", "stewardSend", "stewardReconcile", "stewardResolve",
       "stewardMemoryRead", "stewardMemoryConfigure",
       "stewardGateRead", "stewardGateArm", "stewardGateDecide", "stewardGateAmend", "stewardGateContinue", "stewardGateAcceptContinue",
       "stewardGateIndependent",
@@ -3629,7 +3629,7 @@ h(
       );
     }
     return {
-      inject: ["modules", "slots", "locale", "configForms", "remote", "remote.settings"],
+      inject: ["modules", "slots", "locale", "configForms", "remote", "remote.settings", "remote.workspaceFiles", "remote.session"],
       apply,
       Controller,
       watchTaskPanelVisibility,
