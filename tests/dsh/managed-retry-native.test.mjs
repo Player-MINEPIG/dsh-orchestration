@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {join} from 'node:path';
 import {createNativeHarness} from './native-harness.mjs';
-import {registerExecutor} from './executor-fixture.mjs';
+import {registerExecutor,respondToCatalogRequests} from './executor-fixture.mjs';
 
 async function until(read) {
   const end=Date.now()+15000;
@@ -138,4 +138,18 @@ test('fresh-heartbeat hosts queue managed retry for an offline chosen executor w
     h.ledger.recordNodeHeartbeat('now-up',{nodeId:'worker',runtimeReady:true,activeExecutions:0});h.runtime.tick();h.runtime.tick();
     assert.equal(h.ledger.snapshot().runs.length,2);
   }finally{await h.dispose();}
+});
+
+test('managed retry refreshes an expired advertised catalog before validating the currently configured default',async()=>{
+  const h=await fixture(),stop=respondToCatalogRequests(h.ledger,['worker']);try{
+    const node=h.ledger.getNode('worker');
+    h.ledger.registerNode('legacy-static-models',{...node,models:[{provider:'old',model:'expired',reasoningEfforts:['medium']}]});
+    h.ledger.managementDatabase().prepare("UPDATE execution_model_nodes SET data=json_set(data,'$.snapshot.expiresAt',0,'$.positiveSnapshot.expiresAt',0) WHERE node_id='worker'").run();
+    assert.notEqual(h.ledger.executionModels.view('worker').catalog.state,'fresh');
+    await send(h,'stale-user',{commandId:'stale-retry',taskId:h.task.taskId,retry:true,expectedActionVersion:h.ledger.taskActionState(h.task.taskId).version});
+    const row=h.ledger.managementDatabase().prepare("SELECT data FROM entities WHERE kind='decision'").get();
+    assert.ok(row,'A stale static declaration must not reject the confirmed current node default before refresh');
+    const input=JSON.parse(row.data).input;assert.equal(input.route.provider,'new');assert.equal(input.route.model,'usable');assert.equal(input.route.reasoningEffort,'high');
+    assert.deepEqual(input.route.requiredCapabilities,['safe']);assert.equal(h.ledger.executionModels.view('worker').catalog.state,'fresh');
+  }finally{stop();await h.dispose();}
 });

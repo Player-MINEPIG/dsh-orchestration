@@ -2002,6 +2002,10 @@ export class ProjectRuntime {
       if ((route.backend || route.execution) && (input.retryRouting.executionModel || (input.retryRouting.nodeId && input.retryRouting.nodeId !== route.nodeId)))
         throw new TaskError("INVALID", "Native model overrides cannot replace the stored backend or program route");
       const nodeId = input.retryRouting.nodeId ?? route.nodeId;
+      if (!route.backend && !route.execution && this.ledger.executionModels.view(nodeId).catalog.state !== "fresh") {
+        await this.ledger.refreshNodeModels(nodeId);
+        authorize();
+      }
       const selected = route.backend || route.execution ? {choice: route} : this.ledger.selectExecutionModel(nodeId, input.retryRouting.executionModel);
       const {reasoningEffort: _oldEffort, ...base} = route;
       route = {...base, nodeId, ...selected.choice};
