@@ -5609,6 +5609,10 @@ export class TaskLedger {
       workspaces: this.list<Workspace>("workspace"),
     };
   }
+  commandMatches(commandId: string, operation: string, input: unknown): boolean {
+    const row = this.db.prepare("SELECT digest FROM commands WHERE id=?").get(commandId);
+    return row?.digest === hash({operation, input});
+  }
   commandReceipt<T = Json>(commandId: string): Receipt<T> | undefined {
     const row = this.db
       .prepare(this.receiptExpirySupported

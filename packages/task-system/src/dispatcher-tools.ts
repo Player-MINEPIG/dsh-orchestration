@@ -1,3 +1,4 @@
+import { manualCheckFor } from "./task-checkin-surface.js";
 import { z } from "zod";
 import { ExecutionStatusRequest, nativeExecutionStatus } from "./execution-reconciliation.js";
 import type { Context } from "@deepseek-ai/cordis";
@@ -12,7 +13,7 @@ export function mountDispatcherTools(ctx: Context, service: TaskSystemService) {
   const collaboration = service.sessionCollaboration;
   ctx.tools.register(defineTool({
     name: "task_execution_status",
-    description: "Inspect a bound coordinator task's current Run, attempt, formal reports and exact local native evidence without messaging or resuming its executor. inspect returns actionVersion/evidenceVersion and canReconcile; reconcile may settle a proven startup AUTH/401 with zero tools as failed using those exact versions and a stable commandId. Insufficient, remote, active or effectful evidence remains unknown. Never dispatches or retries work; workers cannot use it.",
+    description: "Inspect a bound coordinator task's current Run, attempt, formal reports and exact local native evidence without messaging or resuming its executor. inspect returns actionVersion/evidenceVersion and canReconcile; reconcile may settle a proven startup AUTH/401 or verify an exact durable interrupted invocation has stopped with no submitted business result. The latter preserves the historical business result as unproven, never asserts it was not executed. Use exact returned versions and stable commandId. Insufficient, remote or active evidence remains unknown. Never dispatches or retries work; workers cannot use it.",
     parameters: { action: {type:"string",enum:["inspect","reconcile"],required:true},taskId:{type:"string",required:true},runId:{type:"string",required:true},commandId:{type:"string"},expectedEvidenceVersion:{type:"string"},expectedActionVersion:{type:"string"}},
     output,
     execute: async (args, exec) => {
@@ -24,8 +25,14 @@ export function mountDispatcherTools(ctx: Context, service: TaskSystemService) {
       const authorize = () => {
         if (request.action === "reconcile" && ctx.get("sandboxPolicy")?.resolve({session:agent.session}).mode === "read-only") throw new TaskError("FORBIDDEN", "The current request is read-only; execution reconciliation writes are not allowed");
         const binding = collaboration.binding(agent);
-        if (!projects.projectForSession(String(agent.id)) && !projects.taskForSession(String(agent.id)) && binding?.state !== "active") throw new TaskError("FORBIDDEN", "Bind this coordinator before inspecting execution");
-        projects.assertExecutionCoordinatorTask(String(agent.id), cwd, request.taskId, binding?.projectId);
+        const managed = projects.projectForSession(String(agent.id)) || projects.taskForSession(String(agent.id));
+        if (!managed && binding?.state !== "active") {
+          const scoped = manualCheckFor(agent,request.taskId,request.runId), origin = service.ledger.getTask(request.taskId).dispatchOrigin;
+          if (!scoped || !service.ledger.commandMatches(scoped.commandId,"workflow.task_checkin.request",{taskId:request.taskId,manualVerification:true}) ||
+              origin?.kind !== "session" || origin.parentLease || origin.nodeId !== service.config.nodeId ||
+              origin.sessionId !== String(agent.id) || origin.cwd !== cwd)
+            throw new TaskError("FORBIDDEN", "Bind this coordinator or use its explicit task-scoped manual check");
+        } else projects.assertExecutionCoordinatorTask(String(agent.id), cwd, request.taskId, binding?.projectId);
       };
       return z.json().parse(await nativeExecutionStatus(ctx, service, agent, request, authorize, exec.signal));
     },

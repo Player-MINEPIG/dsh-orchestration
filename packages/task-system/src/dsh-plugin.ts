@@ -1026,6 +1026,10 @@ export class NativeExecutionProvider {
     return !!owned && owned.ref.runId === ref.runId && owned.ref.fence === ref.fence && owned.ref.executionId === ref.executionId;
   }
 
+  hasOwnedSession(sessionId: string): boolean {
+    return this.directSessions.has(sessionId) || this.bySession.has(sessionId) ||
+      [...this.active.values()].some(owned => owned.claim.attempt.sessionId === sessionId);
+  }
   executionStatus(ref: LeaseRef): string {
     const owned = this.active.get(ref.attemptId);
     if (

@@ -24,7 +24,7 @@ async function fixture(
       });
     },
   ],
-  { wait = true } = {},
+  { wait = true, captureOrigin = false } = {},
 ) {
   const h = await createNativeHarness({
     executionRoot: true,
@@ -57,7 +57,8 @@ async function fixture(
     capabilities: [],
     maxConcurrent: 2,
   });
-  const task = ledger.createTask("task", { title: "Failed native task" }).value;
+  const creator = captureOrigin ? (await h.ctx.sessionController.resolveAgent(SessionId(sessionId))).agent : undefined;
+  const task = creator ? h.ctx.taskSystem.withDispatchOrigin(creator,()=>ledger.createTask("task", { title: "Failed native task" }).value) : ledger.createTask("task", { title: "Failed native task" }).value;
   projects.linkTask(sessionId, task.taskId);
   const run = ledger.createRun("run", {
     taskId: task.taskId,
@@ -677,4 +678,78 @@ test('local retry never takes over or cancels a busy original WebUI executor ses
     assert.equal(h.ctx.agents.get(SessionId(target.sessionId)),live);assert.equal(h.adapter.requests.length,calls);assert.notEqual(live.status,'idle');
     release.resolve();await live.whenIdle();assert.equal(h.ctx.agents.get(SessionId(target.sessionId)),live);
   }finally{release.resolve();await h.dispose();}
+});
+
+async function interruptedFixture(captureOrigin=false){
+ const h=await fixture(undefined,{captureOrigin});try{
+  const inspected=await tool(h,h.pm,{action:'inspect',taskId:h.task.taskId,runId:h.run.runId});
+  await tool(h,h.pm,{action:'reconcile',taskId:h.task.taskId,runId:h.run.runId,commandId:'close-original-auth',expectedEvidenceVersion:inspected.value.evidence.evidenceVersion,expectedActionVersion:inspected.value.actionVersion});
+  await h.projects.actOnTask({action:'retry',commandId:'prepare-generic-interruption',taskId:h.task.taskId,runId:h.run.runId,expectedVersion:h.ledger.taskActionState(h.task.taskId).version,confirmationRevision:1,expectedExecutionMs:60000});
+  h.ledger.recordNodeHeartbeat('interrupted-local-up',{nodeId:'local',runtimeReady:true,activeExecutions:0});h.projects.tick();h.projects.tick();
+  const previous=h.run,run=h.ledger.snapshot().runs.find(run=>run.runId!==previous.runId),claim=h.ledger.claim('interrupted-local-claim',{runId:run.runId,nodeId:'local',ttlMs:10000}).value;
+  const resume=h.ctx.agents.resume.bind(h.ctx.agents);h.ctx.agents.resume=async()=>{throw Error('Injected writer acquisition failure before input admission');};
+  try{await assert.rejects(h.ctx.taskSystem.native.execute(claim),/Injected writer acquisition/);}finally{h.ctx.agents.resume=resume;}
+  return{...h,previous,run:h.ledger.getRun(run.runId),claim};
+ }catch(error){await h.dispose();throw error;}
+}
+
+test('bound PM verifies a durable pre-input interruption stopped while preserving business result uncertainty, then replays the exact receipt',async()=>{
+ const h=await interruptedFixture();try{
+  const inspected=await tool(h,h.pm,{action:'inspect',taskId:h.task.taskId,runId:h.run.runId});assert.equal(inspected.isError,false);
+  assert.equal(inspected.value.canReconcile,true);assert.equal(inspected.value.evidence.status,'stopped-result-unproven');assert.equal(inspected.value.evidence.businessResult,'unproven');
+  const request={action:'reconcile',commandId:'formal-stopped-only',taskId:h.task.taskId,runId:h.run.runId,expectedEvidenceVersion:inspected.value.evidence.evidenceVersion,expectedActionVersion:inspected.value.actionVersion};
+  const result=await tool(h,h.pm,request);assert.equal(result.isError,false,JSON.stringify(result));assert.equal(result.value.reconciled,true);assert.equal(result.value.runState,'failed');assert.equal(result.value.evidence.businessResult,'unproven');
+  const replay=await tool(h,h.pm,request);assert.equal(replay.isError,false);assert.equal(replay.value.evidence.evidenceVersion,result.value.evidence.evidenceVersion);
+  assert.equal(h.ledger.snapshot().runs.length,2);assert.equal(h.ledger.getRun(h.previous.runId).state,'failed');
+  const later=await tool(h,h.pm,{action:'inspect',taskId:h.task.taskId,runId:h.run.runId});assert.equal(later.value.evidence.businessResult,'unproven');assert.equal(later.value.hasResultReport,false);
+ }finally{await h.dispose();}
+});
+
+test('interruption proof rejects missing or mismatched durable receipts, unmatched ledger timing and actual execution-start evidence',async()=>{
+ const h=await interruptedFixture();try{
+  const db=h.ledger.managementDatabase(),id='interrupted:'+h.claim.attempt.attemptId,row=db.prepare('SELECT digest,receipt FROM commands WHERE id=?').get(id);
+  db.prepare('UPDATE commands SET digest=? WHERE id=?').run('tampered',id);
+  assert.equal((await tool(h,h.pm,{action:'inspect',taskId:h.task.taskId,runId:h.run.runId})).value.canReconcile,false);
+  db.prepare('UPDATE commands SET digest=? WHERE id=?').run(row.digest,id);
+  const receipt=JSON.parse(row.receipt);receipt.value.currentAttemptId='another-attempt';db.prepare('UPDATE commands SET receipt=? WHERE id=?').run(JSON.stringify(receipt),id);
+  assert.equal((await tool(h,h.pm,{action:'inspect',taskId:h.task.taskId,runId:h.run.runId})).value.canReconcile,false);
+  db.prepare('UPDATE commands SET receipt=? WHERE id=?').run(row.receipt,id);
+  const eventRow=db.prepare("SELECT seq,data FROM events WHERE run_id=? AND json_extract(data,'$.type')='run.settled'").get(h.run.runId),event=JSON.parse(eventRow.data);
+  event.at=new Date(Date.parse(JSON.parse(row.receipt).acceptedAt)+3).toISOString();db.prepare('UPDATE events SET data=? WHERE seq=?').run(JSON.stringify(event),eventRow.seq);
+  assert.equal((await tool(h,h.pm,{action:'inspect',taskId:h.task.taskId,runId:h.run.runId})).value.canReconcile,true,'Real3ms transaction timestamp skew is valid');
+  event.at=new Date(Date.parse(JSON.parse(row.receipt).acceptedAt)+31000).toISOString();db.prepare('UPDATE events SET data=? WHERE seq=?').run(JSON.stringify(event),eventRow.seq);
+  assert.equal((await tool(h,h.pm,{action:'inspect',taskId:h.task.taskId,runId:h.run.runId})).value.canReconcile,false);
+  db.prepare('UPDATE events SET data=? WHERE seq=?').run(eventRow.data,eventRow.seq);
+  db.prepare('INSERT INTO events(id,task_id,run_id,data) VALUES(?,?,?,?)').run('injected-start',h.task.taskId,h.run.runId,JSON.stringify({type:'run.execution_started',at:new Date().toISOString(),detail:{attemptId:h.claim.attempt.attemptId}}));
+  assert.equal((await tool(h,h.pm,{action:'inspect',taskId:h.task.taskId,runId:h.run.runId})).value.canReconcile,false);
+  assert.equal(h.ledger.getRun(h.run.runId).state,'uncertain');assert.equal(h.ledger.snapshot().runs.length,2);
+ }finally{await h.dispose();}
+});
+
+test('an active later user turn blocks stop verification and its later reply never becomes the old business result',async()=>{
+ const h=await interruptedFixture(),release=Promise.withResolvers();try{
+  const target=h.ledger.sessionMessageTargets(h.task.taskId)[0],opened=await h.ctx.sessionController.resolveAgent(SessionId(target.sessionId)),entered=Promise.withResolvers();
+  h.adapter.script.push(async()=>{entered.resolve();await release.promise;return 'A later ordinary acknowledgement, not the old task result';});
+  opened.agent.followup(createUserMessage({source:{kind:'user'},content:[{type:'text',text:'Only acknowledge this new user turn'}]}));await entered.promise;
+  const busy=await tool(h,h.pm,{action:'inspect',taskId:h.task.taskId,runId:h.run.runId});assert.equal(busy.value.canReconcile,false);
+  release.resolve();await opened.agent.whenIdle();await h.ctx.sessions.flush(opened.agent.session);
+  const stopped=await tool(h,h.pm,{action:'inspect',taskId:h.task.taskId,runId:h.run.runId});assert.equal(stopped.value.canReconcile,true);assert.equal(stopped.value.evidence.businessResult,'unproven');assert.equal(stopped.value.hasResultReport,false);
+ }finally{release.resolve();await h.dispose();}
+});
+
+test('the task-center manual check drives the real PM through status, evidence inspection and settlement without retry',async()=>{
+ const h=await interruptedFixture(true);try{
+  await h.projects.actOnTask({action:'check',commandId:'manual-stop-button',taskId:h.task.taskId,runId:h.run.runId,expectedVersion:h.ledger.taskActionState(h.task.taskId).version,confirmationRevision:1});
+  const message=h.ledger.pendingSessionMessages('local',{kind:'continuation'}).find(message=>message.checkIn?.manualChecks?.some(scope=>scope.taskId===h.task.taskId));assert.ok(message,JSON.stringify({view:h.ledger.checkins.view(h.task.taskId),pending:h.ledger.pendingSessionMessages('local',{kind:'continuation'})}));
+  const results=[];h.ctx.on('tools/result',(exec,result)=>{if(exec.agent===h.pm&&['task_checkin','task_execution_status'].includes(exec.name))results.push({name:exec.name,result});});
+  h.adapter.script.push(options=>{
+   assert.ok(options.tools.some(tool=>tool.name==='task_checkin'));assert.ok(options.tools.some(tool=>tool.name==='task_execution_status'));assert.ok(!options.tools.some(tool=>tool.name==='task_dispatch'));
+   return{name:'task_checkin',args:{action:'status',taskId:h.task.taskId}};
+  },()=>{assert.equal(results.at(-1)?.result.isError,false);return{name:'task_execution_status',args:{action:'inspect',taskId:h.task.taskId,runId:h.run.runId}};},()=>{
+   const inspected=results.at(-1).result;assert.equal(inspected.isError,false);assert.equal(inspected.value.canReconcile,true);
+   return{name:'task_execution_status',args:{action:'reconcile',commandId:'manual-pm-stopped',taskId:h.task.taskId,runId:h.run.runId,expectedEvidenceVersion:inspected.value.evidence.evidenceVersion,expectedActionVersion:inspected.value.actionVersion}};
+  },()=>{assert.equal(results.at(-1).result.isError,false);return 'The invocation has stopped; its research result remains unproven. No retry was performed.';});
+  const receipt=await h.ctx.taskSystem.taskReturns.deliver(message);h.ledger.completeSessionMessage('manual-stop-ack',{messageId:message.messageId,nodeId:'local',state:'completed',...receipt});
+  assert.equal(h.ledger.getRun(h.run.runId).state,'failed');assert.equal(h.ledger.snapshot().runs.length,2);assert.equal(h.ledger.getSessionMessage(message.messageId).state,'completed');const source=await h.ctx.sessionPersistence.open(SessionId(h.sessionId),'read');try{const {events}=await source.read();assert.ok(events.some(event=>event.type==='assistant/message'&&JSON.stringify(event.data).includes('research result remains unproven')));}finally{await source.close();}
+ }finally{await h.dispose();}
 });

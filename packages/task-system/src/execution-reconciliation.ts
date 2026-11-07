@@ -4,6 +4,7 @@ import { SessionId, type SessionEvent } from "@deepseek-ai/dsh-session";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { canonical, TaskError } from "./ledger.js";
+import type { Run, Attempt } from "./contracts.js";
 import type { TaskSystemService } from "./dsh-plugin.js";
 
 const key = z.string().min(1).max(200);
@@ -19,7 +20,7 @@ export const ExecutionStatusRequest = z.discriminatedUnion("action", [
   }),
 ]);
 type Request = z.infer<typeof ExecutionStatusRequest>;
-const nativeFailureEvidence = z.strictObject({
+const authFailureEvidence = z.strictObject({
   kind: z.literal("native-auth-zero-tools-v1"),
   coordinatorSessionId: key,
   nodeId: key,
@@ -36,6 +37,26 @@ const nativeFailureEvidence = z.strictObject({
   actionVersion: key,
   evidenceVersion: key,
 });
+const interruptedStopEvidence = z.strictObject({
+  kind: z.literal("native-interrupted-stopped-v1"),
+  coordinatorSessionId: key,
+  nodeId: key,
+  sessionId: key,
+  attemptId: key,
+  executionId: key,
+  fence: z.number().int().positive(),
+  interruptionCommandId: key,
+  interruptedAt: z.iso.datetime(),
+  eventCount: z.number().int().nonnegative().max(2000),
+  lastSeq: z.number().int().min(-1),
+  businessResult: z.literal("unproven"),
+  actionVersion: key,
+  evidenceVersion: key,
+});
+const nativeFailureEvidence = z.discriminatedUnion("kind", [
+  authFailureEvidence,
+  interruptedStopEvidence,
+]);
 export type NativeFailureEvidence = z.infer<typeof nativeFailureEvidence>;
 const digest = (value: unknown) =>
   createHash("sha256").update(canonical(value)).digest("hex");
@@ -178,6 +199,123 @@ export function nativeFailureFacts(
   };
 }
 
+export function interruptedStopFacts(
+  service: TaskSystemService,
+  run: Run,
+  attempt: Attempt,
+  events: readonly SessionEvent[],
+) {
+  if (
+    run.state !== "uncertain" ||
+    attempt.state !== "uncertain" ||
+    !attempt.executionId ||
+    events.length > 2000 ||
+    events.some((event, index) => event.seq !== index) ||
+    run.resultSummary !==
+      "Native execution interrupted: native-runtime-error" ||
+    service.results.get(`native-result:${attempt.attemptId}`)
+  )
+    return;
+  const ledger = service.ledger,
+    db = ledger.managementDatabase();
+  const interruptionCommandId = `interrupted:${attempt.attemptId}`;
+  const ref = {
+    runId: run.runId,
+    attemptId: attempt.attemptId,
+    nodeId: attempt.nodeId,
+    fence: attempt.fence,
+    executionId: attempt.executionId,
+  };
+  const interrupted = ledger.commandReceipt<Run>(interruptionCommandId);
+  if (
+    !interrupted ||
+    !ledger.commandMatches(interruptionCommandId, "submit", {
+      ...ref,
+      outcome: "unknown",
+      summary: "Native execution interrupted: native-runtime-error",
+    }) ||
+    interrupted.value.runId !== run.runId ||
+    interrupted.value.taskId !== run.taskId ||
+    interrupted.value.currentAttemptId !== attempt.attemptId ||
+    interrupted.value.state !== "uncertain"
+  )
+    return;
+  if (
+    db
+      .prepare(
+        "SELECT 1 FROM events WHERE run_id=? AND json_extract(data,'$.type')='run.execution_started' LIMIT 1",
+      )
+      .get(run.runId)
+  )
+    return;
+  const settled = db
+    .prepare(
+      "SELECT data FROM events WHERE run_id=? AND json_extract(data,'$.type')='run.settled' ORDER BY seq DESC LIMIT 1",
+    )
+    .get(run.runId);
+  const parsed = z
+    .object({
+      at: z.iso.datetime(),
+      detail: z.object({
+        outcome: z.literal("unknown"),
+        summary: z.literal(
+          "Native execution interrupted: native-runtime-error",
+        ),
+      }),
+    })
+    .safeParse(settled ? JSON.parse(String(settled.data)) : undefined);
+  if (!parsed.success) return;
+  const transactionMs =
+    Date.parse(parsed.data.at) - Date.parse(interrupted.acceptedAt);
+  if (
+    transactionMs < 0 ||
+    transactionMs > 30_000 ||
+    Number(
+      db
+        .prepare(
+          "SELECT COUNT(*) n FROM entities WHERE kind='attempt' AND parent=?",
+        )
+        .get(run.runId)?.n,
+    ) !== 1 ||
+    Number(
+      db
+        .prepare(
+          "SELECT COUNT(*) n FROM events WHERE run_id=? AND json_extract(data,'$.type')='run.settled'",
+        )
+        .get(run.runId)?.n,
+    ) !== 1
+  )
+    return;
+  const sourceReference = z.object({
+    kind: z.literal("dsh-task"),
+    runId: z.string().optional(),
+    attemptId: z.string().optional(),
+  });
+  const matches = (source: unknown) => {
+    const parsed = sourceReference.safeParse(source);
+    return (
+      parsed.success &&
+      (parsed.data.runId === run.runId ||
+        parsed.data.attemptId === attempt.attemptId)
+    );
+  };
+  for (const event of events) {
+    if (event.type === "user/message" && matches(event.data.source)) return;
+    if (
+      event.type === "agent/inbox/spliced" &&
+      event.data.inserted.some((message) => matches(message.source))
+    )
+      return;
+  }
+  return {
+    interruptionCommandId,
+    interruptedAt: interrupted.acceptedAt,
+    eventCount: events.length,
+    lastSeq: events.at(-1)?.seq ?? -1,
+    businessResult: "unproven" as const,
+  };
+}
+
 export async function nativeExecutionStatus(
   ctx: Context,
   service: TaskSystemService,
@@ -272,20 +410,37 @@ export async function nativeExecutionStatus(
       runState: replay.value.state,
       reconciled: true,
       canReconcile: false,
-      evidence: { status: "proven-start-failure", ...event.detail.evidence },
+      evidence: {
+        status:
+          event.detail.evidence.kind === "native-interrupted-stopped-v1"
+            ? "stopped-result-unproven"
+            : "proven-start-failure",
+        ...event.detail.evidence,
+      },
       notice: "已返回同一持久核实回执；未重新执行或重复结算。",
     };
   }
-  if (!["uncertain", "running", "queued"].includes(run.state))
+  if (!["uncertain", "running", "queued"].includes(run.state)) {
+    const row = db
+      .prepare(
+        "SELECT data FROM events WHERE run_id=? AND json_extract(data,'$.type')='run.reconciled' ORDER BY seq DESC LIMIT 1",
+      )
+      .get(run.runId);
+    const stopped = interruptedStopEvidence.safeParse(
+      row ? JSON.parse(String(row.data)).detail?.evidence : undefined,
+    );
     return {
       ...base,
       reconciled: false,
       canReconcile: false,
-      evidence: {
-        status: "ledger-terminal",
-        reason: "账本已有正式终态；报告不等于用户验收。",
-      },
+      evidence: stopped.success
+        ? { status: "stopped-result-unproven", ...stopped.data }
+        : {
+            status: "ledger-terminal",
+            reason: "账本已有正式终态；报告不等于用户验收。",
+          },
     };
+  }
   if (
     service.config.centralMode !== "host" ||
     !attempt ||
@@ -326,6 +481,12 @@ export async function nativeExecutionStatus(
   const active = () => {
     const live = agents.get(sessionId);
     return (
+      !!db
+        .prepare(
+          "SELECT 1 FROM entities WHERE kind='attempt' AND state IN ('leased','running') AND json_extract(data,'$.sessionId')=? LIMIT 1",
+        )
+        .get(String(sessionId)) ||
+      service.native?.hasOwnedSession(String(sessionId)) ||
       service.native?.hasOwnedExecution({
         runId: run.runId,
         attemptId: attempt.attemptId,
@@ -366,7 +527,11 @@ export async function nativeExecutionStatus(
     provider: run.route.provider,
     model: run.route.model,
   });
-  if (!proof.proven) return unknown(proof.reason);
+  const stopped =
+    !proof.proven && service.native && reports.length === 0
+      ? interruptedStopFacts(service, run, attempt, events)
+      : undefined;
+  if (!proof.proven && !stopped) return unknown(proof.reason);
   authorize();
   signal.throwIfAborted();
   const after = await persistence.stat(sessionId);
@@ -390,22 +555,31 @@ export async function nativeExecutionStatus(
       "CONFLICT",
       "Execution evidence changed; inspect again before reconciliation",
     );
-  const facts = {
-    kind: "native-auth-zero-tools-v1" as const,
+  const common = {
     coordinatorSessionId: String(agent.id),
     nodeId: attempt.nodeId,
     sessionId: String(sessionId),
     attemptId: attempt.attemptId,
     executionId: attempt.executionId,
     fence: attempt.fence,
-    turn: proof.turn,
-    fromSeq: proof.fromSeq,
-    terminalSeq: proof.terminalSeq,
-    code: "AUTH" as const,
-    httpStatus: 401 as const,
-    toolCallCount: 0 as const,
     actionVersion,
   };
+  const facts = proof.proven
+    ? {
+        ...common,
+        kind: "native-auth-zero-tools-v1" as const,
+        turn: proof.turn,
+        fromSeq: proof.fromSeq,
+        terminalSeq: proof.terminalSeq,
+        code: "AUTH" as const,
+        httpStatus: 401 as const,
+        toolCallCount: 0 as const,
+      }
+    : {
+        ...common,
+        kind: "native-interrupted-stopped-v1" as const,
+        ...stopped!,
+      };
   const evidence: NativeFailureEvidence = {
     ...facts,
     evidenceVersion: digest({ ...facts, revision: after.revision }),
@@ -415,9 +589,17 @@ export async function nativeExecutionStatus(
       ...base,
       canReconcile: run.state === "uncertain",
       reconciled: false,
-      evidence: { status: "proven-start-failure", ...evidence },
+      evidence: {
+        status:
+          evidence.kind === "native-interrupted-stopped-v1"
+            ? "stopped-result-unproven"
+            : "proven-start-failure",
+        ...evidence,
+      },
       notice:
-        "原生已持久终止，未产生模型输出或工具调用；只能据此结算失败，不代表任务成功，也不重试。",
+        evidence.kind === "native-interrupted-stopped-v1"
+          ? "持久中断回执与当前所有者状态确认此次调用已经停止，未提交可信业务结果；旧研究结果仍未知，不代表从未执行或成功。核实本身不重跑。"
+          : "原生已持久终止，未产生模型输出或工具调用；只能据此结算失败，不代表任务成功，也不重试。",
     };
   authorize();
   signal.throwIfAborted();
@@ -432,7 +614,9 @@ export async function nativeExecutionStatus(
       runId: run.runId,
       outcome: "failed",
       reason:
-        "调度会话依据完整原生记录确认启动期 AUTH/401、无模型输出和工具调用，原执行已结束；未重新执行。",
+        evidence.kind === "native-interrupted-stopped-v1"
+          ? "调度会话依据确切持久中断回执、完整原生记录与当前所有者核实此次调用已停止，未提交业务结果；历史业务结果仍未知，不代表从未执行。未重跑。"
+          : "调度会话依据完整原生记录确认启动期 AUTH/401、无模型输出和工具调用，原执行已结束；未重新执行。",
       expectedActionVersion: input.expectedActionVersion,
       evidence,
     },
@@ -442,7 +626,16 @@ export async function nativeExecutionStatus(
     runState: result.value.state,
     reconciled: true,
     canReconcile: false,
-    evidence: { status: "proven-start-failure", ...evidence },
-    notice: "已据证结算失败；未派发或重跑任务。",
+    evidence: {
+      status:
+        evidence.kind === "native-interrupted-stopped-v1"
+          ? "stopped-result-unproven"
+          : "proven-start-failure",
+      ...evidence,
+    },
+    notice:
+      evidence.kind === "native-interrupted-stopped-v1"
+        ? "已据证核实此次运行停止；历史业务结果仍未知。未派发或重跑任务。"
+        : "已据证结算失败；未派发或重跑任务。",
   };
 }

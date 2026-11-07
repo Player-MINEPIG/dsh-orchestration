@@ -82,6 +82,7 @@ const TOOLS = [
   "task_wait",
   "task_session_message",
   "task_execution_status",
+  "task_checkin",
   "steward_recall",
 ];
 interface ProjectRow {
@@ -1840,7 +1841,7 @@ export class ProjectRuntime {
     }
     if (input.action === "check") {
       if (view.version !== input.expectedVersion) throw new TaskError("CONFLICT", "Task changed; refresh before checking");
-      return this.ledger.checkins.request(input.commandId,input.taskId);
+      return this.ledger.checkins.request(input.commandId,input.taskId,{manualVerification:true});
     }
     if (input.action === "retry") return this.retryTask(input);
     if (input.action === "repair") {

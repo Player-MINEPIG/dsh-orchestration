@@ -315,3 +315,14 @@ test('ready check-in preserves the authority owners complete continuation throug
  f.reopen();const resumed=f.messages()[0];assert.equal(resumed.messageId,message.messageId);assert.deepEqual(resumed.checkIn.origin.continuation,continuation);
  assert.deepEqual(f.l.getTask(task.taskId).dispatchOrigin.continuation,continuation);
 });
+
+test('explicit manual verification waits behind the old automatic check without upgrading it or losing the request',t=>{
+ const f=fixture(t),task=f.task('manual-after-automatic', {...owner(),composition:{provider:'offline',model:'script',tools:['task_query','task_history','task_wait']}});
+ f.advance(2000);f.l.checkins.tick();const first=f.messages()[0];assert.equal(first.checkIn.automatic,true);assert.equal(first.checkIn.manualChecks,undefined);
+ f.l.checkins.request('old-model-request',task.taskId);assert.equal(f.l.managementDatabase().prepare("SELECT json_extract(data,'$.requested') requested FROM entities WHERE kind='taskCheckin' AND id=?").get(task.taskId).requested,null);
+ f.l.checkins.request('actual-operator-check',task.taskId,{manualVerification:true});
+ assert.equal(f.messages().length,1);assert.equal(f.messages()[0].messageId,first.messageId);assert.equal(f.messages()[0].checkIn.manualChecks,undefined);
+ f.reopen();f.ack(first,'finish-original-auto');f.l.checkins.tick();const next=f.messages()[0];assert.ok(next);assert.notEqual(next.messageId,first.messageId);assert.equal(next.checkIn.automatic,false);
+ assert.deepEqual(next.checkIn.manualChecks,[{taskId:task.taskId,commandId:'actual-operator-check'}]);
+ f.ack(next,'finish-manual');f.l.checkins.tick();assert.equal(f.messages().length,0);
+});

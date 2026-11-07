@@ -32,6 +32,7 @@ export class StewardTurnPermissions {
       if (!exec.agent || !this.db.prepare("SELECT 1 FROM steward_sources WHERE json_extract(data,'$.binding.sessionId')=? LIMIT 1").get(exec.agent.id)) return;
       if (!this.ctx.get("sandboxPolicy") || this.canWrite(exec.agent)) return;
       if (exec.name === "steward_create_project" || exec.name.startsWith("task_") && !["task_nodes", "task_query", "task_history", "task_wait", "task_alerts"].includes(exec.name) || exec.name.startsWith("project_") && exec.name !== "project_list") {
+        if (exec.name === "task_checkin" && z.object({action:z.literal("status")}).safeParse(exec.arguments).success) return;
         if (exec.name === "task_execution_status" && z.object({action:z.literal("inspect")}).safeParse(exec.arguments).success) return;
         if (exec.name === "task_observations" && z.object({action:z.literal("list")}).safeParse(exec.arguments).success) return;
         if (exec.name === "task_session_message") {

@@ -1,9 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {generateKeyPairSync} from 'node:crypto';
+import {createRequire} from 'node:module';
+import {join} from 'node:path';
+import {pathToFileURL} from 'node:url';
 import {SessionId} from '@deepseek-ai/dsh-session';
 import {createUserMessage,ToolCallId} from '@deepseek-ai/dsh-llm';
 import {createNativeHarness} from './native-harness.mjs';
+import {applyCheckinSurface,manualCheckFor} from '../../packages/task-system/dist/task-checkin-surface.js';
 import {TaskReturnDelivery} from '../../packages/task-system/dist/task-returns.js';
 import {TaskReturnInbox} from '../../packages/task-system/dist/remote/task-return-inbox.js';
 import {RemoteClient,RemoteLedgerClient,RemoteGateway,RecoveryStore,IdentityVerifier} from '../../packages/task-system/dist/remote/api.js';
@@ -111,5 +115,79 @@ test('controller-owned check-in follows the actual per-message model rather than
   const another={...message,messageId:'new-selection-event',checkIn:{...message.checkIn,eventId:'new-selection-event'}};
   const changed=new TaskReturnDelivery(h.ctx);try{await assert.rejects(changed.deliver(another),e=>e.code==='CHECKIN_COMPOSITION_UNAVAILABLE');}finally{await changed.dispose();}
   assert.equal(h.adapter.requests.length,2,'New explicit model selection is preserved, not overwritten');
+ }finally{await h.dispose();}
+});
+
+async function legacyDraft(h,id){
+ const handle=await h.ctx.agents.create({sessionId:SessionId(id),meta:{cwd:h.dir},agentOptions:{provider:'test-offline',model:'script'}});
+ const off=handle.agent.ctx.tools.restrict({deny:['task_checkin','task_execution_status']});
+ await call(h,handle.agent,'task_create',{commandId:'legacy-'+id,title:'Task '+id});off();
+ return{handle,task:h.ledger.snapshot().tasks.find(task=>task.title==='Task '+id)};
+}
+
+test('manual task-center check advertises and runs scoped status first despite a legacy mask, then restores ordinary tools',async()=>{
+ const h=await createNativeHarness({config:{centralMode:'host',executionEnabled:false}});try{
+  const {handle,task}=await legacyDraft(h,'legacy-manual');assert.ok(!task.dispatchOrigin.composition.tools.includes('task_checkin'));
+  const view=h.ledger.taskActionState(task.taskId);await h.ctx.taskSystem.projects.actOnTask({action:'check',commandId:'current-button',taskId:task.taskId,expectedVersion:view.version,runId:null,confirmationRevision:1});
+  const message=h.ledger.pendingSessionMessages('local',{kind:'continuation'})[0];assert.equal(message.checkIn.manualChecks[0].taskId,task.taskId);
+  let status;h.ctx.on('tools/result',(exec,result)=>{if(exec.name==='task_checkin')status=result;});
+  h.adapter.script.push(options=>{const tools=options.tools.map(tool=>tool.name);assert.ok(tools.includes('task_checkin'));assert.ok(!tools.includes('task_dispatch'));assert.ok(!tools.includes('task_session_message'));assert.ok(!tools.includes('read'));return{name:'task_checkin',args:{action:'status',taskId:task.taskId}};},()=>{assert.equal(status.isError,false,JSON.stringify(status));return 'CHECKED_WITHOUT_EXECUTION';});
+  const receipt=await h.ctx.taskSystem.taskReturns.deliver(message);h.ledger.completeSessionMessage('ack-current-button',{messageId:message.messageId,nodeId:'local',state:'completed',...receipt});
+  h.adapter.script.push(options=>{assert.ok(options.tools.some(tool=>tool.name==='task_dispatch'));assert.ok(options.tools.some(tool=>tool.name==='task_execution_status'));return 'ORDINARY_TOOLS_RESTORED';});
+  handle.agent.followup(createUserMessage({source:{kind:'user'},content:[{type:'text',text:'A separate ordinary user turn'}]}));await handle.agent.whenIdle();assert.equal(h.ledger.snapshot().runs.length,0);
+ }finally{await h.dispose();}
+});
+
+test('old automatic capability snapshots hide unavailable check-in tools and use the available query instead',async()=>{
+ const h=await createNativeHarness({config:{centralMode:'host',executionEnabled:false}});try{
+  const {task}=await legacyDraft(h,'legacy-auto');h.ledger.clock=()=>Date.now()+31*60000;h.ledger.checkins.tick();
+  const message=h.ledger.pendingSessionMessages('local',{kind:'continuation'})[0];assert.equal(message.checkIn.automatic,true);assert.equal(message.checkIn.manualChecks,undefined);
+  let result;h.ctx.on('tools/result',(exec,value)=>{if(exec.name==='task_query')result=value;});
+  h.adapter.script.push(options=>{assert.ok(!options.tools.some(tool=>tool.name==='task_checkin'));assert.ok(!options.tools.some(tool=>tool.name==='task_execution_status'));return{name:'task_query',args:{taskId:task.taskId}};},()=>{assert.equal(result.isError,false);return 'OLD_SCOPE_FACTS_ONLY';});
+  const receipt=await h.ctx.taskSystem.taskReturns.deliver(message);h.ledger.completeSessionMessage('ack-old-auto',{messageId:message.messageId,nodeId:'local',state:'completed',...receipt});assert.equal(h.ledger.snapshot().runs.length,0);
+ }finally{await h.dispose();}
+});
+
+test('manual verification retains PTC transport with a task-scoped SDK and restores the ordinary surface',async()=>{
+ const h=await createNativeHarness({config:{centralMode:'host',executionEnabled:false}});let undo;
+ try{
+  const req=createRequire(join(process.env.DSH_OFFICIAL_ROOT,'package.json'));
+  for(const [id,name,config] of [
+   ['check-fs','@deepseek-ai/dsh-fs-local',{cwd:h.dir}],
+   ['check-directory','@deepseek-ai/dsh-working-directory',{defaultDirectory:h.dir}],
+   ['check-sandbox','@deepseek-ai/dsh-sandbox-local'],
+   ['check-policy','@deepseek-ai/dsh-sandbox-policy',{mode:'danger-full-access',workspaceRoot:h.dir}],
+   ['check-subprocess','@deepseek-ai/dsh-subprocess-local'],
+   ['check-ptc','@deepseek-ai/dsh-ptc-runtime-node'],
+  ])await h.ctx.loader.create({id,name:pathToFileURL(req.resolve(name)).href,config});
+  await h.ctx.loader.await();
+  const {handle,task}=await legacyDraft(h,'ptc-manual');undo=handle.agent.ctx.tools.presentAs('ptc');
+  await h.ctx.taskSystem.projects.actOnTask({action:'check',commandId:'ptc-current-button',taskId:task.taskId,expectedVersion:h.ledger.taskActionState(task.taskId).version,runId:null,confirmationRevision:1});
+  const message=h.ledger.pendingSessionMessages('local',{kind:'continuation'})[0];let result;
+  h.ctx.on('tools/result',(exec,value)=>{if(exec.name==='task_checkin')result=value;});
+  h.adapter.script.push(options=>{
+   assert.deepEqual(options.tools.map(tool=>tool.name),['run_code']);
+   const prompt=options.messages.flatMap(message=>message.content??[]).filter(block=>block.type==='text').map(block=>block.text).join('\n');
+   assert.match(prompt,/JSON contracts:/);assert.match(prompt,/"name":"task_checkin"/);assert.doesNotMatch(prompt,/"name":"task_dispatch"/);
+   return{name:'run_code',args:{code:'return await tools.task_checkin('+JSON.stringify({action:'status',taskId:task.taskId})+');',description:'Inspect only the authorized task'}};
+  },()=>{assert.equal(result?.isError,false,JSON.stringify(result));return 'PTC_SOURCE_SCOPED_CHECK_DONE';});
+  const receipt=await h.ctx.taskSystem.taskReturns.deliver(message);h.ledger.completeSessionMessage('ack-ptc-manual',{messageId:message.messageId,nodeId:'local',state:'completed',...receipt});
+  assert.ok(handle.agent.ctx.tools.get('task_dispatch',handle.agent),'Ordinary capability restored');
+  assert.ok(handle.agent.ctx.tools.schemas(handle.agent).some(tool=>tool.name==='run_code'),'Presentation unchanged');
+  assert.equal(h.ledger.snapshot().runs.length,0);
+ }finally{undo?.();await h.dispose();}
+});
+
+test('a failed check surface installation removes all partial guards and grants',async()=>{
+ const h=await createNativeHarness({config:{centralMode:'host',executionEnabled:false}});
+ try{
+  const {handle,task}=await legacyDraft(h,'failed-surface');
+  const agent=handle.agent, originalOn=agent.ctx.on;
+  agent.ctx.on=function(name,...args){if(name==='system-prompt/assemble')throw new Error('Synthetic hook installation failure');return originalOn.call(this,name,...args);};
+  const message={messageId:'failed-install',checkIn:{automatic:false,manualChecks:[{taskId:task.taskId,commandId:'grant',runId:'run'}]}};
+  try{assert.throws(()=>applyCheckinSurface(agent,message,[]),/Synthetic hook installation failure/);}finally{agent.ctx.on=originalOn;}
+  assert.equal(manualCheckFor(agent,task.taskId,'run'),undefined);
+  assert.ok(agent.ctx.tools.get('task_dispatch',agent));
+  const status=await call(h,agent,'task_query',{taskId:task.taskId});assert.ok(status);
  }finally{await h.dispose();}
 });
