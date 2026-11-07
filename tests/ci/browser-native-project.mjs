@@ -29,19 +29,19 @@ async function startHost() {
   const packages = join(process.env.DSH_HOME, 'profiles', profile, 'node_modules', '@dsh-task');
   mkdirSync(packages, { recursive: true });
   symlinkSync(join(repo, 'packages/task-system'), join(packages, 'task-system'), 'dir');
-  const patch = join(directory, 'browser.patch.yml');
+  const patch = join(process.env.DSH_HOME, 'profiles', profile, 'cordis.patch.yml');
   writeFileSync(patch, JSON.stringify([
     { id: 'webserver', config: { host: '127.0.0.1', port: 0, compression: 'none' } },
     { id: 'session-title-llm', disabled: true },
     { id: 'agent-default-model', config: { provider: 'test-offline', model: 'script' } },
     { insert: [
-      { id: 'browser-task', name: '@dsh-task/task-system/plugin', config: { role: 'planner', nodeId: 'local', databasePath: join(directory, 'tasks.sqlite'), executionEnabled: false, keepAlive: false, schedulerEnabled: false, autoExecute: false, projectAgentOptions: { provider: 'test-offline', model: 'script' } } },
+      { id: 'task-system', name: '@dsh-task/task-system/plugin', config: { role: 'planner', nodeId: 'local', databasePath: join(directory, 'tasks.sqlite'), executionEnabled: false, keepAlive: false, schedulerEnabled: false, autoExecute: false, projectAgentOptions: { provider: 'test-offline', model: 'script' } } },
       { id: 'browser-task-settings', name: '@dsh-task/task-system' },
     ] },
   ]));
   let ctx;
   try {
-    ({ ctx } = await runProfile({ profile, patchFiles: [patch], args: ['--no-open'], environment: createLaunchEnvironmentSnapshot([{ source: 'process', values: { ...process.env } }]) }));
+    ({ ctx } = await runProfile({ profile, patchFiles: [], args: ['--no-open'], environment: createLaunchEnvironmentSnapshot([{ source: 'process', values: { ...process.env } }]) }));
     const model = new ScriptedModel([]);
     ctx.llm.registerAdapter(['test-offline'], model);
     const runtime = ctx.taskSystem.projects;
@@ -315,8 +315,44 @@ export async function testNativeProject(browser, { output } = {}) {
     assert.equal(host.model.requests.length,modelCallsBeforeNavigation,'Opening source history does not submit or rerun work');
     if(output)await page.screenshot({path:join(output,'task-open-original-session.png'),fullPage:true});
     console.log('native browser: task source opens the real session in its registered workspace');
+    await page.getByRole('button',{name:'项目与任务',exact:true}).click();
+    await frame.locator('[data-action="task-settings"]').click();
+    const settings=page.locator('[data-task-plugin-settings]');
+    await settings.waitFor();
+    assert.equal(await settings.locator('[data-settings-area]').count(),5);
+    const concurrency=settings.locator('#task-setting-maxConcurrent');
+    const saved=await concurrency.inputValue(),draft=String(Number(saved)+1);
+    await concurrency.fill(draft);
+    await settings.locator('[data-task-save-bar]').getByRole('button',{name:'丢弃全部草稿',exact:true}).click();
+    assert.equal(await concurrency.inputValue(),saved,'Official Host discard restores saved runtime value');
+    await concurrency.fill(draft);
+    await settings.locator('[data-task-save-bar]').getByRole('button',{name:'保存设置',exact:true}).click();
+    await settings.locator('[data-task-save-bar]').getByText('设置已保存。',{exact:true}).waitFor();
+    assert.equal(host.ctx.taskSystem.config.maxConcurrent,Number(draft),'Official config update reaches the running disposable service');
+    await settings.getByRole('button',{name:'任务',exact:true}).click();
+    await frame.locator('[data-action="task-settings"]').click();
+    await concurrency.waitFor();
+    assert.equal(await concurrency.inputValue(),draft,'Official Host rereads the saved runtime value');
+    for(const [size,width] of [['desktop',1440],['mobile',390]]){
+      await page.setViewportSize({width,height:1000});
+      for(const theme of ['light','dark']){
+        await page.evaluate(theme=>document.documentElement.style.colorScheme=theme,theme);
+        await page.locator(`[data-task-plugin-settings][data-theme="${theme}"]`).waitFor();
+        assert.ok(await settings.evaluate(element=>element.scrollWidth<=element.clientWidth+1),'Official settings wrap inside the host');
+        await concurrency.fill(String(Number(draft)+1));
+        const primary=settings.locator('[data-task-save-bar]').getByRole('button',{name:'保存设置',exact:true});
+        const colors=await primary.evaluate(async element=>{await Promise.all(element.getAnimations().map(animation=>animation.finished));const style=getComputedStyle(element);return {background:style.backgroundColor,foreground:style.color};});
+        const luminance=color=>color.match(/\d+/g).slice(0,3).map(Number).map(value=>{const channel=value/255;return channel<=.04045?channel/12.92:((channel+.055)/1.055)**2.4;}).reduce((sum,value,index)=>sum+value*[.2126,.7152,.0722][index],0);
+        const contrast=(Math.max(luminance(colors.background),luminance(colors.foreground))+.05)/(Math.min(luminance(colors.background),luminance(colors.foreground))+.05);
+        assert.ok(contrast>=4.5,`Primary action contrast ${contrast} meets normal-text readability`);
+        await settings.evaluate(element=>element.parentElement.scrollTop=0);
+        if(output)await page.screenshot({path:join(output,`official-settings-${size}-${theme}.png`),fullPage:true});
+        await settings.locator('[data-task-save-bar]').getByRole('button',{name:'丢弃全部草稿',exact:true}).click();
+      }
+    }
+    console.log('native browser: official settings five sections, persisted save, discard, responsive themes passed');
     assert.deepEqual(errors, []);
-    return { legacyComposer: true, explicitOrdinaryPlacement: true, realNativeSend: true, nativePromptIdentity: prompts[0].commandId, generation: placed.nativeSession.binding.generation, placementLostAck: true, originalExecutorRecipient: true, offlineRecipientRecovery: true, mobileDrawer: true, largeImageBytes: statSync(imagePath).size, insecureContextCrypto: true, losslessHistoryFragments: frameParts };
+    return { officialSettings: true, legacyComposer: true, explicitOrdinaryPlacement: true, realNativeSend: true, nativePromptIdentity: prompts[0].commandId, generation: placed.nativeSession.binding.generation, placementLostAck: true, originalExecutorRecipient: true, offlineRecipientRecovery: true, mobileDrawer: true, largeImageBytes: statSync(imagePath).size, insecureContextCrypto: true, losslessHistoryFragments: frameParts };
   } catch (error) {
     if (output) { await page.screenshot({ path: join(output, 'native-project-failure.png'), timeout: 5000 }).catch(() => {}); writeFileSync(join(output, 'native-project-failure.html'), await page.content().catch(() => '')); writeFileSync(join(output, 'native-project-errors.json'), JSON.stringify(errors)); writeFileSync(join(output, 'native-project-native-failures.json'), JSON.stringify(nativeFailures)); writeFileSync(join(output, 'native-project-model-requests.json'), JSON.stringify(host.model.requests)); }
     console.error('native browser failed:', error.message);
