@@ -10,7 +10,11 @@ const withTheme = source => {
 const settingsClient = readFileSync(new URL("../packages/task-system/src/settings-client.js", import.meta.url), "utf8");
 const nativeClient = readFileSync(new URL("../packages/task-system/src/project-native-client.js", import.meta.url), "utf8");
 if (!settingsClient.includes("/*__PROJECT_NATIVE_CLIENT__*/")) throw new Error("Project native client placeholder is missing");
-const settingsBundle = withTheme(settingsClient).replace("/*__PROJECT_NATIVE_CLIENT__*/", () => nativeClient);
+const topicOverview = readFileSync(new URL("../packages/task-system/src/steward-topic-overview.js", import.meta.url), "utf8");
+const stewardClient = topicOverview + "\n" + readFileSync(new URL("../packages/task-system/src/steward-client.js", import.meta.url), "utf8");
+if (!settingsClient.includes("/*__STEWARD_CLIENT__*/")) throw new Error("Steward client placeholder is missing");
+const stewardNativeClient = readFileSync(new URL("../packages/task-system/src/steward-native-client.js", import.meta.url), "utf8");
+const settingsBundle = withTheme(settingsClient).replace("/*__PROJECT_NATIVE_CLIENT__*/", () => nativeClient).replace("/*__STEWARD_CLIENT__*/", () => stewardClient).replace("/*__STEWARD_NATIVE_CLIENT__*/", () => stewardNativeClient);
 new Script(settingsBundle, { filename: "settings-client.js" });
 writeFileSync(new URL("../packages/task-system/dist/settings-client.js", import.meta.url), settingsBundle);
 

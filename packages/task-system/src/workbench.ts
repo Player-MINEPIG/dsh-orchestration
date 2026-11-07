@@ -415,6 +415,7 @@ export class Workbench {
       data.projectId ?? (update ? undefined : randomUUID()),
       "projectId",
     );
+    this.ledger.assertAcceptanceProjectPlan(key);
     const old = update
       ? this.need("wb_projects", "project_id", key)
       : undefined;
@@ -491,6 +492,7 @@ export class Workbench {
     if (!old) this.exists("wb_backlogs", "backlog_id", key);
     const revision = old ? this.revision(old, data.expectedRevision) : 1;
     const projectId = id(data.projectId ?? old?.project_id, "projectId");
+    this.ledger.assertAcceptanceProjectPlan(projectId);
     this.need("wb_projects", "project_id", projectId);
     if (old && projectId !== old.project_id)
       fail("INVALID", "Backlog project cannot be reassigned");
@@ -606,6 +608,7 @@ export class Workbench {
     if (!old) this.exists("wb_milestones", "milestone_id", key);
     const revision = old ? this.revision(old, data.expectedRevision) : 1;
     const projectId = id(data.projectId ?? old?.project_id, "projectId");
+    this.ledger.assertAcceptanceProjectPlan(projectId);
     this.need("wb_projects", "project_id", projectId);
     if (old && projectId !== old.project_id)
       fail("INVALID", "Milestone project cannot be reassigned");
@@ -738,6 +741,7 @@ export class Workbench {
     const rightRow = rightTable.startsWith("wb_")
       ? this.need(rightTable, rightColumn, right)
       : this.entity<Data>(rightTable, right);
+    if (kind === "backlog_task" || kind === "milestone_task") this.ledger.assertAcceptanceProjectPlan(String(leftRow.project_id), right);
     if (
       kind === "milestone_backlog" &&
       leftRow.project_id !== rightRow.project_id

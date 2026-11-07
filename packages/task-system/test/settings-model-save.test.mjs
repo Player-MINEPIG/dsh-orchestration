@@ -4,7 +4,7 @@ import {DatabaseSync} from 'node:sqlite';
 import {ExecutionModels} from '../dist/execution-models.js';
 const {TaskPluginSettings}=await import(process.env.DSH_SETTINGS_MODULE ?? '../dist/settings.js');
 const choice={provider:'aws-vps-magpie',model:'group/gpt-ds-eco'};
-function fixture(t){
+function fixture(t,config={role:"planner",nodeId:"scheduler"}){
   const db=new DatabaseSync(':memory:');t.after(()=>db.close());
   let now=Date.now(),generation=0,refreshes=0;
   const models=new ExecutionModels(db,{now:()=>now});
@@ -16,7 +16,7 @@ function fixture(t){
   const authority={executionModels:models,getNode:()=>({enabled:true}),schedulerIdentity:()=> 'scheduler',refreshNodeModels:async()=>{refreshes++;return publish();}};
   current=authority;
   const settings=Object.create(TaskPluginSettings.prototype);
-  Object.defineProperty(settings,'ctx',{value:{get:()=>({config:{role:'planner',nodeId:'scheduler'},ledger:current})}});
+  Object.defineProperty(settings,'ctx',{value:{get:()=>({config,ledger:current})}});
   const first=publish();
   const input={nodeId:'worker',expectedRevision:0,expectedCatalogRevision:first.catalog.positiveSnapshot.revision,choice};
   return {models,authority,settings,input,publish,expire:()=>{now=Date.now()-120000;publish();now=Date.now();},refreshes:()=>refreshes,replaceAuthority:()=>{current={...authority};}};
@@ -57,4 +57,16 @@ test('partial fresh positive evidence confirms the exact tuple after refresh',as
 test('same ledger with changed scheduler identity rejects a refreshed save',async t=>{
  const f=fixture(t);f.expire();f.authority.refreshNodeModels=async()=>{const view=f.publish();f.authority.schedulerIdentity=()=> 'different-scheduler';return view;};
  await rejects(f.settings.saveNodeModelDefault(f.input),'EXECUTION_MODEL_AUTHORITY_CHANGED');assert.equal(f.models.view('worker').policy.revision,0);
+});
+
+
+test('local node model policy uses the same catalog/CAS path only when execution is enabled on the scheduler',async t=>{
+ const local=fixture(t,{role:'both',nodeId:'worker'});
+ assert.equal((await local.settings.nodeModelSettings({nodeId:'worker'})).policy.revision,0);
+ assert.deepEqual((await local.settings.saveNodeModelDefault(local.input)).policy.choice,choice);
+ for(const config of [{role:'planner',nodeId:'worker'},{centralMode:'host',executionEnabled:false,nodeId:'worker'},{role:'executor',nodeId:'worker'}]){
+  const disabled=fixture(t,config);
+  await rejects(disabled.settings.nodeModelSettings({nodeId:'worker'}),config.role==='executor'?'FORBIDDEN':'EXECUTOR_REQUIRED');
+  assert.equal(disabled.models.view('worker').policy.revision,0);
+ }
 });

@@ -16,14 +16,18 @@ window.__ModuleLoader__.load({
     const taskOperateTheme = `/*__TASK_OPERATE_THEME__*/`;
     const { Context: ClientContext } = require("@deepseek-ai/cordis");
     /*__PROJECT_NATIVE_CLIENT__*/
+    /*__STEWARD_CLIENT__*/
+    /*__STEWARD_NATIVE_CLIENT__*/
     const keys = [
       "schedulerEnabled",
       "autoExecute",
       "maxConcurrent",
       "healthAlerts",
       "localHeartbeatIntervalMs",
+      "stewardActiveDays",
     ];
     const ranges = {
+      stewardActiveDays: [1, 365],
       maxConcurrent: [1, 32],
       localHeartbeatIntervalMs: [100, 3600000],
     };
@@ -161,6 +165,8 @@ window.__ModuleLoader__.load({
       healthAlerts: "Reconcile node-health alerts",
       healthAlertsHint:
         "Runs planner-side health reconciliation during maintenance. It does not change alert destinations.",
+      stewardActiveDays: "Active topic window (days)",
+      stewardActiveDaysHint: "Show topics active in the last 1–365 days; default 30.",
       localHeartbeatIntervalMs: "Local ledger heartbeat interval (ms)",
       localHeartbeatIntervalMsHint:
         "Sampled at maintenance ticks for the configured local node. This is not the remote coordinator heartbeat interval.",
@@ -378,6 +384,8 @@ window.__ModuleLoader__.load({
       healthAlerts: "检查节点健康告警",
       healthAlertsHint:
         "由规划节点在维护轮询中检查健康状态，不改变告警接收位置。",
+      stewardActiveDays: "话题活跃窗口（天）",
+      stewardActiveDaysHint: "话题选择器显示最近 1–365 天有活动的话题，默认 30 天。",
       localHeartbeatIntervalMs: "本地账本心跳间隔（毫秒）",
       localHeartbeatIntervalMsHint:
         "维护轮询按此间隔记录已配置本机节点的心跳，不是向远端协调器发送心跳的间隔。",
@@ -2337,6 +2345,9 @@ h(
                     onSaved: afterSave,
                   })
                 : h("p",{role:"note",style:hintStyle},t("connectionSetupStatus")))),
+
+              state.value.task && nodeModelApi && deployment(state.value.task.values).centralMode === "host" && deployment(state.value.task.values).executionEnabled
+                ? h("section",{"data-local-node-model-settings":true},h("h3",null,"本机执行节点"),h(NodeModelSettings,{nodeId:state.value.task.values.nodeId,...nodeModelApi,saveCoordinator,writable:state.value.writable,active:role.centralMode === "host" && role.executionEnabled})) : null,
             )
           : null,
         h(
@@ -2852,6 +2863,10 @@ h(
     const openPlugins = (ctx) => openSettingsSection(ctx, "plugins");
     const openModels = (ctx) => openSettingsSection(ctx, "models");
     const projectMethods = [
+      "stewardUpload", "stewardUploadRead", "stewardAttachmentRead", "stewardModelCatalog", "stewardValidateModel", "stewardPermissionCatalog", "stewardValidatePermission", "stewardSourceSession", "stewardTopics", "stewardTopic", "stewardTopicSource", "stewardSnapshot", "stewardSend", "stewardReconcile", "stewardResolve",
+      "stewardMemoryRead", "stewardMemoryConfigure",
+      "stewardGateRead", "stewardGateArm", "stewardGateDecide", "stewardGateAmend", "stewardGateContinue", "stewardGateAcceptContinue",
+      "stewardGateIndependent",
       "executionPresets",
       "connectionSettings","saveConnectionSettings",
       "nodeModelSettings","refreshNodeModels","saveNodeModelDefault",
@@ -3464,6 +3479,8 @@ h(
       };
       const projectNavigation = new ProjectNavigation();
       const projectNativeClient = createProjectNativeClient({ React, Context: ClientContext, modules: ctx.modules });
+      const { StewardPanel } = createStewardClient(React);
+      const stewardNativeClient = createStewardNativeClient({ React, Context: ClientContext, modules: ctx.modules, hostContext: ctx, createPortal });
       const projectDirectoryApi = {
         openSession: sessionId => {const service=ctx.get("uiWorkspace");if(!service)throw Error("DSH 会话导航服务尚未加载");return service.openSession(sessionId);},
         list: path => {const service=ctx.get("uiWorkspace");if(!service)throw Error("DSH 目录浏览服务尚未加载，请稍后重试");return service.listDirectory(path);},
@@ -3471,6 +3488,11 @@ h(
         openSettings: () => {ctx.get("layout")?.selectPanel("dsh-task-settings");return true;},
         openModels: () => openModels(ctx),
       };
+      ctx.effect(() => {
+        const offMain = ctx.slots.inject("main", () => ctx.slots.register({ name: "main", key: "dsh-steward", children: { "steward.session.shell": { kind: "single", scope: "session" } }, inject: () => ({ invoke, openSession: projectDirectoryApi.openSession, nativeClient: stewardNativeClient }) }, StewardPanel));
+        const offNav = ctx.slots.inject("sidebar.panellist", () => ctx.slots.register({ name: "sidebar.panellist", id: "dsh-steward", order: 19, label: () => "管家" }, ProjectIcon));
+        return () => { offNav(); offMain(); };
+      }, "steward conversation");
       ctx.effect(() => mountSessionTaskPanel(ctx, invoke), "session task monitor");
       ctx.effect(() => {
         const offMain = ctx.slots.inject("main", () =>

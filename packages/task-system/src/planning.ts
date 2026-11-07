@@ -44,6 +44,8 @@ export interface PlanningInput {
   /** Host-owned previous Run; keeps its pinned template/window and parent binding. */
   retrySourceRunId?: string;
   automaticResultRetry?: boolean;
+  retryRouting?: {nodeId?: string; executionModel?: ExecutionModelChoice};
+  retryActor?: string;
 }
 /** A consumer of the independent decision plugin. All grants are operator-owned policy. */
 export class TaskPlanner {
@@ -137,6 +139,7 @@ export class TaskPlanner {
     };
   }
   async plan(input: PlanningInput, options: { signal?: AbortSignal } = {}) {
+    this.ledger.assertAcceptancePlanning(input);
     if (input.expectedExecutionMs !== undefined)
       input = { ...input, expectedExecutionMs: ExpectedExecutionMs.parse(input.expectedExecutionMs) };
     const projectId = input.projectId ?? (input.taskId ? this.ledger.projectForTask(input.taskId) : this.ledger.dispatchProjectId());

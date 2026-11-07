@@ -381,7 +381,7 @@ test('task status requests and elapsed timestamps survive snapshot refresh and u
 });
 
 
-test('a read-only follow-up keeps existing run identities and exposes honest report and messaging limitations in the planner prompt',async()=>{
+test('an adhoc read-only follow-up keeps existing run identities and does not gain project session messaging authority',async()=>{
  const h=await createNativeHarness({config:{role:'planner',projectAgentOptions:{provider:'test-offline',model:'script'}}});
  try {
   const runtime=h.ctx.taskSystem.projects;runtime.saveSettings({root:join(h.dir,'projects'),expectedRevision:0});registerExecutor(h.ledger, 'node',worker);
@@ -390,7 +390,8 @@ test('a read-only follow-up keeps existing run identities and exposes honest rep
   const before=h.ledger.snapshot();await runtime.taskConversation(task.taskId);
   h.adapter.script.push({name:'task_history',args:{taskId:task.taskId}},'账本没有完成证据；当前统筹工具不能向原执行端会话发送普通消息，不重新派发。');
   runtime.sendTask({taskId:task.taskId,commandId:'receipt-question-message',text:'不重新运行，只询问执行端已有结果'});assert.equal((await settle(h,'receipt-question-message')).state,'completed');
-  const prompt=JSON.stringify(h.adapter.requests[0].messages);assert.match(prompt,/不得断言执行端没有完成/);assert.match(prompt,/没有向执行端会话发送普通消息/);assert.match(prompt,/不得 task_dispatch/);
+  const prompt=JSON.stringify(h.adapter.requests[0].messages);assert.match(prompt,/不得断言执行端没有完成/);assert.match(prompt,/本临时任务规划会话不提供原会话通信工具/);assert.match(prompt,/不得 task_dispatch/);
+  assert.ok(!h.adapter.requests[0].tools.some(tool=>tool.name==='task_session_message'));
   const after=h.ledger.snapshot();assert.deepEqual(after.runs,before.runs);assert.deepEqual(after.attempts,before.attempts);assert.deepEqual(after.reports,before.reports);
  }finally{await h.dispose();}
 });
