@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 export async function testNativeSteward(browser, { output } = {}) {
   const memoryManagerPath = resolve('.runtime/steward-plugins/manager');
   const host = await startHost({memoryManagerPath:existsSync(memoryManagerPath)?memoryManagerPath:undefined,viewProbe:true}), errors = [], calls = [], memoryQueries = [], taskQueries = [];
-  const names = new Map([['auto','自动选择'],['personal','闲聊'],[`project:${host.created.projectId}`,'Native browser project']]);
+  const names = new Map([['auto','自动选择'],['personal','新开话题'],[`project:${host.created.projectId}`,'Native browser project']]);
   const context = await browser.newContext({ viewport: { width: 1440, height: 1100 }, locale: 'zh-CN' });
   const page = await context.newPage(); page.setDefaultTimeout(15000);
   page.on('pageerror', error => errors.push(error.message));
@@ -15,6 +15,7 @@ export async function testNativeSteward(browser, { output } = {}) {
   page.on('console', message => { if (message.type() === 'error') console.log('BROWSER', message.text()); });
   page.on('request', request => { if(request.url().includes('/api/taskPluginSettings/sessionTaskPage'))taskQueries.push(request.postDataJSON()?.payload?.args?.input?.sessionId); if(request.url().includes('/api/dsh-memory-manager/query'))memoryQueries.push(new URL(request.url()).searchParams.get('sessionId')); if (request.url().includes('/api/taskPluginSettings/stewardSend')) calls.push(request.postDataJSON()?.payload?.args?.input); });
   try {
+    await host.ctx.taskSystem.steward.configureRouting({ commandId: 'native-steward-router-model', expectedRevision: 0, fallback: { provider: 'test-offline', model: 'script' } });
     await page.goto(host.url);
     await page.waitForFunction(() => !document.querySelector('[data-dsh-boot]'));
     const preview = page.getByRole('dialog', { name: '预览版说明', exact: true });
@@ -34,14 +35,14 @@ export async function testNativeSteward(browser, { output } = {}) {
     await editor.fill('Native steward first prompt');
     await native.getByRole('button', { name: '发送消息', exact: true }).click();
     await native.locator('strong').filter({ hasText: '原生 Markdown 回复' }).waitFor();
-    assert.equal(await native.getByText('Native steward first prompt', { exact: true }).count(), 1);
+    assert.equal(await native.locator('.steward-native-user').getByText('Native steward first prompt', { exact: true }).count(), 1);
     assert.equal(calls.length, 1);
     assert.equal(host.model.requests[0].provider,'test-offline');
     assert.equal(host.model.requests[0].model,'script');
     assert.equal(await native.getByRole('button',{name:'复制',exact:true}).count(),2,'Each role has exactly one copy action');
     for(const name of ['回复','引用','跳转原会话'])assert.equal(await native.getByRole('button',{name,exact:true}).count(),2);
     await native.locator('[data-message-id]').filter({ hasText: '本轮已回复' }).waitFor();
-    const firstSource = (await host.ctx.taskSystem.steward.sourceSession({conversationId:'main',scope:{kind:'personal'}})).binding.sessionId;
+    const firstMessage=host.ctx.taskSystem.steward.store.commandMessage('main',calls[0].commandId);const firstSource=firstMessage.source.sessionId;names.set('personal',(await host.ctx.taskSystem.steward.snapshot({conversationId:'main'})).topics.find(topic=>topic.id===firstMessage.scope.topicId).title);
     await page.evaluate(()=>window.dispatchEvent(new Event('native-view-probe-enable')));
     await native.getByRole('tab',{name:'独立插件探针',exact:true}).click();
     await native.locator(`[data-independent-view-session="${firstSource}"]`).waitFor();
@@ -121,7 +122,7 @@ export async function testNativeSteward(browser, { output } = {}) {
     assert.equal(await editor.evaluate(element=>element===window.stewardEditorBeforeBrowse),true,'Browsing during the native prepaint handoff keeps the same composer');
     await page.evaluate(() => { window.requestAnimationFrame = window.savedNativeRAF; for (const callback of window.heldNativeRAF) window.requestAnimationFrame(callback); });
     await native.getByText('Frozen personal response', { exact: true }).waitFor();
-    assert.equal(calls.find(call => call.text === 'freeze personal before paint').target.kind, 'personal');
+    assert.equal(calls.find(call => call.text === 'freeze personal before paint').target.kind, 'workbench');
     const personalRequest = host.model.requests.find(request => JSON.stringify(request.messages).includes('freeze personal before paint'));
     assert.equal(JSON.stringify(personalRequest.messages).includes('ALPHA_PRIVATE_FIRST'), false);
     assert.equal(JSON.stringify(personalRequest.messages).includes('BETA_PRIVATE_FIRST'), false);
@@ -231,7 +232,7 @@ export async function testNativeSteward(browser, { output } = {}) {
     assert.equal(await editor.innerText(), 'Draft survives bounded native window reconnect');
     assert.equal(await editor.evaluate(element => element === window.retainedStewardEditor && document.activeElement === element), true, 'Pruning retains the exact focused native editor');
     assert.deepEqual(await editor.evaluate(() => ({ anchor: getSelection().anchorOffset, focus: getSelection().focusOffset })), editorState, 'Pruning retains the native caret');
-    assert.equal(await native.getByText('Native steward first prompt', { exact: true }).count(), 0, 'Capped native history drops old text together with canonical receipt data');
+    assert.equal(await native.locator('.steward-native-user').getByText('Native steward first prompt', { exact: true }).count(), 0, 'Capped native history drops old text together with canonical receipt data');
     await page.locator(`[data-pending-command="${windowCommand}"]`).waitFor();
     assert.equal(await target.inputValue(), 'auto');
     host.model.script.push('Admission completes after native window reset'); releaseWindowAdmission();

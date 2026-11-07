@@ -1,3 +1,4 @@
+import { stewardScopeForBinding } from "./steward-contracts.js";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { Context } from "@deepseek-ai/cordis";
@@ -35,7 +36,7 @@ export const STEWARD_NATIVE_PRESET = {
 export interface StewardMemoryConfiguration {
   revision: number; selectionHash: string; mode: "native" | "manager"; available: boolean; readOnly: boolean;
   selectionObserved: boolean;
-  sourceRegistered: boolean; scope: { kind: "personal" | "workbench" } | { kind: "project"; projectId: string };
+  sourceRegistered: boolean; scope: import("./steward-contracts.js").StewardScope;
   session: { sessionId: string; generation: number; nodeId: string }; currentPresetId: string | null;
   presets: { id: string; name: string }[]; missingResourceIds: string[]; diagnostics: string[];
   inheritAuthorized: boolean; pendingChange: { commandId: string; request: StewardMemoryConfigure } | null;
@@ -115,7 +116,7 @@ export class StewardMemorySettings {
     const outstanding = pendingRow ? { id: String(pendingRow.id), value: pending.parse(JSON.parse(String(pendingRow.data))) } : null;
     if (!selectionObserved) diagnostics.push("实际预设状态未知；显式恢复原生所有权不会覆盖已有预设或Manager规则。");
     return { revision: saved?.revision ?? 0, selectionHash: selectionObserved ? memoryHash(selection) : memoryHash({ selection: "unavailable" }), mode, available, readOnly: !local,
-      sourceRegistered: this.registered(), selectionObserved, scope: (binding.kind === "personal" || binding.kind === "workbench") ? { kind: binding.kind } : { kind: "project", projectId: binding.projectId },
+      sourceRegistered: this.registered(), selectionObserved, scope: stewardScopeForBinding(binding),
       session: { sessionId: binding.sessionId, generation: binding.generation, nodeId: binding.nodeId },
       currentPresetId: memoryPreset.safeParse(selection).data?.id ?? null, presets, missingResourceIds: missing, diagnostics,
       inheritAuthorized: saved?.inherit ?? false, pendingChange: outstanding ? { commandId: outstanding.id, request: outstanding.value.request } : null };
@@ -132,7 +133,7 @@ export class StewardMemorySettings {
   }
   private async change(request: StewardMemoryConfigure, binding: StewardBinding, digest: string) {
     this.checkBinding(binding);
-    const actualScope = (binding.kind === "personal" || binding.kind === "workbench") ? { kind: binding.kind } : { kind: "project", projectId: binding.projectId };
+    const actualScope = stewardScopeForBinding(binding);
     if (canonical(request.scope) !== canonical(actualScope)) throw new TaskError("FORBIDDEN", "Configuration scope differs from its trusted native binding");
     if (binding.nodeId !== this.task.config.nodeId) throw new TaskError("UNAVAILABLE", "Configure memory on the actual native owner; no remote owner adapter is available");
     this.assertMutationIdle(binding);

@@ -111,15 +111,16 @@ function createStewardNativeClient({ React, Context, modules, hostContext, creat
     const nativePreset = props.useSessions(value => value.byId[sessionId]?.projectionValues?.agentPreset);
     const blank = props.useSession(value => value.blank);
     React.useLayoutEffect(() => {
+      if (!source.visible) return;
       const off = hostContext.slots.inject('conversation.composer', () => hostContext.slots.register({
         name: 'conversation.composer', id: 'steward-router', priority: -100,
         select: owner => owner.sessionId === sessionId ? true : null,
       }, function RouterComposer() { return null; }));
       return off;
-    }, [sessionId, placement]);
+    }, [sessionId, placement, source.visible]);
     return h(ShellState.Provider, { value: { placement, selected, overviewOpen:source.overviewOpen } },
       h('div', { className: 'steward-native-heading', 'data-steward-browse-session': sessionId },
-        h('div', { ref:placement.header, className: 'steward-native-title-row' }, h('strong', { title: sessionId }, nativeTitle || `管家 · ${source.sourceScopeLabel}`), typeof nativePreset === 'string' && h('span', { title: `原生 Agent 预设 ${nativePreset}` }, nativePreset), source.renderBrowseTopic(), h('button',{type:'button',className:'steward-icon-button','aria-label':'打开原生文件侧栏',title:'打开原生文件侧栏',onClick:()=>{void bridge.preview?.openGuide().catch(error=>{if(error.name!=='AbortError')bridge.notice(error.message);});}},h('svg',{width:18,height:18,viewBox:'0 0 24 24',fill:'none',stroke:'currentColor',strokeWidth:1.5,'aria-hidden':true},h('path',{d:'M3 4h18v16H3z M15 4v16'})))),
+        h('div', { ref:placement.header, className: 'steward-native-title-row' }, source.renderSettings?.(), h('strong', { title: sessionId }, nativeTitle || `管家 · ${source.sourceScopeLabel}`), typeof nativePreset === 'string' && h('span', { title: `原生 Agent 预设 ${nativePreset}` }, nativePreset), source.renderBrowseTopic(), h('button',{type:'button',className:'steward-icon-button steward-sidebar-toggle','aria-label':presentation.sidebarShown?'收起原生文件侧栏':'打开原生文件侧栏',title:presentation.sidebarShown?'收起原生文件侧栏':'打开原生文件侧栏','aria-expanded':presentation.sidebarShown,onClick:()=>{void bridge.preview?.toggleGuide().catch(error=>{if(error.name!=='AbortError')bridge.notice(error.message);});}},h('svg',{width:18,height:18,viewBox:'0 0 24 24',fill:'none',stroke:'currentColor',strokeWidth:1.5,'aria-hidden':true},h('path',{d:'M3 4h18v16H3z M15 4v16'})))),
         h('div', { inert:source.overviewOpen?'':undefined, role: 'tablist', 'data-conversation-tabs': '' }, tabs.map(tab => h('button', { key: tab.id, type: 'button', role: 'tab', 'aria-selected': selected === tab.id, onClick: () => { hostContext.get('uiConversation').binding(sessionId).activate(tab.id); placement.select(tab.id); } }, tab.label)))),
       blank && selected !== 'chat' && h('p', { role: 'status' }, '该原会话尚无对话轮次，原生页面会在开始对话后显示。'),
       props.renderFactorySlot('conversation.content', { variant: 'embedded', phase: 'active', hero: false }, { slots: sourceContentSlots }));
@@ -184,7 +185,7 @@ function createStewardNativeClient({ React, Context, modules, hostContext, creat
       h('div', { ref: mount, style: { display: 'none' } }),h('div',{ref:sidebarMount,style:{display:'none'}}), displayStatus && h('p', { role: 'status' }, displayStatus),
       source ? h(SessionProvider, { key: source.binding.sessionId, session: source.reference }, renderSlot('steward.session.shell', { bridge, placement })) :
         h('div', { style: { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' } },
-          h('div', { className: 'steward-native-heading' }, h('div', { ref:placement.header, className: 'steward-native-title-row' }, h('strong', null, '管家'), view.renderBrowseTopic())),
+          h('div', { className: 'steward-native-heading' }, h('div', { ref:placement.header, className: 'steward-native-title-row' }, view.renderSettings?.(), h('strong', null, '管家'), view.renderBrowseTopic())),
           h('p', { role: sourceError ? 'alert' : 'status' }, sourceError || '正在读取当前话题的原会话…'),
           sourceError && h('button', { type: 'button', onClick: () => setSourceRefresh(value => value + 1) }, '重新读取原会话'),
           h('div', { ref: placement.chat, style: { flex: 1, minHeight: 0 } })),
@@ -755,6 +756,14 @@ function createStewardNativeClient({ React, Context, modules, hostContext, creat
               sidebarReference.sessionId,
               `dsh-resource://file/session/${encodeURIComponent(target.sessionId)}/${path.split("/").map(encodeURIComponent).join("/")}`,
             );
+          },
+          async toggleGuide() {
+            await ensureSidebar();
+            await bridge.preview.setSource(bridge.previewSource);
+            aborted(lifetime.signal);
+            if (!sidebarReference) throw new Error("文件栏还在读取当前话题，请稍后再试。");
+            if (sidebarCtx.sidebarRight.openTabs.getSnapshot().some(tab=>tab.sessionId===sidebarReference.sessionId)) sidebarCtx.sidebarRight.toggleExpanded();
+            else await bridge.preview.openGuide();
           },
           async openGuide() {
             await ensureSidebar();

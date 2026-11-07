@@ -160,3 +160,10 @@ test('empty progress does not render and missing preview callback does not expos
   const f = fixture([notification(1, { presentation: presentation('材料已登记', { targets: [{ id: 'file-a', kind: 'file' }] }) })], { onOpen: undefined });
   assert.equal(f.visibleButtons()[0].props.disabled, true);
 });
+
+
+test('same task notices in different independent topics keep separate groups and original actions', () => {
+  const first=notification(1,{scope:{kind:'workbench',topicId:'topic-a'}}),second=notification(2,{scope:{kind:'workbench',topicId:'topic-b'}});
+  const grouped=group([first,second]);assert.equal(grouped.length,2);assert.equal(grouped[0].messages[0],first);assert.equal(grouped[1].messages[0],second);
+  for(const item of grouped){const rendered=fixture(item.messages);for(const button of rendered.all(node=>node.props['data-original-action']))button.props.onClick();assert.deepEqual(rendered.actions,[item.messages[0].id]);}
+});

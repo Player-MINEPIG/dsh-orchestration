@@ -10,11 +10,11 @@ const CONTEXT_BYTES = 10 * 1024, BATCH_BYTES = 8 * 1024, CARD_BYTES = 24 * 1024;
 const digest = (value: unknown) => createHash("sha256").update(canonical(value)).digest("hex");
 const size = (value: unknown) => Buffer.byteLength(canonical(value));
 const sourceKey = (source: TopicSource) => canonical(source);
-const scopeArgs = (scope: StewardScope) => [scope.kind, scope.kind === "project" ? scope.projectId : null];
-const visible = "conversation=? AND json_extract(data,'$.scope.kind')=? AND json_extract(data,'$.scope.projectId') IS ?";
+const scopeArgs = (scope: StewardScope) => [scope.kind, scope.kind === "project" ? scope.projectId : null, scope.kind === "workbench" ? scope.topicId ?? null : null];
+const visible = "conversation=? AND json_extract(data,'$.scope.kind')=? AND json_extract(data,'$.scope.projectId') IS ? AND json_extract(data,'$.scope.topicId') IS ?";
 // A canonical message keeps its original text separate; sourced routing answers remain part of the same versioned evidence body.
 const sourceText = "(json_extract(data,'$.text') || CASE WHEN json_type(data,'$.routingClarification')='object' THEN char(10)||char(10)||'[分流问题与用户澄清原文；不代替原始请求]'||char(10)||json_extract(data,'$.routingClarification') ELSE '' END)";
-const listCursor = z.strictObject({ stage: z.enum(["local", "projects"]), page: z.number().int().nonnegative(), offset: z.number().int().nonnegative().max(12), query: z.string().max(200) });
+const listCursor = z.strictObject({ stage: z.enum(["local", "projects"]), page: z.number().int().nonnegative(), offset: z.number().int().nonnegative(), query: z.string().max(200) });
 const evidence = z.strictObject({ factId: z.string().min(1).max(200), source: topicSource, quote: z.string().min(1).max(1800) });
 /** A compactor returns data, never routing authority. Each changed fact requires an exact
  * quote from this batch. Supersession additionally requires later, explicit user evidence. */
@@ -68,9 +68,10 @@ export class StewardTopicCards implements TopicCardsPort {
   private readonly jobs = new Map<string, Promise<void>>();
   constructor(ledger: Pick<TaskLedger, "managementDatabase">, private readonly host: TopicHostReads) {
     this.db = ledger.managementDatabase();
-    this.db.exec(`CREATE INDEX IF NOT EXISTS steward_topic_discussion_latest ON steward_messages(conversation,json_extract(data,'$.scope.kind'),json_extract(data,'$.scope.projectId'),seq DESC) WHERE json_extract(data,'$.role') IN ('user','assistant')`);
+    this.db.exec(`CREATE INDEX IF NOT EXISTS steward_topic_discussion_scoped ON steward_messages(conversation,json_extract(data,'$.scope.kind'),json_extract(data,'$.scope.projectId'),json_extract(data,'$.scope.topicId'),seq DESC) WHERE json_extract(data,'$.role') IN ('user','assistant')`);
     this.db.exec(`CREATE TABLE IF NOT EXISTS steward_topic_cards(topic_key TEXT PRIMARY KEY,conversation TEXT NOT NULL,scope TEXT NOT NULL,data TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS steward_topic_card_conversation ON steward_topic_cards(conversation,topic_key);
+      CREATE INDEX IF NOT EXISTS steward_topic_card_title ON steward_topic_cards(conversation,json_extract(data,'$.card.title'));
       CREATE TABLE IF NOT EXISTS steward_topic_terms(conversation TEXT NOT NULL,term TEXT NOT NULL,topic_key TEXT NOT NULL,PRIMARY KEY(conversation,term,topic_key));`);
   }
 
@@ -84,6 +85,10 @@ export class StewardTopicCards implements TopicCardsPort {
     for (let pass = 0; pass < 3 && items.length < request.limit && hasMore; pass++) {
       if (cursor.stage === "local") {
         const scopes: StewardScope[] = [{ kind: "personal" }, { kind: "workbench" }];
+        if (this.db.prepare("SELECT 1 FROM sqlite_master WHERE name='steward_independent_topics'").get()) {
+          for (const row of this.db.prepare("SELECT id FROM steward_independent_topics WHERE conversation=? ORDER BY rowid").all(request.conversationId))
+            scopes.push({ kind: "workbench", topicId: String(row.id) });
+        }
         while (cursor.offset < scopes.length && items.length < request.limit) {
           const scope = scopes[cursor.offset++];
           if (!scope || !this.db.prepare(`SELECT 1 FROM steward_messages WHERE ${visible} LIMIT 1`).get(request.conversationId, ...scopeArgs(scope))) continue;
@@ -160,6 +165,47 @@ export class StewardTopicCards implements TopicCardsPort {
     // Marking an omission also consumes bytes; never cross the serialized context boundary.
     while (originals.length && size({ card, originals, complete, byteLimit: CONTEXT_BYTES }) > CONTEXT_BYTES) originals.pop();
     return { card, originals, complete, byteLimit: CONTEXT_BYTES };
+  }
+
+  async activity(topic: TopicRef, throughSeq: number): Promise<string | null> {
+    const authority = await this.host.authorize(topic), observedAt = new Date().toISOString();
+    const row = this.db.prepare(`SELECT MAX(json_extract(data,'$.createdAt')) AS at FROM steward_messages WHERE ${visible} AND seq<=? AND json_extract(data,'$.createdAt')<=?`)
+      .get(topic.conversationId, ...scopeArgs(topic.scope), throughSeq, observedAt);
+    const at = typeof row?.at === "string" ? row.at : null, created = authority.project?.createdAt ?? authority.createdAt;
+    return created && (!at || created > at) && created <= observedAt ? created : at;
+  }
+
+  async deterministic(input: { conversationId: string; text: string; throughSeq: number }) {
+    const request = z.strictObject({ conversationId: z.string().min(1).max(200), text: z.string().max(16000), throughSeq: z.number().int().nonnegative() }).parse(input);
+    const explicit = /^继续「([^」\n]{1,200})」(?:[：:]\s*[\s\S]+)?$/.exec(request.text.trim());
+    const text = explicit?.[1] ?? request.text.trim(), scopes: StewardScope[] = [];
+    if (!text) return { matches: [], complete: true };
+    const cached = this.db.prepare("SELECT scope FROM steward_topic_cards WHERE conversation=? AND json_extract(data,'$.card.title')=? LIMIT 9").all(request.conversationId, text);
+    for (const row of cached) scopes.push(stewardScope.parse(JSON.parse(String(row.scope))));
+    let complete = cached.length < 9;
+    if (this.db.prepare("SELECT 1 FROM sqlite_master WHERE name='steward_independent_topics'").get()) {
+      const rows = this.db.prepare("SELECT id FROM steward_independent_topics WHERE conversation=? AND json_extract(data,'$.title')=? LIMIT 9").all(request.conversationId,text);
+      for (const row of rows) scopes.push({kind:"workbench",topicId:String(row.id)});
+      complete &&= rows.length < 9;
+    }
+    if (text.length <= 200) {
+      const page = await this.host.projects({ conversationId: request.conversationId, query: text, page: 0, limit: 8 });
+      complete &&= !page.hasMore;
+      for (const item of page.items) if (item.title === text) scopes.push({ kind: "project", projectId: item.projectId });
+    }
+    const seen = new Set<string>(), matches: { card: TopicCard; lastActiveAt: string | null }[] = [];
+    for (const scope of scopes) {
+      const key = canonical(scope);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      if (matches.length >= 4) { complete = false; break; }
+      try {
+        const topic = { conversationId: request.conversationId, scope }, authority = await this.host.authorize(topic);
+        const card = this.routingCard(this.snapshot(topic, authority, request.throughSeq).card, 2048);
+        matches.push({ card, lastActiveAt: await this.activity(topic, request.throughSeq) });
+      } catch (error) { if (!(error instanceof TaskError && (error.code === "FORBIDDEN" || error.code === "NOT_FOUND"))) throw error; }
+    }
+    return { matches, complete, directed: !!explicit };
   }
 
   async candidates(input: Parameters<TopicCardsPort["candidates"]>[0]): Promise<TopicCard[]> {

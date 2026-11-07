@@ -7,7 +7,7 @@ import { ArmAcceptanceGate, AmendAcceptanceGate } from "./acceptance-gates.js";
 const key = z.string().min(1).max(160);
 export const stewardScope = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("personal") }),
-  z.strictObject({ kind: z.literal("workbench") }),
+  z.strictObject({ kind: z.literal("workbench"), topicId: key.optional() }),
   z.strictObject({ kind: z.literal("project"), projectId: key }),
 ]);
 export type StewardScope = z.infer<typeof stewardScope>;
@@ -34,9 +34,11 @@ export const stewardSend = z.strictObject({
   target: stewardScope.optional(), replyTo: key.optional(), contextAnchor: z.discriminatedUnion("kind", [z.strictObject({ kind: z.literal("canonical"), messageId: key, throughSeq: z.number().int().nonnegative() }), z.strictObject({ kind: z.literal("predecessor"), commandId: key })]).optional(),
   routingMode: z.literal("auto").optional(),
   latestTopic: z.strictObject({ scope: stewardScope, latestMessageId: key.nullable(), throughSeq: z.number().int().nonnegative() }).optional(),
-  routeQuestionId: key.optional(),
+  routeQuestionId: key.optional(), routeCreateTopic: z.literal(true).optional(),
   quote: stewardQuoteInput.optional(),
 }).superRefine((value, ctx) => {
+  if (value.routeCreateTopic && (value.replyTo || value.target && (value.target.kind !== "workbench" || value.target.topicId)))
+    ctx.addIssue({ code: "custom", path: ["routeCreateTopic"], message: "A new-topic intent cannot redirect a reply or existing topic" });
   if (!value.text && !value.uploads?.length) ctx.addIssue({ code: "custom", path: ["text"], message: "A message requires text or an attachment" });
   if (value.quote && value.replyTo)
     ctx.addIssue({ code: "custom", path: ["quote"], message: "A quotation cannot be combined with a reply" });
@@ -76,11 +78,16 @@ export const stewardGateIndependent = z.strictObject({ conversationId: key, comm
 export const stewardBinding = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("personal"), nodeId: key, sessionId: key,
     generation: z.literal(1), cwd: z.string().min(1) }),
-  z.strictObject({ kind: z.literal("workbench"), nodeId: key, sessionId: key,
+  z.strictObject({ kind: z.literal("workbench"), topicId: key.optional(), nodeId: key, sessionId: key,
     generation: z.literal(1), cwd: z.string().min(1) }),
   ...projectSessionReference.options,
 ]);
 export type StewardBinding = z.infer<typeof stewardBinding>;
+export function stewardScopeForBinding(binding: StewardBinding): StewardScope {
+  if (binding.kind === "personal") return {kind:"personal"};
+  if (binding.kind === "workbench") return {kind:"workbench", ...(binding.topicId ? {topicId:binding.topicId} : {})};
+  return {kind:"project",projectId:binding.projectId};
+}
 export const stewardQuote = z.strictObject({
   messageId: key, revision: z.number().int().nonnegative(), scope: stewardScope,
   source: stewardBinding, sourceContentHash: z.string().length(64),
@@ -160,6 +167,8 @@ export interface StewardSnapshot {
     items: { scope: StewardScope; title: string; lastActiveAt: string }[]; hasMore: boolean;
     latestMessage: { id: string; scope: StewardScope; createdAt: string } | null;
   };
+  topicMaintenance: {scope:StewardScope;throughSeq:number;state:"running"|"ready"|"unavailable";reason:string|null}[];
+  topics: (import("./steward-topics.js").StewardIndependentTopic & { scope: Extract<StewardScope, {kind:"workbench"}> })[];
   router: import("./steward-router.js").RouterView[];
   lastSeq: number;
   limitations: string[];

@@ -248,7 +248,9 @@ test("browser companion registers the shared persistent task settings surface an
     },
   };
   await ui.apply(ctx);
-  assert.equal(registrations.length, 8);
+  const stewardMain=registrations.find(r=>r.options.key==="dsh-steward"),stewardPortal=registrations.find(r=>r.options.id==="steward-surface");
+  assert.ok(stewardMain&&stewardPortal);
+  assert.equal(stewardMain.options.inject().surface,stewardPortal.options.inject().surface);
   assert.ok(registrations.some(r => r.options.key === "dsh-steward"));
   assert.ok(registrations.some(r => r.options.id === "dsh-steward"));
   assert.ok(!registrations.some(r => r.options.id === "dsh-task-workflows"));
@@ -269,11 +271,8 @@ test("browser companion registers the shared persistent task settings surface an
   registrations.length = 0;
   ctx.configForms.whileServed = () => () => {};
   await ui.apply(ctx);
-  assert.equal(
-    registrations.length,
-    6,
-    "hide the surface and portal while the Host does not serve task-system settings",
-  );
+  assert.equal(registrations.some(row=>row.options.key==="dsh-task-settings"||row.options.id==="task-settings-surface"),false,
+    "hide the settings surface and portal while the Host does not serve task-system settings");
   for (const cleanup of effects.splice(0).reverse()) cleanup?.();
 });
 

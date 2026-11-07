@@ -14,18 +14,21 @@ import { canonical, TaskError } from "./ledger.js";
 import { StewardConversations, stewardBindingKey, type StewardCursor } from "./steward-conversations.js";
 import { StewardMemoryBridge, stewardMemoryRead, stewardMemoryConfigure } from "./steward-memory.js";
 import { StewardRecall } from "./steward-recall.js";
-import { createStewardSemanticCall, createStewardTopicCompactor } from "./steward-routing.js";
+import { createStewardTriageCall, createStewardTopicCompactor } from "./steward-routing.js";
 import { StewardAttachments } from "./steward-attachments.js";
 import { pinStewardTurnSelection } from "./steward-turn-selection.js";
 import { authorizedProjectInput, requestsNewProject, suppliesProjectDetails, delegatesProjectDetails, cancelsProjectCreation } from "./steward-project-creation.js";
 import { StewardRouter } from "./steward-router.js";
+import { StewardTopicPromotion } from "./steward-topic-promotion.js";
+import { StewardRoutingSettings } from "./steward-routing-settings.js";
+import { StewardTopics, independentTopicScope } from "./steward-topics.js";
 import { StewardTopicCards } from "./steward-topic-cards.js";
 import { topicListInput, topicDetailInput, topicSourceInput } from "./steward-topic-types.js";
 import { workbenchFileAllowed } from "./steward-workbench.js";
 import { StewardTurnPermissions } from "./steward-turn-permission.js";
 import type { AdmittedPromptContentPart } from "@deepseek-ai/dsh-attachment";
 import { initializeTaskSessionTitle } from "./session-titles.js";
-import { STEWARD_PERSONA, STEWARD_PERSONA_TEXT, stewardBinding, stewardRead, stewardSend, stewardResolve, stewardSourceSession, stewardSelection, stewardAttachmentRead, stewardUploadRead,
+import { STEWARD_PERSONA, STEWARD_PERSONA_TEXT, stewardBinding, stewardRead, stewardSend, stewardResolve, stewardSourceSession, stewardSelection, stewardScopeForBinding, stewardAttachmentRead, stewardUploadRead,
   stewardGateRead, stewardGateArm, stewardGateDecide, stewardGateAmend, stewardGateContinue, stewardGateAcceptContinue, stewardGateIndependent,
   type StewardBinding, type StewardMessage, type StewardScope, type StewardSend, type StewardSnapshot, type StewardQuote } from "./steward-contracts.js";
 
@@ -56,6 +59,9 @@ export class StewardRuntime {
   readonly recall: StewardRecall;
   readonly permissions: StewardTurnPermissions;
   readonly topics: StewardTopicCards;
+  readonly independentTopics: StewardTopics;
+  readonly topicPromotion: StewardTopicPromotion;
+  readonly routingSettings: StewardRoutingSettings;
   readonly router: StewardRouter;
   readonly progress: StewardProgress;
   private readonly personalRequests = new WeakMap<Agent, StewardMessage>();
@@ -69,6 +75,11 @@ export class StewardRuntime {
   private readonly handles = new Map<string, Awaited<ReturnType<Context["agents"]["create"]>>>();
   private readonly personalJobs = new Set<Promise<void>>();
   private readonly memoryJobs = new Set<Promise<unknown>>();
+  private readonly maintenanceEligible = new Set<string>();
+  private readonly maintenancePending = new Map<string,{conversationId:string;scope:StewardScope;throughSeq:number}>();
+  private readonly maintenanceRunning = new Set<string>();
+  private readonly maintenanceStatus = new Map<string,{conversationId:string;scope:StewardScope;throughSeq:number;coverageSeq:number;state:"running"|"ready"|"unavailable";reason:string|null}>();
+  private readonly maintenanceAbort = new AbortController();
   private readonly memoryScopes = new Set<string>();
   private timer?: ReturnType<typeof setInterval>;
   private promptDisposer?: () => void;
@@ -79,6 +90,14 @@ export class StewardRuntime {
   constructor(private readonly task: TaskSystemService, ctx: Context) {
     this.ctx = ctx;
     this.store = new StewardConversations(task.ledger);
+    this.independentTopics = new StewardTopics(task.ledger);
+    this.topicPromotion = new StewardTopicPromotion(task,ctx,this.independentTopics,
+      topic => stewardBinding.options[1].parse(this.personalBinding(topic.conversationId,topic.scope)),
+      topic => this.sourceSession({conversationId:topic.conversationId,scope:topic.scope}));
+    this.routingSettings = new StewardRoutingSettings(task.ledger,()=>this.modelCatalog(),()=>!!this.ctx.get("decisionModels"),()=>this.task.config.stewardActiveDays,()=>{
+      const current=this.ctx.get("decisionModels")?.config();
+      return current?.provider === "native" && current.nativeProvider && current.model ? {provider:current.nativeProvider,model:current.model} : null;
+    });
     this.media = new StewardAttachments(ctx, task.ledger);
     this.progress = new StewardProgress(ctx, task, this.store, projectId => {
       this.ready();
@@ -93,10 +112,14 @@ export class StewardRuntime {
     });
     this.permissions = new StewardTurnPermissions(ctx, task.ledger);
     this.topics = new StewardTopicCards(task.ledger, {
-      compact: async (input,signal) => { const options=this.task.config.projectAgentOptions; if(!options||!this.ctx.get("llm")) throw new TaskError("UNAVAILABLE","Topic maintenance model is unavailable"); return createStewardTopicCompactor(this.ctx,options)(input,signal); },
+      compact: async (input,signal) => { const options=(await this.routingSettings.read()).fallback; if(!options||!this.ctx.get("llm")) throw new TaskError("UNAVAILABLE","Topic maintenance model is unavailable"); return createStewardTopicCompactor(this.ctx,options)(input,signal); },
       authorize: async ({conversationId,scope}) => {
         this.ready(); this.store.ensure(conversationId);
-        if (scope.kind !== "project") return { title: scope.kind === "personal" ? "闲聊" : "管家工作区", binding: this.store.cursors(conversationId).find(item => item.binding.kind === scope.kind)?.binding ?? null, project: null };
+        if (scope.kind !== "project") {
+          const topic = scope.kind === "workbench" && scope.topicId ? this.independentTopics.get(conversationId, scope.topicId) : undefined;
+          return { title: topic?.title ?? (scope.kind === "personal" ? "闲聊（历史）" : "工作区（历史）"),
+            binding: this.store.cursors(conversationId).find(item => canonical(stewardScopeForBinding(item.binding)) === canonical(scope))?.binding ?? null, project: null, ...(topic ? {createdAt:topic.createdAt} : {}) };
+        }
         const project = this.task.projects!.placementProject(scope.projectId);
         const binding = await this.task.sessionPortal.bindingForRead(scope.projectId);
         return { title: project.title, binding, project: { id: scope.projectId, revision: hash(canonical({goal:project.goal,session:project.session,generation:project.generation})), goal: project.goal } };
@@ -119,7 +142,7 @@ export class StewardRuntime {
       return "Workbench tools may only access their own workspace or explicitly admitted attachments";
     }));
   }
-  get active(): boolean { return this.permissions.active || this.media.active || this.sends.size > 0 || this.sourceJobs.size > 0 || this.sourceCreations.size > 0 || this.personalJobs.size > 0 || this.memoryJobs.size > 0; }
+  get active(): boolean { return this.topicPromotion.active || this.permissions.active || this.media.active || this.sends.size > 0 || this.sourceJobs.size > 0 || this.sourceCreations.size > 0 || this.personalJobs.size > 0 || this.memoryJobs.size > 0; }
   bindContext(ctx: Context) {
     this.ctx = ctx;
     this.progress.bindContext(ctx);
@@ -132,7 +155,7 @@ export class StewardRuntime {
     this.workbenchPromptDisposer?.();
     this.workbenchPromptDisposer = ctx.systemPrompt.section({ name: "dsh-steward-workbench", order: 10201, interpolate: false, text: ({ agent }) => {
       if (!agent || !this.store.sourcesForSession(agent.id, this.task.config.nodeId).some(source => source.binding.kind === "workbench")) return "";
-      return "This is the steward workbench: persistent requirements, planning, research notes and temporary artifacts, not casual chat and not a project PM. Use only this workspace and explicitly admitted attachments. Do not claim other project history. When the user explicitly asks to create a project and delegates its title/goal, draft them from the actual request, preserve that requirement, and use steward_create_project. Once a project exists, its execution belongs to the existing PM/DO; do not execute unrelated project work here.";
+      return "This is one ordinary steward topic with its own discussion, files and authorized attachments. The user may use it for casual discussion or work. Discussion alone does not create a project or authorize task dispatch. Use only this workspace and explicitly admitted attachments. Do not claim other topic or project history. When the user explicitly asks to create a project and delegates its title/goal, draft them from the actual request, preserve that requirement, and use steward_create_project. Once a project exists, its execution belongs to the existing PM/DO; do not execute unrelated project work here.";
     } });
     this.requestDisposer?.();
     const runtime = this;
@@ -169,7 +192,9 @@ export class StewardRuntime {
       currentScope: this.store.current(request.conversationId), ...(attachments ? { media: { imageLimits: attachments.imageLimits, maxFileBytes: 8388608, chunkBytes: 24576 } } : {}), persona: STEWARD_PERSONA,
       ...page, attention: this.store.attention(request.conversationId), commandMessage: request.commandId ? this.store.commandMessage(request.conversationId, request.commandId) : null, projects: this.projects(),
       topicActivity: this.store.topicActivity(request.conversationId, this.task.projects!.chatProjectActivity(), this.task.config.stewardActiveDays),
-      router: this.router.list(request.conversationId), lastSeq: page.page.lastStoredSeq, limitations, routing: { auto: !!this.task.config.projectAgentOptions && !!this.ctx.get("llm"), anchorMessageId: this.store.latestUserId(request.conversationId) },
+      topicMaintenance:[...this.maintenanceStatus.values()].filter(item=>item.conversationId===request.conversationId).slice(-100),
+      topics: this.independentTopics.list(request.conversationId).map(topic => ({...topic,scope:independentTopicScope(topic)})),
+      router: this.router.list(request.conversationId), lastSeq: page.page.lastStoredSeq, limitations, routing: { auto: true, anchorMessageId: this.store.latestUserId(request.conversationId) },
       context: this.memory.capability(),
       requests: this.store.requests(request.conversationId),
       requestObservation: { kind: this.requestDiagnostic || !this.requestDisposer ? "unavailable" : "active", reason: this.requestDiagnostic },
@@ -260,7 +285,11 @@ export class StewardRuntime {
     const users = [...context.filter(item => item.role === "user"), message];
     const delegated = users.some(item => delegatesProjectDetails(item.text));
     const request = authorizedProjectInput(users.map(item => item.text).join("\n"), input, delegated);
-    const created = await this.task.projects!.create({ commandId: `steward-create:${instruction.id}`, stewardOrigin: instruction.id, ...request,
+    const topic = message.scope.kind === "workbench" && message.scope.topicId ? this.independentTopics.get(message.conversationId,message.scope.topicId) : undefined;
+    const created = topic ? await this.topicPromotion.configure({commandId:`steward-create:${instruction.id}`,
+      topic:{conversationId:message.conversationId,scope:independentTopicScope(topic)},expectedRevision:topic.revision,mode:"create",
+      ...request,taskIds:topic.taskIds,...(message.selection?{selection:message.selection}:{})})
+      : await this.task.projects!.create({ commandId: `steward-create:${instruction.id}`, stewardOrigin: instruction.id, ...request,
       ...(message.selection ? { selection: message.selection } : {}) });
     const project = this.task.projects!.placementProject(created.projectId);
     this.store.selectCreatedProject(message.conversationId, created.projectId, message.id);
@@ -289,7 +318,7 @@ export class StewardRuntime {
     this.task.assertConversationAdmission();
     const request = stewardSourceSession.parse(input);
     if (!this.ctx.get("sessionPersistence")) throw new TaskError("UNAVAILABLE", "Native session persistence is unavailable");
-    const binding = request.scope.kind !== "project" ? this.personalBinding(request.conversationId, request.scope.kind)
+    const binding = request.scope.kind !== "project" ? this.personalBinding(request.conversationId, request.scope)
       : await this.resolveBinding(request.scope, request.conversationId);
     if (binding.nodeId !== this.task.config.nodeId)
       throw new TaskError("UNAVAILABLE", "Open this source session on its native owner");
@@ -402,16 +431,29 @@ export class StewardRuntime {
   async topicList(input: unknown) { this.ready(); return this.topics.list(topicListInput.parse(input)); }
   async topicDetail(input: unknown) { this.ready(); const value=topicDetailInput.parse(input); const context=await this.topics.context({topic:value.topic,throughSeq:value.throughSeq ?? this.snapshot({conversationId:value.topic.conversationId}).lastSeq,maintain:false}); const sources=[...new Map([...context.card.sources,...context.originals.map(item=>item.source)].map(ref=>[canonical(ref),ref])).values()]; const card={...context.card,sources};return {...card,version:hash(canonical(card))}; }
   async topicSource(input: unknown) { this.ready(); return this.topics.source(topicSourceInput.parse(input)); }
+  routingConfiguration() { this.ready(); return this.routingSettings.read(); }
+  configureRouting(input:unknown) { this.ready(); return this.routingSettings.configure(input); }
+  projectTopics(projectId:string) {
+    this.ready();
+    if (!this.projects().some(project=>project.projectId===projectId)) throw new TaskError("FORBIDDEN","Project is not available");
+    return this.independentTopics.forProject(projectId).map(value=>({title:value.title,topic:{conversationId:value.conversationId,scope:independentTopicScope(value)}}));
+  }
+  topicProjectOptions(input:unknown) { this.ready(); return this.topicPromotion.options(input); }
+  topicProjectConfigure(input:unknown) { this.ready(); return this.topicPromotion.configure(input); }
+  topicTaskCreate(input:unknown) { this.ready(); return this.topicPromotion.createTask(input); }
+  topicTaskBind(input:unknown) { this.ready(); return this.topicPromotion.bindTask(input); }
   private async routeAndSubmit(request: StewardSend): Promise<StewardSnapshot> {
     if (request.routeQuestionId && (request.replyTo || request.quote)) throw new TaskError("CLARIFICATION","请在原消息回复/引用与分流问题回答之间选择一种；不会关联到另一项原请求。");
-    if (!this.router.get(request.commandId) && !request.routeQuestionId && (request.target || request.replyTo || request.routingMode !== "auto")) return this.submit(request);
+    if (!this.router.get(request.commandId) && !request.routeQuestionId && !request.routeCreateTopic && (request.target || request.replyTo || request.routingMode !== "auto")) return this.submit(request);
     await this.prepareQuote(request);
     const snapshot = this.snapshot({conversationId:request.conversationId});
     const latest = request.latestTopic ?? {scope:snapshot.topicActivity.latestMessage?.scope ?? snapshot.currentScope,latestMessageId:snapshot.topicActivity.latestMessage?.id ?? null,throughSeq:snapshot.lastSeq};
     if (latest.throughSeq > snapshot.lastSeq) throw new TaskError("FORBIDDEN", "Routing cursor is ahead of this conversation");
     if (latest.latestMessageId) { const original=this.store.message(latest.latestMessageId); if(original.conversationId!==request.conversationId || original.seq>latest.throughSeq || canonical(original.scope)!==canonical(latest.scope)) throw new TaskError("FORBIDDEN","Latest-topic anchor does not match this conversation"); }
-    const options=this.task.config.projectAgentOptions;
-    const routed=await this.router.prepare(request,latest,options && this.ctx.get("llm") ? createStewardSemanticCall(this.ctx,options) : undefined,()=>this.media.retainForRouter(request.conversationId,request.commandId,request.uploads ?? []),this.router.get(request.commandId)?.permission ?? (request.permissionPreset ? this.permissions.resolve(request.permissionPreset) : undefined));
+    const routed=await this.router.prepare(request,latest,createStewardTriageCall(this.ctx,async()=>(await this.routingSettings.read()).fallback),()=>this.media.retainForRouter(request.conversationId,request.commandId,request.uploads ?? []),this.router.get(request.commandId)?.permission ?? (request.permissionPreset ? this.permissions.resolve(request.permissionPreset) : undefined),{
+      activeDays:this.task.config.stewardActiveDays,
+      createTopic: parent => independentTopicScope(this.independentTopics.create({conversationId:parent.conversationId,commandId:parent.commandId,text:parent.request.text})),
+    });
     if (!routed.delivery) return this.snapshot({conversationId:request.conversationId,commandId:request.commandId});
     const previous=this.store.replay(routed.delivery);
     if(previous) return this.reconcile({conversationId:request.conversationId,commandId:routed.delivery.commandId});
@@ -601,9 +643,11 @@ export class StewardRuntime {
     if (binding.kind === "managed") this.task.projects!.resumeConversationQueue();
     return this.snapshot({ conversationId: request.conversationId });
   }
-  private personalBinding(conversationId: string, kind: "personal" | "workbench" = "personal"): Extract<StewardBinding, { kind: "personal" | "workbench" }> {
-    const key = hash(this.task.ledger.schedulerIdentity() + ":" + conversationId);
-    return { kind, nodeId: this.task.config.nodeId, sessionId: `steward-${kind}-${key}`,
+  private personalBinding(conversationId: string, scope: Extract<StewardScope,{kind:"personal"|"workbench"}> = {kind:"personal"}): Extract<StewardBinding, { kind: "personal" | "workbench" }> {
+    const kind = scope.kind;
+    const topic = scope.kind === "workbench" && scope.topicId ? this.independentTopics.get(conversationId,scope.topicId) : undefined;
+    const key = hash(this.task.ledger.schedulerIdentity() + ":" + conversationId + (topic ? ":topic:" + topic.id : ""));
+    return { kind, ...(topic ? {topicId:topic.id} : {}), nodeId: this.task.config.nodeId, sessionId: `steward-${kind}-${key}`,
       generation: 1, cwd: join(dirname(resolve(this.task.config.databasePath)), kind === "workbench" ? "steward-workbench" : "steward", key) };
   }
   private ensurePersonalSource(binding: Extract<StewardBinding, { kind: "personal" | "workbench" }>): Promise<void> {
@@ -611,6 +655,8 @@ export class StewardRuntime {
     if (active) return active;
     const create = async () => {
       const sessionId = SessionId(binding.sessionId), persistence = this.ctx.sessionPersistence;
+      const topicTitle = binding.kind === "workbench" && binding.topicId ? this.independentTopics.titleForId(binding.topicId) : undefined;
+      const title = topicTitle ? `管家 · ${topicTitle}` : binding.kind === "workbench" ? "管家 · 工作区" : "管家 · 闲聊";
       if (!await persistence.stat(sessionId)) {
         mkdirSync(binding.cwd, { recursive: true, mode: 0o700 });
         try {
@@ -618,7 +664,7 @@ export class StewardRuntime {
             createdAt: Date.now(), cwd: binding.cwd, isSeeded: false, delegationDepth: 0 });
           try {
             const session = Session.create(sessionId, undefined, handle.header, undefined, this.ctx.sessions.messageProjections);
-            initializeTaskSessionTitle(session, binding.kind === "workbench" ? "管家 · 工作区" : "管家 · 闲聊");
+            initializeTaskSessionTitle(session, title);
             await handle.append(session.snapshotEvents());
             await handle.flush();
             await this.ctx.get("sessionProjectionCache")?.write(session);
@@ -630,7 +676,7 @@ export class StewardRuntime {
         throw new TaskError("FORBIDDEN", "Native source metadata does not match its authorized binding");
       const registry = this.ctx.get("workspaceRegistry");
       if (registry) {
-        const workspace = await registry.create(binding.cwd, binding.kind === "workbench" ? "管家 · 工作区" : "管家 · 闲聊");
+        const workspace = await registry.create(binding.cwd, title);
         await workspace.attachSession(sessionId);
       }
     };
@@ -642,8 +688,7 @@ export class StewardRuntime {
     if (!this.ctx.get("agents") || !this.ctx.get("sessions") || !this.ctx.get("sessionPersistence"))
       throw new TaskError("UNAVAILABLE", "Native session services are unavailable");
     if (scope.kind === "personal" || scope.kind === "workbench") {
-      if (!this.task.config.projectAgentOptions) throw new TaskError("CONFIGURATION", "Configure the conversation model first");
-      return this.personalBinding(conversationId, scope.kind);
+      return this.personalBinding(conversationId, scope);
     }
     if (!this.projects().some(project => project.projectId === scope.projectId))
       throw new TaskError("FORBIDDEN", "Project is not available to this conversation");
@@ -681,7 +726,11 @@ export class StewardRuntime {
     return [];
   }
   private createdFrom(instructionId: string): boolean {
-    return !!this.task.ledger.managementDatabase().prepare("SELECT 1 FROM pr_projects WHERE command=?").get(`steward-create:${instructionId}`);
+    const commandId=`steward-create:${instructionId}`;
+    // Topic promotion keeps the trusted creation command in its durable operation
+    // ledger, even while native project creation is still pending or recovering.
+    return !!this.task.ledger.managementDatabase().prepare(`SELECT 1 FROM pr_projects WHERE command=?
+      UNION ALL SELECT 1 FROM steward_topic_operations WHERE command=? LIMIT 1`).get(commandId,commandId);
   }
   private async submit(request: StewardSend, expectedBinding?: StewardBinding, routingClarification?: StewardMessage["routingClarification"], expectedPermission?: StewardMessage["permission"]): Promise<StewardSnapshot> {
     const quote = await this.prepareQuote(request);
@@ -701,7 +750,7 @@ export class StewardRuntime {
           throw new TaskError("CLARIFICATION", "该创建需求在此提问后已有更新、结束或撤销；请回复最新澄清或明确重新发起，不能用旧提问覆盖后续要求。");
       }
     }
-    if (creation.length) scope = { kind: "workbench" };
+    if (creation.length && scope.kind !== "workbench") scope = { kind: "workbench" };
     const binding = await this.resolveBinding(scope, request.conversationId);
     if (binding.nodeId !== this.task.config.nodeId && (request.uploads?.length || request.selection || request.permissionPreset)) throw new TaskError("UNAVAILABLE", "该远端原会话暂不支持管家附件、逐条模型选择或单次权限；请打开原会话发送。");
     const selection = await this.selectionFor(binding, request.selection);
@@ -732,6 +781,7 @@ export class StewardRuntime {
       if (scope.kind === "project") { const current=this.task.projects!.placementProject(scope.projectId); if(current.session!==binding.sessionId || current.generation!==binding.generation || current.cwd!==binding.cwd) throw new TaskError("CONFLICT","路由依据已变化，请重新确认话题。"); }
     }
     const message = this.store.accept(request, scope, binding, initialSeq, quote, { content, selection, permission, route, ...(routingClarification ? {routingClarification} : {}), ...(creation.length ? { creationContext: { instructionId: creation.find(item => requestsNewProject(item.text))?.id ?? creation[0]!.id, messageIds: creation.map(item => item.id) } } : {}) }, id => this.media.bind(request.conversationId, request.uploads ?? [], id));
+    this.maintenanceEligible.add(message.id);
     try { this.memory.prepare(binding); }
     catch (error) {
       this.store.setState(message.id, { kind: "rejected", reason: error instanceof Error ? error.message : "Memory preparation failed before native admission" });
@@ -970,6 +1020,7 @@ export class StewardRuntime {
     } else if (event.type === "turn/end") {
       const reason = endData.parse(event.data).reason.kind;
       for (const id of cursor.pendingUsers) {
+        if (this.maintenanceEligible.delete(id)) this.scheduleTopicMaintenance(this.store.message(id));
         this.store.setState(id, reason === "completed" ? { kind: "completed" } : { kind: "stopped", reason: `Native turn ended: ${reason}` });
         if (reason === "completed" && cursor.binding.kind === "managed") this.task.projects?.confirmConversationCompletion(this.store.requestId(id), cursor.binding.sessionId);
       }
@@ -978,6 +1029,34 @@ export class StewardRuntime {
     }
     cursor.afterSeq = event.seq;
     this.store.saveCursor(conversationId, cursor);
+  }
+  private scheduleTopicMaintenance(message:StewardMessage) {
+    if(this.closed) return;
+    const key=canonical({conversationId:message.conversationId,scope:message.scope});
+    const throughSeq=Number(this.task.ledger.managementDatabase().prepare("SELECT MAX(seq) AS seq FROM steward_messages WHERE conversation=?").get(message.conversationId)?.seq ?? message.seq);
+    const previous=this.maintenanceStatus.get(key);
+    if(previous && previous.throughSeq>=throughSeq) return;
+    this.maintenancePending.set(key,{conversationId:message.conversationId,scope:message.scope,throughSeq});
+    this.runTopicMaintenance(key);
+  }
+  private runTopicMaintenance(key:string) {
+    if(this.closed || this.maintenanceRunning.has(key)) return;
+    const pending=this.maintenancePending.get(key);
+    if(!pending) return;
+    this.maintenancePending.delete(key);this.maintenanceRunning.add(key);
+    const signal=AbortSignal.any([this.maintenanceAbort.signal,AbortSignal.timeout(15000)]);
+    let calls=0;
+    const coveredSeq=this.maintenanceStatus.get(key)?.coverageSeq ?? 0;
+    this.maintenanceStatus.set(key,{...pending,coverageSeq:coveredSeq,state:"running",reason:null});
+    const job=this.topics.context({topic:{conversationId:pending.conversationId,scope:pending.scope},throughSeq:pending.throughSeq,maintain:true,
+      requestBudget:{signal,claimCall:()=>{signal.throwIfAborted();if(++calls>1)throw new TaskError("LIMIT","One maintenance batch is allowed per completed turn");}}})
+      .then(context=>{this.maintenanceStatus.set(key,{...pending,coverageSeq:context.card.coverageSeq,state:calls && !context.complete && context.card.coverageSeq<=coveredSeq ? "unavailable":"ready",
+        reason:calls && !context.complete && context.card.coverageSeq<=coveredSeq ? "话题整理尚未完成，既有来源已保留。":null});})
+      .catch(()=>{this.maintenanceStatus.set(key,{...pending,coverageSeq:coveredSeq,state:"unavailable",reason:"话题整理暂不可用，既有来源已保留。"});})
+      .finally(()=>{this.memoryJobs.delete(job);this.maintenanceRunning.delete(key);this.runTopicMaintenance(key);
+        for(const old of this.maintenanceStatus.keys()) {if(this.maintenanceStatus.size<=100)break;if(!this.maintenanceRunning.has(old)&&!this.maintenancePending.has(old))this.maintenanceStatus.delete(old);}
+      });
+    this.memoryJobs.add(job);
   }
   private notifications(conversationId: string) {
     const db = this.task.ledger.managementDatabase();
@@ -1040,11 +1119,13 @@ export class StewardRuntime {
   }
   async close() {
     this.closed = true;
+    this.maintenanceAbort.abort();
     clearInterval(this.timer);
     this.promptDisposer?.();
     this.workbenchPromptDisposer?.();
     this.requestDisposer?.();
     await Promise.allSettled([...this.sends.values(), ...this.reads.values(), ...this.sourceJobs, ...this.sourceCreations.values(), ...this.memoryJobs]);
+    await this.topicPromotion.drain();
     this.media.close();
     this.memory.close();
     for (const handle of this.handles.values()) handle.agent.cancel({ kind: "hook", reason: "Steward personal session is stopping" });

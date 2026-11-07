@@ -78,7 +78,9 @@
     "packages/task-system/test/acceptance-gates.test.mjs",
     "packages/task-system/test/steward-pagination.test.mjs",
     "packages/task-system/test/steward-router.test.mjs",
+    "packages/task-system/test/steward-routing-settings.test.mjs",
     "packages/task-system/test/steward-topic-cards.test.mjs",
+    "packages/task-system/test/steward-topics.test.mjs",
     "packages/task-system/test/steward-topic-overview.test.mjs"
   ],
   "native": [
@@ -121,6 +123,7 @@
     "packages/task-system/test/project-session-remote.test.mjs",
     "tests/dsh/task-checkins-native.test.mjs",
     "tests/dsh/steward-conversation.test.mjs",
+    "tests/dsh/steward-independent-topics-native.test.mjs",
     "tests/dsh/steward-memory-native.test.mjs",
     "tests/dsh/steward-observation.test.mjs",
     "tests/dsh/steward-memory-productization.test.mjs",

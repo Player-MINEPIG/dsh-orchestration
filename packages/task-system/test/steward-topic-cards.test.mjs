@@ -209,6 +209,48 @@ test('personal history is a candidate only when its indexed terms match the requ
   } finally { f.close(); }
 });
 
+test('exact directed title matching retains old same-name topics and does not treat shared words as a match', async () => {
+  const f = fixture();
+  try {
+    f.projects.get('A').title = 'Same title';
+    f.projects.get('A').createdAt = '2000-01-01T00:00:00.000Z';
+    f.projects.set('B', { id: 'B', title: 'Same title', revision: '1', goal: 'A different new project', createdAt: new Date().toISOString() });
+    const authorize = f.host.authorize;
+    f.host.authorize = async ref => { const authority = await authorize(ref); if (authority.project) authority.project.createdAt = f.projects.get(ref.scope.projectId).createdAt; return authority; };
+    const matched = await f.cards.deterministic({ conversationId: 'main', text: '继续「Same title」', throughSeq: through });
+    assert.equal(matched.directed, true); assert.equal(matched.complete, true); assert.equal(matched.matches.length, 2);
+    assert.equal(matched.matches.find(item => item.card.topic.scope.projectId === 'A').lastActiveAt, '2000-01-01T00:00:00.000Z');
+    const shared = await f.cards.deterministic({ conversationId: 'main', text: 'What about Same title today?', throughSeq: through });
+    assert.deepEqual(shared.matches, []);
+    f.add('A complete repeated instruction must remain semantic');await context(f);
+    assert.deepEqual((await f.cards.deterministic({conversationId:'main',text:'A complete repeated instruction must remain semantic',throughSeq:through})).matches,[]);
+    const plan=f.db.prepare("EXPLAIN QUERY PLAN SELECT scope FROM steward_topic_cards WHERE conversation=? AND json_extract(data,'$.card.title')=? LIMIT 9").all('main','Same title');
+    assert.ok(plan.some(row=>row.detail.includes('USING INDEX steward_topic_card_title')));
+  } finally { f.close(); }
+});
+
+test('independent topic cards and exact-title lookup keep identities, original histories and activity isolated', async () => {
+  const f = fixture();
+  try {
+    f.db.exec('CREATE TABLE steward_independent_topics(id TEXT PRIMARY KEY,conversation TEXT,command TEXT,data TEXT)');
+    const created = new Date().toISOString(), old = '2000-01-01T00:00:00.000Z';
+    for (const id of ['one','two']) f.db.prepare('INSERT INTO steward_independent_topics VALUES(?,?,?,?)').run(id,'main',id,JSON.stringify({title:'Shared name',createdAt:created}));
+    const authorize = f.host.authorize;
+    f.host.authorize = async ref => ref.scope.kind === 'workbench' && ref.scope.topicId ? {title:'Shared name',binding:null,project:null,createdAt:ref.scope.topicId === 'one' ? old : created} : authorize(ref);
+    const scope = {kind:'workbench',topicId:'one'},source = {...scope,nodeId:'host',sessionId:'one',generation:1,cwd:'/one'};
+    f.store.project({conversationId:'main',role:'user',text:'UniqueIndependent requirement',scope,source,commandId:null,replyTo:null,createdAt:old,nativeSeq:null,state:{kind:'completed'},
+      manifest:{persona:{id:'dsh-steward',version:'1'},scope,history:'scope-native-session',evidence:'selection-only',resources:[]}},'original-one');
+    const one = await context(f,false,{conversationId:'main',scope});
+    const two = await context(f,false,{conversationId:'main',scope:{kind:'workbench',topicId:'two'}});
+    assert.equal(one.originals.length,1); assert.equal(two.originals.length,0);
+    const exact = await f.cards.deterministic({conversationId:'main',text:'继续「Shared name」',throughSeq:through});
+    assert.equal(exact.matches.length,2);assert.equal(exact.matches.find(item=>item.card.topic.scope.topicId==='one').lastActiveAt,old);
+    assert.equal(exact.matches.find(item=>item.card.topic.scope.topicId==='two').lastActiveAt,created);
+    const index = await f.cards.candidates({conversationId:'main',queries:['UniqueIndependent'],exclude:{kind:'project',projectId:'A'}});
+    assert.deepEqual(index.map(card=>card.topic.scope),[scope]);
+  } finally { f.close(); }
+});
+
 test('overview is compact, paged, deterministic, and never invokes maintenance', async () => {
   const f = fixture();
   try {

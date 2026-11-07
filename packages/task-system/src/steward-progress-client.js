@@ -11,7 +11,7 @@ function groupStewardNotifications(messages) {
       previousKey = null;
       continue;
     }
-    const key = JSON.stringify([scope.kind, scope.kind === 'project' ? scope.projectId : null, taskId]);
+    const key = JSON.stringify([scope.kind, scope.kind === 'project' ? scope.projectId : scope.kind === 'workbench' ? scope.topicId ?? null : null, taskId]);
     const previous = groups.at(-1);
     if (previous?.kind === 'progress' && previousKey === key) previous.messages.push(message);
     else groups.push({ kind: 'progress', id: message.id, messages: [message] });

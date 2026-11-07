@@ -1,3 +1,4 @@
+import { topicCutoff, topicActiveAt } from "./steward-topic-activity.js";
 import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import { canonical, TaskError, type TaskLedger } from "./ledger.js";
@@ -27,7 +28,7 @@ export class StewardConversations {
       CREATE INDEX IF NOT EXISTS steward_request_conversation ON steward_requests(conversation);`);
     this.db.exec(`CREATE INDEX IF NOT EXISTS steward_pending_source ON steward_messages(conversation,json_extract(data,'$.source'))
       WHERE json_extract(data,'$.role')='user' AND json_extract(data,'$.state.kind') NOT IN ('completed','rejected','stopped','released');
-      CREATE INDEX IF NOT EXISTS steward_scope_latest ON steward_messages(conversation,json_extract(data,'$.scope.kind'),json_extract(data,'$.scope.projectId'),seq);
+      CREATE INDEX IF NOT EXISTS steward_scope_topic_latest ON steward_messages(conversation,json_extract(data,'$.scope.kind'),json_extract(data,'$.scope.projectId'),json_extract(data,'$.scope.topicId'),seq);
       CREATE INDEX IF NOT EXISTS steward_native_source ON steward_sources(json_extract(data,'$.binding.sessionId'),json_extract(data,'$.binding.nodeId'));`);
     this.db.exec("CREATE INDEX IF NOT EXISTS steward_message_reply ON steward_messages(conversation,json_extract(data,'$.replyTo'),seq)");
     this.db.exec("CREATE INDEX IF NOT EXISTS steward_message_activity ON steward_messages(conversation,json_extract(data,'$.createdAt'))");
@@ -143,17 +144,23 @@ export class StewardConversations {
       .run(canonical({ kind: "project", projectId }), conversationId, messageId, conversationId);
   }
   topicActivity(conversationId: string, projects: { projectId: string; title: string; createdAt: string }[], activeDays: number, observedAt = new Date().toISOString()) {
-    const cutoffAt = new Date(Date.parse(observedAt) - activeDays * 86400000).toISOString();
+    const cutoffAt = topicCutoff(observedAt,activeDays);
     const topics = new Map<string, { scope: StewardScope; title: string; lastActiveAt: string }>();
     const titles = new Map(projects.map(project => [project.projectId, project.title]));
-    for (const project of projects) if (project.createdAt >= cutoffAt && project.createdAt <= observedAt)
+    const independent = this.db.prepare("SELECT 1 FROM sqlite_master WHERE name='steward_independent_topics'").get() ? this.db.prepare("SELECT id,json_extract(data,'$.title') AS title,json_extract(data,'$.createdAt') AS created FROM steward_independent_topics WHERE conversation=? ORDER BY rowid DESC LIMIT 100").all(conversationId) : [];
+    const topicTitles = new Map(independent.map(topic => [String(topic.id),String(topic.title)]));
+    for (const topic of independent) if (topicActiveAt(String(topic.created),observedAt,activeDays))
+      topics.set(`topic:${topic.id}`, {scope:{kind:"workbench",topicId:String(topic.id)},title:String(topic.title),lastActiveAt:String(topic.created)});
+    for (const project of projects) if (topicActiveAt(project.createdAt,observedAt,activeDays))
       topics.set(project.projectId, { scope: { kind: "project", projectId: project.projectId }, title: project.title, lastActiveAt: project.createdAt });
     const rows = this.db.prepare("SELECT json_extract(data,'$.scope') AS scope,MAX(json_extract(data,'$.createdAt')) AS active FROM steward_messages WHERE conversation=? AND json_extract(data,'$.createdAt')>=? AND json_extract(data,'$.createdAt')<=? GROUP BY json_extract(data,'$.scope')").all(conversationId, cutoffAt, observedAt);
     for (const row of rows) {
       const scope = stewardScope.parse(JSON.parse(String(row.scope)));
-      const title = scope.kind === "personal" ? "闲聊" : scope.kind === "workbench" ? "管家工作区" : titles.get(scope.projectId);
+      const independentTitle = scope.kind === "workbench" && scope.topicId
+        ? topicTitles.get(scope.topicId) ?? this.db.prepare("SELECT json_extract(data,'$.title') AS title FROM steward_independent_topics WHERE conversation=? AND id=?").get(conversationId,scope.topicId)?.title : undefined;
+      const title = scope.kind === "personal" ? "闲聊（历史）" : scope.kind === "workbench" ? scope.topicId ? typeof independentTitle === "string" ? independentTitle : undefined : "工作区（历史）" : titles.get(scope.projectId);
       if (title === undefined) continue;
-      const key = scope.kind === "project" ? scope.projectId : scope.kind, lastActiveAt = String(row.active);
+      const key = scope.kind === "project" ? scope.projectId : scope.kind === "workbench" && scope.topicId ? `topic:${scope.topicId}` : scope.kind, lastActiveAt = String(row.active);
       const previous = topics.get(key);
       if (!previous || previous.lastActiveAt < lastActiveAt) topics.set(key, { scope, title, lastActiveAt });
     }

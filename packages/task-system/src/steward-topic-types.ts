@@ -27,12 +27,14 @@ export type TopicSourcePage = { ref: TopicSource; content: string; offset: numbe
 
 /** Trusted host reads only. None of these callbacks may create/activate a native session. */
 export interface TopicHostReads {
-  authorize(input: TopicRef): Promise<{ title: string; binding: z.infer<typeof stewardBinding> | null; project: { id: string; revision: string; goal: string } | null }>;
+  authorize(input: TopicRef): Promise<{ title: string; binding: z.infer<typeof stewardBinding> | null; project: { id: string; revision: string; goal: string; createdAt?: string } | null; createdAt?: string }>;
   projects(input: { conversationId: string; query: string; page: number; limit: number }): Promise<{ items: { projectId: string; title: string; summary: string }[]; hasMore: boolean }>;
   /** Optional bounded per-real-request maintenance. Never called by list/source/detail. */
   compact?(input: { previous: TopicCard; delta: TopicOriginal[] }, signal?: AbortSignal): Promise<unknown>;
 }
 export interface TopicCardsPort {
+  activity?(topic: TopicRef, throughSeq: number): Promise<string | null>;
+  deterministic?(input: { conversationId: string; text: string; throughSeq: number }): Promise<{ matches: { card: TopicCard; lastActiveAt: string | null }[]; complete: boolean; directed?: boolean }>;
   list(input: z.input<typeof topicListInput>): Promise<TopicListPage>;
   context(input: { topic: TopicRef; throughSeq: number; maintain: boolean; requestBudget?: {signal:AbortSignal;claimCall():void} }): Promise<TopicContext>;
   candidates(input: { conversationId: string; queries: string[]; exclude: z.infer<typeof stewardScope>; limit?: number }): Promise<TopicCard[]>;

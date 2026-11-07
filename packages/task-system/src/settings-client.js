@@ -166,7 +166,7 @@ window.__ModuleLoader__.load({
       healthAlertsHint:
         "Runs planner-side health reconciliation during maintenance. It does not change alert destinations.",
       stewardActiveDays: "Active topic window (days)",
-      stewardActiveDaysHint: "Show topics active in the last 1–365 days; default 30.",
+      stewardActiveDaysHint: "Shared window for recent-topic menus and confirmation before using old records; 1–365 days, default 30.",
       localHeartbeatIntervalMs: "Local ledger heartbeat interval (ms)",
       localHeartbeatIntervalMsHint:
         "Sampled at maintenance ticks for the configured local node. This is not the remote coordinator heartbeat interval.",
@@ -385,7 +385,7 @@ window.__ModuleLoader__.load({
       healthAlertsHint:
         "由规划节点在维护轮询中检查健康状态，不改变告警接收位置。",
       stewardActiveDays: "话题活跃窗口（天）",
-      stewardActiveDaysHint: "话题选择器显示最近 1–365 天有活动的话题，默认 30 天。",
+      stewardActiveDaysHint: "话题选择器与旧记录确认共用最近 1–365 天的活动时间，默认 30 天；超出窗口的记录需先确认。",
       localHeartbeatIntervalMs: "本地账本心跳间隔（毫秒）",
       localHeartbeatIntervalMsHint:
         "维护轮询按此间隔记录已配置本机节点的心跳，不是向远端协调器发送心跳的间隔。",
@@ -2102,6 +2102,40 @@ h(
       const snapshot=recent?positive:value?.catalog.snapshot;
       return {snapshot,available:recent || (value?.catalog.state==="fresh" && snapshot?.complete===true && snapshot.expiresAt>Date.now() && !!snapshot.revision)};
     }
+    function StewardRoutingSettings({read,save,saveCoordinator,writable,openDecisions,openModels}) {
+      const [state,setState]=React.useState({loading:true}),[draft,setDraft]=React.useState(null),[saving,setSaving]=React.useState(false),[message,setMessage]=React.useState("");
+      const generation=React.useRef(0),pendingSave=React.useRef(null);
+      const load=React.useCallback(async()=>{const request=++generation.current;setState(old=>({...old,loading:true,error:""}));try{const value=await read();if(request===generation.current)setState({value,loading:false});}catch(error){if(request===generation.current)setState(old=>({...old,loading:false,error:error?.details?.detail??error?.message??"分流设置暂不可读取"}));}},[read]);
+      React.useEffect(()=>{void load();return()=>{generation.current++;};},[load]);
+      const value=state.value,choice=draft?draft.choice:value?.configuredFallback??null;
+      const routes=new Map((value?.available??[]).flatMap(group=>group.models.map(model=>[JSON.stringify([group.id,model.id]),{provider:group.id,providerName:group.name,...model}])));
+      const modelKey=choice?JSON.stringify([choice.provider,choice.model]):"",model=routes.get(modelKey),efforts=model?.reasoning?.efforts??[];
+      const dirty=!!draft&&nodeModelChoiceKey(draft.choice)!==nodeModelChoiceKey(value?.configuredFallback);
+      const valid=!choice||!!model&&(!choice.reasoningEffort||efforts.some(effort=>effort.id===choice.reasoningEffort));
+      const disabled=!writable||saving||state.loading||!value;
+      const choose=choice=>{pendingSave.current=null;setDraft({choice,expectedRevision:draft?.expectedRevision??value.revision});setMessage("");};
+      const saveDraft=async()=>{if(!dirty||!valid||disabled)return false;setSaving(true);setMessage("");try{const input=pendingSave.current??{commandId:crypto.randomUUID(),expectedRevision:draft.expectedRevision,fallback:draft.choice};pendingSave.current=input;const next=await save(input);generation.current++;setState({value:next,loading:false});setDraft(null);pendingSave.current=null;setMessage("管家分流设置已保存，后续新请求使用此配置。");return true;}catch(error){setMessage(`保存未能确认，草稿已保留：${error?.details?.detail??error?.message??"请刷新后核对"}`);return false;}finally{setSaving(false);}};
+      useSaveParticipant(saveCoordinator,"steward-routing",{meta:{dirty,invalid:!writable||!valid,busy:saving||state.loading,restart:false},save:saveDraft,discard:()=>{setDraft(null);pendingSave.current=null;setMessage("");}});
+      const effective=value?.fallback,selectedRoute=effective?routes.get(JSON.stringify([effective.provider,effective.model])):null;
+      return h(SettingsArea,{id:"task-steward-router",title:"管家话题分流",description:"先用程序核对，再按需要判断语义；去向不明确时先询问。新开话题不会自动创建项目或启动任务。"},
+        h("ol",{style:{paddingLeft:22,margin:"0 0 20px",maxWidth:"75ch"}},
+          h("li",null,"程序优先：明确指定的话题、回复和确切匹配先按记录核对。"),
+          h("li",null,"旧记录需确认：与话题选择器共用下方的活跃窗口设置，默认 30 天；超出窗口时先请你确认。"),
+          h("li",null,"Jev：需要语义判断时使用独立的决策配置。",value?h("span",null,value.jevAvailable?" 服务已加载。":" 服务尚未加载。"):null),
+          h("li",null,"轻量模型兜底：仍不能确定时使用下面的专用模型；没有可用模型时请你说明。")),
+        h("p",{style:hintStyle},"分流模型只决定原消息交给哪个话题，不执行请求，也不会沿用项目 PM 的模型。"),
+        state.error&&h("p",{role:"alert"},state.error),
+        h("div",{className:"task-connection-grid"},
+          h("label",{className:"task-connection-field"},h("span",null,"分流兜底模型"),h("select",{"aria-label":"分流兜底模型",style:controlStyle,value:modelKey,disabled,onChange:event=>{const selected=routes.get(event.target.value);if(!selected){choose(null);return;}const effort=["none","off","minimal","low"].map(id=>selected.reasoning?.efforts.find(item=>item.id===id)).find(Boolean);choose({provider:selected.provider,model:selected.id,...(effort?{reasoningEffort:effort.id}:{})});}},
+            h("option",{value:""},"自动选择可用的轻量模型"),
+            choice&&!model&&h("option",{value:modelKey,disabled:true},`${choice.provider} / ${choice.model} · 当前不可用`),
+            ...[...routes].map(([key,route])=>h("option",{key,value:key},`${route.providerName} / ${route.name}`)))),
+          h("label",{className:"task-connection-field"},h("span",null,"分流推理档位"),h("select",{"aria-label":"分流推理档位",style:controlStyle,value:choice?.reasoningEffort??"",disabled:disabled||!choice||!model,onChange:event=>{const {reasoningEffort,...base}=choice;choose({...base,...(event.target.value?{reasoningEffort:event.target.value}:{})});}},h("option",{value:""},"模型默认档位"),...efforts.map(effort=>h("option",{key:effort.id,value:effort.id},effort.name))))),
+        h("p",{role:"status",style:hintStyle},state.loading?"正在读取分流模型…":effective?`当前有效兜底：${selectedRoute?`${selectedRoute.providerName} / ${selectedRoute.name}`:`${effective.provider} / ${effective.model}`}${effective.reasoningEffort?` · ${effective.reasoningEffort}`:""}${value.source==="default"?"（自动轻量默认）":""}。`:"当前没有可用的轻量兜底模型；不明确的请求会保持待答。"),
+        h("p",{style:hintStyle},"活跃天数在下方“运行控制”的“话题活跃窗口（天）”设置，菜单筛选与旧记录确认同时生效。"),
+        h("div",{style:{display:"flex",gap:8,flexWrap:"wrap"}},h(Button,{variant:"outline",disabled:saving||state.loading,onClick:load},"刷新分流模型"),h(Button,{variant:"outline",onClick:openDecisions},"打开 Jev 决策设置"),h(Button,{variant:"outline",onClick:openModels},"打开模型设置")),
+        message&&h("p",{role:"status"},message));
+    }
     function NodeModelSettings({nodeId,read,refresh,save,saveCoordinator,writable,active=true}) {
       const [state,setState]=React.useState({loading:true}),[draft,setDraft]=React.useState(null),[saving,setSaving]=React.useState(false),[message,setMessage]=React.useState("");
       const generation=React.useRef(0);
@@ -2691,7 +2725,7 @@ h(
           h("div",null,h("h1",null,"设置"),h("p",{style:hintStyle},`当前服务设备 · ${hostIdentity.state.value?.nodeId ?? (hostIdentity.state.failed ? "身份读取失败" : "正在读取身份…")} · 本机配置`)),
           h("nav",{className:"task-primary-nav","aria-label":"任务系统导航"},...[ ["tasks","任务"],["projects","项目"],["fullpanel","完整面板"],["settings","设置"] ].map(([target,label])=>h("button",{type:"button",key:target,"aria-current":target==="settings"?"page":undefined,onClick:()=>props.onNavigate?.(target)},label)))),
         h("p",{style:hintStyle},"修改先保留为草稿；底部统一保存。即时设置与需重启插件的设置会分别标明，部分保存失败会保留未完成草稿。"),
-        h("nav",{className:"task-settings-nav","aria-label":"设置分区"},...[ ["task-local","本机与工作区"],["task-connections","协作连接"],["task-decisions","观察归并"],["task-runtime","运行控制"],["task-diagnostics","状态与诊断"] ].map(([id,title])=>h("a",{key:id,href:`#${id}`,onClick:event=>{event.preventDefault();document.getElementById(id)?.scrollIntoView({block:"start",behavior:"smooth"});}},title))),
+        h("nav",{className:"task-settings-nav","aria-label":"设置分区"},...[ ["task-local","本机与工作区"],["task-connections","协作连接"],["task-decisions","观察归并"],["task-steward-router","管家分流"],["task-runtime","运行控制"],["task-diagnostics","状态与诊断"] ].map(([id,title])=>h("a",{key:id,href:`#${id}`,onClick:event=>{event.preventDefault();document.getElementById(id)?.scrollIntoView({block:"start",behavior:"smooth"});}},title))),
         props.startup
           ? h(StartupSettings, {
               t,
@@ -2714,6 +2748,7 @@ h(
               }),
             })
           : null,
+        hostIdentity.state.value&&deployment(hostIdentity.state.value).centralMode==="host"&&props.stewardRoutingApi?h(StewardRoutingSettings,{...props.stewardRoutingApi,saveCoordinator,writable:state.writable,openDecisions:props.openDecisions,openModels:props.openModels}):null,
         h(
           "div",
           { "data-task-runtime-and-diagnostics": true },
@@ -2820,20 +2855,29 @@ h(
       );
     }
     class TaskSettingsSurface {
-      constructor() { this.container=document.createElement("div");this.container.style.cssText="height:100%;min-height:0;width:100%;overflow:auto";this.listeners=new Set();this.opened=false; }
+      constructor() { this.container=document.createElement("div");this.container.style.cssText="height:100%;min-height:0;width:100%;overflow:auto";this.listeners=new Set();this.opened=false;this.attached=false; }
       subscribe = listener => {this.listeners.add(listener);return()=>this.listeners.delete(listener);};
       snapshot = () => this.opened;
-      attach(node) {node.appendChild(this.container);if(!this.opened){this.opened=true;for(const listener of this.listeners)listener();}}
-      detach(node) {if(this.container.parentNode===node)this.container.remove();}
+      visibilitySnapshot = () => this.attached;
+      attach(node) {node.appendChild(this.container);this.opened=true;this.attached=true;for(const listener of this.listeners)listener();}
+      detach(node) {if(this.container.parentNode===node){this.container.remove();this.attached=false;for(const listener of this.listeners)listener();}}
     }
-    function TaskSettingsPanel({surface}) {
+    function TaskSettingsPanel({surface,kind="settings"}) {
       const ref=React.useRef(null);
       React.useEffect(()=>{const node=ref.current;surface.attach(node);return()=>surface.detach(node);},[surface]);
-      return h("div",{ref,style:{height:"100%",minHeight:0,width:"100%"},"data-task-settings-panel":true});
+      return h("div",{ref,style:{height:"100%",minHeight:0,width:"100%"},"data-task-settings-panel":kind==="settings"?true:undefined,"data-steward-panel":kind==="steward"?true:undefined});
     }
     function TaskSettingsPortal({surface, ...props}) {
       const opened=React.useSyncExternalStore(surface.subscribe,surface.snapshot,surface.snapshot);
       return opened ? createPortal(h(Page,props),surface.container) : null;
+    }
+    let PersistentStewardPanel;
+    function StewardPanelPortal({surface,...props}) {
+      const opened=React.useSyncExternalStore(surface.subscribe,surface.snapshot,surface.snapshot);
+      const visible=React.useSyncExternalStore(surface.subscribe,surface.visibilitySnapshot,surface.visibilitySnapshot);
+      if(!opened)return null;
+      PersistentStewardPanel??=createStewardClient(React).StewardPanel;
+      return createPortal(h(PersistentStewardPanel,{...props,visible}),surface.container);
     }
     async function readRemote(ctx, method, codec, ...args) {
       // $mount owns a separate Cordis namespace. This dynamically mounted service
@@ -2863,8 +2907,8 @@ h(
     const openPlugins = (ctx) => openSettingsSection(ctx, "plugins");
     const openModels = (ctx) => openSettingsSection(ctx, "models");
     const projectMethods = [
-      "stewardUpload", "stewardUploadRead", "stewardAttachmentRead", "stewardModelCatalog", "stewardValidateModel", "stewardPermissionCatalog", "stewardValidatePermission", "stewardSourceSession", "stewardTopics", "stewardTopic", "stewardTopicSource", "stewardProgress", "stewardDocument", "stewardSnapshot", "stewardSend", "stewardReconcile", "stewardResolve",
-      "stewardMemoryRead", "stewardMemoryConfigure",
+      "stewardUpload", "stewardUploadRead", "stewardAttachmentRead", "stewardModelCatalog", "stewardValidateModel", "stewardPermissionCatalog", "stewardValidatePermission", "stewardSourceSession", "stewardTopics", "stewardTopic", "stewardTopicSource", "topicProjectOptions", "topicProjectConfigure", "topicTaskCreate", "topicTaskBind", "stewardProgress", "stewardDocument", "stewardSnapshot", "stewardSend", "stewardReconcile", "stewardResolve",
+      "stewardMemoryRead", "stewardMemoryConfigure", "stewardRoutingRead", "stewardRoutingConfigure",
       "stewardGateRead", "stewardGateArm", "stewardGateDecide", "stewardGateAmend", "stewardGateContinue", "stewardGateAcceptContinue",
       "stewardGateIndependent",
       "executionPresets",
@@ -2995,7 +3039,7 @@ h(
     }
     class ProjectNavigation {
       constructor(){this.target=null;this.listeners=new Set();}
-      go(target){if(!["tasks","projects","fullpanel"].includes(target))return;this.target=target;for(const listener of this.listeners)listener(target);}
+      go(target){if(!["tasks","projects","fullpanel"].includes(target)&&!(target?.kind==="task"&&typeof target.taskId==="string"))return;this.target=target;for(const listener of this.listeners)listener(target);}
       subscribe(listener){this.listeners.add(listener);return()=>this.listeners.delete(listener);}
     }
     function ProjectNativeOverlay({ frame, nativeClient, invoke, descriptor, covered }) {
@@ -3151,7 +3195,7 @@ h(
             return;
           }
           if(event.source===frame.current?.contentWindow && event.data?.channel==="dsh-project-runtime" && event.data.method==="navigateAcknowledged"){
-            if(navigation?.target===event.data.input)navigation.target=null;
+            if(JSON.stringify(navigation?.target)===JSON.stringify(event.data.input))navigation.target=null;
             return;
           }
           if (event.source === frame.current?.contentWindow && event.data?.channel === "dsh-project-runtime" && event.data.method === "detailFullscreen") {
@@ -3172,7 +3216,7 @@ h(
           if (
             event.source !== frame.current?.contentWindow ||
             event.data?.channel !== "dsh-project-runtime" ||
-            !projectMethods.includes(event.data.method) && !["projectDirectoryList", "projectDirectoryPick", "projectOpenSettings", "projectOpenModels", "projectOpenTaskSession"].includes(event.data.method) ||
+            !projectMethods.includes(event.data.method) && !["projectDirectoryList", "projectDirectoryPick", "projectOpenSettings", "projectOpenModels", "projectOpenTaskSession", "projectOpenStewardTopic"].includes(event.data.method) ||
             ["projectPage", "workflowPage"].includes(event.data.method)
           )
             return;
@@ -3183,6 +3227,7 @@ h(
               : method === "projectDirectoryPick" ? await directoryApi.pick()
               : method === "projectOpenSettings" ? directoryApi.openSettings()
               : method === "projectOpenModels" ? directoryApi.openModels()
+              : method === "projectOpenStewardTopic" ? await invoke("stewardSourceSession",input.topic).then(value=>directoryApi.openSession(value.binding.sessionId))
               : method === "projectOpenTaskSession" ? await openTaskSession(input,invoke,directoryApi.openSession)
               : await invoke(method, input);
             source.postMessage(
@@ -3479,19 +3524,21 @@ h(
       };
       const projectNavigation = new ProjectNavigation();
       const projectNativeClient = createProjectNativeClient({ React, Context: ClientContext, modules: ctx.modules });
-      const { StewardPanel } = createStewardClient(React);
       const stewardNativeClient = createStewardNativeClient({ React, Context: ClientContext, modules: ctx.modules, hostContext: ctx, createPortal });
       const projectDirectoryApi = {
         openSession: sessionId => {const service=ctx.get("uiWorkspace");if(!service)throw Error("DSH 会话导航服务尚未加载");return service.openSession(sessionId);},
         list: path => {const service=ctx.get("uiWorkspace");if(!service)throw Error("DSH 目录浏览服务尚未加载，请稍后重试");return service.listDirectory(path);},
         pick: () => {const service=ctx.get("uiWorkspace");if(!service)throw Error("DSH 目录选择服务尚未加载");return service.pickDirectory();},
-        openSettings: () => {ctx.get("layout")?.selectPanel("dsh-task-settings");return true;},
+        openTask: taskId => {projectNavigation.go({kind:"task",taskId});ctx.get("layout")?.selectPanel("dsh-task-projects");},
+        openSettings: section => {ctx.get("layout")?.selectPanel("dsh-task-settings");if(section){let frames=60;const reveal=()=>{const node=document.getElementById(section);if(node)node.scrollIntoView({block:"start"});else if(--frames>0)requestAnimationFrame(reveal);};requestAnimationFrame(reveal);}return true;},
         openModels: () => openModels(ctx),
       };
       ctx.effect(() => {
-        const offMain = ctx.slots.inject("main", () => ctx.slots.register({ name: "main", key: "dsh-steward", children: { "steward.session.shell": { kind: "single", scope: "session" } }, inject: () => ({ invoke, openSession: projectDirectoryApi.openSession, nativeClient: stewardNativeClient }) }, StewardPanel));
+        const surface=new TaskSettingsSurface();
+        const offMain = ctx.slots.inject("main", () => ctx.slots.register({ name: "main", key: "dsh-steward", inject: () => ({surface,kind:"steward"}) }, TaskSettingsPanel));
+        const offPortal=ctx.slots.inject("shell.overlay",()=>ctx.slots.register({name:"shell.overlay",id:"steward-surface",children:{"steward.session.shell":{kind:"single",scope:"session"}},inject:()=>({surface,invoke,openSession:projectDirectoryApi.openSession,openTask:projectDirectoryApi.openTask,openSettings:projectDirectoryApi.openSettings,nativeClient:stewardNativeClient})},StewardPanelPortal));
         const offNav = ctx.slots.inject("sidebar.panellist", () => ctx.slots.register({ name: "sidebar.panellist", id: "dsh-steward", order: 19, label: () => "管家" }, ProjectIcon));
-        return () => { offNav(); offMain(); };
+        return () => { offNav(); offPortal(); offMain(); };
       }, "steward conversation");
       ctx.effect(() => mountSessionTaskPanel(ctx, invoke), "session task monitor");
       ctx.effect(() => {
@@ -3592,6 +3639,7 @@ h(
               readConnectionSettings:()=>invoke("connectionSettings"),
               saveConnectionSettings:input=>invoke("saveConnectionSettings",input),
               nodeModelApi:{read:input=>invoke("nodeModelSettings",input),refresh:input=>invoke("refreshNodeModels",input),save:input=>invoke("saveNodeModelDefault",input)},
+              stewardRoutingApi:{read:()=>invoke("stewardRoutingRead",{}),save:input=>invoke("stewardRoutingConfigure",input)},
               readProjectSettings: () => invoke("projectSettings"),
               readExecutionPresets: () => invoke("executionPresets"),
               readExecutionDirectorySettings: () => invoke("executionDirectorySettings"),

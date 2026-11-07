@@ -1,3 +1,5 @@
+import { topicProjectOptionsInput, topicProjectConfigureInput, topicTaskCreateInput, topicTaskBindInput } from "./steward-topic-promotion.js";
+import { stewardRoutingRead, stewardRoutingConfigure } from "./steward-routing-settings.js";
 import { stewardProgressRead, stewardDocumentOpen } from "./steward-progress.js";
 import { topicListInput, topicDetailInput, topicSourceInput } from "./steward-topic-types.js";
 import { ExecutorDemandReads } from "./remote/executor-reads.js";
@@ -370,6 +372,7 @@ const projectInputs = {
   ...demandReadInputs,
   stewardUpload, stewardUploadRead, stewardAttachmentRead, stewardValidateModel: stewardSelection, stewardModelCatalog: z.strictObject({}), stewardPermissionCatalog: z.strictObject({}), stewardValidatePermission: z.strictObject({preset:z.string().min(1).max(160)}),
   stewardSourceSession,
+  topicProjectOptions:topicProjectOptionsInput, topicProjectConfigure:topicProjectConfigureInput, topicTaskCreate:topicTaskCreateInput, topicTaskBind:topicTaskBindInput,
   stewardTopics: topicListInput, stewardTopic: topicDetailInput, stewardTopicSource: topicSourceInput,
   stewardProgress:stewardProgressRead, stewardDocument:stewardDocumentOpen,
   stewardSnapshot: stewardRead,
@@ -378,6 +381,7 @@ const projectInputs = {
   stewardResolve,
   stewardMemoryRead,
   stewardMemoryConfigure,
+  stewardRoutingRead, stewardRoutingConfigure,
   stewardGateRead, stewardGateArm, stewardGateDecide, stewardGateAmend, stewardGateContinue, stewardGateAcceptContinue, stewardGateIndependent,
   nodeModelSettings:z.object({nodeId:z.string().min(1).max(128)}).strict(),
   refreshNodeModels:z.object({nodeId:z.string().min(1).max(128)}).strict(),
@@ -567,7 +571,10 @@ export class TaskPluginSettings extends TypertRemoteService {
   async taskGraphPage(input:unknown) { return this.demandProduct("taskGraphPage",input); }
   async taskSessionAccess(input:unknown) { return this.demandProduct("taskSessionAccess",input); }
   async projectListPage(input:unknown) { return this.demandProduct("projectListPage",input); }
-  async projectDetail(input:unknown) { return this.demandProduct("projectDetail",input); }
+  async projectDetail(input:unknown) {
+    const request=parseDemandRead("projectDetail",input),detail=z.object({}).passthrough().parse(await this.demandProduct("projectDetail",request)),task=this.ctx.get("taskSystem");
+    return {...detail,linkedTopics:request.view!=="executor"&&task?.steward&&deploymentPolicy(task.config).centralMode==="host"?task.steward.projectTopics(request.projectId):[]};
+  }
   async projectCreateOptions(input:unknown) { return this.demandProduct("projectCreateOptions",input); }
   async projectResourcesPage(input:unknown) { return this.demandProduct("projectResourcesPage",input); }
   async scheduleListPage(input:unknown) { return this.demandProduct("scheduleListPage",input); }
@@ -703,6 +710,10 @@ export class TaskPluginSettings extends TypertRemoteService {
   async stewardModelCatalog() { return this.stewardOperation(() => this.stewardService().modelCatalog()); }
   async stewardValidateModel(input: unknown) { return this.stewardOperation(() => this.stewardService().validateModel(input)); }
   async stewardSourceSession(input: unknown) { return this.stewardOperation(() => this.stewardService().sourceSession(stewardSourceSession.parse(input))); }
+  async topicProjectOptions(input: unknown) { return this.stewardOperation(() => this.stewardService().topicProjectOptions(topicProjectOptionsInput.parse(input))); }
+  async topicProjectConfigure(input: unknown) { return this.stewardOperation(() => this.stewardService().topicProjectConfigure(topicProjectConfigureInput.parse(input))); }
+  async topicTaskCreate(input: unknown) { return this.stewardOperation(() => this.stewardService().topicTaskCreate(topicTaskCreateInput.parse(input))); }
+  async topicTaskBind(input: unknown) { return this.stewardOperation(() => this.stewardService().topicTaskBind(topicTaskBindInput.parse(input))); }
   async stewardTopics(input: unknown) { return this.stewardOperation(() => this.stewardService().topicList(input)); }
   async stewardTopic(input: unknown) { return this.stewardOperation(() => this.stewardService().topicDetail(input)); }
   async stewardTopicSource(input: unknown) { return this.stewardOperation(() => this.stewardService().topicSource(input)); }
@@ -723,6 +734,8 @@ export class TaskPluginSettings extends TypertRemoteService {
   }
   async stewardReconcile(input: unknown) { return this.stewardOperation(() => this.stewardService().reconcile(stewardRead.parse(input))); }
   async stewardResolve(input: unknown) { return this.stewardOperation(() => this.stewardService().resolve(stewardResolve.parse(input))); }
+  async stewardRoutingRead(input: unknown) { stewardRoutingRead.parse(input); return this.stewardOperation(() => this.stewardService().routingConfiguration()); }
+  async stewardRoutingConfigure(input: unknown) { const value=stewardRoutingConfigure.parse(input); return this.stewardOperation(() => this.stewardService().configureRouting(value)); }
   async stewardMemoryRead(input: unknown) { return this.stewardOperation(() => this.stewardService().memoryConfiguration(stewardMemoryRead.parse(input))); }
   async stewardMemoryConfigure(input: unknown) { return this.stewardOperation(() => this.stewardService().configureMemory(stewardMemoryConfigure.parse(input))); }
   async stewardGateRead(input: unknown) { return this.stewardOperation(() => this.stewardService().gateRead(stewardGateRead.parse(input))); }

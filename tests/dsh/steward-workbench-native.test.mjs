@@ -38,16 +38,16 @@ test('real workbench tools write/read own persistent cwd while other-project, tr
 
 test('legacy personal creation clarification bridges only that explicit intent on an active same-command retry; delegated goal preserves original requirement',{timeout:30000},async()=>{
  const h=await fixture();try{
-  const s=h.ctx.taskSystem.steward,original='创建一个新项目，去搜索并推测gpt6.2的发布时间';
+  const s=h.ctx.taskSystem.steward,original='创建一个新项目，去搜索并推测gpt6.2的发布时间';await s.configureRouting({commandId:'legacy-creation-router',expectedRevision:0,fallback:{provider:'test-offline',model:'script'}});
   h.model.script.push('PERSONAL_SECRET');await s.send({conversationId:'main',commandId:'unrelated-casual',text:'我的无关闲聊秘密',target:{kind:'personal'}});await done(h,'unrelated-casual');
   h.model.script.push('请提供新项目的标题和目标原文。');await s.send({conversationId:'main',commandId:'legacy-create',text:original,target:{kind:'personal'}});const old=await done(h,'legacy-create');
   const before=h.model.requests.length,request={conversationId:'main',commandId:'same-local-not-admitted-id',text:'你自己写即可',routingMode:'auto'};
   h.model.script.push(JSON.stringify({kind:'new-work',question:'要将这项待创建项目需求交给管家工作区吗？'}),options=>{const data=JSON.stringify(options.messages);assert.match(data,/去搜索并推测gpt6.2/);assert.ok(!data.includes('PERSONAL_SECRET'));assert.ok(!data.includes('无关闲聊秘密'));return {name:'steward_create_project',args:{title:'GPT6.2发布时间研究',goal:'搜索可信信息并形成有依据的发布时间推测'}};},'已创建研究项目');
-  const routing=await s.send(request),question=routing.router.find(item=>item.commandId===request.commandId);assert.equal(question.executorAdmitted,false);await s.send({conversationId:'main',commandId:'legacy-confirm-workbench',text:'确认',routeQuestionId:question.questionId,target:{kind:'workbench'}});const next=await done(h,request.commandId);assert.equal(h.model.requests.length,before+3,'Independent routing confirmation precedes the real bounded creation tool turn');
-  assert.equal(next.commandMessage.scope.kind,'workbench');assert.equal(s.store.message(old.commandMessage.id).scope.kind,'personal');assert.equal(next.commandMessage.creationContext.instructionId,old.commandMessage.id);
+  const routing=await s.send(request),question=routing.router.find(item=>item.commandId===request.commandId);assert.equal(question.executorAdmitted,false);await s.send({conversationId:'main',commandId:'legacy-confirm-workbench',text:'确认',routeQuestionId:question.questionId,routeCreateTopic:true,target:{kind:'workbench'}});const next=await done(h,request.commandId);assert.equal(h.model.requests.length,before+3,'Independent routing confirmation precedes the real bounded creation tool turn');
+  assert.equal(next.commandMessage.scope.kind,'workbench');assert.ok(next.commandMessage.scope.topicId);assert.equal(s.store.message(old.commandMessage.id).scope.kind,'personal');assert.equal(next.commandMessage.creationContext.instructionId,old.commandMessage.id);
   const project=h.runtime.snapshot().projects.find(p=>p.title==='GPT6.2发布时间研究');assert.ok(project);assert.ok(project.goal.includes(original));
   const count=h.model.requests.length;await s.send(request);assert.equal(h.model.requests.length,count);assert.equal(h.runtime.snapshot().projects.filter(p=>p.title==='GPT6.2发布时间研究').length,1);
-  const source=await s.sourceSession({conversationId:'main',scope:{kind:'workbench'}});assert.ok(existsSync(source.binding.cwd));
+  const source=await s.sourceSession({conversationId:'main',scope:next.commandMessage.scope});assert.ok(existsSync(source.binding.cwd));
   h.model.script.push({name:'steward_create_project',args:{title:'不允许',goal:'无授权'}},'未创建');await s.send({conversationId:'main',commandId:'isolated-delegation',text:'你自己写即可',target:{kind:'workbench'}});await done(h,'isolated-delegation');assert.equal(h.runtime.snapshot().projects.filter(p=>p.title==='不允许').length,0);
  }finally{await h.close();}
 });

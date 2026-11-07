@@ -500,23 +500,40 @@ test('auto routing uses bounded classifier requests for casual turns, direct add
   const h=await createNativeHarness({config:{role:'both',schedulerEnabled:false,projectAgentOptions:{provider:'test-offline',model:'script'}}});
   try {
     const service=h.ctx.taskSystem.steward,projects=h.ctx.taskSystem.projects;
+    await attachSidebar(h);
+    await service.configureRouting({commandId:'auto-routing-fixture-model',expectedRevision:0,fallback:{provider:'test-offline',model:'script'}});
     projects.saveSettings({root:join(h.dir,'projects'),expectedRevision:0});
     const a=await projects.create({commandId:'auto-a',title:'Alpha 项目',goal:'SECRET_A_GOAL'});
     const b=await projects.create({commandId:'auto-b',title:'Beta 项目',goal:'SECRET_B_GOAL'});
-    async function send(commandId,text,response,classify,replyTo) {
-      if(!replyTo){const desired=classify?.target ?? (text.startsWith('Alpha')?{kind:'project',projectId:a.projectId}:{kind:'project',projectId:b.projectId});const latest=service.snapshot({conversationId:'main'}).topicActivity.latestMessage?.scope ?? service.store.current('main');if(JSON.stringify(latest)!==JSON.stringify(desired))h.adapter.script.push(JSON.stringify({kind:'search',queries:[desired.kind==='personal'?'闲聊':desired.projectId===a.projectId?'Alpha':'Beta']}));h.adapter.script.push(JSON.stringify({kind:'route',target:desired}));}h.adapter.script.push(response);
-      await service.send({conversationId:'main',commandId,text,routingMode:'auto',...(replyTo?{replyTo}:{})});
-      return waitFor(service,s=>s.messages.some(message=>message.text===response));
+    for(const [project,commandId,response] of [[a,'auto-recent-a','Alpha discussion ready'],[b,'auto-recent-b','Beta discussion ready']]){
+      h.adapter.script.push(response);await service.send({conversationId:'main',commandId,text:'建立近期讨论记录',target:{kind:'project',projectId:project.projectId}});
+      await waitFor(service,s=>s.messages.some(message=>message.text===response));
     }
-    await send('auto-personal','先闲聊 PERSONAL_AUTO_MARKER','personal one',{kind:'route',target:{kind:'personal'}});
-    let snapshot=await send('auto-project-a','Alpha 项目：A_AUTO_MARKER','alpha one');
+    h.adapter.script.push('ordinary topic ready');
+    await service.send({conversationId:'main',commandId:'auto-casual-topic',text:'普通闲聊',routeCreateTopic:true});
+    await waitFor(service,s=>s.messages.some(message=>message.text==='ordinary topic ready'));
+    const casual=service.store.commandMessage('main','auto-casual-topic').scope;
+    assert.equal(casual.kind,'workbench');assert.ok(casual.topicId);
+    async function send(commandId,text,response,{target,program=false,replyTo}={}) {
+      const classifierCount=()=>h.adapter.requests.filter(request=>request.messages[0]?.source?.kind==='dsh-steward-route-classifier').length;
+      const before=classifierCount(),requestsBefore=h.adapter.requests.length;
+      if(!replyTo&&!program){const latest=service.snapshot({conversationId:'main'}).topicActivity.latestMessage?.scope ?? service.store.current('main');if(JSON.stringify(latest)!==JSON.stringify(target))h.adapter.script.push(JSON.stringify({kind:'search',queries:[target.kind==='workbench'?'普通闲聊':target.projectId===a.projectId?'Alpha':'Beta']}));h.adapter.script.push(JSON.stringify({kind:'route',target}));}h.adapter.script.push(response);
+      await service.send({conversationId:'main',commandId,text,routingMode:'auto',...(replyTo?{replyTo}:{})});
+      const snapshot=await waitFor(service,s=>s.messages.some(message=>message.text===response));
+      if(program||replyTo){assert.equal(classifierCount(),before,'An exact recent title or canonical reply uses no routing model');assert.equal(h.adapter.requests.length,requestsBefore+1,'Only the destination native model runs for a direct title or reply');}
+      return snapshot;
+    }
+    await send('auto-personal','先闲聊 PERSONAL_AUTO_MARKER','personal one',{target:casual});
+    assert.deepEqual(service.store.commandMessage('main','auto-personal').scope,casual);
+    let snapshot=await send('auto-project-a','继续「Alpha 项目」: A_AUTO_MARKER','alpha one',{program:true});
     const oldA=snapshot.messages.find(message=>message.text==='alpha one');
-    await send('auto-project-b','@Beta 项目 B_AUTO_MARKER','beta one');
-    await send('auto-personal-back','不要交给 Alpha 项目，聊点别的 PERSONAL_BACK_AUTO','personal back',{kind:'route',target:{kind:'personal'}});
-    snapshot=await send('auto-old-reply','Beta 项目只是引用，继续旧问题','alpha reply',null,oldA.id);
+    await send('auto-project-b','继续「Beta 项目」: B_AUTO_MARKER','beta one',{program:true});
+    await send('auto-personal-back','不要交给 Alpha 项目，聊点别的 PERSONAL_BACK_AUTO','personal back',{target:casual});
+    assert.deepEqual(service.store.commandMessage('main','auto-personal-back').scope,casual);
+    snapshot=await send('auto-old-reply','Beta 项目只是引用，继续旧问题','alpha reply',{replyTo:oldA.id});
     assert.deepEqual(snapshot.messages.find(message=>message.commandId==='auto-old-reply').scope,{kind:'project',projectId:a.projectId});
     const classifiers=h.adapter.requests.filter(request=>request.messages[0]?.source?.kind==='dsh-steward-route-classifier');
-    assert.equal(classifiers.length,8);assert.ok(classifiers.every(request=>request.messages.length===1));
+    assert.equal(classifiers.length,3);assert.ok(classifiers.every(request=>request.messages.length===1));
     for(const request of classifiers){assert.deepEqual(request.tools,[]);assert.ok(Buffer.byteLength(JSON.stringify(request))<=32768);}
     const before=snapshot.messages.length,requestsBefore=h.adapter.requests.length;
     h.adapter.script.push(JSON.stringify({kind:'route',target:{kind:'project',projectId:'UNKNOWN_PROJECT'}}));
@@ -589,13 +606,17 @@ test('automatic quotation routes the next text to B without sharing the source h
   const h=await createNativeHarness({config:{role:'both',schedulerEnabled:false,projectAgentOptions:{provider:'test-offline',model:'script'}}});
   try {
     const projects=h.ctx.taskSystem.projects,service=h.ctx.taskSystem.steward;
+    await attachSidebar(h);
+    await service.configureRouting({commandId:'auto-quote-fixture-model',expectedRevision:0,fallback:{provider:'test-offline',model:'script'}});
     projects.saveSettings({root:join(h.dir,'projects'),expectedRevision:0});
     const a=await projects.create({commandId:'auto-quote-a',title:'Auto quote A',goal:'AUTO_A_PRIVATE_GOAL'});
     const b=await projects.create({commandId:'auto-quote-b',title:'Auto quote B',goal:'AUTO_B_GOAL'});
+    h.adapter.script.push('Auto B discussion ready');await service.send({conversationId:'main',commandId:'auto-quote-recent-b',text:'建立B的近期讨论记录',target:{kind:'project',projectId:b.projectId}});
+    await waitFor(service,s=>s.messages.some(message=>message.text==='Auto B discussion ready'));
     h.adapter.script.push('AUTO_QUOTE_SHARED_EXCERPT AUTO_A_PRIVATE_REMAINDER');
     await service.send({conversationId:'main',commandId:'auto-quote-source',text:'AUTO_A_PRIVATE_INPUT',target:{kind:'project',projectId:a.projectId}});
     const initial=await waitFor(service,s=>s.messages.some(message=>message.role==='assistant'&&message.text.includes('AUTO_QUOTE_SHARED_EXCERPT')));
-    const source=initial.messages.find(message=>message.role==='assistant');
+    const source=initial.messages.find(message=>message.role==='assistant'&&message.text.includes('AUTO_QUOTE_SHARED_EXCERPT'));
     const input={conversationId:'main',commandId:'auto-quote-send',text:'请交给另一个项目核对这份资料。',routingMode:'auto',
       quote:{messageId:source.id,expectedRevision:source.revision,excerpt:'AUTO_QUOTE_SHARED_EXCERPT'}};
     h.adapter.script.push(JSON.stringify({kind:'search',queries:['Auto quote B']}),JSON.stringify({kind:'route',target:{kind:'project',projectId:b.projectId}}),'Auto B received excerpt');
@@ -622,19 +643,24 @@ test('ambiguous quotation stays router-only with its exact excerpt frozen; inval
   const h=await createNativeHarness({config:{role:'both',schedulerEnabled:false,projectAgentOptions:{provider:'test-offline',model:'script'}}});
   try {
     const projects=h.ctx.taskSystem.projects,service=h.ctx.taskSystem.steward;
+    await attachSidebar(h);
+    await service.configureRouting({commandId:'ambiguous-quote-fixture-model',expectedRevision:0,fallback:{provider:'test-offline',model:'script'}});
     projects.saveSettings({root:join(h.dir,'projects'),expectedRevision:0});
     const a=await projects.create({commandId:'ambiguous-quote-a',title:'Ambiguous quote A',goal:'PRIVATE_AMBIGUOUS_A_GOAL'});
     const b=await projects.create({commandId:'ambiguous-quote-b',title:'Ambiguous quote B',goal:'AMBIGUOUS_B_GOAL'});
+    h.adapter.script.push('Ambiguous B discussion ready');await service.send({conversationId:'main',commandId:'ambiguous-quote-recent-b',text:'建立B的近期讨论记录',target:{kind:'project',projectId:b.projectId}});
+    await waitFor(service,s=>s.messages.some(message=>message.text==='Ambiguous B discussion ready'));
     h.adapter.script.push('WAITING_QUOTE_EXCERPT PRIVATE_AMBIGUOUS_REMAINDER');
     await service.send({conversationId:'main',commandId:'ambiguous-quote-source',text:'PRIVATE_AMBIGUOUS_INPUT',target:{kind:'project',projectId:a.projectId}});
     const initial=await waitFor(service,s=>s.messages.some(message=>message.role==='assistant'&&message.text.includes('WAITING_QUOTE_EXCERPT')));
-    const source=initial.messages.find(message=>message.role==='assistant');
+    const source=initial.messages.find(message=>message.role==='assistant'&&message.text.includes('WAITING_QUOTE_EXCERPT'));
     const input={conversationId:'main',commandId:'ambiguous-quote-send',text:'请核对这份资料。',routingMode:'auto',
       quote:{messageId:source.id,expectedRevision:source.revision,excerpt:'WAITING_QUOTE_EXCERPT'}};
     const before=h.adapter.requests.length;
-    h.adapter.script.push(JSON.stringify({kind:'clarification',question:'交给哪个项目？'}));
+    h.adapter.script.push(JSON.stringify({kind:'search',queries:['Ambiguous quote B']}),JSON.stringify({kind:'clarification',question:'交给哪个项目？',targets:[{kind:'project',projectId:b.projectId}]}));
     await service.send(input);
-    const pending=service.snapshot({conversationId:'main'}).router.find(item=>item.commandId===input.commandId);assert.equal(pending.phase,'clarifying');assert.equal(pending.question,'交给哪个项目？');assert.equal(service.store.commandMessage('main',input.commandId),null);assert.equal(h.adapter.requests.length,before+1,'Ambiguity stays in the router, without workbench or PM execution');
+    const pending=service.snapshot({conversationId:'main'}).router.find(item=>item.commandId===input.commandId);assert.equal(pending.phase,'clarifying');assert.match(pending.question,/请选择下列去向/);assert.equal(service.store.commandMessage('main',input.commandId),null);assert.equal(h.adapter.requests.length,before+2,'Both semantic stages stay in the router, without workbench or PM execution');
+    const option=pending.options.find(option=>option.target?.kind==='project'&&option.target.projectId===b.projectId);assert.ok(option,'Clarification offers the retrieved and authorized B destination');
     h.adapter.script.push('Clarified B received excerpt');
     const clarified={conversationId:'main',commandId:'ambiguous-quote-selected-b',text:'选择B',routeQuestionId:pending.questionId,target:{kind:'project',projectId:b.projectId}};
     await service.send(clarified);
