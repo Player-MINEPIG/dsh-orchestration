@@ -193,6 +193,22 @@ test('derived term index finds bounded cards without supplying all project histo
   } finally { f.close(); }
 });
 
+test('personal history is a candidate only when its indexed terms match the request', async () => {
+  const f = fixture(), personal = { conversationId: 'main', scope: { kind: 'personal' } };
+  try {
+    f.store.accept({ commandId: 'personal-research', conversationId: 'main', text: 'UniqueNebula release prediction' }, personal.scope,
+      { kind: 'personal', nodeId: 'host', sessionId: 'personal', generation: 1, cwd: '/personal' }, 0);
+    await context(f, false, personal);
+    const matched = await f.cards.candidates({ conversationId: 'main', queries: ['UniqueNebula'], exclude: topic().scope });
+    assert.deepEqual(matched.map(card => card.topic.scope), [personal.scope]);
+    const excluded = await f.cards.candidates({ conversationId: 'main', queries: ['UniqueNebula'], exclude: personal.scope });
+    assert.deepEqual(excluded, []);
+    const unrelated = await f.cards.candidates({ conversationId: 'main', queries: ['ElectionPolicy'], exclude: topic().scope });
+    assert.deepEqual(unrelated, [], 'Unrelated personal history must not turn an empty search into a model candidate');
+    assert.equal(f.calls.compact, 0);
+  } finally { f.close(); }
+});
+
 test('overview is compact, paged, deterministic, and never invokes maintenance', async () => {
   const f = fixture();
   try {

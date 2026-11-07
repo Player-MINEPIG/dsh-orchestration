@@ -2,6 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
 import {StewardRouter} from '../dist/steward-router.js';
+import {canonical} from '../dist/ledger.js';
 const scope={kind:'project',projectId:'A'},other={kind:'project',projectId:'B'};
 const binding={kind:'managed',projectId:'A',nodeId:'host',sessionId:'A',generation:1,cwd:'/A'};
 const card=s=>({topic:{conversationId:'main',scope:s},version:'v1',binding:s.kind==='project'?{...binding,projectId:s.projectId,sessionId:s.projectId}:null,title:s.projectId??s.kind,summary:'goal',facts:[],coverageSeq:4,observedThroughSeq:4,freshness:'current',sources:[]});
@@ -17,3 +18,43 @@ test('question lookup and uniqueness use all unresolved roots, not the forty vis
 test('one parent resolves once under simultaneous different candidate choices, including metadata changes on the answering composer',async()=>{const f=fixture();try{const q=await f.router.prepare(request('root'),latest,async()=>({kind:'new-work',question:'工作区吗'}));const one={conversationId:'main',commandId:'answer-1',text:'确认',routeQuestionId:q.questionId,target:{kind:'workbench'},selection:{provider:'other',model:'later-model'},permissionPreset:'full'};const [a,b]=await Promise.all([f.router.prepare(one,latest),f.router.prepare({...one,commandId:'answer-2'},latest)]);assert.equal([a,b].filter(item=>item.delivery).length,1);const saved=f.router.get('root');assert.equal(saved.answers.length,1);assert.equal(saved.delivery.selection.model,'m');assert.equal(saved.delivery.permissionPreset,'read-only');assert.equal(saved.delivery.commandId,'root');}finally{f.db.close()}});
 test('the shared call budget prevents an association plus compaction from starting an unbounded fourth auxiliary call',async()=>{const f=fixture();try{await f.router.prepare(request('old'),latest,async()=>({kind:'new-work',question:'工作区吗'}));const router=f.router;const previous=router.cards.context;router.cards.context=async input=>{if(input.maintain){input.requestBudget.claimCall();input.requestBudget.claimCall();}return previous(input)};let calls=0;const result=await router.prepare({conversationId:'main',commandId:'new',text:'another request',routingMode:'auto'},latest,async input=>{calls++;return input.stage==='association'?{kind:'new-request'}:{kind:'search',queries:['B']}});assert.equal(calls,1);assert.equal(result.delivery,null);assert.equal(result.reason,'budget');}finally{f.db.close()}});
 test('the unresolved-root capacity cannot block answering an existing question',async()=>{const f=fixture();try{const q=await f.router.prepare(request('first'),latest,async()=>({kind:'new-work',question:'工作区吗'}));for(let n=0;n<19;n++){const value={...q,commandId:'other-'+n,questionId:'other-q-'+n};f.db.prepare('INSERT INTO steward_router VALUES(?,?,?)').run(value.commandId,'main',JSON.stringify(value));}await assert.rejects(f.router.prepare(request('overflow'),latest),{code:'LIMIT'});const resolved=await f.router.prepare({conversationId:'main',commandId:'capacity-answer',text:'确认',routeQuestionId:q.questionId,target:{kind:'workbench'}},latest);assert.equal(resolved.delivery.commandId,'first');}finally{f.db.close()}});
+
+test('empty retrieval asks two local recipient choices without a second model call and freezes original payload',async()=>{
+ const f=fixture();try{
+  f.router.cards.candidates=async()=>[];let calls=0;
+  const root=await f.router.prepare(request('empty'),{...latest,scope:{kind:'personal'}},async()=>{calls++;return {kind:'search',queries:['no matching topic']}});
+  assert.equal(calls,1);assert.equal(root.delivery,null);
+  const options=f.router.list('main')[0].options;
+  assert.deepEqual(options.map(x=>x.target),[{kind:'personal'},{kind:'workbench'}]);
+  assert.deepEqual(options.map(x=>x.label),['在闲聊中继续','作为独立工作处理']);
+  const resolved=await f.router.prepare({conversationId:'main',commandId:'pick-empty',text:'明确选择',routeQuestionId:root.questionId,target:{kind:'workbench'}},latest);
+  assert.equal(resolved.delivery.commandId,'empty');assert.deepEqual(resolved.delivery.uploads,['server-minted']);assert.equal(resolved.delivery.selection.model,'m');
+ }finally{f.db.close()}
+});
+test('structured questions whitelist offered targets; free-text questions never infer choices from prose',async()=>{
+ const f=fixture();try{
+  const q=await f.router.prepare(request('choices'),latest,async()=>({kind:'clarification',question:'model question',targets:[{kind:'personal'},{kind:'workbench'}]}));
+  assert.deepEqual(f.router.list('main')[0].options.map(x=>x.target),[{kind:'personal'},{kind:'workbench'}]);
+  const rejected=await f.router.prepare({conversationId:'main',commandId:'foreign-target',text:'pick',routeQuestionId:q.questionId,target:other},latest);
+  assert.equal(rejected.delivery,null);assert.equal(f.router.get('choices').answers.length,0);
+  const free=await f.router.prepare(request('free'),latest,async input=>input.stage==='association'?{kind:'new-request'}:{kind:'clarification',question:'个人话题「闲聊」中继续，还是作为一项新的独立工作处理？'});
+  assert.deepEqual(free.options,[]);
+  const invalid=await f.router.prepare(request('invalid'),latest,async()=>({kind:'clarification',question:'foreign',targets:[other]}));
+  assert.equal(invalid.delivery,null);assert.equal(invalid.reason,'unavailable');
+ }finally{f.db.close()}
+});
+test('known legacy two-way receipt projects both choices without changing audit or accepting arbitrary legacy questions',async()=>{
+ const f=fixture();try{
+  const original=await f.router.prepare(request('legacy'),latest,async()=>({kind:'clarification',question:'ignored'}));
+  const old={...original,question:'请确认：是放入个人话题「闲聊」中继续，还是作为一项新的独立工作处理？',candidates:[{kind:'personal'}]};delete old.options;
+  const raw=canonical(old);f.db.prepare('UPDATE steward_router SET data=? WHERE command=?').run(raw,'legacy');
+  assert.deepEqual(f.router.list('main')[0].options.map(x=>x.target),[{kind:'personal'},{kind:'workbench'}]);
+  assert.equal(f.db.prepare('SELECT data FROM steward_router WHERE command=?').get('legacy').data,raw);
+  const answer={conversationId:'main',commandId:'legacy-pick',text:'选择独立工作',routeQuestionId:old.questionId,target:{kind:'workbench'}};
+  const result=await f.router.prepare(answer,latest);assert.equal(result.delivery.commandId,'legacy');
+  assert.deepEqual((await f.router.prepare(answer,latest)).delivery,result.delivery);
+  const ordinary={...old,commandId:'ordinary-legacy',questionId:'ordinary-q',question:'你要分析哪个年份？'};
+  f.db.prepare('INSERT INTO steward_router VALUES(?,?,?)').run(ordinary.commandId,'main',JSON.stringify(ordinary));
+  assert.deepEqual(f.router.list('main').find(x=>x.commandId==='ordinary-legacy').options,[]);
+ }finally{f.db.close()}
+});

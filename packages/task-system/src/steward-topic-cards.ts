@@ -177,7 +177,6 @@ export class StewardTopicCards implements TopicCardsPort {
       const page = await this.host.projects({ conversationId, query, page: 0, limit: 4 });
       for (const project of page.items.slice(0, 4)) scopes.push({ kind: "project", projectId: project.projectId });
     }
-    scopes.push({kind:"personal"});
     const seen = new Set([canonical(exclude)]), output: TopicCard[] = [];
     for (const scope of scopes) {
       const key = canonical(scope);
