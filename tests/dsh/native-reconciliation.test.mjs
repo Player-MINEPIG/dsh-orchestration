@@ -1,10 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { join } from "node:path";
-import { mkdirSync } from "node:fs";
+import { createRequire } from "node:module";
+import { pathToFileURL } from "node:url";
+import { mkdirSync, writeFileSync, readFileSync } from "node:fs";
+import { defineTool } from "@deepseek-ai/dsh-tools";
 import { ToolCallId, LlmError, createUserMessage } from "@deepseek-ai/dsh-llm";
 import { SessionId } from "@deepseek-ai/dsh-session";
 import { createNativeHarness } from "./native-harness.mjs";
+import { terminalStopFacts } from "../../packages/task-system/dist/execution-reconciliation.js";
 import { attachProjectSessionHost } from "../../packages/task-system/test/fixtures/project-session-host.mjs";
 let serial = 0;
 async function tool(h, agent, args) {
@@ -24,7 +28,7 @@ async function fixture(
       });
     },
   ],
-  { wait = true, captureOrigin = false } = {},
+  { wait = true, captureOrigin = false, setup } = {},
 ) {
   const h = await createNativeHarness({
     executionRoot: true,
@@ -37,6 +41,7 @@ async function fixture(
     script,
   });
   await attachProjectSessionHost(h);
+  try{await setup?.(h);}catch(error){await h.dispose();throw error;}
   const projects = h.ctx.taskSystem.projects,
     ledger = h.ledger;
   projects.saveSettings({ root: join(h.dir, "projects"), expectedRevision: 0 });
@@ -277,7 +282,7 @@ test("a real bound PM inspects and reconciles its exact zero-effect AUTH attempt
   }
 });
 
-test("ordinary output, later turns and foreign coordinator scopes cannot be converted to a zero-effect failure", async () => {
+test("ordinary output and later idle turns may prove only stopping; foreign coordinator scopes remain forbidden", async () => {
   const h = await fixture(["Output happened before any formal result"]);
   try {
     const request = {
@@ -287,7 +292,9 @@ test("ordinary output, later turns and foreign coordinator scopes cannot be conv
     };
     const inspected = await tool(h, h.pm, request);
     assert.equal(inspected.isError, false, JSON.stringify(inspected));
-    assert.equal(inspected.value.canReconcile, false);
+    assert.equal(inspected.value.canReconcile, true);
+    assert.equal(inspected.value.evidence.kind,"native-terminal-stopped-v1");
+    assert.equal(inspected.value.evidence.businessResult,"unproven");
     assert.equal(h.ledger.getRun(h.run.runId).state, "uncertain");
     const other = await h.projects.create({
         commandId: "other-project",
@@ -327,14 +334,15 @@ test("ordinary output, later turns and foreign coordinator scopes cannot be conv
       taskId: zero.task.taskId,
       runId: zero.run.runId,
     });
-    assert.equal(result.value.canReconcile, false);
+    assert.equal(result.value.canReconcile, true);
+    assert.equal(result.value.evidence.businessResult,"unproven");
     assert.equal(zero.ledger.getRun(zero.run.runId).state, "uncertain");
   } finally {
     await zero.dispose();
   }
 });
 
-test("tool dispatch, live ownership, stale action versions and a fence changed during observation all fail closed", async () => {
+test("tool dispatch preserves unknown business effects; live ownership, stale action versions and fence changes fail closed", async () => {
   const effectful = await fixture([
     { name: "task_query", args: {} },
     () => {
@@ -349,7 +357,10 @@ test("tool dispatch, live ownership, stale action versions and a fence changed d
       taskId: effectful.task.taskId,
       runId: effectful.run.runId,
     });
-    assert.equal(result.value.canReconcile, false);
+    assert.equal(result.value.canReconcile, true);
+    assert.equal(result.value.evidence.kind,"native-terminal-stopped-v1");
+    assert.equal(result.value.evidence.toolCallCount,1);
+    assert.equal(result.value.evidence.businessResult,"unproven");
     assert.equal(
       effectful.ledger.getRun(effectful.run.runId).state,
       "uncertain",
@@ -739,6 +750,7 @@ test('an active later user turn blocks stop verification and its later reply nev
 
 test('the task-center manual check drives the real PM through status, evidence inspection and settlement without retry',async()=>{
  const h=await interruptedFixture(true);try{
+
   await h.projects.actOnTask({action:'check',commandId:'manual-stop-button',taskId:h.task.taskId,runId:h.run.runId,expectedVersion:h.ledger.taskActionState(h.task.taskId).version,confirmationRevision:1});
   const message=h.ledger.pendingSessionMessages('local',{kind:'continuation'}).find(message=>message.checkIn?.manualChecks?.some(scope=>scope.taskId===h.task.taskId));assert.ok(message,JSON.stringify({view:h.ledger.checkins.view(h.task.taskId),pending:h.ledger.pendingSessionMessages('local',{kind:'continuation'})}));
   const results=[];h.ctx.on('tools/result',(exec,result)=>{if(exec.agent===h.pm&&['task_checkin','task_execution_status'].includes(exec.name))results.push({name:exec.name,result});});
@@ -748,8 +760,77 @@ test('the task-center manual check drives the real PM through status, evidence i
   },()=>{assert.equal(results.at(-1)?.result.isError,false);return{name:'task_execution_status',args:{action:'inspect',taskId:h.task.taskId,runId:h.run.runId}};},()=>{
    const inspected=results.at(-1).result;assert.equal(inspected.isError,false);assert.equal(inspected.value.canReconcile,true);
    return{name:'task_execution_status',args:{action:'reconcile',commandId:'manual-pm-stopped',taskId:h.task.taskId,runId:h.run.runId,expectedEvidenceVersion:inspected.value.evidence.evidenceVersion,expectedActionVersion:inspected.value.actionVersion}};
-  },()=>{assert.equal(results.at(-1).result.isError,false);return 'The invocation has stopped; its research result remains unproven. No retry was performed.';});
+  },()=>{assert.equal(results.at(-1).result.isError,false);return{name:'task_checkin',args:{action:'update',commandId:'manual-final-progress',taskId:h.task.taskId,observation:'blocked',summary:'Invocation stopped; business result remains unproven',plan:{kind:'paused',reason:'Stopped verification completed; separate retry authorization required'}}};},()=>{
+   assert.equal(results.at(-1).result.isError,false,JSON.stringify(results.at(-1).result));h.ledger.demandReads.reconcileFacts(Number.MAX_SAFE_INTEGER);h.ledger.checkins.tick();assert.equal(h.ledger.getSessionMessage(message.messageId).withdrawn,true,JSON.stringify({state:h.ledger.getSessionMessage(message.messageId).state,reply:h.ledger.getSessionMessage(message.messageId).reply,view:h.ledger.checkins.view(h.task.taskId)}));
+   return 'The invocation has stopped; its research result remains unproven. No retry was performed.';
+  });
   const receipt=await h.ctx.taskSystem.taskReturns.deliver(message);h.ledger.completeSessionMessage('manual-stop-ack',{messageId:message.messageId,nodeId:'local',state:'completed',...receipt});
-  assert.equal(h.ledger.getRun(h.run.runId).state,'failed');assert.equal(h.ledger.snapshot().runs.length,2);assert.equal(h.ledger.getSessionMessage(message.messageId).state,'completed');const source=await h.ctx.sessionPersistence.open(SessionId(h.sessionId),'read');try{const {events}=await source.read();assert.ok(events.some(event=>event.type==='assistant/message'&&JSON.stringify(event.data).includes('research result remains unproven')));}finally{await source.close();}
+  assert.equal(h.ledger.getRun(h.run.runId).state,'failed');assert.equal(h.ledger.snapshot().runs.length,2);assert.equal(h.ledger.getSessionMessage(message.messageId).state,'completed');assert.equal(h.ledger.getSessionMessage(message.messageId).withdrawn,undefined,'Actual admitted owner completion supersedes premature withdrawal');const source=await h.ctx.sessionPersistence.open(SessionId(h.sessionId),'read');try{const {events}=await source.read();assert.ok(events.some(event=>event.type==='assistant/message'&&JSON.stringify(event.data).includes('research result remains unproven')));}finally{await source.close();}
  }finally{await h.dispose();}
+});
+
+
+test('a quiescent exact native terminal journal proves stopping after tools, without claiming no effects or a business result',async()=>{
+ const h=await fixture([{name:'fixture_effect',args:{}},()=>{throw new Error('Synthetic runtime failure after a harmless fixture artifact');}],{setup(h){h.ctx.tools.register(defineTool({name:'fixture_effect',description:'Write a fixture marker only',parameters:{},output:{schema:{type:'json'},render:(_,value)=>[{type:'text',text:JSON.stringify(value)}]},execute:async()=>{writeFileSync(join(h.dir,'effect.txt'),'PARTIAL_ARTIFACT');return{written:true};}}));}});
+ try{
+  assert.equal(readFileSync(join(h.dir,'effect.txt'),'utf8'),'PARTIAL_ARTIFACT');
+  const executor=(await h.ctx.sessionController.resolveAgent(SessionId(h.ledger.sessionMessageTargets(h.task.taskId)[0].sessionId))).agent, entered=Promise.withResolvers(),release=Promise.withResolvers();
+  const child=await h.ctx.agents.create({sessionId:SessionId('unsettled-proof-child'),parentAgent:executor,meta:{cwd:executor.session.header.cwd,parentSession:executor.id},agentOptions:{provider:'test-offline',model:'script'}});
+  try{
+   h.adapter.script.push(async()=>{entered.resolve();await release.promise;return 'Child work actually stopped';});child.agent.followup(createUserMessage({source:{kind:'user'},content:[{type:'text',text:'Controlled child activity'}]}));await entered.promise;
+   assert.equal((await tool(h,h.pm,{action:'inspect',taskId:h.task.taskId,runId:h.run.runId})).value.canReconcile,false,'A related active child prevents claiming quiescence');
+  }finally{release.resolve();await child.agent.whenIdle();await child.dispose();}
+  const inspected=await tool(h,h.pm,{action:'inspect',taskId:h.task.taskId,runId:h.run.runId});assert.equal(inspected.isError,false);assert.equal(inspected.value.canReconcile,true,JSON.stringify(inspected));assert.equal(inspected.value.evidence.kind,'native-terminal-stopped-v1');assert.equal(inspected.value.evidence.toolCallCount,1);assert.equal(inspected.value.evidence.businessResult,'unproven');
+  const persisted=await h.ctx.sessionPersistence.open(executor.id,'read');let actual;try{actual=(await persisted.read()).events;}finally{await persisted.close();}
+  const terminalIndex=actual.findIndex(event=>event.seq===inspected.value.evidence.terminalSeq),withPendingChild=structuredClone(actual);withPendingChild.splice(terminalIndex,0,{type:'subagent/catalog',time:actual[terminalIndex].time,data:{version:0,mode:'continuable',childId:'unreturned-child',childCreatedAt:actual[terminalIndex].time,label:'Awaited child'}});withPendingChild.forEach((event,seq)=>event.seq=seq);
+  assert.equal(terminalStopFacts(h.ctx.taskSystem,h.ledger.getRun(h.run.runId),h.ledger.getAttempt(h.claim.attempt.attemptId),withPendingChild),undefined,'An admitted child without its durable settled notice is not quiescent proof');
+  const withAccount=[...withPendingChild,{type:'user/message',seq:withPendingChild.length,time:Date.now(),data:{source:{kind:'subagent-settled',form:'notice',senderSessionId:'unreturned-child',summary:'Stopped'},content:[]}}];
+  assert.ok(terminalStopFacts(h.ctx.taskSystem,h.ledger.getRun(h.run.runId),h.ledger.getAttempt(h.claim.attempt.attemptId),withAccount));
+  const journal=h.ctx.taskSystem.results.get('missing-result:'+h.claim.attempt.attemptId), get=h.ctx.taskSystem.results.get.bind(h.ctx.taskSystem.results);
+  h.ctx.taskSystem.results.get=()=>({...journal,ref:{...journal.ref,fence:journal.ref.fence+1}});
+  try{assert.equal((await tool(h,h.pm,{action:'inspect',taskId:h.task.taskId,runId:h.run.runId})).value.canReconcile,false);}finally{h.ctx.taskSystem.results.get=get;}
+  const settled=await tool(h,h.pm,{action:'reconcile',commandId:'stop-runtime-journal',taskId:h.task.taskId,runId:h.run.runId,expectedEvidenceVersion:inspected.value.evidence.evidenceVersion,expectedActionVersion:inspected.value.actionVersion});assert.equal(settled.isError,false);assert.equal(settled.value.evidence.businessResult,'unproven');assert.equal(h.ledger.getRun(h.run.runId).state,'failed');assert.equal(h.ledger.snapshot().runs.length,1);assert.equal(readFileSync(join(h.dir,'effect.txt'),'utf8'),'PARTIAL_ARTIFACT');
+ }finally{await h.dispose();}
+});
+
+
+async function prepareWebOwnerRetry(h,command){
+ const inspected=await tool(h,h.pm,{action:'inspect',taskId:h.task.taskId,runId:h.run.runId});
+ await tool(h,h.pm,{action:'reconcile',commandId:command+'-close',taskId:h.task.taskId,runId:h.run.runId,expectedEvidenceVersion:inspected.value.evidence.evidenceVersion,expectedActionVersion:inspected.value.actionVersion});
+ const target=h.ledger.sessionMessageTargets(h.task.taskId)[0],live=(await h.ctx.sessionController.resolveAgent(SessionId(target.sessionId))).agent;
+ await h.projects.actOnTask({action:'retry',commandId:command,taskId:h.task.taskId,runId:h.run.runId,expectedVersion:h.ledger.taskActionState(h.task.taskId).version,confirmationRevision:1});
+ h.ledger.recordNodeHeartbeat(command+'-up',{nodeId:'local',runtimeReady:true,activeExecutions:0});h.projects.tick();h.projects.tick();
+ const run=h.ledger.snapshot().runs.find(run=>run.runId!==h.run.runId),claim=h.ledger.claim(command+'-claim',{runId:run.runId,nodeId:'local',ttlMs:10000}).value;
+ return{live,run,claim};
+}
+
+test('a WebUI-owned execution accepts only child relay activated during that exact attempt and submits normally',async()=>{
+ const h=await fixture();try{
+  const req=createRequire(join(process.env.DSH_OFFICIAL_ROOT,'package.json'));
+  for(const [id,name,config] of [['relay-fs','@deepseek-ai/dsh-fs-local',{cwd:h.dir}],['relay-cwd','@deepseek-ai/dsh-working-directory',{defaultDirectory:h.dir}],['relay-runtime','@deepseek-ai/dsh-subagent'],['relay-spawn','@deepseek-ai/dsh-subagent-spawn-in-process']])await h.ctx.loader.create({id,name:pathToFileURL(req.resolve(name)).href,config});
+  await h.ctx.loader.await();
+  const {live,run,claim}=await prepareWebOwnerRetry(h,'current-child-relay'),relayed=Promise.withResolvers();let activation,startError;
+  h.adapter.script.push(async()=>{
+   try{activation=await live.ctx.get('subagents').startActivation({provider:'spawn',childId:SessionId('current-attempt-child'),label:'One safe fixture child',request:{parent:live,prompt:[{type:'text',text:'Send only the safe fixture relay'}]},signal:new AbortController().signal,delivery:'parent'});}catch(error){startError=error;throw error;}
+   await relayed.promise;await activation.result;return{name:'task_query',args:{taskId:h.task.taskId}};
+  },async()=>{
+   const child=h.ctx.agents.get(SessionId('current-attempt-child'));assert.ok(child);
+   await child.ctx.get('subagents').sendMessage(child,live.id,[{type:'text',text:'CURRENT_ATTEMPT_CHILD_EVIDENCE'}],{signal:new AbortController().signal});relayed.resolve();return 'Child fixture done';
+  },options=>{assert.ok(options.messages.some(message=>message.source?.kind==='subagent-settled'),'The standard settled notice is consumed inside the leased turn');return{name:'task_submit_result',args:{outcome:'success',summary:'CURRENT_CHILD_RELAY_ACCEPTED',reportTitle:'Safe child relay proof',reportBody:'Only current-attempt authorized child relay and settled notice were consumed'}};} );
+  const executed=await h.ctx.taskSystem.native.execute(claim);assert.equal(startError,undefined,startError?.stack);assert.ok(activation,JSON.stringify(executed));await activation.result;
+  assert.equal(executed.run.state,'succeeded');assert.equal(h.ctx.agents.get(live.id),live);assert.equal(h.ledger.snapshot().runs.length,2);assert.equal(h.ledger.getRun(run.runId).resultSummary,'CURRENT_CHILD_RELAY_ACCEPTED');
+ }finally{await h.dispose();}
+});
+
+for(const inputKind of ['old-child','foreign-child','old-notice','foreign-notice','user'])test('a borrowed executor still rejects '+inputKind+' input outside the current subagent activation',async()=>{
+ const h=await fixture();let child;
+ try{
+  const {live,claim}=await prepareWebOwnerRetry(h,'reject-'+inputKind);
+  if(inputKind!=='user')child=await h.ctx.agents.create({sessionId:SessionId('untrusted-'+inputKind),...(inputKind.startsWith('old-')?{parentAgent:live}:{}),meta:{cwd:live.session.header.cwd},agentOptions:{provider:'test-offline',model:'script'}});
+  if(inputKind.startsWith('old-'))assert.equal(h.ctx.agents.isOwnedBy(child.agent.id,live),true);
+  h.adapter.script.push(()=>{live.steer(createUserMessage({source:inputKind==='user'?{kind:'user'}:inputKind.endsWith('notice')?{kind:'subagent-settled',form:'notice',summary:'Not this attempt',senderSessionId:child.agent.id}:{kind:'agent-message',form:'relay',senderSessionId:child.agent.id},content:[{type:'text',text:'Must not become leased task input'}]}));return{name:'task_query',args:{taskId:h.task.taskId}};});
+  const result=await h.ctx.taskSystem.native.execute(claim);assert.equal(result.run.state,'uncertain');assert.equal(result.submitted,false);
+  const source=await h.ctx.sessionPersistence.open(live.id,'read');try{const {events}=await source.read();assert.ok(events.some(event=>event.type==='turn/end'&&event.data.reason.kind==='error'&&event.data.reason.error.message==='Another input reached the task-owned session'));}finally{await source.close();}
+  assert.equal(h.ledger.snapshot().runs.length,2);
+ }finally{await child?.dispose();await h.dispose();}
 });

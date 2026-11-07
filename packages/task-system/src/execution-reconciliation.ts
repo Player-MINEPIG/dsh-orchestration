@@ -53,9 +53,29 @@ const interruptedStopEvidence = z.strictObject({
   actionVersion: key,
   evidenceVersion: key,
 });
+const terminalStopEvidence = z.strictObject({
+  kind: z.literal("native-terminal-stopped-v1"),
+  coordinatorSessionId: key,
+  nodeId: key,
+  sessionId: key,
+  attemptId: key,
+  executionId: key,
+  fence: z.number().int().positive(),
+  journalCommandId: key,
+  journalDigest: key,
+  readyAt: z.number().int().nonnegative(),
+  turn: z.number().int().positive(),
+  fromSeq: z.number().int().nonnegative(),
+  terminalSeq: z.number().int().nonnegative(),
+  toolCallCount: z.number().int().nonnegative(),
+  businessResult: z.literal("unproven"),
+  actionVersion: key,
+  evidenceVersion: key,
+});
 const nativeFailureEvidence = z.discriminatedUnion("kind", [
   authFailureEvidence,
   interruptedStopEvidence,
+  terminalStopEvidence,
 ]);
 export type NativeFailureEvidence = z.infer<typeof nativeFailureEvidence>;
 const digest = (value: unknown) =>
@@ -316,6 +336,116 @@ export function interruptedStopFacts(
   };
 }
 
+export function terminalStopFacts(
+  service: TaskSystemService,
+  run: Run,
+  attempt: Attempt,
+  events: readonly SessionEvent[],
+) {
+  if (
+    run.state !== "uncertain" ||
+    attempt.state !== "uncertain" ||
+    !attempt.executionId ||
+    events.length > 2000 ||
+    events.some((event, index) => event.seq !== index)
+  )
+    return;
+  const entry =
+    service.results.get(`missing-result:${attempt.attemptId}`) ??
+    service.results.get(`native-result:${attempt.attemptId}`);
+  const ref = {
+    runId: run.runId,
+    attemptId: attempt.attemptId,
+    nodeId: attempt.nodeId,
+    fence: attempt.fence,
+    executionId: attempt.executionId,
+  };
+  if (
+    !entry ||
+    entry.state !== "committed" ||
+    entry.settlement.outcome !== "unknown" ||
+    !entry.quiescent ||
+    !entry.sessionPersisted ||
+    entry.sessionId !== attempt.sessionId ||
+    canonical(entry.ref) !== canonical(ref) ||
+    !service.ledger.commandMatches(
+      entry.commandId,
+      "submit",
+      entry.settlement,
+    ) ||
+    entry.receipt?.value.runId !== run.runId ||
+    entry.receipt.value.taskId !== run.taskId ||
+    entry.receipt.value.currentAttemptId !== attempt.attemptId ||
+    entry.receipt.value.state !== "uncertain"
+  )
+    return;
+  const inputs = events.filter(
+    (event) =>
+      event.type === "user/message" &&
+      event.data.source.kind === "dsh-task" &&
+      event.data.source.taskId === run.taskId &&
+      event.data.source.runId === run.runId &&
+      event.data.source.attemptId === attempt.attemptId,
+  );
+  const starts = new Set(
+    inputs.map(
+      (input) =>
+        events.findLast(
+          (event) => event.type === "turn/start" && event.seq < input.seq,
+        )?.seq,
+    ),
+  );
+  if (!inputs.length || starts.size !== 1 || starts.has(undefined)) return;
+  const start = events.find((event) => starts.has(event.seq));
+  if (start?.type !== "turn/start") return;
+  const end = events.find(
+    (event) => event.type === "turn/end" && event.data.turn === start.data.turn,
+  );
+  if (
+    end?.type !== "turn/end" ||
+    end.time > entry.readyAt ||
+    entry.readyAt < Date.parse(attempt.createdAt)
+  )
+    return;
+  const turn = events.filter(
+    (event) => event.seq >= start.seq && event.seq <= end.seq,
+  );
+  for (const child of turn.filter(
+    (event) => event.type === "subagent/catalog",
+  )) {
+    if (
+      child.type !== "subagent/catalog" ||
+      !events.some(
+        (event) =>
+          event.seq > child.seq &&
+          event.type === "user/message" &&
+          event.data.source.kind === "subagent-settled" &&
+          event.data.source.senderSessionId === child.data.childId,
+      )
+    )
+      return;
+  }
+  if (
+    !turn.some(
+      (event) =>
+        event.type === "request/header" &&
+        event.data.header.config.provider === run.route?.provider &&
+        event.data.header.config.model === run.route?.model,
+    )
+  )
+    return;
+  return {
+    journalCommandId: entry.commandId,
+    journalDigest: entry.digest,
+    readyAt: entry.readyAt,
+    turn: start.data.turn,
+    fromSeq: start.seq,
+    terminalSeq: end.seq,
+    toolCallCount: turn.filter((event) => event.type === "tool/call").length,
+    businessResult: "unproven" as const,
+  };
+}
+
 export async function nativeExecutionStatus(
   ctx: Context,
   service: TaskSystemService,
@@ -412,7 +542,7 @@ export async function nativeExecutionStatus(
       canReconcile: false,
       evidence: {
         status:
-          event.detail.evidence.kind === "native-interrupted-stopped-v1"
+          event.detail.evidence.kind !== "native-auth-zero-tools-v1"
             ? "stopped-result-unproven"
             : "proven-start-failure",
         ...event.detail.evidence,
@@ -480,7 +610,28 @@ export async function nativeExecutionStatus(
   const frozen = digest({ run, attempt });
   const active = () => {
     const live = agents.get(sessionId);
+    const family = new Set([String(sessionId)]);
+    const related = agents.list();
+    for (let changed = true; changed; ) {
+      changed = false;
+      for (const child of related)
+        if (
+          child.session.header.parentSession &&
+          family.has(String(child.session.header.parentSession)) &&
+          !family.has(String(child.id))
+        ) {
+          family.add(String(child.id));
+          changed = true;
+        }
+    }
     return (
+      related.some(
+        (child) =>
+          family.has(String(child.id)) &&
+          (child.status !== "idle" ||
+            child.inbox.nextTurn.length > 0 ||
+            child.inbox.nextStep.length > 0),
+      ) ||
       !!db
         .prepare(
           "SELECT 1 FROM entities WHERE kind='attempt' AND state IN ('leased','running') AND json_extract(data,'$.sessionId')=? LIMIT 1",
@@ -531,7 +682,14 @@ export async function nativeExecutionStatus(
     !proof.proven && service.native && reports.length === 0
       ? interruptedStopFacts(service, run, attempt, events)
       : undefined;
-  if (!proof.proven && !stopped) return unknown(proof.reason);
+  const terminal =
+    !proof.proven && !stopped && service.native && reports.length === 0
+      ? terminalStopFacts(service, run, attempt, events)
+      : undefined;
+  if (!proof.proven && !stopped && !terminal)
+    return unknown(
+      "缺少与当前任务、attempt和已停止所有者匹配的完整终止证据，或子工作尚未回传；保留业务结果未知。",
+    );
   authorize();
   signal.throwIfAborted();
   const after = await persistence.stat(sessionId);
@@ -575,11 +733,13 @@ export async function nativeExecutionStatus(
         httpStatus: 401 as const,
         toolCallCount: 0 as const,
       }
-    : {
-        ...common,
-        kind: "native-interrupted-stopped-v1" as const,
-        ...stopped!,
-      };
+    : terminal
+      ? { ...common, kind: "native-terminal-stopped-v1" as const, ...terminal }
+      : {
+          ...common,
+          kind: "native-interrupted-stopped-v1" as const,
+          ...stopped!,
+        };
   const evidence: NativeFailureEvidence = {
     ...facts,
     evidenceVersion: digest({ ...facts, revision: after.revision }),
@@ -591,14 +751,14 @@ export async function nativeExecutionStatus(
       reconciled: false,
       evidence: {
         status:
-          evidence.kind === "native-interrupted-stopped-v1"
+          evidence.kind !== "native-auth-zero-tools-v1"
             ? "stopped-result-unproven"
             : "proven-start-failure",
         ...evidence,
       },
       notice:
-        evidence.kind === "native-interrupted-stopped-v1"
-          ? "持久中断回执与当前所有者状态确认此次调用已经停止，未提交可信业务结果；旧研究结果仍未知，不代表从未执行或成功。核实本身不重跑。"
+        evidence.kind !== "native-auth-zero-tools-v1"
+          ? "可信持久终止回执与当前所有者状态确认此次调用已经停止，未提交可信业务结果；旧研究结果仍未知，不代表从未执行或成功。核实本身不重跑。"
           : "原生已持久终止，未产生模型输出或工具调用；只能据此结算失败，不代表任务成功，也不重试。",
     };
   authorize();
@@ -614,8 +774,8 @@ export async function nativeExecutionStatus(
       runId: run.runId,
       outcome: "failed",
       reason:
-        evidence.kind === "native-interrupted-stopped-v1"
-          ? "调度会话依据确切持久中断回执、完整原生记录与当前所有者核实此次调用已停止，未提交业务结果；历史业务结果仍未知，不代表从未执行。未重跑。"
+        evidence.kind !== "native-auth-zero-tools-v1"
+          ? "调度会话依据确切持久终止回执、完整原生记录与当前所有者核实此次调用已停止，未提交业务结果；历史业务结果仍未知，不代表从未执行。未重跑。"
           : "调度会话依据完整原生记录确认启动期 AUTH/401、无模型输出和工具调用，原执行已结束；未重新执行。",
       expectedActionVersion: input.expectedActionVersion,
       evidence,
@@ -628,13 +788,13 @@ export async function nativeExecutionStatus(
     canReconcile: false,
     evidence: {
       status:
-        evidence.kind === "native-interrupted-stopped-v1"
+        evidence.kind !== "native-auth-zero-tools-v1"
           ? "stopped-result-unproven"
           : "proven-start-failure",
       ...evidence,
     },
     notice:
-      evidence.kind === "native-interrupted-stopped-v1"
+      evidence.kind !== "native-auth-zero-tools-v1"
         ? "已据证核实此次运行停止；历史业务结果仍未知。未派发或重跑任务。"
         : "已据证结算失败；未派发或重跑任务。",
   };

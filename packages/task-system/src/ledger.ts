@@ -4073,7 +4073,14 @@ export class TaskLedger {
       }
       if (message.state !== "queued") {
         if(message.checkIn && message.state==="completed" && message.withdrawn && input.state==="completed" && input.withdrawn)return message;
-        if(message.checkIn?.kind==="execution-deadline" && message.state==="completed" && message.withdrawn && input.state==="completed" && !input.withdrawn && Array.isArray(input.checkInTasks) && input.checkInTasks.length===0) {
+        if(message.checkIn && message.state==="completed" && message.withdrawn && input.state==="completed" && !input.withdrawn) {
+          const admitted=CheckinRefs.safeParse(input.checkInTasks);
+          if(!admitted.success) throw new TaskError("INVALID","Check-in acknowledgement requires its admitted references");
+          if((message.checkIn.kind==="execution-deadline" ? admitted.data.length!==0 : admitted.data.length===0) ||
+              new Set(admitted.data.map(ref=>canonical(ref))).size!==admitted.data.length ||
+              admitted.data.some(ref=>!message.checkIn!.tasks.some(original=>original.taskId===ref.taskId && original.revision===ref.revision)))
+            fail("CONFLICT","A withdrawn check requires its original admitted references before a successful owner acknowledgement");
+          this.checkins.acknowledge(message,admitted.data);
           delete message.withdrawn;
           message.reply=input.reply;
           message.updatedAt=this.now();

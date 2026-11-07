@@ -1550,10 +1550,26 @@ export class NativeExecutionProvider {
             // route owns both the prompt variables and this attempt's requests.
             this.pinExecutionRoute(ctx, owned.claim.run.route!);
             await options.setup?.(ctx, live);
+            const childActivations = new Map<string, {agent:Agent; runId:string; ended:boolean}>();
+            ctx.on("subagent/start",info=>{
+              const child=this.ctx.agents.get(info.id);
+              if(info.local && child && this.ctx.agents.isOwnedBy(info.id,live))
+                childActivations.set(String(info.id),{agent:child,runId:info.runId,ended:false});
+            });
+            ctx.on("subagent/end",info=>{
+              const activation=childActivations.get(String(info.id));
+              if(activation?.runId===info.runId)activation.ended=true;
+            });
             ctx.on("agent/pre-step", async ({ messages }, next) => {
               if (
                 messages.some((message) => {
                   const source = message.source;
+                  if(source.kind==="agent-message" || source.kind==="subagent-settled") {
+                    const activation=childActivations.get(String(source.senderSessionId));
+                    const current=this.ctx.agents.get(source.senderSessionId);
+                    if(activation && (source.kind!=="subagent-settled" || activation.ended) &&
+                      (current===activation.agent && this.ctx.agents.isOwnedBy(source.senderSessionId,live) || !current && activation.ended))return false;
+                  }
                   return (
                     source.kind !== "dsh-task" ||
                     source.taskId !== owned.claim.task.taskId ||

@@ -326,3 +326,12 @@ test('explicit manual verification waits behind the old automatic check without 
  assert.deepEqual(next.checkIn.manualChecks,[{taskId:task.taskId,commandId:'actual-operator-check'}]);
  f.ack(next,'finish-manual');f.l.checkins.tick();assert.equal(f.messages().length,0);
 });
+
+test('an unadmitted withdrawn check cannot be relabeled completed without original owner and admitted references',t=>{
+ const f=fixture(t),task=f.task();f.l.checkins.request('queued-unsent',task.taskId);const message=f.messages()[0];f.update(task,{kind:'paused',reason:'Superseded before admission'});f.l.checkins.tick();assert.equal(f.l.getSessionMessage(message.messageId).withdrawn,true);
+ const ack={messageId:message.messageId,nodeId:'central',state:'completed',reply:'Not an admitted completion',checkInTasks:[]};
+ assert.throws(()=>f.l.completeSessionMessage('empty-admission',ack),error=>error.code==='CONFLICT');
+ assert.throws(()=>f.l.completeSessionMessage('foreign-owner',{...ack,nodeId:'other',checkInTasks:message.checkIn.tasks}),error=>error.code==='FORBIDDEN');
+ assert.throws(()=>f.l.completeSessionMessage('foreign-admission',{...ack,checkInTasks:[{taskId:'other',revision:0}]}),error=>error.code==='CONFLICT');
+ assert.equal(f.l.getSessionMessage(message.messageId).withdrawn,true);
+});
