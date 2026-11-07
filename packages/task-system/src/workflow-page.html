@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>工作流</title>
     <style>
+/*__TASK_OPERATE_THEME__*/
       :root {
         font-family:
           system-ui,
@@ -13,29 +14,29 @@
           "Segoe UI",
           sans-serif;
         color-scheme: light;
-        --bg: #f6f7fa;
-        --panel: #fff;
-        --text: #182132;
-        --muted: #657187;
-        --border: #dce1ea;
-        --accent: #365fd3;
-        --soft: #edf2ff;
-        --danger: #b44141;
-        --success: #20764b;
-        --shadow: 0 8px 24px #15264908;
+        --bg: var(--task-bg);
+        --panel: var(--task-panel);
+        --text: var(--task-text);
+        --muted: var(--task-muted);
+        --border: var(--task-line);
+        --accent: var(--task-accent);
+        --soft: var(--task-selected);
+        --danger: var(--task-error);
+        --success: var(--task-success);
+        --shadow: none;
         --select-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16'%3E%3Cpath d='m4 6 4 4 4-4' fill='none' stroke='%23657187' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
       }
       html[data-theme="dark"] {
         color-scheme: dark;
-        --bg: #15171c;
-        --panel: #20232b;
-        --text: #e8ecf4;
-        --muted: #a0aabb;
-        --border: #373e4b;
-        --accent: #96b4ff;
-        --soft: #29354f;
-        --danger: #f29696;
-        --success: #8cd4ac;
+        --bg: var(--task-bg);
+        --panel: var(--task-panel);
+        --text: var(--task-text);
+        --muted: var(--task-muted);
+        --border: var(--task-line);
+        --accent: var(--task-accent);
+        --soft: var(--task-selected);
+        --danger: var(--task-error);
+        --success: var(--task-success);
         --shadow: none;
         --select-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16'%3E%3Cpath d='m4 6 4 4 4-4' fill='none' stroke='%23a0aabb' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
       }
@@ -64,7 +65,7 @@
         cursor: pointer;
         min-height: 40px;
         border: 1px solid var(--border);
-        border-radius: 9px;
+        border-radius: 7px;
         background: var(--panel);
         color: var(--text);
         padding: 8px 13px;
@@ -77,8 +78,8 @@
         cursor: not-allowed;
       }
       .primary {
-        background: var(--accent);
-        color: var(--bg);
+        background: var(--task-fill);
+        color: var(--task-fill-text);
         border-color: var(--accent);
       }
       .danger {
@@ -184,7 +185,7 @@
       .panel {
         background: var(--panel);
         border: 1px solid var(--border);
-        border-radius: 14px;
+        border-radius: 12px;
         padding: 20px;
         margin-bottom: 18px;
         box-shadow: var(--shadow);
@@ -302,7 +303,7 @@
       .node-overview, .internal-steps { padding: 16px; border: 1px solid var(--border); border-radius: 12px; min-width: 0; }
       .node-overview { background: var(--soft); }
       .internal-steps { background: var(--bg); }
-      .detail-section-title { border-left: 3px solid var(--accent); padding-left: 11px; margin: 0 0 16px; line-height: 1.5; }
+      .detail-section-title { border-bottom: 1px solid var(--border); padding-bottom: 12px; margin: 0 0 16px; line-height: 1.5; }
       .workflow-detail-section { margin-bottom: 26px; }
       .workflow-detail-section:last-child { margin-bottom: 0; }
       #step-detail { min-width: 0; }
@@ -416,7 +417,7 @@
         white-space: pre-wrap;
       }
       .hint {
-        border-left: 3px solid var(--accent);
+        border-left: 1px solid var(--border);
         padding: 8px 12px;
         color: var(--muted);
         font-size: 13px;
@@ -553,8 +554,8 @@
         position: absolute;
         background: var(--panel);
         border: 1px solid var(--border);
-        border-radius: 14px;
-        box-shadow: 0 6px 20px #1526490d;
+        border-radius: 12px;
+        box-shadow: none;
         cursor: move;
       }
       .graph-terminal {
@@ -575,7 +576,7 @@
       .node-connection { margin-top: 20px; padding: 14px; border: 1px solid var(--border); border-radius: 10px; }
       .graph-card.active {
         border-color: var(--accent);
-        box-shadow: 0 0 0 2px var(--soft);
+        box-shadow: none;
       }
       .card-main {
         display: flex;
@@ -742,7 +743,15 @@
           justify-content: flex-end;
         }
       }
-    </style>
+
+      body{font-size:14px;line-height:1.6;caret-color:var(--accent)}
+      ::selection{background:var(--soft);color:var(--text)}
+      :is(button,input,select,textarea,summary,a):focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+      .toolbar{min-height:84px;padding:18px 32px}.toolbar h1{font-size:18px;font-weight:650}.toolbar p{font-size:12px;max-width:75ch}
+      .panel{padding:24px}.detail-section-title{font-size:16px}.muted,.hint{max-width:75ch}.port{color:var(--task-fill-text);background:var(--task-fill)}
+      @media(max-width:760px){#content>.panel>.row.between:first-child{display:grid;grid-template-columns:minmax(0,1fr);gap:12px}#content>.panel>.row.between:first-child>.grow{width:100%}#workflow-heading{overflow-wrap:anywhere}.toolbar{padding:16px}.panel{padding:18px 16px}input,select,textarea{font-size:16px}button:not(.port):not(.card-main){min-height:44px}.layout{grid-template-columns:minmax(0,1fr)}main{padding:16px}}
+      @media(prefers-reduced-motion:reduce){*,*::before,*::after{transition:none!important;scroll-behavior:auto!important}}
+</style>
   </head>
   <body>
     <header class="toolbar row between">

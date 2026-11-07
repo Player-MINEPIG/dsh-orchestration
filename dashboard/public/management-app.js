@@ -56,7 +56,7 @@ function notice(text, kind = "error") {
   target.textContent = text;
 }
 function title(eyebrow, name, description, actions = "") {
-  return `<div class="management-page-title"><div><div class="eyebrow">${e(eyebrow)}</div><h1>${e(name)}</h1><p>${e(description)}</p></div><div class="management-actions">${actions}</div></div>`;
+  return `<div class="management-page-title"><div><h1>${e(name)}</h1><p>${e(description)}</p></div><div class="management-actions">${actions}</div></div>`;
 }
 function criteria(items = []) {
   return items.length
