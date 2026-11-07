@@ -635,3 +635,46 @@ test("the official WebHost exposes the same formal PM evidence tool and preserve
     await host.close();
   }
 });
+
+test('local managed retry borrows the actual WebUI-owned original executor and submits without replacing its Agent',async()=>{
+  const h=await fixture();try{
+    const inspected=await tool(h,h.pm,{action:'inspect',taskId:h.task.taskId,runId:h.run.runId});
+    assert.equal(inspected.isError,false);assert.equal(inspected.value.canReconcile,true);
+    const settled=await tool(h,h.pm,{action:'reconcile',taskId:h.task.taskId,runId:h.run.runId,commandId:'before-local-owner-retry',expectedEvidenceVersion:inspected.value.evidence.evidenceVersion,expectedActionVersion:inspected.value.actionVersion});
+    assert.equal(settled.isError,false);
+    const target=h.ledger.sessionMessageTargets(h.task.taskId)[0];
+    const opened=await h.ctx.sessionController.resolveAgent(SessionId(target.sessionId));assert.equal(opened.error,undefined);
+    const live=opened.agent,globalBefore=h.ctx.agentDefaultModel.currentSelection();
+    h.adapter.resolveModel=async(provider,id)=>({provider,id,name:id,reasoning:{efforts:[{id:'high',name:'High'}]}});
+    h.ctx.llm.registerAdapter(['test-other'],h.adapter);
+    const {registerExecutor}=await import('./executor-fixture.mjs');
+    registerExecutor(h.ledger,'local-owner-models',{nodeId:'local',roles:['both'],enabled:true,models:[{provider:'test-offline',model:'script',reasoningEfforts:[]},{provider:'test-other',model:'usable',reasoningEfforts:['high']}],workspaceIds:[],capabilities:[],maxConcurrent:2});
+    await h.projects.actOnTask({commandId:'local-owner-retry',taskId:h.task.taskId,runId:h.run.runId,action:'retry',expectedVersion:h.ledger.taskActionState(h.task.taskId).version,confirmationRevision:1,retryRouting:{nodeId:'local',executionModel:{provider:'test-other',model:'usable',reasoningEffort:'high'}}});
+    h.ledger.recordNodeHeartbeat('local-owner-up',{nodeId:'local',runtimeReady:true,activeExecutions:0});h.projects.tick();h.projects.tick();
+    const run=h.ledger.snapshot().runs.find(run=>run.runId!==h.run.runId);assert.ok(run);
+    h.adapter.script.push(options=>{assert.equal(options.provider,'test-other');assert.equal(options.model,'usable');assert.equal(options.reasoningEffort,'high');return{name:'task_submit_result',args:{outcome:'success',summary:'REUSED_WEBUI_OWNER',reportTitle:'Owned retry proof',reportBody:'Same controller Agent submitted a scoped result'}};});
+    const claim=h.ledger.claim('claim-local-owner',{runId:run.runId,nodeId:'local',ttlMs:10000}).value;
+    const result=await h.ctx.taskSystem.native.execute(claim);
+    assert.equal(result.run.state,'succeeded');assert.equal(h.ctx.agents.get(SessionId(target.sessionId)),live);
+    assert.equal(h.ledger.getRun(h.run.runId).state,'failed');assert.equal(h.ledger.snapshot().runs.length,2);
+    assert.deepEqual(h.ctx.agentDefaultModel.currentSelection(),globalBefore);
+  }finally{await h.dispose();}
+});
+
+test('local retry never takes over or cancels a busy original WebUI executor session',async()=>{
+  const h=await fixture(),release=Promise.withResolvers();try{
+    const inspected=await tool(h,h.pm,{action:'inspect',taskId:h.task.taskId,runId:h.run.runId});
+    await tool(h,h.pm,{action:'reconcile',taskId:h.task.taskId,runId:h.run.runId,commandId:'before-busy-retry',expectedEvidenceVersion:inspected.value.evidence.evidenceVersion,expectedActionVersion:inspected.value.actionVersion});
+    const target=h.ledger.sessionMessageTargets(h.task.taskId)[0],opened=await h.ctx.sessionController.resolveAgent(SessionId(target.sessionId)),entered=Promise.withResolvers();
+    const live=opened.agent;
+    h.adapter.script.push(async()=>{entered.resolve();await release.promise;return 'ORIGINAL_UI_TURN_PRESERVED';});
+    live.followup(createUserMessage({source:{kind:'user',rpcId:'existing-ui-work'},content:[{type:'text',text:'Synthetic UI work, no external effects'}]}));
+    await entered.promise;const calls=h.adapter.requests.length;
+    await h.projects.actOnTask({commandId:'busy-local-retry',taskId:h.task.taskId,runId:h.run.runId,action:'retry',expectedVersion:h.ledger.taskActionState(h.task.taskId).version,confirmationRevision:1});
+    h.ledger.recordNodeHeartbeat('busy-local-up',{nodeId:'local',runtimeReady:true,activeExecutions:0});h.projects.tick();h.projects.tick();
+    const run=h.ledger.snapshot().runs.find(run=>run.runId!==h.run.runId),claim=h.ledger.claim('claim-busy-local',{runId:run.runId,nodeId:'local',ttlMs:10000}).value;
+    await assert.rejects(h.ctx.taskSystem.native.execute(claim),error=>error.code==='SESSION_BUSY');
+    assert.equal(h.ctx.agents.get(SessionId(target.sessionId)),live);assert.equal(h.adapter.requests.length,calls);assert.notEqual(live.status,'idle');
+    release.resolve();await live.whenIdle();assert.equal(h.ctx.agents.get(SessionId(target.sessionId)),live);
+  }finally{release.resolve();await h.dispose();}
+});

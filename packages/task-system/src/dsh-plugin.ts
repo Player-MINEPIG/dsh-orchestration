@@ -1501,7 +1501,7 @@ export class NativeExecutionProvider {
    * a second writer or dispose the WebUI's Agent when the attempt ends. */
   private async resumeOwnedAgent(
     owned: OwnedAttempt,
-    workspacePath: string,
+    workspacePath: string | undefined,
     options: ResumeAgentOptions,
   ): Promise<AgentHandle> {
     const sessionId = options.resumeSessionId;
@@ -1878,7 +1878,7 @@ export class NativeExecutionProvider {
       } else {
         composition = await this.executionComposition(!resume);
         owned.handle = resume
-          ? await this.ctx.agents.resume({
+          ? await this.resumeOwnedAgent(owned, workspacePath, {
               resumeSessionId: SessionId(sessionId),
               agentOptions,
               setup,
