@@ -44,6 +44,8 @@ export interface PlanningInput {
   /** Host-owned previous Run; keeps its pinned template/window and parent binding. */
   retrySourceRunId?: string;
   automaticResultRetry?: boolean;
+  retryRouting?: {nodeId?: string; executionModel?: ExecutionModelChoice};
+  retryActor?: string;
 }
 /** A consumer of the independent decision plugin. All grants are operator-owned policy. */
 export class TaskPlanner {

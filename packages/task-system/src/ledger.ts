@@ -5817,8 +5817,8 @@ export class TaskLedger {
         title: "Task request",
         body: originalInput.automaticResultRetry === true && typeof originalInput.retryPrompt === "string" ? originalInput.retryPrompt : input.description || input.title,
         kind: "progress",
-        ...(input.expectedActionVersion && typeof originalInput.retryPrompt === "string"
-          ? { data: { actor: originalInput.automaticResultRetry === true ? "scheduler:report-validation" : "operator:task-center", retryPrompt: originalInput.retryPrompt } } : {}),
+        ...(input.expectedActionVersion && (typeof originalInput.retryPrompt === "string" || typeof originalInput.retryActor === "string")
+          ? { data: { actor: originalInput.automaticResultRetry === true ? "scheduler:report-validation" : typeof originalInput.retryActor === "string" ? originalInput.retryActor : "operator:task-center", ...(typeof originalInput.retryPrompt === "string" ? {retryPrompt: originalInput.retryPrompt} : {}) } } : {}),
       });
       if (input.deferExecution) {
         const origin=this.dispatchOrigins.getStore();

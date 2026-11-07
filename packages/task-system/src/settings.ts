@@ -492,6 +492,8 @@ const projectInputs = {
       runId: z.string().min(1).nullable(),
       confirmationRevision: z.number().int().positive().default(1),
       retryPrompt: z.string().max(20000).optional(),
+      retryRouting: z.object({nodeId:z.string().min(1).max(128).optional(),executionModel:ExecutionModelChoice.optional()}).strict().optional(),
+      expectedExecutionMs: ExpectedExecutionMs.optional(),
       returnMessageId: z.string().min(1).max(200).optional(),
       action: z.enum([
         "complete-materials",

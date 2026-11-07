@@ -155,3 +155,9 @@ DSH_CI_RESULTS_DIR="$PWD/.runtime/steward-current-packages" npm run test:distrib
 Use a fresh results directory for newly changed package bytes; never overwrite a prior tested tarball receipt. Local macOS results do not establish Linux PR CI. Native request observation proves the official model-call boundary snapshot, not network delivery or model comprehension. Canonical pagination bounds returned/processed records; underlying JSONL persistence can still scan files. Project continuation carries bounded authority references and truncation markers, preserves original Task IDs, and retrieves full records by scoped pages instead of dumping all reports.
 
 No `dev` merge, production preflight/deployment, version bump or release belongs to this isolated demo. Delivery follows a draft feature PR to `dev` and its required checks, without merging it.
+
+### 托管 PM 重试已结束任务
+
+已绑定的项目或临时任务 PM 在用户明确要求重新执行时，可使用原有 `task_dispatch`：传同一 `taskId`、`retry: true`、`task_query` 返回的当前 `expectedActionVersion` 和稳定 `commandId`。不重新提交标题、正文或配置，不创建重复 Task。宿主复用任务中心的正式重试、版本检查和持久派发队列，保留先前失败 Run。
+
+省略 `executionModel` 时，托管 PM 重试冻结所选节点当前默认模型；显式选择只作用于这次执行，不改节点或全局默认。旧任务中心调用未指定新路由选项时仍保留原重试行为。只读请求、定时检查及结果通知不能自行授权重跑；执行中或结果未知的运行必须先据证核实。

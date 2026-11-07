@@ -49,7 +49,7 @@ test('cold native resume restores a retained marker before releasing work after 
   assert.equal(h.ctx.sandboxPolicy.resolve({session:h.agent.session}).mode,'read-only');await h.ctx.sessions.flush(h.agent.session);await h.handle.dispose();
   const calls=h.model.requests.length;await h.ctx.fiber.dispose();
   const req=createRequire(join(process.env.DSH_OFFICIAL_ROOT,'package.json')),{runProfile}=await import(pathToFileURL(req.resolve('@deepseek-ai/dsh/profile-boot'))),{createLaunchEnvironmentSnapshot}=await import(pathToFileURL(req.resolve('@deepseek-ai/dsh-launch-environment')));
-  ({ctx:restarted}=await runProfile({profile:'project-native-browser',patchFiles:[join(h.directory,'browser.patch.yml')],args:['--no-open'],environment:createLaunchEnvironmentSnapshot([{source:'process',values:{...process.env}}])}));restarted.llm.registerAdapter(['test-offline'],h.model);
+  ({ctx:restarted}=await runProfile({profile:'project-native-browser',patchFiles:[],args:['--no-open'],environment:createLaunchEnvironmentSnapshot([{source:'process',values:{...process.env}}])}));restarted.llm.registerAdapter(['test-offline'],h.model);
   resumed=await restarted.agents.resume({resumeSessionId:h.agent.id,agentOptions:{provider:'test-offline',model:'script'}});
   assert.equal(h.model.requests.length,calls);assert.equal(restarted.permissionPresets.current(resumed.agent.session),'workspace-write');assert.equal(restarted.approval.overrideOf(resumed.agent.session),'ask');assert.equal(restarted.taskSystem.ledger.managementDatabase().prepare("SELECT state FROM steward_turn_permissions WHERE request='cold-restore'").get().state,'restored');
  }finally{await resumed?.dispose();await restarted?.fiber.dispose();await h.close();}

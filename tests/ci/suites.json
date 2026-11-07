@@ -138,7 +138,8 @@
     "tests/dsh/steward-continuity-native.test.mjs",
     "tests/dsh/steward-permission-native.test.mjs",
     "tests/dsh/steward-topic-router-native.test.mjs",
-    "tests/dsh/native-reconciliation.test.mjs"
+    "tests/dsh/native-reconciliation.test.mjs",
+    "tests/dsh/managed-retry-native.test.mjs"
   ],
   "ui": [
     "packages/task-system/test/executor-alerts.test.mjs",

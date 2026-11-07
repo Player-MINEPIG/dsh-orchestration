@@ -3349,7 +3349,7 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
     defineTool({
       name: "task_dispatch",
       description:
-        "Dispatch one authorized task with a stable commandId. Ordinary callers register and dispatch directly without a separate planning tool or decision-model call. taskId can dispatch an existing draft. Omit nodeId only to accept general allocation within the authorized executor pool; use task_nodes and specify nodeId for device-specific requirements. Active /project sessions use their bound central project. Owned execution agents delegate a child through their authoritative ledger and fenced lease. Omit executionModel to use the chosen executor node default. Set expectedExecutionMs to a reasonable task-specific upper bound for a one-time progress check after actual execution starts. Collect actual reports with task_query/history/wait; dispatch ACK is not completion.",
+        "Dispatch one authorized task with a stable commandId. Ordinary callers register and dispatch directly without a separate planning tool or decision-model call. taskId can dispatch an existing draft. Bound managed project/task coordinators can retry the same ended Task only in a user-requested turn: retry=true, taskId, current expectedActionVersion from task_query, and a stable commandId; omit title/description/workspaceId/configuration/route. Read-only or scheduled check-in turns cannot authorize retry. Omit nodeId only to accept general allocation within the authorized executor pool; use task_nodes and specify nodeId for device-specific requirements. Active /project sessions use their bound central project. Owned execution agents delegate a child through their authoritative ledger and fenced lease. Omit executionModel to use the chosen executor node default. Set expectedExecutionMs to a reasonable task-specific upper bound for a one-time progress check after actual execution starts. Collect actual reports with task_query/history/wait; dispatch ACK is not completion.",
       parameters: {
         expectedExecutionMs:{type:"integer",description:"Caller-estimated positive integer milliseconds, at most 30 days, from actual execution start until one progress check. Does not stop or retry execution. Omit only when no estimate is set."},
         commandId: { type: "string", required: true },
@@ -3358,7 +3358,7 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
         taskId: {
           type: "string",
           description:
-            "Existing draft task to dispatch. Owned agents create children atomically and cannot select a taskId.",
+            "Existing draft to dispatch, or ended Task to retry with retry=true and current expectedActionVersion. Owned agents create children atomically and cannot select a taskId.",
         },
         retry:{type:"boolean",description:"Explicitly create a new Run for an ended Task; requires current expectedActionVersion."},
         expectedActionVersion:{type:"string"},
@@ -3436,6 +3436,18 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
               "policy/display are available only for owned child dispatch",
             );
           const sessionBinding = exec.agent ? service.sessionCollaboration.binding(exec.agent) : undefined;
+          if (args.taskId && (args.retry || args.expectedActionVersion) &&
+              (service.projects?.projectForSession(exec.agent?.id ?? "") || service.projects?.taskForSession(exec.agent?.id ?? ""))) {
+            if (args.title || args.description || args.workspaceId) throw new TaskError("INVALID", "Existing task retry uses its stored intent; omit title/description/workspaceId");
+            if (!args.retry || !args.expectedActionVersion || !exec.agent) throw new TaskError("INVALID", "Retry requires retry=true and the current expectedActionVersion");
+            if (args.route || args.configuration !== undefined) throw new TaskError("INVALID", "Managed retry accepts nodeId/executionModel and preserves the stored task configuration");
+            return json(await service.projects!.retryManagedTask(exec.agent, {
+              commandId: args.commandId, taskId: args.taskId, expectedActionVersion: args.expectedActionVersion,
+              ...(args.nodeId ? {nodeId: args.nodeId} : {}),
+              ...(args.executionModel ? {executionModel: ExecutionModelChoice.parse(args.executionModel)} : {}),
+              ...(args.expectedExecutionMs !== undefined ? {expectedExecutionMs: args.expectedExecutionMs} : {}),
+            }, exec.signal));
+          }
           const managedLocal = config.centralMode === "host" && sessionBinding?.projectId && !service.projects?.nativeSession(String(exec.agent?.id)) && ledger.managementDatabase().prepare("SELECT 1 FROM pr_projects WHERE id=?").get(sessionBinding.projectId);
           const project = !managedLocal ? await service.sessionProjectDispatch?.(exec.agent, args, String(exec.callId)) : undefined;
           if (project?.handled) return project.value;
@@ -3462,7 +3474,6 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
               service.projects?.projectForSession(exec.agent?.id ?? "") ||
               service.projects?.taskForSession(exec.agent?.id ?? "")
             ) {
-              if(args.retry || args.expectedActionVersion)throw new TaskError("FORBIDDEN","Use the authorized task retry action for an ended managed task");
               const task=ledger.getTask(args.taskId);
               return dispatchPlanned({commandId:args.commandId,taskId:args.taskId,title:task.title,description:task.description,...(args.expectedExecutionMs!==undefined?{expectedExecutionMs:args.expectedExecutionMs}:{}),...(args.nodeId?{nodeId:args.nodeId}:{}),...(args.route?{route:args.route as unknown as Claim["run"]["route"]}:{}),...(args.executionModel?{executionModel:ExecutionModelChoice.parse(args.executionModel)}:{})},exec);
             }
