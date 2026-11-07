@@ -58,6 +58,11 @@ export async function testSettings(browser, { output } = {}) {
         root.unmount(); root = ReactDOM.createRoot(document.getElementById('root'));
         const fixture = window.fixture = { reads: 0, writes: [], snapshot: { writable: true, applies: 'plugin-restart', remote: null, task: { entryId: 'task-system', decisionAvailable: true, values: { role: 'both', centralMode: 'host', executionEnabled: true, nodeId: 'immutable-node', databasePath: '/fixture/tasks.sqlite', executionAgentPreset: 'ptc', executionTools: null, planningDecisionEnabled: true, sessionDecisionEnabled: false } } } };
         root.render(h(settings.StartupSettings, { t: key => settings.zh[key] ?? key,
+          nodeModelApi: {
+            read: async ({nodeId}) => ({nodeId,policy:{revision:0},catalog:{state:"fresh",positiveSnapshot:{revision:"local-catalog",expiresAt:Date.now()+60000,complete:true,models:[{provider:"test-offline",model:"script",reasoningEffort:"high"}]}}}),
+            refresh: async () => {throw Error("Fresh local catalog must not need a remote peer");},
+            save: async input => {fixture.writes.push(input);return {nodeId:input.nodeId,policy:{revision:1,choice:input.choice},catalog:{state:"fresh",positiveSnapshot:{revision:"local-catalog",expiresAt:Date.now()+60000,complete:true,models:[input.choice]}}};},
+          },
           startup: async () => { fixture.reads++; return settings.startupDescriptor.result.create().parse(structuredClone(fixture.snapshot)); },
           readExecutionPresets: async () => ({ items: [{ id: 'ptc', label: 'PTC', available: true }] }),
           readConnectionSettings: async () => ({ exists: false, writable: false, revision: 0, values: { authMode: 'trusted-network', listenerEnabled: false, listenAddress: '127.0.0.1', listenPort: 18440, routePath: '/dsh-task/v1/commands', serviceAudience: 'scheduler', peers: [], outbound: null } }),
@@ -134,7 +139,15 @@ export async function testSettings(browser, { output } = {}) {
     assert.equal(await page.locator('[data-task-executor-decision]').count(), 0);
 
     await page.evaluate(() => mountStartupSettings());
+    const localModels=page.locator('[data-local-node-model-settings]');
+    await localModels.getByRole('heading',{name:'本机执行节点'}).waitFor();
+    await localModels.getByLabel('默认执行模型',{exact:true}).selectOption({label:'test-offline / script'});
+    await localModels.getByRole('button',{name:'保存节点默认模型',exact:true}).click();
+    await localModels.getByText('节点默认执行模型已保存。',{exact:true}).waitFor();
+    assert.equal(await page.evaluate(()=>fixture.writes[0].nodeId),'immutable-node');
+    await page.evaluate(()=>{fixture.writes=[];});
     await execution.uncheck();
+    assert.equal(await localModels.getByLabel('默认执行模型',{exact:true}).isDisabled(),true);
     await page.evaluate(() => { fixture.snapshot.task.values.role = 'executor'; fixture.snapshot.task.values.centralMode = 'remote'; fixture.snapshot.task.values.executionEnabled = true; fixture.snapshot.task.values.sessionDecisionEnabled = true; });
     await page.getByRole('button', { name: '刷新启动配置', exact: true }).click();
     await page.waitForFunction(() => fixture.reads === 2);
