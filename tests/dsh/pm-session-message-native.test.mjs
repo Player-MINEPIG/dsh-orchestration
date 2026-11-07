@@ -66,6 +66,7 @@ test('actual PM tool queues an existing worker conversation and reads its exact 
     await until(async()=>{const state=await service.steward.reconcile({conversationId:'main'});return state.messages.some(message=>message.text==='PM read the exact existing-session reply.');},'Actual PM tool chain did not finish');
     assert.equal(stage,4);assert.equal(ledger.sessionMessages(task.taskId).filter(message=>!message.completion).length,1);
     assert.deepEqual({tasks:ledger.snapshot().tasks.length,runs:ledger.snapshot().runs.length,attempts:ledger.snapshot().attempts.length,reports:ledger.snapshot().reports.length},before);
+    await until(()=>!h.ctx.agents.get(SessionId(owner.session)),'Managed PM did not release its native write handle');
     pmHandle=await h.ctx.agents.resume({resumeSessionId:SessionId(owner.session),agentOptions:{provider:'test-offline',model:'script'}});
     const retry={action:'send',taskId:task.taskId,nodeId:'local',sessionId:session.sessionId,commandId:'pm-ordinary-feedback',text:'Please confirm the existing result; do not rerun.'};
     assert.equal(decode(await call(h,pmHandle.agent,retry)).value.messageId,queuedId);
