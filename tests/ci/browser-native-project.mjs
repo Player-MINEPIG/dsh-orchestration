@@ -11,7 +11,7 @@ import { ScriptedModel } from '../dsh/scripted-model.mjs';
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 
-async function startHost() {
+export async function startHost({ withJev = false } = {}) {
   const runtimeRoot = process.env.DSH_OFFICIAL_ROOT ?? ensureOfficialRuntime().root;
   const require = createRequire(join(runtimeRoot, 'package.json'));
   const directory = realpathSync(mkdtempSync(join(tmpdir(), 'dsh-project-native-browser-')));
@@ -29,6 +29,7 @@ async function startHost() {
   const packages = join(process.env.DSH_HOME, 'profiles', profile, 'node_modules', '@dsh-task');
   mkdirSync(packages, { recursive: true });
   symlinkSync(join(repo, 'packages/task-system'), join(packages, 'task-system'), 'dir');
+  if(withJev)symlinkSync(join(repo,'packages/jev'),join(packages,'..','dsh-jev-plugin'),'dir');
   const patch = join(process.env.DSH_HOME, 'profiles', profile, 'cordis.patch.yml');
   writeFileSync(patch, JSON.stringify([
     { id: 'webserver', config: { host: '127.0.0.1', port: 0, compression: 'none' } },
@@ -37,6 +38,7 @@ async function startHost() {
     { insert: [
       { id: 'task-system', name: '@dsh-task/task-system/plugin', config: { role: 'planner', nodeId: 'local', databasePath: join(directory, 'tasks.sqlite'), executionEnabled: false, keepAlive: false, schedulerEnabled: false, autoExecute: false, projectAgentOptions: { provider: 'test-offline', model: 'script' } } },
       { id: 'browser-task-settings', name: '@dsh-task/task-system' },
+      ...(withJev ? [{id:'jev',name:'dsh-jev-plugin',config:{enabled:false,provider:'typesafe',dataDir:join(directory,'jev')}}] : []),
     ] },
   ]));
   let ctx;
@@ -315,6 +317,31 @@ export async function testNativeProject(browser, { output } = {}) {
     assert.equal(host.model.requests.length,modelCallsBeforeNavigation,'Opening source history does not submit or rerun work');
     if(output)await page.screenshot({path:join(output,'task-open-original-session.png'),fullPage:true});
     console.log('native browser: task source opens the real session in its registered workspace');
+    const monitorAgent=host.ctx.agents.get(binding.sessionId);
+    assert.ok(monitorAgent);
+    await host.ctx.taskSystem.sessionCollaboration.activate(monitorAgent,undefined,host.created.projectId);
+    for(const [command,title] of [['first','Monitor dispatched evidence'],['second','Monitor second handover']]){
+      await host.ctx.taskSystem.sessionCollaboration.invoke(monitorAgent,'dispatch',{title,description:'Disposable monitor verification; no executor is started',nodeId:'worker',executionModel:{provider:'fixture',model:'fixture'}},'monitor-'+command,'browser-monitor-'+command);
+    }
+    await page.getByRole('tab',{name:'任务',exact:true}).click();
+    const sessionTasks=page.locator('.session-task-monitor');await sessionTasks.waitFor();
+    await sessionTasks.getByText('Monitor dispatched evidence',{exact:true}).waitFor();
+    await sessionTasks.locator('input').fill('second');
+    await sessionTasks.getByText('Monitor second handover',{exact:true}).waitFor();
+    assert.equal(await sessionTasks.getByText('Monitor dispatched evidence',{exact:true}).count(),0);
+    await sessionTasks.locator('input').fill('');
+    await sessionTasks.locator('summary').first().click();
+    for(const width of [1440,390])for(const mode of ['light','dark']){
+      await page.setViewportSize({width,height:1000});
+      await page.evaluate(mode=>document.documentElement.style.colorScheme=mode,mode);
+      await page.locator(`.session-task-monitor[data-theme=${mode}]`).waitFor();
+      assert.ok(await sessionTasks.evaluate(element=>element.scrollWidth<=element.clientWidth+1));
+      if(output)await page.screenshot({path:join(output,`official-session-tasks-${width}-${mode}.png`),fullPage:true});
+      const last=sessionTasks.locator('summary').last();await last.scrollIntoViewIfNeeded();
+      const lastBox=await last.boundingBox(),scrollBox=await sessionTasks.boundingBox();
+      assert.ok(lastBox.y>=scrollBox.y-1&&lastBox.y+lastBox.height<=scrollBox.y+scrollBox.height+1,'Last task remains reachable above the host composer');
+    }
+    console.log('native browser: nonempty session task monitor, search and responsive themes passed');
     await page.getByRole('button',{name:'项目与任务',exact:true}).click();
     await frame.locator('[data-action="task-settings"]').click();
     const settings=page.locator('[data-task-plugin-settings]');

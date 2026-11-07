@@ -13,6 +13,7 @@ window.__ModuleLoader__.load({
       Modal,
     } = require("@deepseek-ai/dsh-client-ui-primitives");
     const h = React.createElement;
+    const taskOperateTheme = `/*__TASK_OPERATE_THEME__*/`;
     const { Context: ClientContext } = require("@deepseek-ai/cordis");
     /*__PROJECT_NATIVE_CLIENT__*/
     const keys = [
@@ -33,18 +34,6 @@ window.__ModuleLoader__.load({
     ]);
     const NS = "taskPluginSettings";
     const en = {
-      decisionFormTitle: "Decision model settings",
-      decisionShared:
-        "Scheduler executor selection and executor workspace/session decisions use this same configuration.",
-      decisionMode: "Decision adapter",
-      decisionKind_rules:
-        "Rules applies configured rules without a model call. With no matching rule it abstains.",
-      decisionKind_structured:
-        "DSH LLM uses your configured DSH provider/model. Recommended for varied tasks and natural-language requests.",
-      decisionKind_jev:
-        "Typesafe Jev uses the dedicated Typesafe decision API and needs its own credentials; it does not use your DSH model API.",
-      decisionKind_compatible:
-        "Uses an explicitly configured compatible decision API.",
       connectionCheck: "Check connection",
       connectionChecking: "Checking…",
       connectionCheckOk:
@@ -78,39 +67,6 @@ window.__ModuleLoader__.load({
         "Configuration changed. Refresh before saving; your draft is retained.",
       startupError_STARTUP_OVERRIDE:
         "A higher configuration layer owns these settings; update profile ownership before saving.",
-      decisionProvider: "Configured DSH provider",
-      decisionModel: "Configured model",
-      decisionChoose: "Choose…",
-      decisionModelSelector: "Model selector",
-      decisionModelVersion: "Exact model version",
-      decisionEndpoint: "Compatible API endpoint",
-      decisionManageModels: "Open DSH model settings",
-      decisionModelsUnavailable: "Model settings could not be opened. Select Models in the settings sidebar.",
-      decisionCredentialMissing:
-        "Credentials are not configured. Non-secret settings can be saved; model decisions are not ready.",
-      decisionCatalogEmpty:
-        "No configured DSH model is available. Add or repair it in Models, then refresh.",
-      decisionBridgeMissing:
-        "The native bridge entry is missing. Update this plugin installation to enable GUI routing.",
-      decisionRestart:
-        "Save restarts the decision plugins. Credentials, env references and other routes are retained.",
-      decisionSave: "Save decision model",
-      decisionCurrent: "Current configuration",
-      decisionStatus_ready: "Configured",
-      "decisionStatus_configured-unverified":
-        "Configured; connection not verified",
-      decisionStatus_unconfirmed: "Credential readiness could not be confirmed",
-      "decisionStatus_credential-missing": "Credentials missing",
-      "decisionStatus_bridge-missing": "Native model route missing",
-      "decisionStatus_model-unavailable": "Configured model unavailable",
-      decisionConflict:
-        "Configuration changed. Your draft is retained. Refresh and discard to use current values before retrying.",
-      decisionSaveFailed:
-        "Save could not be confirmed. Your draft is retained; refresh to check current configuration.",
-      decisionReadFailed: "Could not read model settings. Refresh to retry.",
-      decisionUnavailable:
-        "The Jev plugin is not installed or has no editable entry.",
-      decisionClose: "Close model settings",
       decisionDependencyRequired: "Install and enable the dsh-jev-plugin decision plugin to use this feature. Refresh startup configuration after enabling it.",
       startupError_STARTUP_DECISION_REQUIRED: "Install and enable dsh-jev-plugin before enabling decisions.",
       schedulerDecisionTitle: "Automatic observation admission",
@@ -127,11 +83,6 @@ window.__ModuleLoader__.load({
         "The project or temporary-task rule fixes the directory. The decision selects a legal new or existing Task session.",
       executorDecisionInactive:
         "Local task execution is disabled. Session selection settings are retained.",
-      decisionModelEntry: "Executor decision model settings",
-      decisionModelStatus:
-        "Uses the existing decision-model configuration. If no valid decision is available, the default Task session/workspace policy applies.",
-      decisionModelSetup:
-        "Open Decision model settings to select the configured provider and model.",
       schedulerAddress: "Scheduler address",
       audienceHint:
         "Audience must match the scheduler's configured target validation label. Obtain it from the scheduler; it is not inferred from the address.",
@@ -309,17 +260,6 @@ window.__ModuleLoader__.load({
         "Edits stay in the draft until Save. Switching pages preserves the draft. Saved runtime settings persist in this profile without restarting the task service.",
     };
     const zh = {
-      decisionFormTitle: "决策模型配置",
-      decisionShared:
-        "调度端选择执行端、执行端选择工作区／会话，共用此决策模型配置。",
-      decisionMode: "决策方式",
-      decisionKind_rules:
-        "Rules：按已配置的规则判断，不调用模型；没有匹配规则时不会自动选择。",
-      decisionKind_structured:
-        "DSH LLM：使用 DSH 中已有的供应商和模型。适合非固定任务及自然语言请求，建议你的场景选择此项。",
-      decisionKind_jev:
-        "Typesafe Jev：调用 Typesafe 的专用决策 API，需要单独配置凭据；不会使用你已配置的 DSH 模型 API。",
-      decisionKind_compatible: "使用明确配置的兼容决策 API。",
       connectionCheck: "检验连接",
       connectionChecking: "正在检验…",
       connectionCheckOk: "已连通调度端任务协议，并确认此节点获准连接。",
@@ -348,35 +288,6 @@ window.__ModuleLoader__.load({
         "配置已变化，请刷新核对后保存；草稿已保留。",
       startupError_STARTUP_OVERRIDE:
         "此配置由更高层配置持有，需要先调整 profile 配置归属。",
-      decisionProvider: "已有 DSH provider",
-      decisionModel: "已有模型",
-      decisionChoose: "请选择…",
-      decisionModelSelector: "模型选择名",
-      decisionModelVersion: "实际模型／版本",
-      decisionEndpoint: "Compatible API 地址",
-      decisionManageModels: "打开 DSH 模型设置",
-      decisionModelsUnavailable: "模型设置入口暂不可用，请点击设置左侧的“模型”。",
-      decisionCredentialMissing:
-        "凭据尚未配置。可保存非秘密设置；模型决策尚未就绪。",
-      decisionCatalogEmpty:
-        "暂无可选的已配置 DSH 模型。请在“模型”中添加或修复后刷新。",
-      decisionBridgeMissing:
-        "当前安装缺少 native bridge 条目；更新插件安装后即可在此保存普通模型路由。",
-      decisionRestart: "保存后重启相关决策插件；保留凭据、env 引用和其他路由。",
-      decisionSave: "保存决策模型",
-      decisionCurrent: "当前配置",
-      decisionStatus_ready: "已配置",
-      "decisionStatus_configured-unverified": "已配置；连接尚未验证",
-      decisionStatus_unconfirmed: "凭据状态尚未确认",
-      "decisionStatus_credential-missing": "缺少凭据",
-      "decisionStatus_bridge-missing": "缺少普通模型路由",
-      "decisionStatus_model-unavailable": "已配置模型不可用",
-      decisionConflict:
-        "配置已变化，草稿保留。刷新并取消草稿以载入当前值后重试。",
-      decisionSaveFailed: "保存未能确认，草稿保留；请刷新检查当前配置。",
-      decisionReadFailed: "无法读取决策模型配置，请刷新重试。",
-      decisionUnavailable: "Jev 插件未安装或没有可编辑条目。",
-      decisionClose: "关闭模型配置",
       decisionDependencyRequired: "需要安装并启用 dsh-jev-plugin 决策插件后才能使用。启用后请刷新启动配置。",
       startupError_STARTUP_DECISION_REQUIRED: "请先安装并启用 dsh-jev-plugin 决策插件，再开启决策功能。",
       schedulerDecisionTitle: "自动观察归并",
@@ -393,11 +304,6 @@ window.__ModuleLoader__.load({
         "工作目录按项目或临时任务规则确定；决策只选择合法的 Task 会话，新建或复用。",
       executorDecisionInactive:
         "本机未启用任务执行，会话选择配置保留。",
-      decisionModelEntry: "选择执行端决策预设",
-      decisionModelStatus:
-        "使用本机选择的决策预设；没有有效决策时，按项目/临时目录规则确定工作区，并创建或复用合法会话。",
-      decisionModelSetup:
-        "点击“选择执行端决策预设”；此开关控制会话与工作区决策。",
       schedulerAddress: "调度端地址",
       audienceHint:
         "audience 是调度端配置的目标验证标识，必须与调度端的值一致；请向调度端获取，不按地址猜测。",
@@ -2526,280 +2432,6 @@ h(
       invocation:{kind:"direct"}, parameters: method === "setDecisionPreset" ? [{name:"input",wire:"input",source:"json",codec:{mode:"strict",typeSymbol:"@dsh-task/task-system#SetDecisionPresetInput",create:()=>({parse:value=>value})}}] : [],
       result:{mode:"strict",typeSymbol:`@dsh-task/task-system#${method}Result`,create:()=>({parse(value){if(!value || typeof value!=="object")throw Error("Invalid decision preset response");return value;}})},
     }));
-    function decisionChoices(snapshot) {
-      const choices = snapshot.providers.map((p) => ({
-        id: p.id,
-        kind: p.kind,
-        label: `${p.kind === "structured" ? "DSH LLM" : p.kind === "jev" ? "Typesafe Jev" : p.kind === "compatible" ? "AnyJev compatible" : "Rules"} · ${p.id}`,
-      }));
-      for (const [kind, base, label] of [
-        ["structured", "ordinary", "DSH LLM"],
-        ["jev", "typesafe", "Typesafe Jev"],
-      ]) {
-        if (choices.some((p) => p.kind === kind)) continue;
-        let id = base;
-        for (let n = 2; choices.some((p) => p.id === id); n++)
-          id = `${base}-${n}`;
-        choices.push({ id, kind, label });
-      }
-      return choices;
-    }
-    function decisionDraft(snapshot, providerId = snapshot.defaultProvider) {
-      const kind =
-        decisionChoices(snapshot).find((p) => p.id === providerId)?.kind ??
-        "rules";
-      const p = snapshot.providers.find((p) => p.id === providerId),
-        model = p?.models?.[0];
-      const route = snapshot.completion?.routes.find(
-        (r) => r.model === model?.model && r.modelVersion === model.version,
-      );
-      return kind === "structured"
-        ? {
-            kind,
-            providerId,
-            nativeProvider: route?.provider ?? "",
-            modelVersion: route?.modelVersion ?? "",
-          }
-        : kind === "rules"
-          ? { kind, providerId }
-          : {
-              kind,
-              providerId,
-              model: p?.model ?? "jev-1.13.0",
-              modelVersion: p?.modelVersion ?? "jev-1.13.0",
-              ...(kind === "compatible" ? { endpoint: p?.endpoint ?? "" } : {}),
-            };
-    }
-    function DecisionModelRow({
-      t,
-      value,
-      saveDecisionSettings,
-      onSaved,
-      openModels,
-    }) {
-      const snapshot = value.snapshot;
-      const [draft, setDraft] = React.useState(() => decisionDraft(snapshot));
-      const [expected, setExpected] = React.useState(snapshot);
-      const [status, setStatus] = React.useState({ saving: false });
-      const choices = decisionChoices(snapshot),
-        selectedNative = value.catalog.find(
-          (p) => p.provider === draft.nativeProvider,
-        );
-      const edit = (key, text) => {
-        setDraft((old) => ({ ...old, [key]: text }));
-        setStatus({ saving: false });
-      };
-      const valid =
-        Object.entries(draft).every(
-          ([, v]) => typeof v === "string" && v.trim(),
-        ) &&
-        (draft.kind !== "structured" ||
-          (snapshot.completion &&
-            selectedNative?.available &&
-            selectedNative.models.some((m) => m.id === draft.modelVersion)));
-      const dirty =
-        JSON.stringify(draft) !== JSON.stringify(decisionDraft(expected));
-      const disabled = !value.writable || status.saving;
-      const select = (key, label, items) =>
-        h(
-          "label",
-          { style: { display: "block", margin: "12px 0" } },
-          h("span", { style: { display: "block", marginBottom: 6 } }, label),
-          h(
-            "select",
-            {
-              id: `task-decision-${key}`,
-              style: controlStyle,
-              value: draft[key],
-              disabled,
-              onChange: (e) => {
-                if (key === "providerId")
-                  setDraft(decisionDraft(snapshot, e.target.value));
-                else if (key === "nativeProvider")
-                  setDraft((old) => ({
-                    ...old,
-                    nativeProvider: e.target.value,
-                    modelVersion: "",
-                  }));
-                else edit(key, e.target.value);
-                setStatus({ saving: false });
-              },
-            },
-            h("option", { value: "" }, t("decisionChoose")),
-            draft[key] && !items.some((i) => i.id === draft[key])
-              ? h(
-                  "option",
-                  { value: draft[key], disabled: true },
-                  `${draft[key]} · ${t("workspaceUnavailableSuffix")}`,
-                )
-              : null,
-            ...items.map((i) =>
-              h(
-                "option",
-                { key: i.id, value: i.id, disabled: i.available === false },
-                i.label ?? i.name,
-              ),
-            ),
-          ),
-        );
-      const text = (key, label) =>
-        h(
-          "label",
-          { style: { display: "block", margin: "12px 0" } },
-          h("span", { style: { display: "block", marginBottom: 6 } }, label),
-          h("input", {
-            id: `task-decision-${key}`,
-            style: controlStyle,
-            value: draft[key],
-            disabled,
-            onChange: (e) => edit(key, e.target.value),
-          }),
-        );
-      const readiness = value.readiness.find(
-        (p) => p.providerId === snapshot.defaultProvider,
-      )?.status;
-      const credentialMissing =
-        draft.kind === "structured"
-          ? selectedNative?.credential === "missing"
-          : ["jev", "compatible"].includes(draft.kind) &&
-            (!snapshot.providers.some((p) => p.id === draft.providerId) ||
-              value.readiness.find((p) => p.providerId === draft.providerId)
-                ?.status === "credential-missing");
-      return h(
-        "div",
-        { "data-decision-model-form": true },
-        h("p", { style: hintStyle }, t("decisionShared")),
-        readiness
-          ? h(
-              "p",
-              { role: "status", style: hintStyle },
-              `${t("decisionCurrent")}: ${t(`decisionStatus_${readiness}`)}`,
-            )
-          : null,
-        select("providerId", t("decisionMode"), choices),
-        h(
-          "p",
-          { style: hintStyle, "data-decision-kind-help": draft.kind },
-          t(`decisionKind_${draft.kind}`),
-        ),
-        draft.kind === "structured"
-          ? h(
-              React.Fragment,
-              null,
-              select(
-                "nativeProvider",
-                t("decisionProvider"),
-                value.catalog.map((p) => ({
-                  id: p.provider,
-                  name: p.name,
-                  available: p.available,
-                })),
-              ),
-              select(
-                "modelVersion",
-                t("decisionModel"),
-                selectedNative?.models ?? [],
-              ),
-              !snapshot.completion
-                ? h("p", { role: "alert" }, t("decisionBridgeMissing"))
-                : null,
-              !value.catalog.length
-                ? h("p", { role: "status" }, t("decisionCatalogEmpty"))
-                : null,
-            )
-          : ["jev", "compatible"].includes(draft.kind)
-            ? h(
-                React.Fragment,
-                null,
-                text("model", t("decisionModelSelector")),
-                text("modelVersion", t("decisionModelVersion")),
-                draft.kind === "compatible"
-                  ? text("endpoint", t("decisionEndpoint"))
-                  : null,
-              )
-            : null,
-        credentialMissing
-          ? h("p", { role: "status" }, t("decisionCredentialMissing"))
-          : null,
-        h(
-          Button,
-          {
-            variant: "outline",
-            onClick: () => {
-              if (!openModels?.())
-                setStatus({ saving: false, code: "MODELS_GUI_UNAVAILABLE" });
-            },
-          },
-          t("decisionManageModels"),
-        ),
-        h("p", { style: hintStyle }, t("decisionRestart")),
-        status.code
-          ? h(
-              "p",
-              { role: "alert" },
-              t(
-                status.code === "MODELS_GUI_UNAVAILABLE"
-                  ? "decisionModelsUnavailable"
-                  : status.code === "DECISION_CONFLICT"
-                    ? "decisionConflict"
-                    : "decisionSaveFailed",
-              ),
-              ` (${status.code})`,
-            )
-          : null,
-        status.saved && !saveCoordinator ? h("p", { role: "status" }, t("startupSaved")) : null,
-        h(
-          "div",
-          {
-            style: { display: "flex", gap: 8, flexWrap: "wrap", marginTop: 14 },
-          },
-          h(
-            Button,
-            {
-              variant: "outline",
-              disabled: disabled || !dirty || !valid,
-              onClick: async () => {
-                setStatus({ saving: true });
-                try {
-                  await saveDecisionSettings(
-                    parseDecisionInput({ expected, selection: draft }),
-                  );
-                  const saved = await onSaved();
-                  setExpected(saved.snapshot);
-                  setDraft(decisionDraft(saved.snapshot));
-                  setStatus({ saving: false, saved: true });
-                } catch (error) {
-                  setStatus({
-                    saving: false,
-                    code:
-                      error?.message?.match(/DECISION_[A-Z_]+/)?.[0] ??
-                      error?.code ??
-                      "DECISION_SAVE_REJECTED",
-                  });
-                }
-              },
-            },
-            t(status.saving ? "startupSaving" : "decisionSave"),
-          ),
-          h(
-            Button,
-            {
-              variant: "outline",
-              disabled:
-                status.saving ||
-                (!dirty &&
-                  JSON.stringify(expected) === JSON.stringify(snapshot)),
-              onClick: () => {
-                setDraft(decisionDraft(snapshot));
-                setExpected(snapshot);
-                setStatus({ saving: false });
-              },
-            },
-            t("discardDraft"),
-          ),
-        ),
-      );
-    }
     function DecisionPresetSettings({role, readDecisionConsole, setDecisionPreset, openDecisions, close, saveCoordinator}) {
       const {state, refresh} = useReadSnapshot(readDecisionConsole);
       const [selected, select] = React.useState(null), [saving, setSaving] = React.useState(false), [message, setMessage] = React.useState(null);
@@ -2824,59 +2456,6 @@ h(
           h(Button, {variant:"outline",disabled:state.loading,onClick:refresh}, "刷新预设"),
           close ? h(Button, {variant:"outline",onClick:close}, "关闭预设选择") : null));
     }
-    function DecisionModelSettings({
-      t,
-      readDecisionSettings,
-      saveDecisionSettings,
-      openModels,
-      close,
-    }) {
-      const { state, refresh, replace } = useReadSnapshot(readDecisionSettings);
-      return h(
-        "section",
-        {
-          "data-decision-model-settings": true,
-          id: "task-decision-model-form",
-          tabIndex: -1,
-        },
-        h("h3", { style: headingStyle }, t("decisionFormTitle")),
-        state.loading && !state.value
-          ? h("p", { role: "status" }, t("loading"))
-          : null,
-        state.failed
-          ? h("p", { role: "alert" }, t("decisionReadFailed"))
-          : null,
-        state.value?.snapshot
-          ? h(DecisionModelRow, {
-              key: state.value.snapshot.entryId,
-              t,
-              value: state.value,
-              saveDecisionSettings,
-              onSaved: async () => {
-                const current = await readDecisionSettings();
-                replace(current);
-                return current;
-              },
-              openModels,
-            })
-          : state.value
-            ? h("p", { role: "status" }, t("decisionUnavailable"))
-            : null,
-        h(
-          "div",
-          {
-            style: { display: "flex", flexWrap: "wrap", gap: 8, marginTop: 12 },
-          },
-          h(
-            Button,
-            { variant: "outline", onClick: refresh, disabled: state.loading },
-            t("refresh"),
-          ),
-          h(Button, { variant: "outline", onClick: close }, t("decisionClose")),
-        ),
-      );
-    }
-
     function DirectoryField({ value, onChange, disabled, directoryApi, extraActions, label = "项目父目录" }) {
       const [open, setOpen] = React.useState(false);
       const [listing, setListing] = React.useState(null);
@@ -2965,17 +2544,7 @@ h(
         h(Button,{variant:"outline",disabled:saving,onClick:()=>{setNotice("");refresh();}},"刷新本机工作区"));
     }
     function Page(props) {
-      const [theme, setTheme] = React.useState(hostTheme);
-      React.useEffect(() => {
-        const update = () => setTheme(hostTheme());
-        const observer = new MutationObserver(update);
-        observer.observe(document.documentElement, { attributes: true });
-        observer.observe(document.body, { attributes: true });
-        const system = matchMedia("(prefers-color-scheme: dark)");
-        system.addEventListener("change", update);
-        update();
-        return () => { observer.disconnect(); system.removeEventListener("change", update); };
-      }, []);
+      const theme = useHostTheme();
       const { t } = props;
       const registryRef=React.useRef(null);if (!registryRef.current) registryRef.current=new SettingsSaveCoordinator();
       const saveCoordinator=registryRef.current;
@@ -2990,11 +2559,11 @@ h(
       if (props.view === "summary") return t("summary");
       return h(
         "div",
-        { "data-task-plugin-settings": true, "data-theme": theme, style:{minHeight:"100%",display:"flex",flexDirection:"column"} },
+        { "data-task-plugin-settings": true, className:"task-operate", "data-theme": theme, style:{minHeight:"100%",display:"flex",flexDirection:"column"} },
         h(
           "style",
           null,
-          `[data-task-plugin-settings]{min-width:0;width:100%;max-width:none;margin:0;box-sizing:border-box;overflow-wrap:anywhere;--imp-bg:#f7f8fa;--imp-panel:#fff;--imp-text:#202a38;--imp-muted:#596779;--imp-line:#dce1e8;--imp-accent:#265bad;--imp-selected:#e9f0fc;--imp-fill:#265bad;--imp-fill-text:#fff;--dsw-alias-bg-layer-1:var(--imp-panel);--dsw-alias-bg-layer-2:#f0f2f5;--dsw-alias-label-primary:var(--imp-text);--dsw-alias-label-secondary:var(--imp-muted);--dsw-alias-border-l3:var(--imp-line);--dsw-alias-link:var(--imp-accent);background:var(--imp-bg);color:var(--imp-text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif;font-size:14px;line-height:1.6;padding:0 32px 24px;caret-color:var(--imp-accent);}
+          taskOperateTheme + `[data-task-plugin-settings]{min-width:0;width:100%;max-width:none;margin:0;box-sizing:border-box;overflow-wrap:anywhere;--imp-bg:var(--task-bg);--imp-panel:var(--task-panel);--imp-text:var(--task-text);--imp-muted:var(--task-muted);--imp-line:var(--task-line);--imp-accent:var(--task-accent);--imp-selected:var(--task-selected);--imp-fill:var(--task-fill);--imp-fill-text:var(--task-fill-text);--dsw-alias-bg-layer-1:var(--imp-panel);--dsw-alias-bg-layer-2:#f0f2f5;--dsw-alias-label-primary:var(--imp-text);--dsw-alias-label-secondary:var(--imp-muted);--dsw-alias-border-l3:var(--imp-line);--dsw-alias-link:var(--imp-accent);background:var(--imp-bg);color:var(--imp-text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif;font-size:14px;line-height:1.6;padding:0 32px 24px;caret-color:var(--imp-accent);}
           [data-task-plugin-settings] *{box-sizing:border-box;}
           [data-task-plugin-settings] > :not(style):not(header){width:100%;margin-left:auto;margin-right:auto;max-width:1180px;}
           [data-task-plugin-settings] .task-settings-header{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;margin:0 -32px 24px;min-height:84px;padding:18px 32px;background:var(--imp-panel);border-bottom:1px solid var(--imp-line);gap:20px;}
@@ -3069,7 +2638,7 @@ h(
           [data-task-plugin-settings] [data-task-save-bar] > p{font-size:12px;line-height:1.6;margin:0!important;max-width:75ch;}
           [data-task-plugin-settings] [data-task-save-bar] > div{flex-shrink:0;}
           [data-task-plugin-settings] [data-task-save-bar] button:first-child:not(:disabled){background:var(--imp-fill);border-color:var(--imp-fill)!important;color:var(--imp-fill-text);}
-          [data-task-plugin-settings][data-theme=dark]{--imp-bg:#151b24;--imp-panel:#1d2531;--imp-text:#e8edf5;--imp-muted:#a9b6c8;--imp-line:#374457;--imp-accent:#9abfff;--imp-selected:#263d5d;--imp-fill:#9abfff;--imp-fill-text:#15243b;--dsw-alias-bg-layer-2:#263140;}
+          [data-task-plugin-settings][data-theme=dark]{--imp-bg:var(--task-bg);--imp-panel:var(--task-panel);--imp-text:var(--task-text);--imp-muted:var(--task-muted);--imp-line:var(--task-line);--imp-accent:var(--task-accent);--imp-selected:var(--task-selected);--imp-fill:var(--task-fill);--imp-fill-text:var(--task-fill-text);--dsw-alias-bg-layer-2:#263140;}
           @media(max-width:760px){[data-task-plugin-settings] .task-connection-grid{grid-template-columns:minmax(0,1fr);}}
           @media(max-width:760px){[data-task-plugin-settings]{padding:0 18px;}[data-task-plugin-settings] .task-settings-header{margin:0 -18px 18px;padding:14px 16px;align-items:flex-start;}[data-task-plugin-settings] .task-primary-nav{max-width:100%;}[data-task-plugin-settings] .task-primary-nav button{padding:7px 11px!important;}[data-task-plugin-settings] .task-directory-grid,[data-task-plugin-settings] .task-decision-grid,[data-task-plugin-settings] [data-startup-target=remote]{grid-template-columns:minmax(0,1fr);gap:16px;}[data-task-plugin-settings] [data-settings-area] > header{padding:14px 16px;}[data-task-plugin-settings] [data-settings-area] > header h2{font-size:21px;}}
           @media (max-width: 640px){
@@ -3382,6 +2951,20 @@ h(
       const scheme = getComputedStyle(document.documentElement).colorScheme;
       return scheme === "dark" || (scheme !== "light" && matchMedia("(prefers-color-scheme: dark)").matches) ? "dark" : "light";
     }
+    function useHostTheme() {
+      const [theme, setTheme] = React.useState(hostTheme);
+      React.useEffect(() => {
+        const update = () => setTheme(hostTheme());
+        const observer = new MutationObserver(update);
+        observer.observe(document.documentElement, { attributes: true });
+        observer.observe(document.body, { attributes: true });
+        const system = matchMedia("(prefers-color-scheme: dark)");
+        system.addEventListener("change", update);
+        update();
+        return () => { observer.disconnect(); system.removeEventListener("change", update); };
+      }, []);
+      return theme;
+    }
     function sendTheme(frame, channel) {
       frame.current?.contentWindow?.postMessage({ channel, method: "theme", input: hostTheme() }, "*");
     }
@@ -3401,6 +2984,7 @@ h(
       subscribe(listener){this.listeners.add(listener);return()=>this.listeners.delete(listener);}
     }
     function ProjectNativeOverlay({ frame, nativeClient, invoke, descriptor, covered }) {
+      const theme = useHostTheme();
       const root = React.useRef(null), content = React.useRef(null);
       const [status, setStatus] = React.useState({ state: "connecting", message: "正在连接项目所属设备…" });
       const [retry, setRetry] = React.useState(0), [toast, setToast] = React.useState(null);
@@ -3449,16 +3033,17 @@ h(
         return () => { abort.abort(); if (mounted) void mounted.dispose(); };
       }, [nativeClient, invoke, retry]);
       const blocked = status.state !== "ready";
-      return h("section", { ref: root, "data-project-native-host": "", "aria-label": "项目统筹原生会话", inert: covered ? "" : undefined,
+      return h("section", { ref: root, className:"task-operate", "data-theme":theme, "data-project-native-host": "", "aria-label": "项目统筹原生会话", inert: covered ? "" : undefined,
         style: { position: "fixed", zIndex: 1001, display: "none", flexDirection: "column", minHeight: 0,
-          visibility: covered ? "hidden" : "visible", background: "var(--dsw-alias-bg-base,#fff)", color: "var(--dsw-alias-label-primary)" } },
+          visibility: covered ? "hidden" : "visible", background: "var(--task-panel)", color: "var(--task-text)" } },
+        h("style",null,taskOperateTheme+`[data-project-native-host]>.task-native-connection{font:14px/1.7 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;overflow-wrap:anywhere}[data-project-native-host]>.task-native-connection p{max-width:65ch;margin:0}[data-project-native-host]>.task-native-connection button{font:inherit;padding:9px 14px;min-height:44px;background:var(--task-panel);color:var(--task-text);border:1px solid var(--task-line);border-radius:7px}[data-project-native-host]>.task-native-connection button:focus-visible{outline:2px solid var(--task-accent);outline-offset:3px}`),
         h("div", { ref: content, style: { height: "100%", minHeight: 0, opacity: blocked ? 0.5 : 1, pointerEvents: blocked ? "none" : "auto" } }),
-        blocked && h("div", { role: status.state === "error" ? "alert" : "status", style: { position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 12, padding: 24, background: "var(--dsw-alias-bg-base,#fff)" } },
+        blocked && h("div", {className:"task-native-connection", role: status.state === "error" ? "alert" : "status", style: { position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 12, padding: 24, background: "var(--task-panel)" } },
           h("p", null, status.message), h("button", { type: "button", onClick: openRecipient }, "选择对话对象"), status.state === "error" && h("button", { type: "button", onClick: () => setRetry((value) => value + 1) }, "重新连接")),
         toast && h("div", { role: "status", "data-project-native-toast": "", style: { position: "fixed", zIndex: 1002, left: toast.left, top: toast.top, width: toast.width,
           boxSizing: "border-box", padding: "12px 18px", borderRadius: 10, pointerEvents: "none", fontSize: 12,
-          background: toast.status === "done" ? "#dcfce7" : toast.status === "error" ? "#fee2e2" : "var(--dsw-alias-bg-base,#fff)",
-          color: toast.status === "done" ? "#166534" : toast.status === "error" ? "#991b1b" : "inherit" } }, toast.text));
+          background: "var(--task-panel)", border:"1px solid var(--task-line)",
+          color: toast.status === "done" ? "var(--task-success)" : toast.status === "error" ? "var(--task-error)" : "var(--task-text)" } }, toast.text));
     }
     async function openTaskSession(input, invoke, openSession) {
       const access=await invoke("taskSessionAccess",{view:input?.view==="executor"?"executor":"planner",taskId:input.taskId,nodeId:input.nodeId,sessionId:input.sessionId});
@@ -3775,16 +3360,7 @@ h(
       }, [monitor]);
       React.useEffect(() => { setFilter("all"); setSearch(""); }, [sessionId]);
       React.useEffect(() => {monitor.setQuery({status:filter,search,page:0});},[monitor,filter,search]);
-      const [theme, setTheme] = React.useState(hostTheme);
-      React.useEffect(() => {
-        const update = () => setTheme(hostTheme()), observer = new MutationObserver(update);
-        observer.observe(document.documentElement, { attributes: true });
-        observer.observe(document.body, { attributes: true });
-        const system = matchMedia("(prefers-color-scheme: dark)");
-        system.addEventListener("change", update);
-        update();
-        return () => { observer.disconnect(); system.removeEventListener("change", update); };
-      }, []);
+      const theme = useHostTheme();
       const tasks = value?.tasks ?? [], counts = value?.counts ?? {}, context = value?.viewContext;
       const local = context?.scope === "local";
       const formatTime = time => time && Number.isFinite(new Date(time).getTime()) ? new Date(time).toLocaleString() : "尚未观测";
@@ -3793,14 +3369,14 @@ h(
       const statusColor = status => `var(--status-${({ accepted: "done", handled: "queued", cancelled: "queued", cancelling: "review", archived: "queued", unknown: "queued" })[status] || status}, var(--status-queued))`;
       const runLabel = run => run.stateLabel || (run.reviewStatus === "pending_user" ? "待确认" : run.reviewStatus === "accepted" ? "已验收" : run.reviewStatus === "rejected" ? "审核未通过" : ({ queued: "等待开始", running: "执行中", succeeded: "执行成功", partial: "部分完成", failed: "执行失败", blocked: "执行受阻", uncertain: "结果待核实", cancelled: "已取消" }[run.state] ?? run.state));
       const evidence = rows => h("dl", { className: "stm-evidence" }, rows.filter(([, detail]) => detail).map(([label, detail]) => h(React.Fragment, { key: label }, h("dt", null, label), h("dd", null, detail))));
-      return h("section", { ref:root, className: "session-task-monitor", "data-theme": theme, "aria-label": "当前会话的执行任务" },
-        h("style", null, `
-          .session-task-monitor{--status-running:#315fa8;--status-review:#86601d;--status-queued:#62626b;--status-done:#347457;--status-error:#b43e48;--stm-panel:var(--dsw-alias-bg-layer-1,#fafafa);--stm-soft:var(--dsw-alias-bg-layer-2,#f5f5f7);--stm-line:var(--dsw-alias-border-l3,#d4d4d8);--stm-muted:var(--dsw-alias-label-secondary,#62626b);--stm-selected:var(--dsw-alias-bg-hover,#e4e4e7);height:100%;min-height:0;overflow:auto;box-sizing:border-box;padding:32px;line-height:1.6;color:var(--dsw-alias-label-primary,inherit);font-size:14px}
-          .session-task-monitor[data-theme=dark]{--status-running:#7ca4ef;--status-review:#d3b686;--status-queued:#a1a1a1;--status-done:#91b9a4;--status-error:#e58f8f;--stm-panel:var(--dsw-alias-bg-layer-1,#1d1d1d);--stm-soft:var(--dsw-alias-bg-layer-2,#222);--stm-line:var(--dsw-alias-border-l3,#343434);--stm-muted:var(--dsw-alias-label-secondary,#a1a1a1);--stm-selected:var(--dsw-alias-bg-hover,#414141)}
-          .session-task-monitor *{box-sizing:border-box}.session-task-monitor header{display:flex;gap:16px;justify-content:space-between;align-items:flex-start;flex-wrap:wrap}.session-task-monitor h2{font-size:26px;font-weight:600;letter-spacing:-.6px;margin:0 0 8px}.session-task-monitor p{margin:5px 0 14px}.session-task-monitor .stm-muted{color:var(--stm-muted);font-size:12px}.session-task-monitor .stm-scope{font-size:12px;color:var(--stm-muted);margin-bottom:8px}.session-task-monitor button,.session-task-monitor input{font:inherit;color:inherit;background:transparent;border:1px solid var(--stm-line);border-radius:9px;padding:10px 14px}.session-task-monitor button{cursor:pointer;min-height:40px}.session-task-monitor button:hover{background:var(--stm-selected)}.session-task-monitor button:disabled{opacity:.4;cursor:default}.session-task-monitor button:focus-visible,.session-task-monitor input:focus-visible,.session-task-monitor summary:focus-visible{outline:2px solid var(--status-running);outline-offset:3px}.session-task-monitor .stm-filters{display:flex;flex-wrap:wrap;gap:10px;margin:24px 0 16px}.session-task-monitor .stm-filters button{padding:8px 12px;font-size:12px;background:var(--stm-soft)}.session-task-monitor .stm-filters button[aria-pressed=true]{background:var(--stm-selected);border-color:var(--stm-muted)}.session-task-monitor .stm-filters b{margin-left:10px;font-weight:500}.session-task-monitor input{width:100%;margin-bottom:20px;background:var(--stm-soft)}.session-task-monitor input::placeholder{color:var(--stm-muted)}.session-task-monitor .stm-list{display:flex;flex-direction:column;border:1px solid var(--stm-line);border-radius:13px;overflow:hidden}.session-task-monitor .stm-list:empty{display:none}.session-task-monitor details{background:var(--stm-panel);border-bottom:1px solid var(--stm-line);min-width:0}.session-task-monitor details:last-child{border:0}.session-task-monitor summary{padding:18px;cursor:pointer;list-style:none}.session-task-monitor summary:hover{background:var(--stm-soft)}.session-task-monitor summary::-webkit-details-marker{display:none}.session-task-monitor .stm-row{display:flex;justify-content:space-between;gap:14px;align-items:flex-start}.session-task-monitor .stm-title{font-size:14px;font-weight:600;overflow-wrap:anywhere;min-width:0}.session-task-monitor .stm-status{display:inline-flex;align-items:center;gap:5px;padding:4px 8px;border-radius:6px;background:var(--stm-soft);font-size:12px;flex-shrink:0;white-space:nowrap}.session-task-monitor .stm-dot{width:6px;height:6px;border-radius:50%;background:currentColor;flex-shrink:0}.session-task-monitor .stm-meta{margin-top:6px;overflow-wrap:anywhere}.session-task-monitor .stm-body{padding:0 18px 18px;border-top:1px solid var(--stm-line)}.session-task-monitor .stm-body h3{font-size:13px;margin:16px 0 8px}.session-task-monitor .stm-text{white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px}.session-task-monitor .stm-empty{text-align:center;padding:35px 16px;color:var(--stm-muted)}.session-task-monitor .stm-notice{border:1px solid var(--stm-line);border-radius:10px;padding:12px;background:var(--stm-soft);font-size:13px}.session-task-monitor .stm-evidence{display:grid;grid-template-columns:90px minmax(0,1fr);gap:6px 12px;font-size:12px;margin:14px 0}.session-task-monitor dt{color:var(--stm-muted)}.session-task-monitor dd{margin:0;overflow-wrap:anywhere;font-family:ui-monospace,SFMono-Regular,monospace}.session-task-monitor .stm-runs{list-style:none;padding:0;margin:0;display:grid;gap:8px}.session-task-monitor .stm-run{border:1px solid var(--stm-line);border-radius:10px;padding:12px;background:var(--stm-soft)}.session-task-monitor .stm-run .stm-evidence{margin-bottom:0}
-          @media(max-width:600px){.session-task-monitor{padding:20px 16px}.session-task-monitor h2{font-size:22px}.session-task-monitor .stm-filters{gap:6px}.session-task-monitor .stm-filters button{padding:7px 9px;min-height:36px}.session-task-monitor summary{padding:14px}.session-task-monitor .stm-row{gap:8px;flex-wrap:wrap}.session-task-monitor .stm-status{white-space:normal}.session-task-monitor .stm-body{padding:0 14px 14px}.session-task-monitor .stm-evidence{grid-template-columns:70px minmax(0,1fr)}}
+      return h("section", { ref:root, className: "session-task-monitor task-operate", "data-theme": theme, "aria-label": "当前会话的执行任务" },
+        h("style", null, taskOperateTheme + `
+          .session-task-monitor{--status-running:var(--task-accent);--status-review:var(--task-review);--status-queued:var(--task-muted);--status-done:var(--task-success);--status-error:var(--task-error);--stm-panel:var(--task-panel);--stm-soft:var(--task-soft);--stm-line:var(--task-line);--stm-muted:var(--task-muted);--stm-selected:var(--task-selected);height:100%;min-height:0;overflow:auto;box-sizing:border-box;padding:32px;line-height:1.6;background:var(--task-bg);color:var(--task-text);font-size:14px}
+          .session-task-monitor[data-theme=dark]{--status-running:var(--task-accent);--status-review:var(--task-review);--status-queued:var(--task-muted);--status-done:var(--task-success);--status-error:var(--task-error);--stm-panel:var(--task-panel);--stm-soft:var(--task-soft);--stm-line:var(--task-line);--stm-muted:var(--task-muted);--stm-selected:var(--task-selected)}
+          .session-task-monitor *{box-sizing:border-box}.session-task-monitor header{display:flex;gap:16px;justify-content:space-between;align-items:flex-start;flex-wrap:wrap}.session-task-monitor h2{font-size:24px;font-weight:600;letter-spacing:-.6px;margin:0 0 8px}.session-task-monitor p{margin:5px 0 14px}.session-task-monitor .stm-muted{color:var(--stm-muted);font-size:12px}.session-task-monitor .stm-scope{font-size:12px;color:var(--stm-muted);margin-bottom:8px}.session-task-monitor button,.session-task-monitor input{font:inherit;color:inherit;background:transparent;border:1px solid var(--stm-line);border-radius:7px;padding:10px 14px}.session-task-monitor button{cursor:pointer;min-height:40px}.session-task-monitor button:hover{background:var(--stm-selected)}.session-task-monitor button:disabled{opacity:.4;cursor:default}.session-task-monitor button:focus-visible,.session-task-monitor input:focus-visible,.session-task-monitor summary:focus-visible{outline:2px solid var(--status-running);outline-offset:3px}.session-task-monitor .stm-filters{display:flex;flex-wrap:wrap;gap:10px;margin:24px 0 16px}.session-task-monitor .stm-filters button{padding:8px 12px;font-size:12px;background:var(--stm-soft)}.session-task-monitor .stm-filters button[aria-pressed=true]{background:var(--stm-selected);border-color:var(--stm-muted)}.session-task-monitor .stm-filters b{margin-left:10px;font-weight:500}.session-task-monitor input{width:100%;margin-bottom:20px;background:var(--stm-soft)}.session-task-monitor input::placeholder{color:var(--stm-muted)}.session-task-monitor .stm-list{display:flex;flex-direction:column;border:1px solid var(--stm-line);border-radius:13px;overflow:hidden}.session-task-monitor .stm-list:empty{display:none}.session-task-monitor details{background:var(--stm-panel);border-bottom:1px solid var(--stm-line);min-width:0}.session-task-monitor details:last-child{border:0}.session-task-monitor summary{padding:18px;cursor:pointer;list-style:none}.session-task-monitor summary:hover{background:var(--stm-soft)}.session-task-monitor summary::-webkit-details-marker{display:none}.session-task-monitor .stm-row{display:flex;justify-content:space-between;gap:14px;align-items:flex-start}.session-task-monitor .stm-title{font-size:14px;font-weight:600;overflow-wrap:anywhere;min-width:0}.session-task-monitor .stm-status{display:inline-flex;align-items:center;gap:5px;padding:4px 8px;border-radius:6px;background:var(--stm-soft);font-size:12px;flex-shrink:0;white-space:nowrap}.session-task-monitor .stm-dot{width:6px;height:6px;border-radius:50%;background:currentColor;flex-shrink:0}.session-task-monitor .stm-meta{margin-top:6px;overflow-wrap:anywhere}.session-task-monitor .stm-body{padding:0 18px 18px;border-top:1px solid var(--stm-line)}.session-task-monitor .stm-body h3{font-size:13px;margin:16px 0 8px}.session-task-monitor .stm-text{white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px}.session-task-monitor .stm-empty{text-align:center;padding:35px 16px;color:var(--stm-muted)}.session-task-monitor .stm-notice{border:1px solid var(--stm-line);border-radius:10px;padding:12px;background:var(--stm-soft);font-size:13px}.session-task-monitor .stm-evidence{display:grid;grid-template-columns:90px minmax(0,1fr);gap:6px 12px;font-size:12px;margin:14px 0}.session-task-monitor dt{color:var(--stm-muted)}.session-task-monitor dd{margin:0;overflow-wrap:anywhere;font-family:ui-monospace,SFMono-Regular,monospace}.session-task-monitor .stm-runs{list-style:none;padding:0;margin:0;display:grid;gap:8px}.session-task-monitor .stm-run{border:1px solid var(--stm-line);border-radius:10px;padding:12px;background:var(--stm-soft)}.session-task-monitor .stm-run .stm-evidence{margin-bottom:0}
+          @media(max-width:600px){.session-task-monitor{padding:20px 16px}.session-task-monitor h2{font-size:22px}.session-task-monitor .stm-filters{gap:6px}.session-task-monitor .stm-filters button{padding:8px 10px;min-height:44px}.session-task-monitor summary{padding:14px}.session-task-monitor .stm-row{gap:8px;flex-wrap:wrap}.session-task-monitor .stm-status{white-space:normal}.session-task-monitor .stm-body{padding:0 14px 14px}.session-task-monitor .stm-evidence{grid-template-columns:70px minmax(0,1fr)}}
         `),
-        h("header", null, h("div", null, h("div", { className: "stm-scope" }, local ? `本机执行${context.nodeId ? " · " + context.nodeId : ""}` : "当前会话"), h("h2", null, "会话任务"), h("p", { className: "stm-muted" }, value ? `共 ${counts.all ?? value.total} 项${value.directCount===undefined?"":` · 会话任务 ${value.directCount} 项 · 子任务 ${Math.max(0,(counts.all??value.total)-value.directCount)} 项`}` : "查看当前会话的执行任务与后续子任务")),
+        h("header", null, h("div", null, h("h2", null, "会话任务"), h("div", { className: "stm-scope" }, local ? `本机执行${context.nodeId ? " · " + context.nodeId : ""}` : "当前会话"), h("p", { className: "stm-muted" }, value ? `共 ${counts.all ?? value.total} 项${value.directCount===undefined?"":` · 会话任务 ${value.directCount} 项 · 子任务 ${Math.max(0,(counts.all??value.total)-value.directCount)} 项`}` : "查看当前会话的执行任务与后续子任务")),
           h("button", { type: "button", disabled: loading, onClick: () => monitor.load() }, loading ? "正在刷新…" : "刷新")),
         local && h("p", { className: "stm-muted" }, "仅显示当前会话关联的本机执行记录。"),
         error && h("p", { role: "alert", className: "stm-notice" }, error, value ? " 下方保留上次成功读取的数据。" : ""),
@@ -4050,12 +3626,8 @@ h(
       openModels,
       decisionSettingsDescriptor,
       saveDecisionSettingsDescriptor,
-      DecisionModelRow,
-      DecisionModelSettings,
       DecisionPresetSettings,
       decisionPresetDescriptors,
-      decisionDraft,
-      decisionChoices,
       parseDecisionInput,
       fieldSpec,
       descriptor,

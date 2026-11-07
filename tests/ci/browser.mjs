@@ -1,3 +1,4 @@
+import { testActiveSurfaces } from './browser-active-surfaces.mjs';
 import { testTaskCheckins } from "./browser-task-checkins.mjs";
 import { chromium } from 'playwright';
 import { mkdirSync, writeFileSync } from 'node:fs';
@@ -14,7 +15,7 @@ const browser = await chromium.launch({ headless: true, ...(process.env.DSH_BROW
 const results = [];
 console.log(`Browser evidence: ${output}`);
 try {
-  for (const [name, run] of [['settings', testSettings], ['executor alerts', testExecutorAlerts], ['responsible task check-ins', testTaskCheckins], ['task center polling selection', testTaskCenterSelection], ['production native project conversation', testNativeProject]]) {
+  for (const [name, run] of [['settings', testSettings], ['executor alerts', testExecutorAlerts], ['responsible task check-ins', testTaskCheckins], ['task center polling selection', testTaskCenterSelection], ['production native project conversation', testNativeProject], ['remaining active frontend surfaces', testActiveSurfaces]]) {
     try {
       const result = await run(browser, { output });
       results.push({ name, status: 'passed', result });
