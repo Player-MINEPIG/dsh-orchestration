@@ -11,7 +11,7 @@ import { ScriptedModel } from '../dsh/scripted-model.mjs';
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 
-export async function startHost({ memoryManagerPath, viewProbe = false, permissionPresets } = {}) {
+export async function startHost({ memoryManagerPath, viewProbe = false, permissionPresets, executionEnabled = false } = {}) {
   const runtimeRoot = process.env.DSH_OFFICIAL_ROOT ?? ensureOfficialRuntime().root;
   const require = createRequire(join(runtimeRoot, 'package.json'));
   const directory = realpathSync(mkdtempSync(join(tmpdir(), 'dsh-project-native-browser-')));
@@ -49,7 +49,7 @@ export async function startHost({ memoryManagerPath, viewProbe = false, permissi
     { id: 'agent-default-model', config: { provider: 'test-offline', model: 'script' } },
     { insert: [
       ...plugins,
-      { id: 'task-system', name: '@dsh-task/task-system/plugin', config: { role: 'planner', nodeId: 'local', databasePath: join(directory, 'tasks.sqlite'), executionEnabled: false, keepAlive: false, schedulerEnabled: false, autoExecute: false, projectAgentOptions: { provider: 'test-offline', model: 'script' } } },
+      { id: 'task-system', name: '@dsh-task/task-system/plugin', config: { role: executionEnabled ? 'both' : 'planner', nodeId: 'local', databasePath: join(directory, 'tasks.sqlite'), executionEnabled, keepAlive: false, schedulerEnabled: false, autoExecute: false, projectAgentOptions: { provider: 'test-offline', model: 'script' } } },
       { id: 'browser-task-settings', name: '@dsh-task/task-system' },
     ] },
   ]));

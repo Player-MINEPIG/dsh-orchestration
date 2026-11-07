@@ -3970,8 +3970,9 @@ export class TaskLedger {
       const target = this.sessionMessageTargets(input.taskId).find(
         (s) => s.nodeId === input.nodeId && s.sessionId === input.sessionId,
       );
-      if (!target?.workspaceId)
-        fail("FORBIDDEN", "Session is not bound to this task and node");
+      if (!target) throw new TaskError("FORBIDDEN", "Session is not bound to this task and node");
+      if (!target.workspaceId)
+        fail("SESSION_MESSAGE_WORKSPACE_REQUIRED", "This bound session uses a managed temporary execution directory; direct chat is unavailable. Use task_execution_status to inspect or reconcile execution evidence without resuming it.");
       const decision = this.getTask(input.taskId).manualCompletion;
       const message: import("./remote/ports.js").SessionMessage = {
         ...(decision?.materials === "pending" &&
@@ -5301,6 +5302,7 @@ export class TaskLedger {
       outcome: "cancelled" | "failed";
       reason: string;
       expectedActionVersion?: string;
+      evidence?: import("./execution-reconciliation.js").NativeFailureEvidence;
     },
   ) {
     this.planner();
@@ -5332,7 +5334,7 @@ export class TaskLedger {
       this.lifecycleDelivery(this.getTask(run.taskId), run);
       this.event(
         "run.reconciled",
-        { reason: text(input.reason, "reason", 1000), outcome: input.outcome },
+        { reason: text(input.reason, "reason", 1000), outcome: input.outcome, ...(input.evidence ? { evidence: input.evidence, reconciliationCommandId: commandId } : {}) },
         run.taskId,
         run.runId,
       );

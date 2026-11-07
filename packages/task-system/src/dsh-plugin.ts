@@ -798,9 +798,9 @@ export class NativeExecutionProvider {
   }
   private missingResultSummary(owned: OwnedAttempt, remote = false): string {
     if (owned.terminalErrorCode)
-      return `Native agent ended with ${owned.terminalErrorCode} without a causal task_submit_result submission; reconcile before retrying.`;
+      return `Native agent ended with ${owned.terminalErrorCode} without a causal task_submit_result submission; inspect task_execution_status before reconciliation or retry.`;
     return remote
-      ? "Remote native agent reached idle without a causal task_submit_result submission; reconcile before retrying."
+      ? "Remote native agent reached idle without a causal task_submit_result submission; inspect task_execution_status before reconciliation or retry."
       : "Native agent reached idle without a causal task_submit_result submission; reconcile side effects before retrying.";
   }
   private preDispatchFailure(claim: NativeClaim): OutcomeInput | undefined {
@@ -1019,6 +1019,11 @@ export class NativeExecutionProvider {
       (owned.claim.run.retry?.count ?? 0) <
       this.owner.config.safeRetry.maxRetries
     );
+  }
+
+  hasOwnedExecution(ref: LeaseRef): boolean {
+    const owned = this.active.get(ref.attemptId);
+    return !!owned && owned.ref.runId === ref.runId && owned.ref.fence === ref.fence && owned.ref.executionId === ref.executionId;
   }
 
   executionStatus(ref: LeaseRef): string {
