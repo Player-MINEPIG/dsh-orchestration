@@ -86,3 +86,30 @@ test('a user turn starting during final authority refresh cannot receive an inje
   await assert.rejects(delivery.deliver(message),e=>e.code==='CHECKIN_BUSY');assert.equal(h.adapter.requests.length,1);assert.equal(handle.agent.inbox.nextTurn.length+handle.agent.inbox.nextStep.length,0);assert.equal((await events(h,'admission-race')).filter(e=>e.type==='user/message'&&e.data.source.kind==='dsh-task-checkin').length,0);release();await handle.agent.whenIdle();
  }finally{release?.();await delivery?.dispose();await h.dispose();}
 });
+
+test('controller-owned check-in follows the actual per-message model rather than immutable Agent startup options',async()=>{
+ const h=await createNativeHarness({config:{centralMode:'host',executionEnabled:false},script:['Seed selected model','Check-in processed']});
+ try{
+  const {attachProjectSessionHost}=await import('../../packages/task-system/test/fixtures/project-session-host.mjs');
+  const {pinStewardTurnSelection}=await import('../../packages/task-system/dist/steward-turn-selection.js');
+  await attachProjectSessionHost(h);h.adapter.listModels=async()=>[{id:'script'},{id:'selected'}];
+  const id=SessionId('selected-model-checkin');
+  const handle=await h.ctx.agents.create({sessionId:id,meta:{cwd:h.dir},agentOptions:{provider:'test-offline',model:'script'}});
+  const resolved=await h.ctx.sessionController.resolveAgent(id);assert.equal(resolved.error,undefined);const agent=resolved.agent;
+  pinStewardTurnSelection(agent,'selected-seed',{provider:'test-offline',model:'selected'});
+  await h.ctx.sessionController.prompt({sessionId:id,requestId:'selected-seed',mode:'queue',content:[{type:'text',text:'Seed selected model'}]},AbortSignal.timeout(10000));
+  await agent.whenIdle();assert.equal(agent.options.model,'script');assert.equal(agent.session.requestHeader().config.model,'selected');
+  await call(h,agent,'task_create',{commandId:'selected-model-task',title:'Selected model check-in'});
+  const task=h.ledger.snapshot().tasks[0];assert.equal(task.dispatchOrigin.composition.model,'selected');
+  h.ledger.checkins.request('selected-model-request',task.taskId);
+  const message=h.ledger.pendingSessionMessages('local',{kind:'continuation'})[0];
+  await h.ctx.taskSystem.taskReturns.deliver(message);
+  assert.equal(h.adapter.requests.at(-1).model,'selected');assert.equal(h.adapter.requests.length,2);
+  assert.equal(agent.options.model,'script','Delivery does not overwrite startup or global model');
+  assert.equal(h.ctx.agentDefaultModel.currentSelection().model,'script');
+  agent.session.append('model/selection',{provider:'test-offline',model:'script'});
+  const another={...message,messageId:'new-selection-event',checkIn:{...message.checkIn,eventId:'new-selection-event'}};
+  const changed=new TaskReturnDelivery(h.ctx);try{await assert.rejects(changed.deliver(another),e=>e.code==='CHECKIN_COMPOSITION_UNAVAILABLE');}finally{await changed.dispose();}
+  assert.equal(h.adapter.requests.length,2,'New explicit model selection is preserved, not overwritten');
+ }finally{await h.dispose();}
+});

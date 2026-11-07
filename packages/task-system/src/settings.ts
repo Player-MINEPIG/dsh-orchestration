@@ -1137,7 +1137,7 @@ export class TaskPluginSettings extends TypertRemoteService {
     const task=this.ctx.get("taskSystem") as TaskSystemService|undefined;
     if(!task || deploymentPolicy(task.config).centralMode === "remote")throw new TaskError("FORBIDDEN","Scheduler settings required");
     const node=task.ledger.getNode(nodeId);
-    if(!node.enabled || nodeId===task.config.nodeId)throw new TaskError("EXECUTOR_REQUIRED","Connect the executor before setting its default model");
+    if(!node.enabled || (nodeId===task.config.nodeId && !deploymentPolicy(task.config).executionEnabled))throw new TaskError("EXECUTOR_REQUIRED","Enable or connect the executor before setting its default model");
     return task.ledger;
   }
   async nodeModelSettings(input:unknown){return this.projectOperation(()=>{const value=projectInputs.nodeModelSettings.parse(input);return this.modelAuthority(value.nodeId).executionModels.view(value.nodeId);});}

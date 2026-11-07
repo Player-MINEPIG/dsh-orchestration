@@ -2439,6 +2439,9 @@ h(
                     onSaved: afterSave,
                   })
                 : h("p",{role:"note",style:hintStyle},t("connectionSetupStatus")))),
+
+              state.value.task && nodeModelApi && deployment(state.value.task.values).centralMode === "host" && deployment(state.value.task.values).executionEnabled
+                ? h("section",{"data-local-node-model-settings":true},h("h3",null,"本机执行节点"),h(NodeModelSettings,{nodeId:state.value.task.values.nodeId,...nodeModelApi,saveCoordinator,writable:state.value.writable,active:role.centralMode === "host" && role.executionEnabled})) : null,
             )
           : null,
         h(

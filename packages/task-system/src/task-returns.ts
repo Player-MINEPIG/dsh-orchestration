@@ -158,6 +158,12 @@ export class TaskReturnDelivery {
       if (!current) throw new TaskError("CHECKIN_BUSY", "Task check-in is deferred by current task facts");
       message = current; return true;
     };
+    const assertCheckinModel = (agent: Agent) => {
+      const composition=origin.composition;
+      const state=z.object({pending:z.object({provider:z.string(),model:z.string()}).nullable()}).safeParse(this.ctx.get("sessionProjections")?.stateOf(agent.session,"modelSelection"));
+      const selected=state.success && state.data.pending ? state.data.pending : agent.session.requestHeader()?.config ?? agent.options;
+      if (composition && (selected.provider!==composition.provider || selected.model!==composition.model)) throw new TaskError("CHECKIN_COMPOSITION_UNAVAILABLE", "Responsible session model differs from its captured check-in binding");
+    };
     const previousHandle = state.handle;
     try {
       if (!await refresh()) return {completion:Promise.resolve("Check-in no longer relevant"),withdrawn:true};
@@ -170,7 +176,7 @@ export class TaskReturnDelivery {
         const otherInput = [...agent.inbox.nextTurn,...agent.inbox.nextStep].some(input=>!("eventId" in input.source) || input.source.eventId!==eventId);
         if (agent.status !== "idle" || otherInput) throw new TaskError("CHECKIN_BUSY", "Responsible session is active; check-in deferred");
         const composition=origin.composition;
-        if (composition && (agent.options.provider!==composition.provider || agent.options.model!==composition.model)) throw new TaskError("CHECKIN_COMPOSITION_UNAVAILABLE", "Responsible session model differs from its captured check-in binding");
+        assertCheckinModel(agent);
         originalTools=composition?.tools;
         if (!originalTools) throw new TaskError("CHECKIN_COMPOSITION_UNAVAILABLE", "Original check-in capability mask unavailable");
         liveAllowedTools=new Set(originalTools);
@@ -226,6 +232,7 @@ export class TaskReturnDelivery {
       abort.throwIfAborted();
       if (!await refresh()) {liveMask?.();return {completion:Promise.resolve("Check-in no longer relevant"),withdrawn:true};}
       if (message.checkIn) {
+        assertCheckinModel(agent);
         const otherInput=[...agent.inbox.nextTurn,...agent.inbox.nextStep].some(input=>!("eventId" in input.source) || input.source.eventId!==eventId);
         if (agent.status!=="idle" || otherInput) throw new TaskError("CHECKIN_BUSY", "Responsible session became active before admission");
         const allowed=liveAllowedTools;
