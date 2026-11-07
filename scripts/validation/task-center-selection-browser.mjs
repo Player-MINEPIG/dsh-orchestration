@@ -124,6 +124,7 @@ const task = (id, title, status = 'running', time = '2026-10-23T00:00:00Z') => (
   results.push({ label, reads, initial, heartbeat, concurrentUpdate, reordered, recovered, unchangedElapsedNodeRetained: true, firstClickOpensTask: true, selectedReportSurvivesOtherDetailsUpdate: true, explicitHistoricalReportRemainsSelected: true, historicalBodiesReadOnOpenOnly: true, changedAndRemovedTextNotRestored: true });
   await page.close();
  }
+ results.push(...await testInitialProjectNavigation(browser,candidate,output));
  writeFileSync(resolve(output, 'browser.json'), JSON.stringify(results, null, 2) + '\n');
  return results;
  } catch (error) {
@@ -137,4 +138,43 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
  const browser = await chromium.launch({ headless: true, ...(process.env.DSH_BROWSER_CHANNEL ? { channel: process.env.DSH_BROWSER_CHANNEL } : {}) });
  try { console.log(JSON.stringify(await testTaskCenterSelection(browser, { output: process.env.DSH_SELECTION_OUTPUT }))); }
  finally { await browser.close(); }
+}
+
+
+async function testInitialProjectNavigation(browser,html,output){
+ const results=[];
+ for(const blockedMethod of ['projectDetail','workflowListPage']){
+  const page=await browser.newPage({viewport:{width:1280,height:900}});
+  let release,started,blocked=false;
+  const blockedRequest=new Promise(resolve=>{started=resolve;}),gate=new Promise(resolve=>{release=resolve;});
+  const snapshot={projects:[{id:'initial-project',title:'Initial context project',goal:'Context navigation regression',session:0,messages:[]}],tasks:[{id:'initial-task',title:'Initial context task',project:'initial-project',status:'done'},{id:'other-task',title:'Global independent task',project:'unassigned',status:'queued'}],runs:[],reports:[],nodes:[],settings:{root:null,revision:0}};
+  try{
+   await page.exposeFunction('fixtureRead',async request=>{
+    if(request.method===blockedMethod&&!blocked){blocked=true;started();await gate;}
+    return new Promise(resolve=>{const requests=[],bridge=demandPageBridge(requests,response=>resolve(response));bridge.send(request);bridge.answer({value:snapshot});});
+   });
+   await page.addInitScript(()=>{
+    window.__DSH_PROJECT_CONTEXT__={projectId:'initial-project',taskId:'initial-task'};
+    window.postMessage=async request=>{
+     if(request?.channel!=='dsh-project-runtime')return;
+     if(request.method==='ready'){window.dispatchEvent(new MessageEvent('message',{source:window,data:{channel:request.channel,method:'active',input:{active:true,generation:1}}}));return;}
+     if(!request.id)return;
+     const response=await window.fixtureRead(request);
+     window.dispatchEvent(new MessageEvent('message',{source:window,data:{channel:request.channel,id:request.id,...response}}));
+    };
+   });
+   await page.route('http://localhost:43192/**',route=>route.fulfill({contentType:'text/html',body:html}));
+   await page.goto('http://localhost:43192/');
+   await Promise.race([blockedRequest,page.waitForTimeout(10000).then(()=>{throw Error('Initial context did not reach '+blockedMethod);})]);
+   await page.getByRole('button',{name:'任务',exact:true}).click();
+   await page.getByRole('heading',{name:'掌握正在推进的工作',exact:true}).waitFor();
+   release();await page.waitForFunction(()=>!refreshing,{},{timeout:10000});
+   await page.getByText('Global independent task',{exact:true}).waitFor();
+   assert.equal(await page.getByRole('dialog').count(),0,'Late initial project context must not reopen its task');
+   await page.getByRole('heading',{name:'掌握正在推进的工作',exact:true}).waitFor();
+   await page.screenshot({path:resolve(output,'global-navigation-after-'+blockedMethod+'.png')});
+   results.push({initialContextNavigation:blockedMethod,lateContextDiscarded:true});
+  }finally{release();await page.close();}
+ }
+ return results;
 }

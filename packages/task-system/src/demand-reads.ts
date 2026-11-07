@@ -63,6 +63,7 @@ export interface AttentionGroup {parentRunId:string;taskId:string|null;count:num
 export type AttentionGroups = PageResult<AttentionGroup> & {totalAttention:number;unbound:number};
 export type AttentionRow = LegacyTask["childAttention"][number];
 export interface TaskDetail {
+  canCollapseInCoordinator?: boolean;
   task: TaskCard & Pick<LegacyTask, "description" | "artifact" | "recommendation" | "candidateChecks">;
   runs: PageResult<RunHeader>; reports: PageResult<ReportHeader>; childAttention: PageResult<AttentionRow>;
 }

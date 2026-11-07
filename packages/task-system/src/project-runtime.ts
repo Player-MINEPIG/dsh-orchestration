@@ -32,7 +32,7 @@ import { WorkspaceManager } from "./workspaces.js";
 import { ScheduledPlans } from "./scheduled-plans.js";
 import { ExpectedExecutionMs } from "./execution-expectation.js";
 import type { TaskPlanner, PlanningInput } from "./planning.js";
-import type { ExecutionRoute, Json, Role, Report } from "./contracts.js";
+import type { ExecutionRoute, Json, Role, Report, Task, Run } from "./contracts.js";
 
 const digest = (v: unknown) =>
   createHash("sha256").update(canonical(v)).digest("hex");
@@ -1731,8 +1731,11 @@ export class ProjectRuntime {
   setTaskPresentation(input:{commandId:string;taskId:string;visibility:"primary"|"execution"}) {
     this.authorize();
     return this.ledger.managementCommand(input.commandId,"task-presentation",input,()=>{
-      this.ledger.getTask(input.taskId);
+      const task=this.ledger.getTask(input.taskId);
       if(!["primary","execution"].includes(input.visibility))throw new TaskError("INVALID","Unknown task presentation");
+      const card=this.demandViews.current(()=>this.demandViews.card(input.taskId,{kind:'planner'}));
+      if(input.visibility==='execution'&&!this.taskHasExecutionDetails(task,card.runId?this.ledger.demandReads.fact('run',card.runId):undefined))
+        throw new TaskError("INVALID","Only tasks with an owning execution can be shown in execution details only");
       this.db.prepare("INSERT INTO pr_task_presentation(task,visibility) VALUES(?,?) ON CONFLICT(task) DO UPDATE SET visibility=excluded.visibility").run(input.taskId,input.visibility);
       return {taskId:input.taskId,visibility:input.visibility};
     });
@@ -1903,7 +1906,7 @@ export class ProjectRuntime {
       case 'taskDetail': {
         const {taskId}=input as DemandReadInputs['taskDetail'],card=views.card(taskId,scope),task=this.ledger.getTask(taskId);
         const dispatch=this.db.prepare('SELECT candidates,attempted FROM pr_dispatch WHERE task=?').get(taskId);
-        return {task:{...card,description:task.description,artifact:card.reportId?this.ledger.demandReads.fact('report',card.reportId)?.title??'等待执行报告':'等待执行报告',recommendation:scope.kind==='planner'&&dispatch?JSON.parse(String(dispatch.candidates)):[],candidateChecks:scope.kind==='planner'&&dispatch?JSON.parse(String(dispatch.attempted)):[]},runs:views.runPage({taskId,pageSize:5},scope),reports:views.reportPage({taskId},scope),childAttention:this.childAttentionRows(taskId,0,20,scope)};
+        return {canCollapseInCoordinator:scope.kind==='planner'&&this.taskHasExecutionDetails(task,card.runId?this.ledger.demandReads.fact('run',card.runId):undefined),task:{...card,description:task.description,artifact:card.reportId?this.ledger.demandReads.fact('report',card.reportId)?.title??'等待执行报告':'等待执行报告',recommendation:scope.kind==='planner'&&dispatch?JSON.parse(String(dispatch.candidates)):[],candidateChecks:scope.kind==='planner'&&dispatch?JSON.parse(String(dispatch.attempted)):[]},runs:views.runPage({taskId,pageSize:5},scope),reports:views.reportPage({taskId},scope),childAttention:this.childAttentionRows(taskId,0,20,scope)};
       }
       case 'taskHistoryPage': {const q=input as DemandReadInputs['taskHistoryPage'];views.card(q.taskId,scope);return views.runPage(q,scope,5);}
       case 'executionPage':return views.runPage(input as DemandReadInputs['executionPage'],scope);
@@ -2127,6 +2130,11 @@ export class ProjectRuntime {
       inputSnapshot:run.intentSnapshot?{title:run.intentSnapshot.title,description:run.intentSnapshot.description,goal:run.intentSnapshot.goal??null,project:run.projectContext?.project??null,criteria:run.intentSnapshot.acceptanceCriteria,notes:noteReports.map(report=>({id:report.reportId,title:report.title,body:report.body}))}:null,
       settlementSummary:detail&&typeof detail==='object'&&!Array.isArray(detail)&&typeof detail.summary==='string'?detail.summary:null,diagnosticReport:diagnosticReport?{id:diagnosticReport.reportId,title:diagnosticReport.title,body:diagnosticReport.body}:null,runtimeVersion:diagnostic('cliVersion'),runtimeSource:diagnostic('cliSource'),actualModel:diagnostic('verifiedModel'),actualReasoningEffort:diagnostic('verifiedReasoningEffort'),productThreadId:diagnostic('productThreadId')};
   }
+  private taskHasExecutionDetails(task: Pick<Task,'parentTaskId'>,run: Run|CompactRun|undefined) {
+    const parentRun=run?.parentRunId?this.ledger.demandReads.fact('run',run.parentRunId):undefined;
+    const workflowStep=!!(run && ('workflow' in run ? run.workflow : run.configuration&&typeof run.configuration==='object'&&!Array.isArray(run.configuration)&&run.configuration.workflow));
+    return workflowStep||!!parentRun&&(!task.parentTaskId||parentRun.taskId===task.parentTaskId);
+  }
   private presentTask(t: import("./contracts.js").Task | CompactTask, context: {
     data: {runs:(import('./contracts.js').Run|CompactRun)[];reports:(Report|CompactReport)[];attempts?:(import('./contracts.js').Attempt|CompactAttempt)[];events:(import('./contracts.js').Event|FactMap['event'])[]};
     dispatch: {candidates:string;state:string;attempted:string}|undefined;
@@ -2231,9 +2239,10 @@ export class ProjectRuntime {
                           : run?.state === "cancelled"
                             ? "cancelled"
                             : !run && t.state === "ready" ? "draft" : "queued";
+      const canCollapseInCoordinator=this.taskHasExecutionDetails(t,run);
       return {
         id: t.taskId,
-        showInCoordinator:visibility==="primary"||visibility!=="execution"&&!t.parentTaskId&&!(run && ('workflow' in run ? run.workflow : run.configuration&&typeof run.configuration==='object'&&!Array.isArray(run.configuration)&&run.configuration.workflow)),
+        showInCoordinator:!canCollapseInCoordinator||visibility==="primary",
         kind: t.kind,
         parentTaskId: t.parentTaskId ?? null,
         parentRunId: t.parentRunId ?? null,

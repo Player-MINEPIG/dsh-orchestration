@@ -552,7 +552,7 @@ test('only a visible rendered report records its exact version; hidden history a
 
 
 test('coordinator defaults to root deliveries, preserves exact child attention and full records, and supports reversible presentation exceptions',async()=>{
- const p=page(),child={id:'child-delivery',parentTaskId:'root',project:'unassigned',title:'Child delivery',status:'review',runId:'child-run',showInCoordinator:false,unreadResultCount:1},root={id:'root',project:'unassigned',title:'User delivery',status:'done',showInCoordinator:true,unreadResultCount:1,childAttention:[{taskId:child.id,runId:'child-run',parentRunId:'old-parent',parentCreatedAt:'2026-10-14T23:00:00Z',state:'partial',node:'PC_AU',summary:'来源缺口'}]},internal={id:'tiny',parentTaskId:'root',project:'unassigned',title:'Internal step',delegationDisplay:'step',status:'done',showInCoordinator:false};
+ const p=page(),child={id:'child-delivery',parentTaskId:'root',project:'unassigned',title:'Child delivery',status:'review',runId:'child-run',showInCoordinator:false,canCollapseInCoordinator:true,unreadResultCount:1},root={id:'root',project:'unassigned',title:'User delivery',status:'done',showInCoordinator:true,unreadResultCount:1,childAttention:[{taskId:child.id,runId:'child-run',parentRunId:'old-parent',parentCreatedAt:'2026-10-14T23:00:00Z',state:'partial',node:'PC_AU',summary:'来源缺口'}]},internal={id:'tiny',parentTaskId:'root',project:'unassigned',title:'Internal step',delegationDisplay:'step',status:'done',showInCoordinator:false};
  const data={...snapshot,tasks:[root,child,internal],runs:[{id:'child-run',taskId:child.id,parentRunId:'old-parent',state:'partial',reviewStatus:'pending_user',createdAt:'2026-10-14T23:00:10Z'}]};
  await p.answer({value:data});assert.match(p.content(),/User delivery/);assert.doesNotMatch(p.content(),/data-action="task" data-id="child-delivery"/);assert.match(p.content(),/相关执行中有 1 项/);assert.match(p.content(),/已完成未读 <span>1/);
  await p.action('task','root');assert.match(p.overlay(),/历史执行待核对/);await p.action('attention-open','root');assert.ok(p.overlay().includes(new Date(root.childAttention[0].parentCreatedAt).toLocaleString('zh-CN')));assert.match(p.overlay(),/data-action="schedule-run" data-id="old-parent"/);assert.doesNotMatch(p.overlay(),/data-id="child-run"/);
@@ -795,4 +795,17 @@ test('partial cards preserve attention while distinguishing execution failure an
  assert.equal(vm.runInContext("nodeDisplayName('<unregistered>')",p.context),'<unregistered>');
  vm.runInContext("state.records.nodes[0].displayName='';",p.context);
  assert.equal(vm.runInContext("nodeDisplayName('local')",p.context),'local');
+});
+
+
+test('global Tasks navigation clears project scope and filters while Back preserves its exact origin',async()=>{
+ const p=page(),project={id:'p',title:'Project',goal:'Goal',session:1,canChat:true,messages:[]};
+ await p.answer({value:{...snapshot,projects:[project],tasks:[{id:'owned',title:'Project work',project:'p',status:'done'},{id:'outside',title:'Other project work',project:'other',status:'running'}]}});
+ await p.action('pick-project');await p.action('scope-select','p');await p.action('filter','done');
+ assert.match(p.content(),/查看全部项目任务/);
+ await p.action('projects');await p.action('project','p');await p.action('global-tasks');
+ assert.equal(vm.runInContext('state.view',p.context),'hub');assert.equal(vm.runInContext('state.scope',p.context),'all');assert.equal(vm.runInContext('state.filter',p.context),'all');
+ assert.match(p.content(),/Other project work/);assert.match(p.content(),/data-action="global-tasks" aria-current="page"/);
+ await p.action('nav-back');assert.equal(vm.runInContext('state.view',p.context),'project-detail');
+ await p.action('task','owned');assert.doesNotMatch(p.overlay(),/主列表呈现|收至执行详情|仅在所属执行中显示/);
 });
