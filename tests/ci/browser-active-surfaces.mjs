@@ -16,8 +16,10 @@ const contrast = ({background,foreground}) => {
 export async function startActiveSurfacesHost() {
   const host=await startHost({withJev:true});
   const ledger=host.ctx.taskSystem.ledger,workbench=new Workbench(ledger),flows=host.ctx.taskSystem.workflows;
+  const outsideTask=ledger.createTask('surface-outside-task',{title:'Independent task outside this project',description:'Global navigation must include this task'}).value;
   const task=ledger.createTask('surface-task',{title:'Review the retained execution evidence',description:'First evidence line\nSecond evidence line'}).value;
   ledger.appendReport('surface-report',{taskId:task.taskId,title:'Multiline verification report',body:'First report line\nSecond report line',sessionId:'surface-inspection'});
+  ledger.managementDatabase().prepare('INSERT INTO pr_task_presentation(task,visibility) VALUES(?,?)').run(task.taskId,'execution');
   workbench.manage('surface-link','link_backlog_task',{backlogId:'pr:'+host.created.projectId,taskId:task.taskId});
   const registry=new ProgramRegistry('surface-worker');
   registry.register({programId:'surface.verify',version:'1',title:'Inspect evidence',inputSchema:{type:'object'},outputSchema:{type:'object'},execute:async()=>({data:{verified:true},summary:'First verified output line\nSecond verified output line'})});
@@ -67,6 +69,21 @@ export async function testActiveSurfaces(browser,{output}={}) {
         await frame.getByRole('button',{name:'项目对话',exact:true}).waitFor();
         await capture(`official-project-${width}-${mode}`);
         await frame.getByRole('button',{name:'任务',exact:true}).click();
+        await frame.getByRole('heading',{name:'掌握正在推进的工作',exact:true}).waitFor();
+        await frame.getByText('Independent task outside this project',{exact:true}).waitFor();
+        await frame.getByText('Review the retained execution evidence',{exact:true}).first().click();
+        const detail=frame.getByRole('dialog');await detail.waitFor();
+        assert.equal(await detail.getByText('主列表呈现',{exact:true}).count(),0);
+        const groups=detail.locator('[data-detail-group]');assert.equal(await groups.count(),4);
+        const hierarchy=await groups.evaluateAll(elements=>elements.map(element=>({title:element.querySelector('h2').textContent,border:getComputedStyle(element).borderTopWidth,background:getComputedStyle(element.querySelector('h2')).backgroundColor,padding:getComputedStyle(element).paddingTop})));
+        assert.equal(hierarchy[0].border,'0px');assert.equal(hierarchy[1].border,'1px');assert.notEqual(hierarchy[0].background,'rgba(0, 0, 0, 0)');
+        await noOverflow(detail);await capture(`official-task-detail-${width}-${mode}`);
+        await detail.locator('[data-action="close"]').first().click();
+        await frame.getByRole('button',{name:'选择筛选项目',exact:true}).click();
+        await frame.locator('[data-action="scope-select"][data-id="'+host.created.projectId+'"]').click();
+        assert.equal(await frame.getByText('Independent task outside this project',{exact:true}).count(),0);
+        await frame.getByRole('button',{name:'查看全部项目任务',exact:true}).click();
+        await frame.getByText('Independent task outside this project',{exact:true}).waitFor();
         await frame.getByRole('button',{name:'完整面板',exact:true}).click();
         await frame.locator('[data-action="panel-tab"][data-id="tasks"]').click();
         await frame.getByText('Review the retained execution evidence',{exact:true}).first().waitFor();
@@ -92,6 +109,15 @@ export async function testActiveSurfaces(browser,{output}={}) {
     await workflow.locator('#history').selectOption(run.workflowRunId);
     await workflow.locator('#run-state').getByText('已完成',{exact:true}).waitFor();
     await capture('official-workflow-run-detail');
+    await workflow.locator('#back-project').click();
+    await frame.getByRole('button',{name:'项目对话',exact:true}).waitFor();
+    await frame.getByRole('button',{name:'任务',exact:true}).click();
+    await frame.getByRole('heading',{name:'掌握正在推进的工作',exact:true}).waitFor();
+    await frame.getByText('Independent task outside this project',{exact:true}).waitFor();
+    await frame.getByRole('button',{name:'设置',exact:true}).click();
+    await page.locator('[data-task-plugin-settings] .task-primary-nav').getByRole('button',{name:'任务',exact:true}).click();
+    await frame.getByRole('heading',{name:'掌握正在推进的工作',exact:true}).waitFor();
+    await frame.getByText('Independent task outside this project',{exact:true}).waitFor();
     console.log('active surfaces: workflow save, completed program run and themes passed');
     await page.getByRole('button',{name:'插件',exact:true}).click();
     await page.getByRole('button',{name:'账号菜单',exact:true}).click();

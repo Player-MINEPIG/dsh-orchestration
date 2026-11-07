@@ -19,7 +19,7 @@ export class DemandTaskViews {
     private readonly attentionCount:(taskId:string,scope:ReadScope)=>number) {
     db.exec('CREATE TABLE IF NOT EXISTS demand_display_meta(id INTEGER PRIMARY KEY CHECK(id=1),version INTEGER NOT NULL)');
     const displayVersion=db.prepare('SELECT version FROM demand_display_meta WHERE id=1').get()?.version;
-    if(displayVersion!==1)db.exec('DROP TABLE IF EXISTS demand_task_display');
+    if(displayVersion!==2)db.exec('DROP TABLE IF EXISTS demand_task_display');
     db.exec(`CREATE TABLE IF NOT EXISTS demand_task_display(id TEXT PRIMARY KEY,seq INTEGER NOT NULL,project TEXT NOT NULL,title TEXT NOT NULL,search_text TEXT NOT NULL,status TEXT NOT NULL,responsibility TEXT NOT NULL,coordinator INTEGER NOT NULL,unread INTEGER NOT NULL,updated_at TEXT NOT NULL,next_transition_at REAL,data TEXT NOT NULL,header_digest TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS demand_session_digest ON demand_task_display(id,status,header_digest);
       CREATE INDEX IF NOT EXISTS demand_display_order ON demand_task_display(updated_at DESC,seq DESC,id);
@@ -27,7 +27,7 @@ export class DemandTaskViews {
       CREATE INDEX IF NOT EXISTS demand_display_due ON demand_task_display(next_transition_at,id);
       CREATE INDEX IF NOT EXISTS demand_display_status ON demand_task_display(coordinator,status,updated_at DESC,seq DESC);
       CREATE INDEX IF NOT EXISTS demand_display_responsibility ON demand_task_display(responsibility,updated_at DESC,seq DESC);`);
-    db.prepare('INSERT OR REPLACE INTO demand_display_meta VALUES(1,1)').run();
+    db.prepare('INSERT OR REPLACE INTO demand_display_meta VALUES(1,2)').run();
     // Display-only sources invalidate their dependency closure, never every historical task.
     const seeds:Record<string,(row:string)=>string>={
       wb_backlog_tasks:row=>`SELECT ${row}.task_id id`,

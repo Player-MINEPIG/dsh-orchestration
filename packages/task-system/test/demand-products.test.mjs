@@ -119,3 +119,24 @@ test('workflow maintenance picks runnable headers before reading any historical 
  for(let i=0;i<3;i++)workflows.tick({scheduleEnabled:false});assert.equal(sourceQueries,0);
  const plan=prepare('EXPLAIN QUERY PLAN SELECT id FROM workflow_run_headers WHERE runnable=1 ORDER BY seq DESC').all().map(row=>row.detail).join('\n');assert.match(plan,/workflow_header_runnable/);
 });
+
+
+test('ordinary and unbound tasks cannot disappear into execution details and v1 persisted cards recover on upgrade',t=>{
+ const f=fixture(t),root=f.task('root-delivery'),parent=f.run(root,'parent-execution','running'),child=f.task('bound-child',{parentTaskId:root.taskId,parentRunId:parent.runId}),unbound=f.task('unbound-child'),noRun=f.task('not-yet-run-child',{parentTaskId:root.taskId,parentRunId:parent.runId}),step=f.task('workflow-internal');
+ f.db.prepare("UPDATE entities SET parent=?,data=json_set(data,'$.parentTaskId',?) WHERE kind='task' AND id=?").run(root.taskId,root.taskId,unbound.taskId);
+ f.run(child,'child-execution','succeeded',{parentRunId:parent.runId});f.run(unbound,'unbound-execution');f.run(step,'step-execution','succeeded',{configuration:{workflow:{workflowRunId:'legacy-flow',stepId:'step'}}});
+ for(const task of [root,child,unbound,noRun,step])f.db.prepare('INSERT INTO pr_task_presentation(task,visibility) VALUES(?,?)').run(task.taskId,'execution');
+ let page=f.read('taskPage');assert.deepEqual(new Set(page.items.map(row=>row.id)),new Set([root.taskId,unbound.taskId,noRun.taskId]));
+ assert.throws(()=>f.runtime.setTaskPresentation({commandId:'hide-root',taskId:root.taskId,visibility:'execution'}),error=>error.code==='INVALID');
+ assert.throws(()=>f.runtime.setTaskPresentation({commandId:'hide-unbound',taskId:unbound.taskId,visibility:'execution'}),error=>error.code==='INVALID');
+ f.runtime.setTaskPresentation({commandId:'promote-child',taskId:child.taskId,visibility:'primary'});assert.ok(f.read('taskPage').items.some(row=>row.id===child.taskId));
+ f.runtime.setTaskPresentation({commandId:'fold-child',taskId:child.taskId,visibility:'execution'});
+ const before=f.ledger.getTask(root.taskId),runBefore=f.ledger.getRun(parent.runId);
+ f.db.prepare("UPDATE demand_task_display SET coordinator=0,data=json_set(data,'$.showInCoordinator',json('false')) WHERE id IN (?,?)").run(root.taskId,unbound.taskId);
+ f.db.exec('UPDATE demand_display_meta SET version=1;DELETE FROM demand_task_dirty');
+ const reopened=new ProjectRuntime({get:()=>undefined},f.ledger,'central','both');
+ for(let i=0;i<10;i++){try{page=reopened.demandRead('taskPage',{});break;}catch(error){if(error.code!=='READ_MODEL_UPDATING')throw error;}}
+ assert.deepEqual(new Set(page.items.map(row=>row.id)),new Set([root.taskId,unbound.taskId,noRun.taskId]));
+ assert.deepEqual(f.ledger.getTask(root.taskId),before);assert.deepEqual(f.ledger.getRun(parent.runId),runBefore);
+ assert.equal(reopened.demandRead('taskPage',{presentation:'all'}).total,5);
+});
