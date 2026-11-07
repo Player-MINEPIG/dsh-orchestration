@@ -754,7 +754,7 @@ test('follow-up and task filters form independent complete partitions and inters
  const rows=statuses.flatMap(status=>responsibilities.map(kind=>({id:status+'-'+kind,title:status+' '+kind,project:'p',status,unreadResultCount:['accepted','done'].includes(status)?1:0,...(kind==='none'?{}:{checkin:{responsibility:{state:kind,summary:'Explicit handling statement'}}})})));
  await p.answer({value:{...snapshot,tasks:rows}});
  const cards=()=>[...p.content().matchAll(/data-dom-key="task:([^"]+)"/g)].map(m=>m[1]);
- const group=legend=>p.content().split('<legend>'+legend+'</legend>')[1].split('</fieldset>')[0];
+ const group=label=>p.content().split('role="group" aria-label="'+label+'"')[1].split('</section>')[0];
  const counts=legend=>[...group(legend).matchAll(/<b>(\d+)<\/b>/g)].map(m=>Number(m[1]));
  for(const legend of ['跟进状态','任务状态']){const [total,...categories]=counts(legend);assert.equal(total,rows.length);assert.equal(categories.reduce((a,b)=>a+b,0),rows.length);}
  await p.action('responsibility-filter','needs_user');assert.equal(cards().length,statuses.length);assert.ok(cards().every(id=>id.endsWith('-needs_user')));
