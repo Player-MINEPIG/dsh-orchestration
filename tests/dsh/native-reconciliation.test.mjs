@@ -107,6 +107,37 @@ test("a real bound PM inspects and reconciles its exact zero-effect AUTH attempt
     assert.equal(h.ledger.getRun(h.run.runId).state, "uncertain");
     const target = h.ledger.sessionMessageTargets(h.task.taskId)[0];
     assert.equal(target.workspaceId, undefined);
+    const metadata = await h.ctx.sessionPersistence.open(
+      SessionId(target.sessionId),
+      "write",
+    );
+    try {
+      const records = (await metadata.read()).events;
+      await metadata.append([
+        {
+          type: "session/end-seed",
+          seq: records.length,
+          time: Date.now(),
+          data: {},
+        },
+        {
+          type: "model/selection",
+          seq: records.length + 1,
+          time: Date.now(),
+          data: { provider: "test-offline", model: "script" },
+        },
+        {
+          type: "model/selection",
+          seq: records.length + 2,
+          time: Date.now(),
+          data: { provider: "test-offline", model: "selected-later" },
+        },
+      ]);
+      await metadata.flush();
+    } finally {
+      await metadata.close();
+    }
+
     assert.throws(
       () =>
         h.ledger.queueSessionMessage("unsupported-chat", {

@@ -1,6 +1,6 @@
 import type { Context } from "@deepseek-ai/cordis";
 import type { Agent } from "@deepseek-ai/dsh-agent";
-import { SessionId } from "@deepseek-ai/dsh-session";
+import { SessionId, type SessionEvent } from "@deepseek-ai/dsh-session";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { canonical, TaskError } from "./ledger.js";
@@ -41,6 +41,142 @@ const digest = (value: unknown) =>
   createHash("sha256").update(canonical(value)).digest("hex");
 const reconciliationCommand = (sessionId: string, commandId: string) =>
   `execution-reconcile:${digest({ sessionId, commandId })}`;
+
+export type NativeFailureFacts =
+  | {
+      proven: true;
+      turn: number;
+      fromSeq: number;
+      terminalSeq: number;
+      code: "AUTH";
+      httpStatus: 401;
+      toolCallCount: 0;
+    }
+  | { proven: false; reason: string };
+
+export function nativeFailureFacts(
+  events: readonly SessionEvent[],
+  reference: {
+    taskId: string;
+    runId: string;
+    attemptId: string;
+    provider: string;
+    model: string;
+  },
+): NativeFailureFacts {
+  const unknown = (reason: string): NativeFailureFacts => ({
+    proven: false,
+    reason,
+  });
+  if (
+    events.length > 2000 ||
+    events.some((event, index) => event.seq !== index)
+  )
+    return unknown("原生记录超出本次有界核实范围或前缀不完整。");
+  const instructions = events.filter(
+    (event) =>
+      event.type === "user/message" &&
+      event.data.source.kind === "dsh-task" &&
+      event.data.source.form === "instructions" &&
+      event.data.source.taskId === reference.taskId &&
+      event.data.source.runId === reference.runId &&
+      event.data.source.attemptId === reference.attemptId,
+  );
+  const instructionTurns = new Set(
+    instructions.map(
+      (input) =>
+        events.findLast(
+          (event) => event.type === "turn/start" && event.seq < input.seq,
+        )?.seq,
+    ),
+  );
+  if (
+    !instructions.length ||
+    instructionTurns.size !== 1 ||
+    instructionTurns.has(undefined)
+  )
+    return unknown(
+      "缺少唯一对应当前 attempt 的原生任务轮次；不能借同会话其他轮次结算。",
+    );
+  const start = events.find((event) => instructionTurns.has(event.seq));
+  const terminal =
+    start?.type === "turn/start"
+      ? events.findLast(
+          (event) =>
+            event.type === "turn/end" && event.data.turn === start.data.turn,
+        )
+      : undefined;
+  if (
+    start?.type !== "turn/start" ||
+    terminal?.type !== "turn/end" ||
+    terminal.data.turn !== start.data.turn ||
+    terminal.data.reason.kind !== "error"
+  )
+    return unknown("对应原生轮次尚无完整错误终止证据，或会话已出现后续轮次。");
+  const metadataTail = new Set(["session/end-seed", "model/selection"]);
+  if (
+    events.some(
+      (event) => event.seq > terminal.seq && !metadataTail.has(event.type),
+    )
+  )
+    return unknown(
+      "目标轮次后出现新的执行事件或尚未支持的尾部事件；保留结果未知。",
+    );
+  const turn = events.filter(
+    (event) => event.seq >= start.seq && event.seq <= terminal.seq,
+  );
+  const error = z
+    .object({ code: z.literal("AUTH"), status: z.literal(401) })
+    .safeParse(terminal.data.reason.error);
+  const requests = turn.filter((event) => event.type === "request/header");
+  const metadataKinds = new Set([
+    "agent-instructions",
+    "runtime-context",
+    "skill-catalog",
+    "time-context",
+  ]);
+  const causal = turn
+    .filter((event) => event.type === "user/message")
+    .every((event) => {
+      if (event.type !== "user/message") return false;
+      const source = event.data.source;
+      return source.kind === "dsh-task"
+        ? source.taskId === reference.taskId &&
+            source.runId === reference.runId &&
+            source.attemptId === reference.attemptId
+        : metadataKinds.has(source.kind);
+    });
+  if (
+    !error.success ||
+    !causal ||
+    requests.length !== 1 ||
+    turn.some(
+      (event) =>
+        event.type === "tool/call" ||
+        event.type === "tool/result" ||
+        event.type === "assistant/message",
+    )
+  )
+    return unknown(
+      "本次仅能自动核实启动期 AUTH/401 且无模型输出或工具调用的失败；其他异常需更多可信执行证据。",
+    );
+  const request = requests[0];
+  if (
+    request?.type !== "request/header" ||
+    request.data.header.config.provider !== reference.provider ||
+    request.data.header.config.model !== reference.model
+  )
+    return unknown("原生请求模型与当前运行路由不一致。");
+  return {
+    proven: true,
+    turn: start.data.turn,
+    fromSeq: start.seq,
+    terminalSeq: terminal.seq,
+    code: "AUTH",
+    httpStatus: 401,
+    toolCallCount: 0,
+  };
+}
 
 export async function nativeExecutionStatus(
   ctx: Context,
@@ -223,88 +359,14 @@ export async function nativeExecutionStatus(
   } finally {
     await handle.close();
   }
-  if (
-    events.length > 2000 ||
-    events.some((event, index) => event.seq !== index)
-  )
-    return unknown("原生记录超出本次有界核实范围或前缀不完整。");
-  const instructions = events.filter(
-    (event) =>
-      event.type === "user/message" &&
-      event.data.source.kind === "dsh-task" &&
-      event.data.source.form === "instructions" &&
-      event.data.source.taskId === input.taskId &&
-      event.data.source.runId === run.runId &&
-      event.data.source.attemptId === attempt.attemptId,
-  );
-  const instructionTurns = new Set(
-    instructions.map(
-      (input) =>
-        events.findLast(
-          (event) => event.type === "turn/start" && event.seq < input.seq,
-        )?.seq,
-    ),
-  );
-  if (
-    !instructions.length ||
-    instructionTurns.size !== 1 ||
-    instructionTurns.has(undefined)
-  )
-    return unknown(
-      "缺少唯一对应当前 attempt 的原生任务轮次；不能借同会话其他轮次结算。",
-    );
-  const start = events.find((event) => instructionTurns.has(event.seq)),
-    terminal = events.at(-1);
-  if (
-    start?.type !== "turn/start" ||
-    terminal?.type !== "turn/end" ||
-    terminal.data.turn !== start.data.turn ||
-    terminal.data.reason.kind !== "error"
-  )
-    return unknown("对应原生轮次尚无完整错误终止证据，或会话已出现后续轮次。");
-  const turn = events.filter((event) => event.seq >= start.seq);
-  const error = z
-    .object({ code: z.literal("AUTH"), status: z.literal(401) })
-    .safeParse(terminal.data.reason.error);
-  const requests = turn.filter((event) => event.type === "request/header");
-  const metadataKinds = new Set([
-    "agent-instructions",
-    "runtime-context",
-    "skill-catalog",
-    "time-context",
-  ]);
-  const causal = turn
-    .filter((event) => event.type === "user/message")
-    .every((event) => {
-      if (event.type !== "user/message") return false;
-      const source = event.data.source;
-      return source.kind === "dsh-task"
-        ? source.taskId === input.taskId &&
-            source.runId === run.runId &&
-            source.attemptId === attempt.attemptId
-        : metadataKinds.has(source.kind);
-    });
-  if (
-    !error.success ||
-    !causal ||
-    requests.length !== 1 ||
-    turn.some(
-      (event) =>
-        event.type === "tool/call" ||
-        event.type === "tool/result" ||
-        event.type === "assistant/message",
-    )
-  )
-    return unknown(
-      "本次仅能自动核实启动期 AUTH/401 且无模型输出或工具调用的失败；其他异常需更多可信执行证据。",
-    );
-  const request = requests[0];
-  if (
-    request?.type !== "request/header" ||
-    request.data.header.config.provider !== run.route.provider ||
-    request.data.header.config.model !== run.route.model
-  )
-    return unknown("原生请求模型与当前运行路由不一致。");
+  const proof = nativeFailureFacts(events, {
+    taskId: input.taskId,
+    runId: run.runId,
+    attemptId: attempt.attemptId,
+    provider: run.route.provider,
+    model: run.route.model,
+  });
+  if (!proof.proven) return unknown(proof.reason);
   authorize();
   signal.throwIfAborted();
   const after = await persistence.stat(sessionId);
@@ -336,9 +398,9 @@ export async function nativeExecutionStatus(
     attemptId: attempt.attemptId,
     executionId: attempt.executionId,
     fence: attempt.fence,
-    turn: start.data.turn,
-    fromSeq: start.seq,
-    terminalSeq: terminal.seq,
+    turn: proof.turn,
+    fromSeq: proof.fromSeq,
+    terminalSeq: proof.terminalSeq,
     code: "AUTH" as const,
     httpStatus: 401 as const,
     toolCallCount: 0 as const,
