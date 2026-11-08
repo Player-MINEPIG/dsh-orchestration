@@ -57,3 +57,12 @@ test('independent fallback receives typed new-topic actions, not an instruction 
  assert.deepEqual(result,{kind:'create-topic'});assert.deepEqual(JSON.parse(seen.messages[0].content[0].text).actions,['create-topic']);
  assert.match(seen.system,/Generic workbench is never a substitute/);assert.doesNotMatch(seen.system,/confirmation to use steward workbench|exact supplied scopes or/);
 });
+
+test('without a configured fallback JEV can decide, while abstention and failure never borrow another model',async()=>{
+ for(const answer of [{type:'choice',choice:'topic_0',confidence:0.9},{type:'choice',choice:'uncertain'},new Error('unavailable')]) {
+  const ctx={decisionModels:{async ask(){if(answer instanceof Error)throw answer;return {provider:'jev-own-provider',model:'jev-own-model',answers:{recipient:answer}};}},llm:{async *stream(){assert.fail('No fallback model was configured');}}};ctx.get=name=>ctx[name];
+  const invoke=()=>createStewardTriageCall(ctx,null)(triageInput());
+  if(!(answer instanceof Error)&&answer.choice==='topic_0')assert.deepEqual(await invoke(),{kind:'route',target:{kind:'project',projectId:'A'}});
+  else await assert.rejects(invoke(),/No independent routing fallback/);
+ }
+});

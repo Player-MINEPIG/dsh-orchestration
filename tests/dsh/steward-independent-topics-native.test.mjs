@@ -92,3 +92,23 @@ test('completed real turns maintain one bounded card batch in the background; op
   const calls=h.model.requests.length;await s.topicDetail({topic});await s.reconcile({conversationId:'main'});assert.equal(h.model.requests.length,calls,'no repeated batch without a new completed real turn');
  }finally{release?.();await h.close()}
 });
+
+test('unset routing asks for an explicit topic and long-history maintenance preserves sources without borrowing a model',{timeout:30000},async()=>{
+ const h=await startHost();try {
+  const s=h.ctx.taskSystem.steward;
+  const settings=await s.routingConfiguration();assert.equal(settings.fallback,null);assert.equal(settings.configuredFallback,null);assert.equal(settings.source,'unset');
+  const request=send('unset-original','Unassigned synthetic discussion',{routingMode:'auto',selection:{provider:'test-offline',model:'script'}});
+  const held=await s.send(request),question=held.router.find(item=>item.commandId===request.commandId);
+  assert.equal(question.phase,'clarifying');assert.equal(question.executorAdmitted,false);assert.equal(held.commandMessage,null);assert.equal(h.model.requests.length,0,'composer and PM selections are not routing defaults');
+  const option=question.options.find(item=>item.action==='create-topic');assert.ok(option);assert.ok(question.question);
+  h.model.script.push('Explicitly opened original request');await s.send(send('unset-choice',option.label,{routeQuestionId:question.questionId,routeCreateTopic:true,target:option.target}));
+  const original=(await completed(s,request.commandId)).commandMessage,topic={conversationId:'main',scope:original.scope};assert.equal(original.text,request.text);
+  for(let n=0;n<22;n++)s.store.project({...original,role:n%2?'assistant':'user',commandId:null,text:`Uncompacted original ${n}`,replyTo:original.id,state:{kind:'completed'},nativeSeq:null},`unset-history-${n}`);
+  const before=(await s.topicDetail({topic})).coverageSeq,calls=h.model.requests.length;
+  h.model.script.push('Explicit continuation completed');await s.send(send('unset-maintenance','Continue the selected discussion',{target:original.scope}));await completed(s,'unset-maintenance');
+  for(let n=0;n<200&&s.snapshot({conversationId:'main'}).topicMaintenance.some(item=>item.state==='running');n++)await new Promise(r=>setTimeout(r,10));
+  assert.equal(h.model.requests.length,calls+1,'only the actual discussion requested a model');const detail=await s.topicDetail({topic});assert.equal(detail.coverageSeq,before);assert.match(detail.coverageReason,/尚未设置或当前不可用/);assert.equal(s.store.message(original.id).text,request.text);
+  assert.equal(s.snapshot({conversationId:'main'}).topicMaintenance.find(item=>item.scope.topicId===original.scope.topicId).state,'unavailable');
+  await s.topicDetail({topic});await s.reconcile({conversationId:'main'});assert.equal(h.model.requests.length,calls+1,'opening or recovering does not retry maintenance');
+ }finally{await h.close()}
+});

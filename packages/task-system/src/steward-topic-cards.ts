@@ -371,7 +371,9 @@ export class StewardTopicCards implements TopicCardsPort {
       for (const original of delta) await this.source({ conversationId: topic.conversationId, ref: original.source, offset: 0 });
       requestBudget?.signal.throwIfAborted();
       this.save({ schemaVersion: 1, card, historyStamp: digest(this.history(topic, coverageSeq)) });
-    } catch { fail("本次整理未通过来源校验，既有内容已保留，请查看原文或补充说明。"); }
+    } catch (error) { fail(error instanceof TaskError && error.code === "UNAVAILABLE"
+      ? "话题整理模型尚未设置或当前不可用，既有内容已保留，请查看原文。"
+      : "本次整理未通过来源校验，既有内容已保留，请查看原文或补充说明。"); }
   }
   private mergeFacts(previous: TopicFact[], delta: TopicOriginal[], output: z.infer<typeof topicCompactionOutput>): TopicFact[] {
     const bySource = new Map(delta.map(original => [sourceKey(original.source), original]));

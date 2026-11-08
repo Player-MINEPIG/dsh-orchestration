@@ -13,24 +13,10 @@ function available(selection: Selection, groups: ModelCatalog["groups"]): boolea
   const model = groups.find(group => group.id === selection.provider)?.models.find(item => item.id === selection.model);
   return !!model && (!selection.reasoningEffort || !!model.reasoning?.efforts.some(effort => effort.id === selection.reasoningEffort));
 }
-function lightweight(groups: ModelCatalog["groups"], jev: Selection | null): Selection | null {
-  const selections: Selection[] = [];
-  for (const id of ["gpt-5-mini", "group/gpt-ds-eco", "gpt-5-nano", "deepseek-flash"]) {
-    for (const group of groups) {
-      const model = group.models.find(item => item.id === id);
-      if (!model) continue;
-      const effort = ["none", "off", "minimal", "low"].find(id => model.reasoning?.efforts.some(item => item.id === id));
-      selections.push({ provider: group.id, model: model.id, ...(effort ? { reasoningEffort: effort } : {}) });
-    }
-  }
-  return selections.find(selection => selection.provider !== jev?.provider || selection.model !== jev.model) ?? selections[0] ?? null;
-}
-
-/** Independent routing preferences; the project coordinator's model is never a default. */
 export class StewardRoutingSettings {
   private readonly db;
   constructor(ledger: Pick<TaskLedger, "managementDatabase">, private readonly catalog: () => Promise<ModelCatalog>,
-    private readonly jevAvailable: () => boolean, private readonly activeDays: () => number, private readonly jevSelection: () => Selection | null = () => null) {
+    private readonly jevAvailable: () => boolean, private readonly activeDays: () => number) {
     this.db = ledger.managementDatabase();
     this.db.exec("CREATE TABLE IF NOT EXISTS steward_routing_settings(id TEXT PRIMARY KEY,data TEXT NOT NULL); CREATE TABLE IF NOT EXISTS steward_routing_setting_commands(id TEXT PRIMARY KEY,data TEXT NOT NULL)");
   }
@@ -41,10 +27,10 @@ export class StewardRoutingSettings {
   async read() {
     const saved = this.saved();
     let groups: ModelCatalog["groups"] = [];
-    try { groups = (await this.catalog()).groups; } catch { /* An unavailable catalog cannot authorize a model. */ }
-    const fallback = saved.fallback ? available(saved.fallback, groups) ? saved.fallback : null : lightweight(groups, this.jevSelection());
+    try { groups = (await this.catalog()).groups; } catch {}
+    const fallback = saved.fallback && available(saved.fallback, groups) ? saved.fallback : null;
     return { revision: saved.revision, configuredFallback: saved.fallback, fallback, available: groups,
-      source: fallback ? saved.fallback ? "saved" as const : "default" as const : "unavailable" as const,
+      source: fallback ? "saved" as const : saved.fallback ? "unavailable" as const : "unset" as const,
       jevAvailable: this.jevAvailable(), activeDays: this.activeDays() };
   }
   async configure(input: unknown) {

@@ -94,10 +94,7 @@ export class StewardRuntime {
     this.topicPromotion = new StewardTopicPromotion(task,ctx,this.independentTopics,
       topic => stewardBinding.options[1].parse(this.personalBinding(topic.conversationId,topic.scope)),
       topic => this.sourceSession({conversationId:topic.conversationId,scope:topic.scope}));
-    this.routingSettings = new StewardRoutingSettings(task.ledger,()=>this.modelCatalog(),()=>!!this.ctx.get("decisionModels"),()=>this.task.config.stewardActiveDays,()=>{
-      const current=this.ctx.get("decisionModels")?.config();
-      return current?.provider === "native" && current.nativeProvider && current.model ? {provider:current.nativeProvider,model:current.model} : null;
-    });
+    this.routingSettings = new StewardRoutingSettings(task.ledger,()=>this.modelCatalog(),()=>!!this.ctx.get("decisionModels"),()=>this.task.config.stewardActiveDays);
     this.media = new StewardAttachments(ctx, task.ledger);
     this.progress = new StewardProgress(ctx, task, this.store, projectId => {
       this.ready();
