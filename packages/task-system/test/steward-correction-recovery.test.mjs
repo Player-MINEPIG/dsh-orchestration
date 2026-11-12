@@ -7,7 +7,7 @@ import {StewardCorrections} from '../dist/steward-corrections.js';
 import {TaskError} from '../dist/ledger.js';
 const stable=id=>'corrected-'+createHash('sha256').update(id).digest('hex').slice(0,32);
 function fixture(){
- const db=new DatabaseSync(':memory:'),ledger={managementDatabase:()=>db},store=new StewardConversations(ledger);
+ const db=new DatabaseSync(':memory:');db.exec('CREATE TABLE events(seq INTEGER PRIMARY KEY AUTOINCREMENT,data TEXT)');const ledger={managementDatabase:()=>db},store=new StewardConversations(ledger);
  const scopes={A:{kind:'workbench',topicId:'A'},B:{kind:'workbench',topicId:'B'}};
  const bindings=Object.fromEntries(['A','B'].map(id=>[id,{kind:'workbench',topicId:id,nodeId:'local',sessionId:id,generation:1,cwd:`/fixture/${id}`} ]));
  for(const binding of Object.values(bindings))store.registerSource('main',binding);
