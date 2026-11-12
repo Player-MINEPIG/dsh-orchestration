@@ -25,7 +25,8 @@ const record = z.strictObject({ commandId: z.string(), conversationId: z.string(
   permission:stewardPermission.nullable().default(null), candidates: z.array(stewardScope).max(4), answers: z.array(answer).max(8), binding: stewardBinding.nullable(), delivery: stewardSend.nullable(), parent: z.string().nullable() });
 export type RouterRecord = z.infer<typeof record>;
 export type RouterView = Omit<RouterRecord, "request" | "digest" | "delivery" | "options"> & { options: z.infer<typeof routeOption>[]; text: string; original: StewardSend; uploadCount: number; executorAdmitted: boolean; pendingDependency: boolean };
-export type SemanticCall = (input: { stage: "latest" | "candidates" | "answer" | "association" | "recipient"; text: string; original?: string; question?: string; context?: TopicContext; candidates?: unknown[]; recipients?: {id:string;role:string;responsibility:string;artifacts:string[];scopeLabel:string}[]; actions?: ("create-topic"|"continue-dependent")[] }, signal?: AbortSignal, trace?: (value: TriageTrace) => void) => Promise<unknown>;
+type SemanticRecipient = {id:string;role:string;responsibility:string;artifacts:string[];scopeLabel:string};
+export type SemanticCall = (input: { stage: "latest" | "candidates" | "answer" | "association" | "recipient"; text: string; original?: string; question?: string; context?: TopicContext; candidates?: unknown[]; recipients?: SemanticRecipient[]; currentGroup?: {title:string;complete:boolean;members:SemanticRecipient[]}; actions?: ("create-topic"|"continue-dependent")[] }, signal?: AbortSignal, trace?: (value: TriageTrace) => void) => Promise<unknown>;
 const decision = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("route"), target: stewardScope }),
   z.strictObject({ kind: z.literal("candidate"), id: z.string().regex(/^topic_(?:[0-9]|[12][0-9]|3[01])$/) }),

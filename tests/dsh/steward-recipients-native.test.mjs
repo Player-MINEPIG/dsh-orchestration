@@ -46,7 +46,13 @@ test('a latest research source routes implementation to its existing sibling wit
     const push=h.model.script.push.bind(h.model.script);
     h.model.script.push=(...entries)=>push(...entries.map(entry=>typeof entry==='function'?async request=>{try{return await entry(request)}catch(error){scriptErrors.push(String(error.stack??error));throw error}}:entry));
     h.ctx.on('tools/result', (exec, value) => { if (exec.name === 'read') readResult = value; });
-    h.model.script.push(JSON.stringify({ kind: 'route', target: b.scope }), request => {
+    h.model.script.push(request => {
+      const input=JSON.parse(request.messages[0].content.find(part=>part.type==='text').text);
+      assert.equal(input.stage,'latest');
+      assert.match(JSON.stringify(input),/修改 implementation\.ts 并验证/,'The outer topic router must see the sibling implementation responsibility');
+      assert.doesNotMatch(JSON.stringify(input),/C_PRIVATE_IMPLEMENTATION_HISTORY|C_PRIVATE_IMPLEMENTATION_FILE/);
+      return JSON.stringify({kind:'route',target:b.scope});
+    }, request => {
       // The actual helper payload contains opaque seats and names, never donor history.
       const serialized = JSON.stringify(request.messages);
       assert.doesNotMatch(serialized, /B_PRIVATE_RESEARCH_HISTORY|C_PRIVATE_IMPLEMENTATION_HISTORY|B_PRIVATE_RESEARCH_FILE/);

@@ -678,7 +678,30 @@ export class StewardRuntime {
     const latest = request.latestTopic ?? {scope:snapshot.topicActivity.latestMessage?.scope ?? snapshot.currentScope,latestMessageId:snapshot.topicActivity.latestMessage?.id ?? null,throughSeq:snapshot.lastSeq};
     if (latest.throughSeq > snapshot.lastSeq) throw new TaskError("FORBIDDEN", "Routing cursor is ahead of this conversation");
     if (latest.latestMessageId) { const original=this.store.message(latest.latestMessageId); if(original.conversationId!==request.conversationId || original.seq>latest.throughSeq || canonical(original.scope)!==canonical(latest.scope)) throw new TaskError("FORBIDDEN","Latest-topic anchor does not match this conversation"); }
-    const triage=createStewardTriageCall(this.ctx,async()=>(await this.routingSettings.read()).fallback);
+    const semantic = createStewardTriageCall(this.ctx, async () => (await this.routingSettings.read()).fallback);
+    // The frozen latest source identifies its logical group. Browsing another
+    // topic never supplies this metadata, and member transcripts stay private.
+    const triage: SemanticCall = async (input, signal, trace) => {
+      if (input.stage !== "latest" || !input.context) return semantic(input, signal, trace);
+      const topic = input.context.card.topic;
+      const stamp = this.relations.stamp(topic);
+      const listing = await this.recipients.list(topic);
+      if (stamp !== this.relations.stamp(topic)) throw new TaskError("CONFLICT", "当前话题归属已变化，请重新核对。");
+      if (listing.complete && listing.seats.length <= 1) return semantic(input, signal, trace);
+      const members = listing.seats.map((seat, index) => ({
+        id: `seat_${index}`, role: seat.role, responsibility: seat.responsibility,
+        artifacts: seat.artifacts.filter(name => name.length <= 150).slice(0, 8), scopeLabel: seat.title,
+      }));
+      const complete = listing.complete && listing.seats.every((seat, index) => members[index]!.artifacts.length === seat.artifacts.length);
+      const groupTopic = this.relations.root(topic);
+      await this.resolveBinding(groupTopic.scope, groupTopic.conversationId);
+      const group = { title: this.scopeTitle(groupTopic.scope, topic.conversationId), complete, members };
+      const result = await semantic({ ...input, currentGroup: group }, signal, trace);
+      if (stamp !== this.relations.stamp(topic)) throw new TaskError("CONFLICT", "当前话题职责已变化，请重新核对。");
+      if (!complete && z.object({ kind: z.enum(["independent", "independent-part"]) }).safeParse(result).success)
+        return { kind: "clarification", question: "当前逻辑话题的承接会话尚未完整列出，请明确要继续的职责或原会话；也可明确新开话题。" };
+      return result;
+    };
     const routed=await this.router.prepare(request,latest,triage,()=>this.media.retainForRouter(request.conversationId,request.commandId,request.uploads ?? []),this.router.get(request.commandId)?.permission ?? (request.permissionPreset ? this.permissions.resolve(request.permissionPreset) : undefined),{
       activeDays:this.task.config.stewardActiveDays,
       createTopic: parent => independentTopicScope(this.independentTopics.create({conversationId:parent.conversationId,commandId:parent.commandId,text:parent.request.text})),

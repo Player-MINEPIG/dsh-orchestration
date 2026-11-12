@@ -110,3 +110,19 @@ test('a dependent continuation choice is available only when the trusted origina
 test('latest Jev may search only with complete bounded local keywords, without changing candidate choice cardinality',async()=>{
  const ctx={decisionModels:{async ask(input){assert.ok(input.questions.recipient.criteria.search);return {provider:'jev',model:'own',answers:{recipient:{type:'choice',choice:'search',confidence:1}}}}}};ctx.get=name=>ctx[name];const input={...triageInput(),text:'scopeboundedsharedneedle'};assert.deepEqual(await createStewardTriageCall(ctx,null)(input),{kind:'search',queries:['scopeboundedsharedneedle']});
 });
+
+test('latest topic triage receives authorized group responsibilities without turning member metadata into direct recipient authority',async()=>{
+ const currentGroup={title:'Implementation group',complete:true,members:[{id:'seat_0',role:'discussion',responsibility:'核对需求',artifacts:[],scopeLabel:'当前讨论'},{id:'seat_1',role:'discussion',responsibility:'修改 implementation.ts 并验证',artifacts:['implementation.ts'],scopeLabel:'实现讨论'}]};
+ const input={...triageInput(),text:'请修改 implementation.ts 并验证',currentGroup},f=triageFixture({type:'choice',choice:'topic_0',confidence:0.99});
+ assert.deepEqual(await f.call(input),{kind:'route',target:{kind:'project',projectId:'A'}});assert.equal(f.fallbacks.length,0);
+ const request=f.requests[0];assert.deepEqual(JSON.parse(request.state).currentGroup,currentGroup);assert.match(request.questions.recipient.instructions,/currentGroup.*actual current logical topic group/);assert.match(request.questions.recipient.criteria.topic_0,/member responsibility or named artifact/);assert.equal(request.questions.recipient.criteria.seat_1,undefined,'Latest chooses a logical topic; the later recipient stage owns the seat');
+});
+test('incomplete latest-group coverage never offers independence and fallback retains the same metadata-only limitation',async()=>{
+ const currentGroup={title:'Partial group',complete:false,members:[{id:'seat_0',role:'discussion',responsibility:'known role',artifacts:[],scopeLabel:'current'}]},input={...triageInput(),currentGroup};
+ const f=triageFixture({type:'choice',choice:'independent',confidence:0.99});assert.deepEqual(await f.call(input),{kind:'route',target:{kind:'project',projectId:'A'}});assert.equal(f.requests[0].questions.recipient.criteria.independent,undefined);assert.equal(f.fallbacks.length,1);
+ const fallback=f.fallbacks[0];assert.match(fallback.system,/do not return independent or independent-part/);assert.match(fallback.system,/neither private history, missing factual context nor execution permission/);assert.deepEqual(JSON.parse(fallback.messages[0].content[0].text).currentGroup,currentGroup);assert.deepEqual(fallback.tools,[]);
+});
+test('latest group metadata stays inside the existing whole-envelope budget without invoking a model on overflow',async()=>{
+ const f=triageFixture({type:'choice',choice:'topic_0'}),input={...triageInput(),currentGroup:{title:'oversized',complete:true,members:[{id:'seat_0',role:'discussion',responsibility:'x'.repeat(40000),artifacts:[],scopeLabel:'current'}]}};
+ await assert.rejects(f.call(input),/budget|bound/);assert.equal(f.requests.length,0);assert.equal(f.fallbacks.length,0);
+});
