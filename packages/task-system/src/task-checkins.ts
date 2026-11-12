@@ -1,9 +1,10 @@
+import { manualCheckTools } from "./task-checkin-surface.js";
 import type { CompactRun, CompactTask, CompactMessage } from "./ledger-read-index.js";
 import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { Task, Run, Attempt, DispatchOrigin, Event } from "./contracts.js";
-import type { SessionMessage, CheckinRef } from "./remote/ports.js";
-import { TaskError, type TaskLedger } from "./ledger.js";
+import type { SessionMessage, CheckinRef, ManualCheckScope } from "./remote/ports.js";
+import { TaskError, canonical, type TaskLedger } from "./ledger.js";
 import {executionCheckId,executionDueAt,type ExecutionExpectationView} from "./execution-expectation.js";
 
 const identifier = z.string().min(1).max(200);
@@ -81,6 +82,7 @@ export interface CheckinRecord {
   };
   pendingMessageId?: string;
   requested?: boolean;
+  requestedVerification?: ManualCheckScope;
   checksWithoutUpdate: number;
   deliveryFailures: number;
   attention?: "no_update" | "delivery_unavailable";
@@ -113,6 +115,7 @@ export interface CheckinView {
   category: CheckinCategory;
   reason: string;
   canRequest: boolean;
+  manualPending: boolean;
   revision: number;
   nextCheckAt: string | null;
   observation: CheckinRecord["observation"] | null;
@@ -574,6 +577,7 @@ export class TaskCheckins {
       category,
       reason,
       canRequest: eligible,
+      manualPending: eligible && Boolean(record?.requestedVerification || (record?.pendingMessageId && this.read<SessionMessage>("sessionMessage",record.pendingMessageId)?.checkIn?.manualChecks?.some(scope=>scope.taskId===taskId))),
       revision: record?.revision ?? 0,
       nextCheckAt:
         category !== "closed" && record?.plan.kind === "scheduled" ? record.plan.nextCheckAt : null,
@@ -711,7 +715,7 @@ export class TaskCheckins {
         record.checksWithoutUpdate = 0;
         record.deliveryFailures = 0;
         delete record.attention;
-        delete record.requested;
+        if (!record.requestedVerification) delete record.requested;
         this.write("taskCheckin", task.taskId, record, task.taskId);
         this.audit("task.checkin_updated", task.taskId, {
           observation: input.observation,
@@ -722,11 +726,11 @@ export class TaskCheckins {
       },
     );
   }
-  request(commandId: string, taskId: string): CheckinView {
+  request(commandId: string, taskId: string, options: {manualVerification?: true} = {}): CheckinView {
     return this.ledger.managementCommand(
       commandId,
       "task_checkin.request",
-      { taskId },
+      { taskId, ...(options.manualVerification ? {manualVerification:true} : {}) },
       () => {
         const task = this.task(taskId),
           view = this.view(taskId);
@@ -738,11 +742,18 @@ export class TaskCheckins {
             "FORBIDDEN",
             "Task does not have an eligible responsibility scope",
           );
+        if (record.pendingMessageId && !options.manualVerification || options.manualVerification && view.manualPending) return this.view(taskId);
+        record.requested = true;
+        if (options.manualVerification) {
+          const run = this.latestRun(taskId);
+          record.requestedVerification = {taskId, commandId, ...(run ? {runId:run.runId} : {})};
+          this.write("taskCheckVerification",commandId,record.requestedVerification,taskId);
+        }
+        this.write("taskCheckin", taskId, record, taskId);
         if (!record.pendingMessageId) {
           record.checksWithoutUpdate = 0;
           record.deliveryFailures = 0;
           delete record.attention;
-          record.requested = true;
           this.write("taskCheckin", taskId, record, taskId);
           if (["ready", "approval", "waiting_user", "waiting_children", "coordinating", "waiting_execution"].includes(this.category(task)))
             this.enqueue([record], false);
@@ -773,8 +784,11 @@ export class TaskCheckins {
           revision: record.revision,
         })),
         automatic,
+        ...(!automatic && records.some(record => record.requestedVerification) ? {
+          manualChecks: records.flatMap(record => record.requestedVerification ? [record.requestedVerification] : []),
+        } : {}),
       },
-      text: this.prompt(records),
+      text: this.prompt(records, automatic, records.flatMap(record => record.requestedVerification ? [record.requestedVerification] : [])),
       state: "queued",
       createdAt: this.now(),
       updatedAt: this.now(),
@@ -783,11 +797,27 @@ export class TaskCheckins {
     for (const record of records) {
       record.pendingMessageId = messageId;
       delete record.requested;
+      delete record.requestedVerification;
       this.write("taskCheckin", record.taskId, record, record.taskId);
     }
   }
-  private prompt(records: CheckinRecord[]) {
-    return `任务进度检查。你是这些任务已记录的负责会话，可自行完成或按既有授权派发子任务。请先用 task_checkin(action=status) 核对当前检查计划，再读取 task_history/task_query/task_wait 的当前记录和已有报告，核对实际进度。不要把回信ACK、空闲或工具文字当成任务完成，也不要重复已完成的外部操作。在聊天中接手处理时，请先用 task_checkin(action=status) 读取 responsibilityVersion，再用 action=responsibility、expectedVersion、state=coordinator、summary 明确由你跟进。只有需要用户决定、授权或你无法修复的阻碍时才用 needs_user，summary 写清具体卡点和所需决定；你已核实本轮异常处理完毕时用 resolved 并说明处理结果，这只关闭本轮跟进，不替代正式提交或人工验收。新执行、报告或审核变化会使声明失效。若工作已完成，请用现有 task_submit_result 等正式工具收尾；草稿可按现有项目和 creator 权限先 task_bind_dispatcher。若仍需继续、等待子任务/外部条件或人工处理，请用 task_checkin(action=update,taskId,commandId,observation,summary,plan) 记录进度和下一次检查时间，或暂停并说明原因。若现有工具/权限不允许收尾，明确记录限制，不能扩大权限。此检查不授予审批、执行租约或重跑结果不确定操作的权限。若当前任务已结束，不再执行。\n${JSON.stringify(records.map((record) => ({ taskId: record.taskId, title: this.task(record.taskId).title, category: this.category(this.task(record.taskId)), previousObservation: record.observation ?? null })))}\n如果原会话能力中没有 task_checkin，使用已有正式任务工具完成可做的工作，并说明无法设置检查时间；不要自行安装或扩大工具权限。`;
+  private prompt(records: CheckinRecord[], automatic = true, manualChecks: ManualCheckScope[] = []) {
+    const origin = records[0] ? this.task(records[0].taskId).dispatchOrigin : undefined;
+    const manual = !automatic && manualChecks.length > 0;
+    const tools = new Set(manual ? manualCheckTools(manualChecks) : origin?.kind === "session" ? origin.composition?.tools ?? [] : []);
+    const checkin = tools.has("task_checkin")
+      ? "先调用 task_checkin(action=status,taskId)，用当前 responsibilityVersion 记录 coordinator/resolved 或 needs_user；如需等待，用 update 记录具体进度与计划。核实状态变化后重新读取版本。"
+      : "原能力快照没有 task_checkin；不要调用它。本轮仅使用实际可见的已有只读任务工具，不能设置检查计划。";
+    const verification = tools.has("task_execution_status")
+      ? "对 uncertain 先 task_execution_status(action=inspect,taskId,runId)。canReconcile=true 时按返回的 evidenceVersion/actionVersion 调用 reconcile：明确区分已证实启动失败与已停止但业务结果未知。没有证据不能说工作成功或从未执行。"
+      : "原能力快照没有 task_execution_status；不要调用它，使用已有 task_query/task_history/task_wait 读取事实并如实报告核实能力限制。";
+    const existingWork = manual ? "" : [
+      tools.has("task_submit_result") ? "工作已完成时用已有正式提交工具收尾，聊天摘要不替代正式结果。" : "",
+      tools.has("task_bind_dispatcher") ? "草稿任务仍可按原有creator/项目权限绑定调度身份。" : "",
+      tools.has("task_dispatch") ? "原任务此前已明确授权且尚未开始的工作可按原权限继续安排；不得把本次检查当成重新执行未知工作的新授权。" : "",
+    ].join("");
+    return `任务进度检查。${existingWork}${manual ? "本次只检查下列已绑定任务；不授权创建任务、派发、重跑、审批、文件操作或向执行会话发送消息。" : "按原任务已有授权跟进；检查本身不授予新的执行或重跑权限。"}${checkin}${verification}${manual ? "这是用户从任务中心主动请求的限域检查，宿主按当前负责身份授权上述状态工具；历史提示中更宽的工具列表不适用于本轮。" : "保持原负责会话冻结的能力范围，不扩大旧授权。"} 检查结束说明当前执行是否已停止、业务结果是否有可信报告及具体缺口；普通聊天回复和空闲不能证明旧工作成功。
+${JSON.stringify(records.map(record => ({taskId:record.taskId,title:this.task(record.taskId).title,category:this.category(this.task(record.taskId)),...(manualChecks.find(scope=>scope.taskId===record.taskId)?.runId ? {runId:manualChecks.find(scope=>scope.taskId===record.taskId)!.runId} : {})})))}`;
   }
   tick() {
     if (!this.ledger.demandReads.reconcileFacts()) return;
@@ -939,17 +969,22 @@ export class TaskCheckins {
         ? [record]
         : [];
     });
+    const manualChecks = message.checkIn?.manualChecks?.filter(scope =>
+      records.some(record => record.taskId === scope.taskId) &&
+      this.ledger.commandMatches(scope.commandId,"workflow.task_checkin.request",{taskId:scope.taskId,manualVerification:true}) &&
+      canonical(this.read<ManualCheckScope>("taskCheckVerification",scope.commandId) ?? null) === canonical(scope));
     return message.checkIn
       ? {
           ...message,
           checkIn: {
             ...message.checkIn,
+            manualChecks: manualChecks?.length ? manualChecks : undefined,
             tasks: records.map((record) => ({
               taskId: record.taskId,
               revision: record.revision,
             })),
           },
-          text: this.prompt(records),
+          text: this.prompt(records,message.checkIn.automatic,manualChecks),
         }
       : message;
   }

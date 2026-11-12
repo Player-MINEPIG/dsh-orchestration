@@ -9,6 +9,7 @@ import { deploymentPolicy, ledgerRole, type DeploymentPolicy } from "./deploymen
 import { mountDispatcherTools } from "./dispatcher-tools.js";
 import { initializeTaskSessionTitle, taskSessionTitle } from "./session-titles.js";
 import { ProjectSessionService } from "./project-session-service.js";
+import { StewardRuntime } from "./steward-runtime.js";
 import { ExpectedExecutionMs } from "./execution-expectation.js";
 import { TaskReturnDelivery } from "./task-returns.js";
 import { returnFailure } from "./task-return-failure.js";
@@ -111,6 +112,7 @@ export interface Config {
   databasePath: string;
   decisionBindings?: Record<string, string>;
   projectAgentOptions?: ProjectAgentOptions | null;
+  stewardActiveDays?: number;
   nodeId?: string;
   nodeDisplayName?: string;
   role?: Role;
@@ -187,6 +189,7 @@ const PlainConfig: z<Config> = z.object({
     ])
     .default(null),
   databasePath: z.string().default(".dsh-task/tasks.sqlite"),
+  stewardActiveDays: z.number().min(1).max(365).step(1).default(30).description("管家话题选择器显示最近多少天有活动的话题。"),
   nodeId: z.string().default(""),
   nodeDisplayName: z.string().default("").description("本机设备显示名称。留空使用节点 ID，不改变任务路由或设备身份。"),
   role: z
@@ -284,6 +287,7 @@ const PlainConfig: z<Config> = z.object({
 
 /** Only values read at an operation/tick boundary are editable live. */
 export const LIVE_SETTING_KEYS = [
+  "stewardActiveDays",
   "schedulerEnabled",
   "autoExecute",
   "maxConcurrent",
@@ -362,7 +366,7 @@ const READ_TOOLS = [
   "task_nodes",
 ];
 const PLANNING_TOOLS = [
-  "project_start", "project_list", "project_bind_session", "task_bind_dispatcher", "task_submit_result", "task_retry_return",
+  "project_start", "project_list", "project_bind_session", "task_bind_dispatcher", "task_submit_result", "task_retry_return", "task_session_message",
   ...READ_TOOLS,
   "task_create",
   "task_checkin",
@@ -794,9 +798,9 @@ export class NativeExecutionProvider {
   }
   private missingResultSummary(owned: OwnedAttempt, remote = false): string {
     if (owned.terminalErrorCode)
-      return `Native agent ended with ${owned.terminalErrorCode} without a causal task_submit_result submission; reconcile before retrying.`;
+      return `Native agent ended with ${owned.terminalErrorCode} without a causal task_submit_result submission; inspect task_execution_status before reconciliation or retry.`;
     return remote
-      ? "Remote native agent reached idle without a causal task_submit_result submission; reconcile before retrying."
+      ? "Remote native agent reached idle without a causal task_submit_result submission; inspect task_execution_status before reconciliation or retry."
       : "Native agent reached idle without a causal task_submit_result submission; reconcile side effects before retrying.";
   }
   private preDispatchFailure(claim: NativeClaim): OutcomeInput | undefined {
@@ -846,6 +850,7 @@ export class NativeExecutionProvider {
             !tool.startsWith("task_") &&
             tool !== "codex_delegate" &&
             tool !== "workflow_input_read" &&
+            tool !== "steward_recall" &&
             tool !== "run_code" &&
             (policyTools === undefined || policyTools.includes(tool)),
         );
@@ -853,6 +858,7 @@ export class NativeExecutionProvider {
     return configured.filter(
       (tool) =>
         tool !== "workflow_input_read" &&
+        tool !== "steward_recall" &&
         tool !== "codex_delegate" &&
         (policyTools === undefined || policyTools.includes(tool)) &&
         (this.owner.config.trustedUnconfinedTools ||
@@ -1015,6 +1021,15 @@ export class NativeExecutionProvider {
     );
   }
 
+  hasOwnedExecution(ref: LeaseRef): boolean {
+    const owned = this.active.get(ref.attemptId);
+    return !!owned && owned.ref.runId === ref.runId && owned.ref.fence === ref.fence && owned.ref.executionId === ref.executionId;
+  }
+
+  hasOwnedSession(sessionId: string): boolean {
+    return this.directSessions.has(sessionId) || this.bySession.has(sessionId) ||
+      [...this.active.values()].some(owned => owned.claim.attempt.sessionId === sessionId);
+  }
   executionStatus(ref: LeaseRef): string {
     const owned = this.active.get(ref.attemptId);
     if (
@@ -1130,6 +1145,8 @@ export class NativeExecutionProvider {
       throw new Error("external task policy denies this workspace");
     if (this.active.has(claim.attempt.attemptId))
       throw new Error("attempt already has an owned native execution");
+    if (this.owner.isConversationSession(sessionId))
+      return Promise.resolve({ outcome: "blocked", summary: "STEWARD_CONVERSATION_RESERVED: personal and project coordinator histories cannot be borrowed for task execution" });
     const ref = {
       runId: claim.run.runId,
       attemptId: claim.attempt.attemptId,
@@ -1488,7 +1505,7 @@ export class NativeExecutionProvider {
    * a second writer or dispose the WebUI's Agent when the attempt ends. */
   private async resumeOwnedAgent(
     owned: OwnedAttempt,
-    workspacePath: string,
+    workspacePath: string | undefined,
     options: ResumeAgentOptions,
   ): Promise<AgentHandle> {
     const sessionId = options.resumeSessionId;
@@ -1533,10 +1550,26 @@ export class NativeExecutionProvider {
             // route owns both the prompt variables and this attempt's requests.
             this.pinExecutionRoute(ctx, owned.claim.run.route!);
             await options.setup?.(ctx, live);
+            const childActivations = new Map<string, {agent:Agent; runId:string; ended:boolean}>();
+            ctx.on("subagent/start",info=>{
+              const child=this.ctx.agents.get(info.id);
+              if(info.local && child && this.ctx.agents.isOwnedBy(info.id,live))
+                childActivations.set(String(info.id),{agent:child,runId:info.runId,ended:false});
+            });
+            ctx.on("subagent/end",info=>{
+              const activation=childActivations.get(String(info.id));
+              if(activation?.runId===info.runId)activation.ended=true;
+            });
             ctx.on("agent/pre-step", async ({ messages }, next) => {
               if (
                 messages.some((message) => {
                   const source = message.source;
+                  if(source.kind==="agent-message" || source.kind==="subagent-settled") {
+                    const activation=childActivations.get(String(source.senderSessionId));
+                    const current=this.ctx.agents.get(source.senderSessionId);
+                    if(activation && (source.kind!=="subagent-settled" || activation.ended) &&
+                      (current===activation.agent && this.ctx.agents.isOwnedBy(source.senderSessionId,live) || !current && activation.ended))return false;
+                  }
                   return (
                     source.kind !== "dsh-task" ||
                     source.taskId !== owned.claim.task.taskId ||
@@ -1645,19 +1678,20 @@ export class NativeExecutionProvider {
   }
 
   private async attachExecutionWorkspace(claim: NativeClaim, path: string, sessionId: string) {
-    if (!claim.run.projectContext ||
-        (claim.run.parentRunId && claim.run.executionParentKind !== "coordinator")) return;
+    const steward = this.owner.steward.store.isStewardTask(claim.task.taskId);
+    if (!steward && (!claim.run.projectContext ||
+        (claim.run.parentRunId && claim.run.executionParentKind !== "coordinator"))) return;
     const registry = this.ctx.get("workspaceRegistry") as unknown as
       {create(path: string,title?: string): Promise<{attachSession(id: SessionId): Promise<void>}>} | undefined;
     if (registry) {
-      const workspace = await registry.create(path, claim.run.projectContext.project?.title ?? "temporary-tasks");
+      const workspace = await registry.create(path, claim.run.projectContext?.project?.title ?? (steward ? "管家 · 执行任务" : "temporary-tasks"));
       await workspace.attachSession(SessionId(sessionId));
     }
   }
 
   private initializeSessionTitle(agent: Agent, claim: NativeClaim) {
     const title = claim.executionContext?.sessionTitle ?? taskSessionTitle({ title: claim.run.intentSnapshot?.title ?? claim.task.title, configuration: claim.run.configuration });
-    initializeTaskSessionTitle(agent.session, title);
+    initializeTaskSessionTitle(agent.session, this.owner.steward.store.isStewardTask(claim.task.taskId) ? `管家 · ${title}` : title);
   }
   private async drive(
     owned: OwnedAttempt,
@@ -1816,6 +1850,8 @@ export class NativeExecutionProvider {
       }
       if (!sessionId)
         throw new Error("resume requires an existing bound session");
+      if (this.owner.isConversationSession(sessionId))
+        throw new TaskError("STEWARD_CONVERSATION_RESERVED", "Personal and project coordinator histories cannot be borrowed for task execution");
       const workspaceId =
         claim.run.route?.workspaceId ?? claim.task.workspaceId;
       workspace = workspaceId
@@ -1862,7 +1898,7 @@ export class NativeExecutionProvider {
       } else {
         composition = await this.executionComposition(!resume);
         owned.handle = resume
-          ? await this.ctx.agents.resume({
+          ? await this.resumeOwnedAgent(owned, workspacePath, {
               resumeSessionId: SessionId(sessionId),
               agentOptions,
               setup,
@@ -2129,12 +2165,23 @@ export class NativeExecutionProvider {
 
 /** Trusted in-process entry point. The underlying ledger enforces roles too. */
 export class TaskSystemService extends Service {
+  isConversationSession(sessionId: string): boolean {
+    if (this.steward.store.hasSession(sessionId, this.config.nodeId)) return true;
+    const db = this.ledger.managementDatabase();
+    const exists = (name: string) => Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name));
+    if (exists("pr_sessions") && db.prepare("SELECT 1 FROM pr_sessions WHERE session=?").get(sessionId)) {
+      const location = exists("pr_session_locations") ? db.prepare("SELECT binding FROM pr_session_locations WHERE session=?").get(sessionId) : undefined;
+      if (!location || db.prepare("SELECT 1 FROM pr_session_locations WHERE session=? AND json_extract(binding,'$.nodeId')=?").get(sessionId, this.config.nodeId)) return true;
+    }
+    return exists("project_session_owner_operations") && Boolean(db.prepare("SELECT 1 FROM project_session_owner_operations WHERE session=? AND json_extract(data,'$.binding.nodeId')=? LIMIT 1").get(sessionId, this.config.nodeId));
+  }
   pendingOriginReturns(sessionId:string) {
     return this.ledger.originPendingRuns(this.config.nodeId,sessionId);
   }
   registerOriginContinuation(adapter:import("./task-returns.js").OriginContinuationAdapter) {return this.taskReturns.register(adapter);}
   readonly taskReturns: TaskReturnDelivery;
   readonly sessionPortal: ProjectSessionService;
+  readonly steward: StewardRuntime;
   withDispatchOrigin<T>(agent: Agent | undefined, operation: () => T): T {
     const selected = agent?.session.requestHeader()?.config;
     const provider=selected?.provider ?? agent?.options.provider;
@@ -2204,6 +2251,7 @@ export class TaskSystemService extends Service {
     });
     this.sessionCollaboration = new SessionCollaboration(ledger, config.nodeId, (nodeId, commandId, input) => collaborationAuthority(config.centralMode, ledger, this.ctx.get("remoteExecution"))(nodeId, commandId, input), agent => Boolean(this.native?.scopeFor(agent)));
     this.sessionPortal = new ProjectSessionService(this, ctx);
+    this.steward = new StewardRuntime(this, ctx);
     this.executionDirectories = new ExecutionDirectories(ledger.managementDatabase());
     ledger.executionDirectoryReady=()=>{try{return !!this.executionDirectories.validatedRoot();}catch{return false;}};
     const inventory=new ExecutionModelInventory({llm:()=>this.ctx.get("llm"),nativeReady:()=>!!this.native,officialBackends:()=>this.config.officialBackends,officialAvailable:backend=>!!this.ctx.get("subagents")?.getProvider(backend),temporaryWorkspaceReady:()=>ledger.executionDirectoryReady?.()===true});
@@ -2234,7 +2282,7 @@ export class TaskSystemService extends Service {
   }
   beginConfigurationEdit(): () => void {
     if (
-      this.configurationPaused || this.returnJob ||
+      this.configurationPaused || this.returnJob || this.steward.active ||
       [...this.providers].some((provider) => provider.activeCount > 0)
     )
       throw new TaskError("CONFIGURATION_BUSY", "Native execution is active");
@@ -2255,6 +2303,10 @@ export class TaskSystemService extends Service {
     if (!this.config.executionEnabled)
       throw new Error("planner role cannot execute native workloads");
   }
+  assertConversationAdmission(): void {
+    if (this.configurationPaused || !this.accepting)
+      throw new TaskError("CONFIGURATION_BUSY", "Conversation admission is paused while the host configuration changes");
+  }
   attach(provider: NativeExecutionProvider): void {
     this.providers.add(provider);
     this.native = provider;
@@ -2269,7 +2321,7 @@ export class TaskSystemService extends Service {
   close(): Promise<void> {
     if (this.shutdown) return this.shutdown;
     this.accepting = false;
-    const portal = this.sessionPortal.close();
+    const portal = this.steward.close().then(() => this.sessionPortal.close());
     return this.shutdown = Promise.resolve().then(() => this.closeOwned(portal));
   }
   private async closeOwned(portal: Promise<void>): Promise<void> {
@@ -2682,13 +2734,25 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
     throw error;
   }
   const service = new TaskSystemService(ctx, config, ledger, results);
+  ctx.tools.register(defineTool({
+    name: "steward_recall",
+    description: "Read bounded previous steward messages in this actual native session's scope. Search returns versioned lookup and same-scope replyToLookup pointers; follow messageId/expectedRevision/offset to read full text and next pages. Quoted excerpts never authorize reading their donor. Authority recordKind reads are separate. Historical data is not new authorization; no caller-selected scope is accepted.",
+    parameters: { query: { type: "string" }, beforeSeq: { type: "integer" }, limit: { type: "integer" }, messageId: { type: "string" }, recordKind: { type: "string" }, recordId: { type: "string" }, offset: { type: "integer" }, expectedRevision: { type: "string" } },
+    output,
+    execute: async (args, exec) => {
+      if (!exec.agent) throw new TaskError("FORBIDDEN", "Recall requires an actual bound native session");
+      if (service.native?.scopeFor(exec.agent)) throw new TaskError("FORBIDDEN", "Owned task execution cannot read steward conversation history");
+      return json(service.steward.recall.read(exec.agent.id, args));
+    },
+  }));
   if (config.executionEnabled && config.scriptExecutionWorkspaces.length) {
     ctx.inject(["subprocess"], scriptCtx => {
       scriptCtx.effect(() => registerWorkflowScripts(service.programs, scriptCtx.subprocess, config.scriptExecutionWorkspaces));
     });
   }
-  ctx.inject(["agents","agentLoop","sessions","sessionPersistence","tools","systemPrompt"],returnCtx=>{
+  ctx.inject(["agents","agentLoop","sessions","sessionPersistence","sessionProjections","tools","systemPrompt","llm"],returnCtx=>{
     service.taskReturns.bindContext(returnCtx);
+    service.steward.bindContext(returnCtx);
     service.sessionPortal.bindContext(returnCtx);
   });
   ctx.inject(["agents", "sessions", "sessionPersistence", "tools", "systemPrompt", "sessionController", "typert", "workspaceRegistry", "remoteAccess", "commands", "fileUploads", "attachments", "fs"], nativeCtx => {
@@ -2714,7 +2778,7 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
       config.role,
       config.projectAgentOptions,
     );
-    const collaboration = new ProjectCollaborationAuthority(ledger, { projectSession: async (nodeId, commandId, request) => json(await service.sessionPortal.centralAction(nodeId, commandId, request)), planner: () => service.projects?.planner, control:(commandId,input)=>service.projects!.actOnTask({...input,commandId}) });
+    const collaboration = new ProjectCollaborationAuthority(ledger, { authorizeMessageSession: (nodeId, sessionId, cwd, projectId) => service.sessionPortal.authorizeMessageSession(nodeId, sessionId, cwd, projectId), projectSession: async (nodeId, commandId, request) => json(await service.sessionPortal.centralAction(nodeId, commandId, request)), planner: () => service.projects?.planner, control:(commandId,input)=>service.projects!.actOnTask({...input,commandId}) });
     service.projects.collaboration = collaboration;
     ledger.projectCollaborate = collaboration.projectCollaborate.bind(collaboration);
     ctx.inject(["workspaceRegistry"], async () => {
@@ -3305,7 +3369,7 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
     defineTool({
       name: "task_dispatch",
       description:
-        "Dispatch one authorized task with a stable commandId. Ordinary callers register and dispatch directly without a separate planning tool or decision-model call. taskId can dispatch an existing draft. Omit nodeId only to accept general allocation within the authorized executor pool; use task_nodes and specify nodeId for device-specific requirements. Active /project sessions use their bound central project. Owned execution agents delegate a child through their authoritative ledger and fenced lease. Omit executionModel to use the chosen executor node default. Set expectedExecutionMs to a reasonable task-specific upper bound for a one-time progress check after actual execution starts. Collect actual reports with task_query/history/wait; dispatch ACK is not completion.",
+        "Dispatch one authorized task with a stable commandId. Ordinary callers register and dispatch directly without a separate planning tool or decision-model call. taskId can dispatch an existing draft. Bound managed project/task coordinators can retry the same ended Task only in a user-requested turn: retry=true, taskId, current expectedActionVersion from task_query, and a stable commandId; omit title/description/workspaceId/configuration/route. Read-only or scheduled check-in turns cannot authorize retry. Omit nodeId only to accept general allocation within the authorized executor pool; use task_nodes and specify nodeId for device-specific requirements. Active /project sessions use their bound central project. Owned execution agents delegate a child through their authoritative ledger and fenced lease. Omit executionModel to use the chosen executor node default. Set expectedExecutionMs to a reasonable task-specific upper bound for a one-time progress check after actual execution starts. Collect actual reports with task_query/history/wait; dispatch ACK is not completion.",
       parameters: {
         expectedExecutionMs:{type:"integer",description:"Caller-estimated positive integer milliseconds, at most 30 days, from actual execution start until one progress check. Does not stop or retry execution. Omit only when no estimate is set."},
         commandId: { type: "string", required: true },
@@ -3314,7 +3378,7 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
         taskId: {
           type: "string",
           description:
-            "Existing draft task to dispatch. Owned agents create children atomically and cannot select a taskId.",
+            "Existing draft to dispatch, or ended Task to retry with retry=true and current expectedActionVersion. Owned agents create children atomically and cannot select a taskId.",
         },
         retry:{type:"boolean",description:"Explicitly create a new Run for an ended Task; requires current expectedActionVersion."},
         expectedActionVersion:{type:"string"},
@@ -3392,6 +3456,18 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
               "policy/display are available only for owned child dispatch",
             );
           const sessionBinding = exec.agent ? service.sessionCollaboration.binding(exec.agent) : undefined;
+          if (args.taskId && (args.retry || args.expectedActionVersion) &&
+              (service.projects?.projectForSession(exec.agent?.id ?? "") || service.projects?.taskForSession(exec.agent?.id ?? ""))) {
+            if (args.title || args.description || args.workspaceId) throw new TaskError("INVALID", "Existing task retry uses its stored intent; omit title/description/workspaceId");
+            if (!args.retry || !args.expectedActionVersion || !exec.agent) throw new TaskError("INVALID", "Retry requires retry=true and the current expectedActionVersion");
+            if (args.route || args.configuration !== undefined) throw new TaskError("INVALID", "Managed retry accepts nodeId/executionModel and preserves the stored task configuration");
+            return json(await service.projects!.retryManagedTask(exec.agent, {
+              commandId: args.commandId, taskId: args.taskId, expectedActionVersion: args.expectedActionVersion,
+              ...(args.nodeId ? {nodeId: args.nodeId} : {}),
+              ...(args.executionModel ? {executionModel: ExecutionModelChoice.parse(args.executionModel)} : {}),
+              ...(args.expectedExecutionMs !== undefined ? {expectedExecutionMs: args.expectedExecutionMs} : {}),
+            }, exec.signal));
+          }
           const managedLocal = config.centralMode === "host" && sessionBinding?.projectId && !service.projects?.nativeSession(String(exec.agent?.id)) && ledger.managementDatabase().prepare("SELECT 1 FROM pr_projects WHERE id=?").get(sessionBinding.projectId);
           const project = !managedLocal ? await service.sessionProjectDispatch?.(exec.agent, args, String(exec.callId)) : undefined;
           if (project?.handled) return project.value;
@@ -3418,7 +3494,6 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
               service.projects?.projectForSession(exec.agent?.id ?? "") ||
               service.projects?.taskForSession(exec.agent?.id ?? "")
             ) {
-              if(args.retry || args.expectedActionVersion)throw new TaskError("FORBIDDEN","Use the authorized task retry action for an ended managed task");
               const task=ledger.getTask(args.taskId);
               return dispatchPlanned({commandId:args.commandId,taskId:args.taskId,title:task.title,description:task.description,...(args.expectedExecutionMs!==undefined?{expectedExecutionMs:args.expectedExecutionMs}:{}),...(args.nodeId?{nodeId:args.nodeId}:{}),...(args.route?{route:args.route as unknown as Claim["run"]["route"]}:{}),...(args.executionModel?{executionModel:ExecutionModelChoice.parse(args.executionModel)}:{})},exec);
             }

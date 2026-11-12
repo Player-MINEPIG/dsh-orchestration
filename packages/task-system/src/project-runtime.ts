@@ -7,6 +7,9 @@ import { nativeProjectSession, type NativeProjectSession } from "./project-sessi
 import type { ProjectSessionMove } from "./project-sessions.js";
 import { temporaryTaskDirectory,temporaryTaskMetadata } from "./remote/project-workspace.js";
 import type { TaskSystemService } from "./dsh-plugin.js";
+import type { Agent } from "@deepseek-ai/dsh-agent";
+import { AttachmentId, type AdmittedPromptContentPart } from "@deepseek-ai/dsh-attachment";
+import { z } from "zod";
 import type {} from "@deepseek-ai/dsh-session-persistence-jsonl";
 import { Context } from "@deepseek-ai/cordis";
 import {
@@ -28,9 +31,14 @@ import {
 import { isAbsolute, join, relative, sep } from "node:path";
 import { TaskLedger, TaskError, canonical } from "./ledger.js";
 import { Workbench } from "./workbench.js";
+import { stewardProjectCheckpoint } from "./steward-memory-context.js";
+import { initializeTaskSessionTitle } from "./session-titles.js";
+import { stewardPermission, type StewardPermission } from "./steward-turn-permission.js";
+import { pinStewardTurnSelection, type StewardTurnSelection } from "./steward-turn-selection.js";
 import { WorkspaceManager } from "./workspaces.js";
 import { ScheduledPlans } from "./scheduled-plans.js";
 import { ExpectedExecutionMs } from "./execution-expectation.js";
+import { ExecutionModelChoice } from "./execution-models.js";
 import type { TaskPlanner, PlanningInput } from "./planning.js";
 import type { ExecutionRoute, Json, Role, Report, Task, Run } from "./contracts.js";
 
@@ -44,6 +52,23 @@ const reportHtmlPresentation = (report: Report) => {
 };
 const reportReadingVersion = (report: Report) => {const presentation=reportHtmlPresentation(report);return digest({title:report.title,body:report.body,revision:report.revision,artifactIds:report.artifactIds,...(presentation?{presentation}:{})});};
 const now = () => new Date().toISOString();
+const queuedSelection = z.strictObject({ provider: z.string().min(1), model: z.string().min(1), reasoningEffort: z.string().min(1).optional() });
+const queuedFile = z.strictObject({ attachmentId: z.string().min(1).transform(AttachmentId), name: z.string(), bytes: z.number().int().nonnegative() });
+const queuedImage = queuedFile.omit({ name: true }).extend({ name: z.string().optional(),
+  mediaType: z.enum(["image/png", "image/jpeg", "image/webp", "image/gif"]),
+  width: z.number().int().positive(), height: z.number().int().positive(),
+  originalDimensions: z.strictObject({ width: z.number().int().positive(), height: z.number().int().positive() }).optional(),
+});
+const queuedContent = z.array(z.discriminatedUnion("type", [
+  z.strictObject({ type: z.literal("text"), text: z.string() }),
+  z.strictObject({ type: z.literal("file"), attachment: queuedFile }),
+  z.strictObject({ type: z.literal("image"), attachment: queuedImage }),
+])).min(1).max(100).refine(parts => parts.some(part => part.type !== "text" || part.text.trim().length > 0));
+interface ProjectTurnContent {
+  content?: AdmittedPromptContentPart[];
+  selection?: StewardTurnSelection;
+  permission?: StewardPermission;
+}
 const text = (v: unknown, limit: number) => {
   if (typeof v !== "string" || !v.trim() || v.length > limit)
     throw new TaskError("INVALID", "Invalid text length");
@@ -55,6 +80,10 @@ const TOOLS = [
   "task_query",
   "task_history",
   "task_wait",
+  "task_session_message",
+  "task_execution_status",
+  "task_checkin",
+  "steward_recall",
 ];
 interface ProjectRow {
   taskId?: string;
@@ -83,7 +112,7 @@ export type ProjectWorkspaceSelection =
   | { kind: "registered"; nodeId: string; workspaceId: string }
   | { kind: "directory"; nodeId: string; path: string };
 type ProjectWorkspaceBinding = { workspaceId: string; nodeId: string; path: string; scope?: "coordinator" };
-interface ProjectCreateInput { commandId: string; title: string; goal: string; selection?: ProjectAgentOptions; workspace?: ProjectWorkspaceSelection }
+interface ProjectCreateInput { stewardOrigin?: string; commandId: string; title: string; goal: string; selection?: ProjectAgentOptions; workspace?: ProjectWorkspaceSelection }
 
 export interface ProjectAgentOptions {
   provider: string;
@@ -100,7 +129,7 @@ export class ProjectRuntime {
   private readonly workbench: Workbench;
   private readonly jobs = new Map<
     string,
-    { done: Promise<void>; abort: AbortController }
+    { done: Promise<void>; abort: AbortController; owner: string; session: string }
   >();
   private accepting = true;
   private readonly placementHandles = new Set<Awaited<ReturnType<Context["agents"]["resume"]>>>();
@@ -131,6 +160,7 @@ export class ProjectRuntime {
     this.db
       .exec(`CREATE TABLE IF NOT EXISTS pr_settings(id INTEGER PRIMARY KEY CHECK(id=1),root TEXT,revision INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS pr_project_workspaces(project TEXT PRIMARY KEY,workspace TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS pr_steward_project_sources(project TEXT PRIMARY KEY,message TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS pr_session_locations(session TEXT PRIMARY KEY,project TEXT NOT NULL,generation INTEGER NOT NULL,binding TEXT NOT NULL,operation TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS pr_task_presentation(task TEXT PRIMARY KEY,visibility TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS pr_report_reads(report TEXT NOT NULL,version TEXT NOT NULL,read_at TEXT NOT NULL,PRIMARY KEY(report,version));
@@ -141,9 +171,16 @@ export class ProjectRuntime {
       CREATE TABLE IF NOT EXISTS pr_adhoc(id TEXT PRIMARY KEY,task TEXT UNIQUE NOT NULL,root TEXT NOT NULL,cwd TEXT NOT NULL,session TEXT NOT NULL,generation INTEGER NOT NULL,state TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS pr_sessions(session TEXT PRIMARY KEY,owner TEXT NOT NULL,generation INTEGER NOT NULL,summary TEXT NOT NULL,created TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS pr_turns(command TEXT PRIMARY KEY,digest TEXT NOT NULL,owner TEXT NOT NULL,session TEXT NOT NULL,text TEXT NOT NULL,state TEXT NOT NULL,error TEXT,created TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS pr_dispatch(task TEXT PRIMARY KEY,decision TEXT NOT NULL,candidates TEXT NOT NULL,state TEXT NOT NULL,run TEXT,generation INTEGER NOT NULL,attempted TEXT NOT NULL,updated TEXT NOT NULL);`);
+      CREATE TABLE IF NOT EXISTS pr_dispatch(task TEXT PRIMARY KEY,decision TEXT NOT NULL,candidates TEXT NOT NULL,state TEXT NOT NULL,run TEXT,generation INTEGER NOT NULL,attempted TEXT NOT NULL,updated TEXT NOT NULL);
+      CREATE INDEX IF NOT EXISTS pr_turn_owner_created ON pr_turns(owner,created);`);
     if(!(this.db.prepare("PRAGMA table_info(pr_task_routes)").all() as {name:string}[]).some(column=>column.name==="expected_execution_ms"))this.db.exec("ALTER TABLE pr_task_routes ADD COLUMN expected_execution_ms INTEGER");
     this.demandViews = new DemandTaskViews(this.db, ledger, nodeId, taskId => this.projectTaskCard(taskId),(taskId,scope)=>this.childAttentionRows(taskId,0,1,scope).total);
+    if (!this.db.prepare("PRAGMA table_info(pr_turns)").all().some(column => column.name === "native_admission"))
+      this.db.exec("ALTER TABLE pr_turns ADD COLUMN native_admission TEXT NOT NULL DEFAULT 'unknown'");
+    for (const column of ["content", "selection", "permission"]) {
+      if (!this.db.prepare("PRAGMA table_info(pr_turns)").all().some(row => row.name === column))
+        this.db.exec(`ALTER TABLE pr_turns ADD COLUMN ${column} TEXT`);
+    }
     // Existing project sessions keep their IDs; the column now names the
     // conversation owner, which can be a real project or a temporary task.
     for (const table of ["pr_sessions", "pr_turns"]) {
@@ -157,7 +194,7 @@ export class ProjectRuntime {
     }
     this.db
       .prepare(
-        "UPDATE pr_turns SET state='interrupted',error='HOST_RESTART' WHERE state IN ('queued','running')",
+        "UPDATE pr_turns SET state='interrupted',error='HOST_RESTART' WHERE state='running'",
       )
       .run();
     this.db
@@ -288,6 +325,18 @@ export class ProjectRuntime {
     return row ? nativeProjectSession.parse(JSON.parse(String(row.binding))) : undefined;
   }
   placementProject(projectId: string) { this.authorize(); return { ...this.project(projectId) }; }
+  chatProjects() {
+    this.authorize();
+    return this.db.prepare("SELECT p.id,p.title,p.session,p.generation,json_extract(l.binding,'$.nodeId') AS owner_node FROM pr_projects p LEFT JOIN pr_session_locations l ON l.session=p.session WHERE p.state='ready' ORDER BY p.id").all()
+      .map(row => ({ projectId: String(row.id), title: String(row.title),
+        bindingToken: digest({ nodeId: String(row.owner_node ?? this.nodeId),
+          sessionId: String(row.session), generation: Number(row.generation) }) }));
+  }
+  chatProjectActivity() {
+    this.authorize();
+    return this.db.prepare("SELECT p.id,p.title,MAX(s.created) AS created FROM pr_projects p JOIN pr_sessions s ON s.owner=p.id WHERE p.state='ready' GROUP BY p.id ORDER BY p.id").all()
+      .map(row => ({ projectId: String(row.id), title: String(row.title), createdAt: String(row.created) }));
+  }
   checkPlacement(input: ProjectSessionMove) {
     this.authorize();
     const project = this.project(input.projectId);
@@ -323,8 +372,9 @@ export class ProjectRuntime {
     const handle = await this.agents().resume({ resumeSessionId: SessionId(binding.sessionId),
       agentOptions: recorded ? { provider: recorded.config.provider, model: recorded.config.model, ...(recorded.config.reasoningEffort ? { reasoningEffort: recorded.config.reasoningEffort } : {}) } : this.options(project.id),
       setup: (agentCtx, agent) => {
-        agentCtx.tools.restrict({ allow: TOOLS });
-        agentCtx.tools.guard(exec => exec.agent === agent && TOOLS.includes(exec.name) ? undefined : "Project dispatch tools only");
+        agentCtx.tools.restrict({ allow: [...TOOLS, ...(agentCtx.tools.get("read", agent) ? ["read"] : [])] });
+        agentCtx.tools.guard(exec => exec.agent === agent && (TOOLS.includes(exec.name) || exec.name === "read" &&
+          this.ctx.get("taskSystem")?.steward.canReadAttachmentFile(binding.sessionId, exec.arguments)) ? undefined : "Project dispatch tools only");
       },
     });
     this.placementHandles.add(handle);
@@ -410,12 +460,31 @@ export class ProjectRuntime {
     return event?JSON.parse(String(event.data)) as import('./contracts.js').Event:undefined;
   }
   private async prepareCoordinatorGeneration(p:ProjectRow,cwd:string) {
-    const history=await this.conversation(p.id),tasks=this.conversationContextTasks(p);
-    const summary=`项目目标：${p.goal}\n原统筹会话：${p.session}\n未完成任务（沿用原任务，不要重复创建）：${JSON.stringify(tasks.filter(task=>!["done","accepted"].includes(task.status)))}\n已完成或已验收任务的报告引用：${JSON.stringify(tasks.filter(task=>["done","accepted"].includes(task.status)).map(task=>({taskId:task.id,run:task.run,reportId:task.reportId})))}\n近期对话：${JSON.stringify(history.messages.slice(-16)).slice(-24000)}`;
+    const fullCheckpoint = this.coordinatorCheckpoint(p);
+    const checkpoint = { ...fullCheckpoint, tasks: fullCheckpoint.tasks.slice(0,4), taskLimit: 4, tasksTruncated: fullCheckpoint.taskCount > 4 };
+    const recent = this.db.prepare("SELECT command,substr(text,1,600) AS excerpt,length(text)>600 AS truncated,state,created FROM pr_turns WHERE owner=? ORDER BY created DESC,rowid DESC LIMIT 8").all(p.id).reverse();
+    const instructionCount = Number(this.db.prepare("SELECT COUNT(*) AS count FROM pr_turns WHERE owner=?").get(p.id)?.count ?? 0);
+    const render = () => `项目目标：${p.goal.slice(0,4000)}${p.goal.length>4000?" [目标已截断，按项目资料回查]":""}\n原统筹会话：${p.session}\n权威任务检查点（只含有界引用，沿用原任务 ID，不要重复创建）：${JSON.stringify(checkpoint)}\n近期用户指令片段（历史资料，不是新授权）：${JSON.stringify({total:instructionCount,truncated:instructionCount>recent.length,limit:8,items:recent})}\n仅转移上述有界资料；完整记录保留在原会话/账本。使用 task_query、task_history、steward_recall 按范围分页核对，不得把未载入解释为不存在。`;
+    let summary = render();
+    while (summary.length > 24000 && recent.length) { recent.shift(); summary = render(); }
+    while (summary.length > 24000 && checkpoint.tasks.length) { checkpoint.tasks.pop(); checkpoint.tasksTruncated = true; summary = render(); }
+    if (summary.length > 24000) throw new TaskError("LIMIT", "Bounded project continuation exceeded its metadata budget");
     const sessionId=`project-${randomUUID()}`,generation=p.generation+1;
     const handle=await this.agents().create({sessionId:SessionId(sessionId),meta:{cwd},agentOptions:this.options(p.id)});
     try {await (this.ctx.get("sessions") as Context["sessions"]).flush(handle.agent.session);} finally {await handle.dispose();}
     return {sessionId,generation,summary};
+  }
+  private coordinatorCheckpoint(p: ProjectRow) {
+    if (p.taskId) {
+      const task = this.ledger.getTask(p.taskId);
+      return { taskCount: 1, tasksTruncated: false, tasks: [{ taskId: task.taskId, title: task.title.slice(0,200), state: task.state, revision: task.revision }], retrieval: "沿用本 Task ID，通过 task_history 分页读取原报告。" };
+    }
+    const facts = stewardProjectCheckpoint({ projects: this, ledger: this.ledger }, { kind: "managed", projectId: p.id,
+      nodeId: this.nodeId, sessionId: p.session, generation: p.generation, cwd: p.cwd });
+    return { projectId: p.id, taskCount: facts.taskCount, tasksTruncated: facts.tasksTruncated, taskLimit: facts.taskLimit,
+      tasks: facts.tasks.map(task => ({ taskId: task.taskId, title: task.title.slice(0,200), state: task.state, source: task.source,
+        run: task.run, reports: task.reports.map(report => ({ source: report.source, runId: report.runId, kind: report.kind })) })),
+      gates: facts.gates, retrieval: facts.retrieval };
   }
   private existingDirectory(path: string, roots: string[]) {
     if (!isAbsolute(path) || path.split(/[\\/]/).some(part => part === "..")) throw new TaskError("WORKSPACE_POLICY", "Expected an absolute existing directory within a controlled root");
@@ -543,6 +612,10 @@ export class ProjectRuntime {
       );
     return this.modelSelection(p.id);
   }
+  conversationModel(projectId: string) {
+    this.authorize();
+    return this.options(this.project(projectId).id);
+  }
   private options(owner?: string) {
     const selected =
       (owner ? this.modelSelection(owner).selection : null) ??
@@ -600,7 +673,12 @@ export class ProjectRuntime {
     const command = text(input.commandId, 200),
       title = text(input.title, 500),
       goal = text(input.goal, 20000);
-    const hash = digest({ title, goal, ...(input.selection ? {selection: input.selection} : {}), ...(input.workspace ? {workspace:input.workspace} : {}) });
+    if (input.stewardOrigin) {
+      const original = this.ctx.get("taskSystem")?.steward.store.message(input.stewardOrigin);
+      if (!original || original.role !== "user" || (original.source.kind !== "personal" && original.source.kind !== "workbench") || original.source.nodeId !== this.nodeId || command !== `steward-create:${original.id}`)
+        throw new TaskError("FORBIDDEN", "Steward project provenance requires its canonical personal creation request");
+    }
+    const hash = digest({ title, goal, ...(input.stewardOrigin ? {stewardOrigin:input.stewardOrigin} : {}), ...(input.selection ? {selection: input.selection} : {}), ...(input.workspace ? {workspace:input.workspace} : {}) });
     let p = this.db
       .prepare("SELECT * FROM pr_projects WHERE command=?")
       .get(command) as unknown as ProjectRow | undefined;
@@ -627,6 +705,7 @@ export class ProjectRuntime {
       try {
         this.db.prepare("INSERT INTO pr_projects VALUES(?,?,?,?,?,?,?,?,1,?)")
           .run(id, command, hash, root, cwd, title, goal, session, "creating");
+        if (input.stewardOrigin) this.db.prepare("INSERT INTO pr_steward_project_sources VALUES(?,?)").run(id,input.stewardOrigin);
         if (binding) this.db.prepare("INSERT INTO pr_project_workspaces VALUES(?,?)").run(id, canonical(binding));
         if (input.selection) this.db.prepare("INSERT INTO pr_models VALUES(?,?,?)").run(id, canonical(input.selection), 1);
         this.db.exec("COMMIT");
@@ -698,6 +777,8 @@ export class ProjectRuntime {
         agentOptions: this.options(p.id),
       });
       try {
+        if (this.db.prepare("SELECT 1 FROM pr_steward_project_sources WHERE project=?").get(p.id))
+          initializeTaskSessionTitle(handle.agent.session, `管家 · ${title}`);
         await (this.ctx.get("sessions") as Context["sessions"]).flush(
           handle.agent.session,
         );
@@ -938,6 +1019,58 @@ export class ProjectRuntime {
         .get(session) as { owner: string } | undefined
     )?.owner;
   }
+  assertExecutionCoordinatorTask(session: string, cwd: string, taskId: string, projectId?: string) {
+    this.authorize();
+    const location = this.nativeSession(session);
+    if (location && location.nodeId !== this.ledger.nodeId) throw new TaskError("FORBIDDEN", "Coordinator belongs to another native owner");
+    const managedProject = this.projectForSession(session);
+    const managedTask = this.taskForSession(session);
+    if (managedTask) {
+      const source = this.adhoc(managedTask);
+      if (source.session !== session || source.cwd !== cwd || source.state !== "ready") throw new TaskError("FORBIDDEN", "Only the current task coordinator may inspect execution");
+      let task = this.ledger.getTask(taskId);
+      const visited = new Set<string>();
+      while (task.taskId !== managedTask) {
+        if (!task.parentTaskId || visited.has(task.taskId) || visited.size >= 32) throw new TaskError("FORBIDDEN", "Task is outside this coordinator's task tree");
+        visited.add(task.taskId);
+        task = this.ledger.getTask(task.parentTaskId);
+      }
+      return;
+    }
+    const selected = managedProject ?? projectId;
+    if (!selected || !this.projectTaskIds(selected).includes(taskId)) throw new TaskError("FORBIDDEN", "Task is outside this coordinator's project");
+    if (managedProject) {
+      const source = this.project(managedProject);
+      if (source.session !== session || source.cwd !== cwd || source.state !== "ready") throw new TaskError("FORBIDDEN", "Only the current project coordinator may inspect execution");
+    } else {
+      const binding = this.db.prepare("SELECT project,cwd FROM dispatcher_projects WHERE node=? AND session=?").get(this.ledger.nodeId, session);
+      if (binding?.project !== selected || binding.cwd !== cwd) throw new TaskError("FORBIDDEN", "Coordinator project binding changed");
+    }
+  }
+  async retryManagedTask(agent: Agent, input: {
+    commandId: string; taskId: string; expectedActionVersion: string;
+    nodeId?: string; executionModel?: ExecutionModelChoice; expectedExecutionMs?: number;
+  }, signal: AbortSignal) {
+    const turn = agent.session.snapshotEvents().findLast(event => event.type === "turn/start");
+    const authorize = () => {
+      signal.throwIfAborted();
+      this.assertExecutionCoordinatorTask(String(agent.id), agent.session.header.cwd ?? "", input.taskId);
+      if (this.ctx.get("sandboxPolicy")?.resolve({session: agent.session}).mode === "read-only")
+        throw new TaskError("FORBIDDEN", "Read-only requests cannot retry execution");
+      const events = agent.session.snapshotEvents();
+      if (!turn || events.findLast(event => event.type === "turn/start")?.seq !== turn.seq ||
+          events.some(event => event.type === "turn/end" && event.data.turn === turn.data.turn) ||
+          !events.some(event => event.seq > turn.seq && event.type === "user/message" && event.data.source.kind === "user"))
+        throw new TaskError("FORBIDDEN", "Managed retry requires a current user-requested coordinator turn; scheduled checks cannot authorize reruns");
+    };
+    authorize();
+    return this.retryTask({
+      ...input, commandId: `pm-${digest({session: String(agent.id), commandId: input.commandId})}`,
+      expectedVersion: input.expectedActionVersion,
+      retryRouting: {nodeId: input.nodeId, executionModel: input.executionModel},
+      retryActor: `agent:${agent.id}`,
+    }, authorize, signal);
+  }
   /** Final deterministic ownership check before dispatch, including attach decisions. */
   assertDecisionScope(session: string, requestId: string) {
     const managedProjectId = this.projectForSession(session);
@@ -1092,6 +1225,7 @@ export class ProjectRuntime {
   tick() {
     if (!this.accepting) return;
     this.ledger.demandReads.ensureFacts();
+    this.resumeConversationQueue();
     if(this.planner)for(const run of this.ledger.resultRetryCandidates()){
       if(!run.resultValidationFailure||this.resultRetries.has(run.runId))continue;
       const info=this.ledger.resultRetryInfo(run.runId);
@@ -1278,26 +1412,31 @@ export class ProjectRuntime {
     const row=this.db.prepare("SELECT id FROM demand_entity_facts WHERE kind='run' AND task_id=? ORDER BY seq DESC LIMIT 1").get(taskId);
     return row?this.ledger.getRun(String(row.id)):undefined;
   }
-  send(input: { projectId: string; commandId: string; text: string }) {
+  send(input: { projectId: string; commandId: string; text: string } & ProjectTurnContent) {
     this.authorize();
     this.agents();
     return this.sendOwned(
       this.project(input.projectId),
       input.commandId,
       input.text,
+      input,
     );
   }
-  private sendOwned(p: ProjectRow, commandId: string, contents: string) {
+  private sendOwned(p: ProjectRow, commandId: string, contents: string, rich: ProjectTurnContent = {}) {
     if (this.nativeSession(p.session)) throw new TaskError("FORBIDDEN", "Use the native owner conversation for this project session");
-    const message = text(contents, 20000),
+    const content = rich.content === undefined ? undefined : queuedContent.parse(rich.content);
+    const selection = rich.selection === undefined ? undefined : queuedSelection.parse(rich.selection);
+    const permission = rich.permission === undefined ? undefined : stewardPermission.parse(rich.permission);
+    const message = content && contents.trim().length === 0 ? "" : text(contents, 20000),
       command = text(commandId, 200);
-    const agentOptions = this.options(p.id);
+    if (!selection) this.options(p.id);
     if (p.state !== "ready")
       throw new TaskError("CONFLICT", "Project is not ready");
     const hash = digest(
-      p.taskId
+      { ...(p.taskId
         ? { taskId: p.taskId, text: message }
-        : { projectId: p.id, text: message },
+        : { projectId: p.id, text: message }),
+        ...(content === undefined ? {} : { content }), ...(selection === undefined ? {} : { selection }), ...(permission === undefined ? {} : { permission }) },
     );
     const existing = this.db
       .prepare("SELECT * FROM pr_turns WHERE command=?")
@@ -1307,29 +1446,64 @@ export class ProjectRuntime {
         throw new TaskError("CONFLICT", "Message command reused");
       return { commandId: command, state: existing.state };
     }
-    if (
-      this.db
-        .prepare(
-          "SELECT command FROM pr_turns WHERE owner=? AND state IN ('queued','running')",
-        )
-        .get(p.id)
-    )
-      throw new TaskError("BUSY", "Project conversation is responding");
     this.db
-      .prepare("INSERT INTO pr_turns VALUES(?,?,?,?,?,?,NULL,?)")
-      .run(command, hash, p.id, p.session, message, "queued", now());
+      .prepare("INSERT INTO pr_turns(command,digest,owner,session,text,state,error,created,native_admission,content,selection,permission) VALUES(?,?,?,?,?,?,NULL,?,'not-started',?,?,?)")
+      .run(command, hash, p.id, p.session, message, "queued", now(), content === undefined ? null : canonical(content), selection === undefined ? null : canonical(selection), permission === undefined ? null : canonical(permission));
+    this.drainConversation(p);
+    return { commandId: command, state: "queued" };
+  }
+  resumeConversationQueue() {
+    if (!this.accepting) return;
+    for (const row of this.db.prepare(`SELECT t.owner FROM pr_turns t JOIN (
+      SELECT id,session,state FROM pr_projects UNION ALL SELECT id,session,state FROM pr_adhoc
+      ) p ON p.id=t.owner WHERE t.state='queued' AND p.state='ready'
+      AND (t.session<>p.session OR NOT EXISTS(SELECT 1 FROM pr_turns active WHERE active.owner=p.id AND active.session=p.session AND active.state IN ('running','interrupted')))
+      GROUP BY t.owner ORDER BY MIN(t.rowid) LIMIT 64`).all()) {
+      const owner = String(row.owner), adhoc = this.db.prepare("SELECT task FROM pr_adhoc WHERE id=?").get(owner);
+      let p: ProjectRow;
+      try { p = adhoc ? this.adhoc(String(adhoc.task)) : this.project(owner); }
+      catch { continue; }
+      this.drainConversation(p);
+    }
+  }
+  private drainConversation(p: ProjectRow) {
+    this.db.prepare("UPDATE pr_turns SET state='interrupted',error='OLD_GENERATION' WHERE owner=? AND session<>? AND state='queued'").run(p.id, p.session);
+    if (p.state !== "ready" || this.nativeSession(p.session) || [...this.jobs.values()].some(job => job.owner === p.id && job.session === p.session) || this.db.prepare("SELECT 1 FROM pr_turns WHERE owner=? AND session=? AND state IN ('running','interrupted') LIMIT 1").get(p.id, p.session)) return;
+    const agents = this.ctx.get("agents"), live = agents?.get(SessionId(p.session));
+    if (!agents || live && (live.status !== "idle" || live.inbox.nextTurn.length || live.inbox.nextStep.length)) return;
+    const row = this.db.prepare("SELECT command,text,content,selection,permission FROM pr_turns WHERE owner=? AND session=? AND state='queued' ORDER BY rowid LIMIT 1").get(p.id, p.session);
+    if (!row) return;
+    let agentOptions: ReturnType<ProjectRuntime["options"]>;
+    const selection = row.selection === null ? undefined : queuedSelection.parse(JSON.parse(String(row.selection)));
+    const content = row.content === null ? undefined : queuedContent.parse(JSON.parse(String(row.content)));
+    const permission = row.permission === null ? undefined : stewardPermission.parse(JSON.parse(String(row.permission)));
+    try { agentOptions = selection ? { provider: selection.provider, model: selection.model,
+      ...(selection.reasoningEffort === undefined ? {} : { reasoningEffort: ReasoningEffortId(selection.reasoningEffort) }) } : this.options(p.id); }
+    catch { return; }
+    if (!this.ctx.get("llm")?.listProviders().some(provider => provider.id === agentOptions.provider)) return;
+    const command = String(row.command), message = String(row.text);
+    const admitted = this.db.prepare("UPDATE pr_turns SET state='running' WHERE command=? AND state='queued' AND NOT EXISTS(SELECT 1 FROM pr_turns WHERE owner=? AND session=? AND state IN ('running','interrupted'))").run(command, p.id, p.session);
+    if (!admitted.changes) return;
     const abort = new AbortController();
-    const done = this.respond(p, command, message, abort.signal, agentOptions)
+    const done = this.respond(p, command, message, abort.signal, agentOptions, { content, selection, permission })
       .catch(() => {
         this.db
           .prepare(
-            "UPDATE pr_turns SET state='failed',error='CONVERSATION_FAILED' WHERE command=?",
+            "UPDATE pr_turns SET state='interrupted',error='CONVERSATION_FAILED' WHERE command=? AND state='running'",
           )
           .run(command);
       })
-      .finally(() => this.jobs.delete(command));
-    this.jobs.set(command, { done, abort });
-    return { commandId: command, state: "queued" };
+      .finally(() => { this.jobs.delete(command); this.resumeConversationQueue(); });
+    this.jobs.set(command, { done, abort, owner: p.id, session: p.session });
+  }
+  confirmConversationCompletion(commandId: string, sessionId: string) {
+    this.db.prepare("UPDATE pr_turns SET state='completed',error=NULL,native_admission='confirmed' WHERE command=? AND session=? AND state='interrupted'").run(commandId, sessionId);
+  }
+  releaseConversationWait(commandId: string, sessionId: string) {
+    const live = this.ctx.get("agents")?.get(SessionId(sessionId));
+    if (live && (live.status !== "idle" || live.inbox.nextTurn.length || live.inbox.nextStep.length) || this.db.prepare("SELECT 1 FROM pr_turns WHERE session=? AND state='running'").get(sessionId))
+      throw new TaskError("BUSY", "The managed project turn is still active");
+    this.db.prepare("UPDATE pr_turns SET state='failed',error='WAIT_ENDED_OUTCOME_UNCONFIRMED' WHERE command=? AND session=? AND state='interrupted'").run(commandId, sessionId);
   }
   private async respond(
     p: ProjectRow,
@@ -1337,40 +1511,35 @@ export class ProjectRuntime {
     message: string,
     signal: AbortSignal,
     agentOptions: ReturnType<ProjectRuntime["options"]>,
+    rich: ProjectTurnContent = {},
   ) {
     let terminalError = false;
+    let agent: Agent | undefined;
+    let binding: ReturnType<Context["plugin"]> | undefined;
+    let nativeAdmitted = false;
+    let unpin: (() => void) | undefined;
     let handle: Awaited<ReturnType<Context["agents"]["resume"]>> | undefined;
     const timeout = AbortSignal.timeout(120000),
       combined = AbortSignal.any([signal, timeout]);
     try {
-      this.db
-        .prepare("UPDATE pr_turns SET state='running' WHERE command=?")
-        .run(command);
+      const selection = rich.selection;
+      if (selection) {
+        const llm = this.ctx.get("llm");
+        if (!llm || !(await llm.listModels(selection.provider)).some(model => model.id === selection.model))
+          throw new TaskError("CONFIGURATION", "The queued conversation model is unavailable");
+        await llm.resolveCallConfig({ provider: selection.provider, model: selection.model,
+          ...(selection.reasoningEffort === undefined ? {} : { reasoningEffort: ReasoningEffortId(selection.reasoningEffort) }) }, combined);
+      }
       const summary = (
         this.db
           .prepare("SELECT summary FROM pr_sessions WHERE session=?")
           .get(p.session) as { summary: string }
       ).summary;
-      const related = this.conversationContextTasks(p)
-        .map((t) => ({
-          id: t.id,
-          title: t.title,
-          status: t.status,
-          stateLabel: t.stateLabel,
-          manualCompletion: t.manualCompletion,
-          materialsStatus: t.materialsStatus,
-          run: t.run,
-          report: t.report,
-          runId: t.runId,
-          canRetry: t.canRetry,
-          canReconcile: t.canReconcile,
-          retryDisabledReason: t.retryDisabledReason,
-        }));
-      handle = await this.agents().resume({
-        resumeSessionId: SessionId(p.session),
-        agentOptions,
-        signal: combined,
-        setup: (agentCtx, agent) => {
+      const related = this.coordinatorCheckpoint(p);
+      const tools = p.taskId ? TOOLS.filter(name => name !== "task_session_message") : TOOLS;
+      const setup = (agentCtx: Context, agent: Agent) => {
+          if (this.ctx.get("taskSystem")?.steward.store.hasSession(p.session, this.nodeId))
+            initializeTaskSessionTitle(agent.session, `管家 · ${p.title}`);
           agentCtx.on("agent/error", () => {
             terminalError = true;
           });
@@ -1380,9 +1549,9 @@ export class ProjectRuntime {
               throw new TaskError("LIMIT", "Project turn step limit");
             return await next();
           });
-          agentCtx.tools.restrict({ allow: TOOLS });
+          agentCtx.tools.restrict({ allow: [...tools, ...(agentCtx.tools.get("read", agent) ? ["read"] : [])] });
           agentCtx.tools.guard((exec) =>
-            exec.agent === agent && TOOLS.includes(exec.name)
+            exec.agent === agent && (tools.includes(exec.name) || exec.name === "read" && this.ctx.get("taskSystem")?.steward.canReadAttachmentFile(p.session, exec.arguments))
               ? undefined
               : "Project dispatch tools only",
           );
@@ -1391,21 +1560,42 @@ export class ProjectRuntime {
             order: 99,
             interpolate: false,
             text: () =>
-              `${p.taskId ? `你负责临时任务 ${p.taskId} 的规划。所有执行规划必须沿用此 Task ID，不创建新任务；结果不确定时先核实；只有明确授权重新执行后才使用重试，不得把补问结果当成重跑授权。` : ""}你负责「${p.title}」的统筹。目标：${p.goal}\n${summary}\n已有任务：${JSON.stringify(related)}\n工作区：${p.cwd}，仅存项目上下文。你可以调用 ${TOOLS.join(", ")} 调度其他执行端。用户授权创建的任务优先交给适合的在线闲置执行端；没有在线执行端时，选择注册的合适执行端排队等待上线。纯调度端不得接单或自行完成工作负载。执行端自己选择其授权工作区，不要把调度端目录设为执行约束。特定设备、操作系统、文件位置或能力要求由你先用 task_nodes 核对并明确 nodeId 或 route；只有授权池内任意执行端都适合时才省略 nodeId，由宿主按就绪和容量分配。执行模型沿用节点默认，用户明确指定时传 executionModel。任务先登记，再按推荐的执行端顺序尝试。都不在线、忙碌或不可接单时保留 inbox，宿主会在执行端上线后自动派发。已经开始或结果不确定的任务不重复派发；先检查相关任务状态。仅当用户明确要重新执行时，才指引用户使用“核实并确认已停止”和“重新执行”。没有 result 报告仅表示调度账本未收到完成证据，不得断言执行端没有完成。若用户要求不重跑、只通信、询问现状或补传回执，不得 task_dispatch，也不得把重新派发描述为唯一取回结果的方法。当前这些统筹工具只能读取调度账本和规划任务，没有向执行端会话发送普通消息或从已停止会话补取回执的工具；不得谎称已发消息或编造报告。此时可以如实解释已有记录，并指引用户在输入框的“对话对象”中选择执行端原会话直接发送消息；普通聊天不代表正式完成回执。只有用户明确授权执行规划时，才使用 commandId="project-message:${command}"，直接调用 task_dispatch（commandId 使用该 ID）登记 Task 和持久候选顺序；只有执行端能接单时才创建 Run。不要重复派发。task_dispatch 派发时按任务给出合理的 expectedExecutionMs（整数毫秒，最多30天），它只从实际执行开始计时并在到期时向原调度会话提醒，不终止或重跑任务。遗漏时表示未设置预计执行上界。正常等待已关联的子任务期间不要另设周期问询；真实故障仍需处理。只调用一次 task_dispatch。提交后简短回复已排队或派发，完成与否必须依据真实报告或账本中用户的人工确认；补交内容会更新执行报告展示，不改写历史 Run 结果。若为普通交流或澄清可直接回复。`,
+              `${p.taskId ? `你负责临时任务 ${p.taskId} 的规划。所有执行规划必须沿用此 Task ID，不创建新任务；结果不确定时先核实；只有明确授权重新执行后才使用重试，不得把补问结果当成重跑授权。` : ""}你负责「${p.title}」的统筹。对于结果不确定的执行，先用 task_execution_status(action=inspect,taskId,runId) 读取正式运行与原生证据；只有 canReconcile=true 时，沿用返回的 evidenceVersion/actionVersion 调用 action=reconcile、expectedEvidenceVersion、expectedActionVersion 和稳定 commandId 据证结算。证据不足保持未知，不发送追问冒充对账、不重派。目标：${p.goal.slice(0,4000)}\n${summary}\n已有任务：${JSON.stringify(related)}\n工作区：${p.cwd}，仅存项目上下文。你可以调用 ${tools.join(", ")} 调度其他执行端。用户授权创建的任务优先交给适合的在线闲置执行端；没有在线执行端时，选择注册的合适执行端排队等待上线。纯调度端不得接单或自行完成工作负载。执行端自己选择其授权工作区，不要把调度端目录设为执行约束。特定设备、操作系统、文件位置或能力要求由你先用 task_nodes 核对并明确 nodeId 或 route；只有授权池内任意执行端都适合时才省略 nodeId，由宿主按就绪和容量分配。执行模型沿用节点默认，用户明确指定时传 executionModel。任务先登记，再按推荐的执行端顺序尝试。都不在线、忙碌或不可接单时保留 inbox，宿主会在执行端上线后自动派发。已经开始或结果不确定的任务不重复派发；先检查相关任务状态。具备可信原生证据时可通过 task_execution_status 自行核实并据证结算，证据不足说明具体缺口；不能用普通聊天回复冒充执行证据。只有重新执行仍需用户明确授权，核实不会隐式重派。用户明确要求重试已结束任务时，沿用原Task ID，先task_query取得当前actionVersion，再task_dispatch(taskId, retry=true, expectedActionVersion, 稳定commandId, 可选nodeId/executionModel)，不传title/description/workspaceId/configuration，不创建重复任务。省略executionModel使用本次选定节点当前默认，不自动沿用旧失败模型。没有 result 报告仅表示调度账本未收到完成证据，不得断言执行端没有完成。若用户要求不重跑、只通信、询问现状或补传回执，不得 task_dispatch，也不得把重新派发描述为唯一取回结果的方法。${p.taskId ? "本临时任务规划会话不提供原会话通信工具；普通问询不得通过 task_dispatch 重跑任务。" : "用户只问现状、反馈或补传材料时，用 task_session_message 的 targets 读取已有任务原会话绑定，send 以稳定 commandId 向明确 nodeId/sessionId 排队，再用 status 按实际返回的 messageId 查询回复。不得为普通消息 task_dispatch 或创建重复任务。排队不是已送达，普通回复不改变 Task/Run 结果，uncertain 不得自动重发；多个原会话不明确时先澄清。"}只有用户明确授权执行规划时，才使用 commandId="project-message:${command}"，直接调用 task_dispatch（commandId 使用该 ID）登记 Task 和持久候选顺序；只有执行端能接单时才创建 Run。不要重复派发。task_dispatch 派发时按任务给出合理的 expectedExecutionMs（整数毫秒，最多30天），它只从实际执行开始计时并在到期时向原调度会话提醒，不终止或重跑任务。遗漏时表示未设置预计执行上界。正常等待已关联的子任务期间不要另设周期问询；真实故障仍需处理。只调用一次 task_dispatch。提交后简短回复已排队或派发，完成与否必须依据真实报告或账本中用户的人工确认；补交内容会更新执行报告展示，不改写历史 Run 结果。向用户汇报时先用简短人话说明具体发生了什么、是否已有可读工作文件、还缺什么或需用户决定什么。不要默认堆放错误码、内部状态字段、长ID或原始工具JSON；用户追问技术原因时再依据原记录提供细节。只有确有可访问的结果或文件时才说“查看报告”，并区分正式结果、进度记录与未正式提交的工作稿；文件存在不等于任务成功或用户已验收。汇报职责由本PM承担，不要求管家读取或汇总整个执行上下文。若为普通交流或澄清可直接回复。`,
           });
-        },
-      });
+      };
+      const live = this.agents().get(SessionId(p.session));
+      if (live) {
+        agent = live;
+        if (live.session.header.cwd !== p.cwd) throw new TaskError("FORBIDDEN", "Coordinator workspace changed");
+        await live.runMaintenance(async () => {
+          combined.throwIfAborted();
+          if (live.inbox.nextTurn.length || live.inbox.nextStep.length) throw new TaskError("BUSY", "Coordinator has pending native input");
+          binding = live.ctx.plugin({ name: "managed-project-turn", inject: ["tools", "systemPrompt"], apply: scope => setup(scope, live) });
+          await binding;
+        });
+      } else {
+        handle = await this.agents().resume({ resumeSessionId: SessionId(p.session), agentOptions, signal: combined, setup });
+        agent = handle.agent;
+      }
       const cancel = () =>
-        handle?.agent.cancel({ kind: "hook", reason: "Project turn stopped" });
+        agent?.cancel({ kind: "hook", reason: "Project turn stopped" });
       combined.addEventListener("abort", cancel, { once: true });
-      handle.agent.followup(
+      if (selection) unpin = pinStewardTurnSelection(agent, command, selection);
+      if (rich.permission) {
+        const permissions = this.ctx.get("taskSystem")?.steward.permissions;
+        if (!permissions) throw new TaskError("UNAVAILABLE", "Request permission service is unavailable");
+        permissions.arm(agent, command, rich.permission);
+      }
+      nativeAdmitted = true;
+      this.db.prepare("UPDATE pr_turns SET native_admission='started' WHERE command=? AND state='running'").run(command);
+      agent.followup(
         createUserMessage({
-          source: { kind: "user" },
-          content: [{ type: "text", text: message }],
+          source: { kind: "user", rpcId: command },
+          content: rich.content ?? [{ type: "text", text: message }],
         }),
       );
       try {
-        await handle.agent.whenIdle();
+        await agent.whenIdle();
       } finally {
         combined.removeEventListener("abort", cancel);
       }
@@ -1416,17 +1606,18 @@ export class ProjectRuntime {
           "Native conversation failed",
         );
       await (this.ctx.get("sessions") as Context["sessions"]).flush(
-        handle.agent.session,
+        agent.session,
       );
       this.db
         .prepare(
-          "UPDATE pr_turns SET state='completed',error=NULL WHERE command=?",
+          "UPDATE pr_turns SET state='completed',error=NULL,native_admission='confirmed' WHERE command=?",
         )
         .run(command);
     } catch (error) {
       this.db
-        .prepare("UPDATE pr_turns SET state='failed',error=? WHERE command=?")
+        .prepare("UPDATE pr_turns SET state=?,error=? WHERE command=?")
         .run(
+          nativeAdmitted ? "interrupted" : "failed",
           signal.aborted
             ? "HOST_STOPPED"
             : timeout.aborted
@@ -1435,13 +1626,15 @@ export class ProjectRuntime {
           command,
         );
     } finally {
-      if (handle) {
+      unpin?.();
+      if (agent) {
         try {
           await (this.ctx.get("sessions") as Context["sessions"]).flush(
-            handle.agent.session,
+            agent.session,
           );
         } finally {
-          await handle.dispose();
+          await binding?.dispose();
+          await handle?.dispose();
         }
       }
     }
@@ -1617,6 +1810,8 @@ export class ProjectRuntime {
     runId: string | null;
     confirmationRevision: number;
     retryPrompt?: string;
+    retryRouting?: {nodeId?: string; executionModel?: ExecutionModelChoice};
+    expectedExecutionMs?: number;
     returnMessageId?: string;
     action:
       | "complete-materials"
@@ -1646,7 +1841,7 @@ export class ProjectRuntime {
     }
     if (input.action === "check") {
       if (view.version !== input.expectedVersion) throw new TaskError("CONFLICT", "Task changed; refresh before checking");
-      return this.ledger.checkins.request(input.commandId,input.taskId);
+      return this.ledger.checkins.request(input.commandId,input.taskId,{manualVerification:true});
     }
     if (input.action === "retry") return this.retryTask(input);
     if (input.action === "repair") {
@@ -1767,7 +1962,11 @@ export class ProjectRuntime {
     expectedVersion: string;
     retryPrompt?: string;
     automaticResultRetry?: boolean;
-  }) {
+    retryRouting?: {nodeId?: string; executionModel?: ExecutionModelChoice};
+    expectedExecutionMs?: number;
+    retryActor?: string;
+  }, authorize = () => this.authorize(), signal?: AbortSignal) {
+    authorize();
     const retryPrompt = input.retryPrompt === undefined || input.retryPrompt === "" ? "" : text(input.retryPrompt, 20000);
     const requestId = `task-retry:${text(input.commandId, 200)}`;
     const prior = this.ledger.commandReceipt(`apply-decision:${requestId}`);
@@ -1777,7 +1976,9 @@ export class ProjectRuntime {
       if (
         record.taskId !== input.taskId ||
         record.expectedActionVersion !== input.expectedVersion ||
-        (record.retryPrompt ?? "") !== retryPrompt
+        (record.retryPrompt ?? "") !== retryPrompt ||
+        canonical(record.retryRouting ?? null) !== canonical(input.retryRouting ?? null) ||
+        record.retryActor !== input.retryActor || record.expectedExecutionMs !== input.expectedExecutionMs
       )
         throw new TaskError("CONFLICT", "Retry command reused");
       this.enqueueDecision(requestId, input.taskId);
@@ -1800,7 +2001,21 @@ export class ProjectRuntime {
     // an explicit workspace grant and do not create a DSH task-session binding.
     // Retain that original grant so their retry remains claimable by the worker.
     if (route && !task.workspaceId && !route.backend) delete route.workspaceId;
-    if (route) {
+    if (input.retryRouting) {
+      if (!route) throw new TaskError("INVALID", "Retry routing requires a previous execution route");
+      if ((route.backend || route.execution) && (input.retryRouting.executionModel || (input.retryRouting.nodeId && input.retryRouting.nodeId !== route.nodeId)))
+        throw new TaskError("INVALID", "Native model overrides cannot replace the stored backend or program route");
+      const nodeId = input.retryRouting.nodeId ?? route.nodeId;
+      if (!route.backend && !route.execution && this.ledger.executionModels.view(nodeId).catalog.state !== "fresh") {
+        await this.ledger.refreshNodeModels(nodeId);
+        authorize();
+      }
+      const selected = route.backend || route.execution ? {choice: route} : this.ledger.selectExecutionModel(nodeId, input.retryRouting.executionModel);
+      const {reasoningEffort: _oldEffort, ...base} = route;
+      route = {...base, nodeId, ...selected.choice};
+      this.ledger.validateRoute(route, {admission: true});
+    }
+    if (route && !input.retryRouting) {
       try {
         this.ledger.validateRoute(route);
       } catch {
@@ -1812,6 +2027,9 @@ export class ProjectRuntime {
       requestId,
       taskId: input.taskId,
       expectedActionVersion: input.expectedVersion,
+      ...(input.retryRouting ? {retryRouting: input.retryRouting} : {}),
+      ...(input.retryActor ? {retryActor: input.retryActor} : {}),
+      ...(input.expectedExecutionMs !== undefined ? {expectedExecutionMs: input.expectedExecutionMs} : {}),
       ...(route ? { route } : {}),
       ...(projectId ? { projectId } : {}),
       title: task.title,
@@ -1819,8 +2037,8 @@ export class ProjectRuntime {
       ...(retryPrompt ? { retryPrompt } : {}),
       ...(previous ? {retrySourceRunId:previous.runId,automaticResultRetry:!!input.automaticResultRetry}:{}),
       ...(task.workspaceId ? { workspaceId: task.workspaceId } : {}),
-    });
-    this.authorize();
+    }, {signal});
+    authorize();
     const receipt = this.planner.apply(requestId, { deferExecution: true });
     this.enqueueDecision(requestId, input.taskId);
     return receipt;

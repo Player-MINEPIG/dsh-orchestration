@@ -11,7 +11,7 @@ import { ScriptedModel } from '../dsh/scripted-model.mjs';
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 
-export async function startHost({ withJev = false } = {}) {
+export async function startHost({ withJev = false, memoryManagerPath, viewProbe = false, permissionPresets, executionEnabled = false } = {}) {
   const runtimeRoot = process.env.DSH_OFFICIAL_ROOT ?? ensureOfficialRuntime().root;
   const require = createRequire(join(runtimeRoot, 'package.json'));
   const directory = realpathSync(mkdtempSync(join(tmpdir(), 'dsh-project-native-browser-')));
@@ -30,13 +30,27 @@ export async function startHost({ withJev = false } = {}) {
   mkdirSync(packages, { recursive: true });
   symlinkSync(join(repo, 'packages/task-system'), join(packages, 'task-system'), 'dir');
   if(withJev)symlinkSync(join(repo,'packages/jev'),join(packages,'..','dsh-jev-plugin'),'dir');
+  const plugins = [];
+  if (memoryManagerPath) {
+    symlinkSync(memoryManagerPath, join(dirname(packages), 'dsh-memory-manager'), 'dir');
+    plugins.push({ id: 'browser-memory-manager', name: 'dsh-memory-manager', config: { storageDir: join(directory, 'memory-manager') } });
+  }
+  if (viewProbe) {
+    const probe = join(dirname(packages), 'native-view-probe'); mkdirSync(probe);
+    writeFileSync(join(probe, 'package.json'), JSON.stringify({name:'native-view-probe',version:'1.0.0',type:'module',exports:{'.':'./index.js','./client':'./client.js'},dsh:{client:{platform:'web',inject:['@deepseek-ai/dsh-client-ui-conversation']}}}));
+    writeFileSync(join(probe, 'index.js'), 'export function apply() {}');
+    writeFileSync(join(probe, 'client.js'), `window.__ModuleLoader__.load({id:'native-view-probe',factory:(require)=>({inject:['slots'],apply(ctx){const React=require('react');const register=()=>ctx.slots.inject('conversation.view',()=>ctx.slots.register({name:'conversation.view',id:'independent-probe',order:100,label:'独立插件探针'},({sessionId})=>React.createElement('output',{'data-independent-view-session':sessionId},sessionId)));window.addEventListener('native-view-probe-enable',register,{once:true});ctx.effect(()=>()=>window.removeEventListener('native-view-probe-enable',register));}})});`);
+    plugins.push({id:'browser-view-probe',name:'native-view-probe'});
+  }
   const patch = join(process.env.DSH_HOME, 'profiles', profile, 'cordis.patch.yml');
   writeFileSync(patch, JSON.stringify([
     { id: 'webserver', config: { host: '127.0.0.1', port: 0, compression: 'none' } },
     { id: 'session-title-llm', disabled: true },
+    ...(permissionPresets ? [{id:'permission',config:{presets:permissionPresets}}] : []),
     { id: 'agent-default-model', config: { provider: 'test-offline', model: 'script' } },
     { insert: [
-      { id: 'task-system', name: '@dsh-task/task-system/plugin', config: { role: 'planner', nodeId: 'local', databasePath: join(directory, 'tasks.sqlite'), executionEnabled: false, keepAlive: false, schedulerEnabled: false, autoExecute: false, projectAgentOptions: { provider: 'test-offline', model: 'script' } } },
+      ...plugins,
+      { id: 'task-system', name: '@dsh-task/task-system/plugin', config: { role: executionEnabled ? 'both' : 'planner', nodeId: 'local', databasePath: join(directory, 'tasks.sqlite'), executionEnabled, keepAlive: false, schedulerEnabled: false, autoExecute: false, projectAgentOptions: { provider: 'test-offline', model: 'script' } } },
       { id: 'browser-task-settings', name: '@dsh-task/task-system' },
       ...(withJev ? [{id:'jev',name:'dsh-jev-plugin',config:{enabled:false,provider:'typesafe',dataDir:join(directory,'jev')}}] : []),
     ] },
