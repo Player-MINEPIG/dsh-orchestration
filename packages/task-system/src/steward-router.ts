@@ -5,6 +5,7 @@ import { stewardBinding, stewardScope, stewardSend, type StewardSend, type Stewa
 import {stewardPermission} from "./steward-turn-permission.js";
 import type { TopicCardsPort, TopicContext } from "./steward-topic-types.js";
 import type { TriageTrace } from "./steward-routing.js";
+import { assertRoutingBudget, compactRoutingCandidates } from "./steward-routing-budget.js";
 import { topicActiveAt } from "./steward-topic-activity.js";
 
 const frozen = z.strictObject({ scope: stewardScope, latestMessageId: z.string().nullable(), throughSeq: z.number().int().nonnegative() });
@@ -21,9 +22,10 @@ export type RouterView = Omit<RouterRecord, "request" | "digest" | "delivery" | 
 export type SemanticCall = (input: { stage: "latest" | "candidates" | "answer" | "association"; text: string; original?: string; question?: string; context?: TopicContext; candidates?: unknown[]; actions?: ("create-topic")[] }, signal?: AbortSignal, trace?: (value: TriageTrace) => void) => Promise<unknown>;
 const decision = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("route"), target: stewardScope }),
+  z.strictObject({ kind: z.literal("candidate"), id: z.string().regex(/^topic_(?:[0-9]|[12][0-9]|3[01])$/) }),
   z.strictObject({ kind: z.literal("create-topic") }),
   z.strictObject({ kind: z.literal("search"), queries: z.array(z.string().trim().min(1).max(100)).min(1).max(3) }),
-  z.strictObject({ kind: z.literal("clarification"), question: z.string().trim().min(1).max(500), targets: z.array(stewardScope).max(4).optional() }),
+  z.strictObject({ kind: z.literal("clarification"), question: z.string().trim().min(1).max(500), targets: z.array(stewardScope).max(4).optional(), candidateIds: z.array(z.string().regex(/^topic_(?:[0-9]|[12][0-9]|3[01])$/)).max(4).refine(ids => new Set(ids).size === ids.length, "Duplicate routing candidate ID").optional() }),
   z.strictObject({ kind: z.literal("new-work"), question: z.string().trim().min(1).max(500) }),
   z.strictObject({ kind: z.literal("answer") }), z.strictObject({ kind: z.literal("new-request") }),
 ]);
@@ -123,8 +125,11 @@ export class StewardRouter {
     const invoke = async (input: Parameters<SemanticCall>[0]) => {
       if(!call) throw new TaskError("UNAVAILABLE","Router service is unavailable");
       claimCall();
-      if (Buffer.byteLength(canonical(input)) > 32768) throw new TaskError("LIMIT", "Router input budget");
-      return decision.parse(await within(call(input, signal, entry => { value.trace = [...value.trace ?? [], entry].slice(-16); this.save(value); }),signal));
+      assertRoutingBudget(input);
+      const result = decision.parse(await within(call(input, signal, entry => { value.trace = [...value.trace ?? [], entry].slice(-16); this.save(value); }),signal));
+      if (result.kind === "clarification" && (input.stage === "candidates" ? result.targets !== undefined : result.candidateIds !== undefined))
+        throw new TaskError("INVALID", "Clarification used the wrong stage's recipient format");
+      return result;
     };
     try {
       if (request.routeCreateTopic && !request.routeQuestionId) {
@@ -220,25 +225,34 @@ export class StewardRouter {
       }
       if(initial.kind!=="search") return this.wait(value,"分流结果未给出可靠收件人，请明确选择话题；原请求保持完整。","invalid-output",[latest.scope]);
       const queries = initial.queries;
-      const candidates = await within(this.cards.candidates({ conversationId: request.conversationId, queries, exclude: currentScope, limit: 4 }),signal);
-      const small = candidates.map(card => ({ ...card, facts: card.facts.filter(item => item.state === "active"), sources: [] }));
-      if (Buffer.byteLength(canonical(small)) > 8192) return this.wait(value, "候选话题资料超过路由预算，请明确选择话题。原请求完整保留。", "budget", candidates.map(item => item.topic.scope));
-      if (!candidates.length) return this.wait(value, "没有找到可靠匹配的话题。要新开普通话题吗？也可以自己说明。", "uncertain", [], [newTopicOption]);
-      value.candidates = candidates.map(item=>item.topic.scope); value.options = optionsFor(value.candidates,new Map(candidates.map(item=>[canonical(item.topic.scope),item.title]))); this.save(value);
-      const result = await invoke({ stage: "candidates", text: request.text, candidates: small });
-      if (result.kind === "route" && candidates.some(item => same(item.topic.scope, result.target))) {
-        const at = this.cards.activity ? await within(this.cards.activity({conversationId:request.conversationId,scope:result.target},latest.throughSeq),signal) : undefined;
-        if(result.target.kind==="personal" || result.target.kind==="workbench"&&!result.target.topicId || at !== undefined && !topicActiveAt(at,value.createdAt,options.activeDays ?? 30)) {
-          const title = candidates.find(item=>same(item.topic.scope,result.target))?.title ?? "历史话题";
-          return this.wait(value,"找到可能相关的历史话题，请先确认是否继续；也可以新开普通话题。","uncertain",[result.target],[...optionsFor([result.target],new Map([[canonical(result.target),title]])),newTopicOption]);
-        }
-        value.phase = "resolved"; value.binding = candidates.find(item => same(item.topic.scope, result.target))?.binding ?? null; value.delivery = this.delivery(value, result.target); this.save(value); return value;
-      }
-      const scopes = candidates.map(item => item.topic.scope);
-      if (result.kind === "new-work") return this.wait(value, "要新开普通话题继续这条请求吗？也可以自己说明。", "new-work", [], [newTopicOption]);
-      const choices = result.kind === "clarification" ? clarificationChoices(result.targets, scopes) : [];
+      const shortlist = await within(this.cards.candidates({ conversationId: request.conversationId, queries, exclude: currentScope, throughSeq: latest.throughSeq, limit: 32 }),signal);
+      const contexts = shortlist.items, candidates = contexts.map(item => item.card);
       const titles = new Map(candidates.map(item => [canonical(item.topic.scope), item.title]));
-      return this.wait(value, choices.length ? "这条原请求想在哪个话题继续？请选择下列去向，也可以自己说明。" : result.kind === "clarification" ? result.question : "这些话题仍有歧义，请说明要交给哪一个。", "uncertain", scopes, semanticOptions(choices, titles));
+      const visible = candidates.slice(0, 3).map(item => item.topic.scope);
+      if (!shortlist.complete) return this.wait(value,"相关话题过多，本次未投递。可以确认下列具体话题；其余话题请先在发送菜单明确选择，再重新发送原请求。原请求仍完整保留。","uncertain",visible,
+        [...optionsFor(visible,titles),newTopicOption]);
+      if (!candidates.length) return this.wait(value, "没有找到可靠匹配的话题。要新开普通话题吗？也可以自己说明。", "uncertain", [], [newTopicOption]);
+      value.candidates = visible; value.options = optionsFor(visible,titles); this.save(value);
+      const small = compactRoutingCandidates(contexts);
+      const result = await invoke({ stage: "candidates", text: request.text, candidates: small });
+      const index = result.kind === "candidate" ? small.findIndex(item => item.id === result.id) : -1;
+      const selected = candidates[index], preview = small[index];
+      if (selected && preview?.complete && preview.freshness === "current") {
+        const target = selected.topic.scope;
+        const at = this.cards.activity ? await within(this.cards.activity({conversationId:request.conversationId,scope:target},latest.throughSeq),signal) : undefined;
+        if(target.kind==="personal" || target.kind==="workbench"&&!target.topicId || at !== undefined && !topicActiveAt(at,value.createdAt,options.activeDays ?? 30))
+          return this.wait(value,"找到可能相关的历史话题，请先确认是否继续；也可以新开普通话题。","uncertain",[target],[...optionsFor([target],titles),newTopicOption]);
+        value.phase = "resolved"; value.binding = selected.binding; value.delivery = this.delivery(value,target); this.save(value); return value;
+      }
+      if (result.kind === "new-work") return this.wait(value, "要新开普通话题继续这条请求吗？也可以自己说明。", "new-work", [], [newTopicOption]);
+      // Model-supplied executable scopes are never accepted in this phase.
+      const choices = result.kind === "clarification" ? (result.candidateIds ?? []).map(id => {
+        const position = small.findIndex(item => item.id === id);
+        if (position < 0) throw new TaskError("INVALID", "Clarification named an unavailable candidate ID");
+        return candidates[position]!.topic.scope;
+      }) : [];
+      return this.wait(value, choices.length ? "这条原请求想在哪个话题继续？请选择下列去向，也可以自己说明。" : result.kind === "clarification" ? result.question : "这些话题仍有歧义或资料不完整，请说明要交给哪一个。", "uncertain", choices.slice(0,4), semanticOptions(choices.slice(0,4), titles));
+
     } catch (error) {
       const reason = error instanceof TaskError && error.code === "LIMIT" ? "budget" : error instanceof TaskError && error.code === "TIMEOUT" ? "timeout" : error instanceof z.ZodError || error instanceof SyntaxError ? "invalid-output" : "unavailable";
       return this.wait(value, "自动分流暂未可靠完成，原请求已保留。可以新开普通话题，或说明要继续的已有话题；尚未投递或启动任务。", reason, value.candidates,

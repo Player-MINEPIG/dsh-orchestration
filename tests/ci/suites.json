@@ -141,6 +141,7 @@
     "tests/dsh/steward-continuity-native.test.mjs",
     "tests/dsh/steward-permission-native.test.mjs",
     "tests/dsh/steward-topic-router-native.test.mjs",
+    "tests/dsh/steward-32-candidates-native.test.mjs",
     "tests/dsh/native-reconciliation.test.mjs",
     "tests/dsh/managed-retry-native.test.mjs",
     "tests/dsh/steward-progress.test.mjs"

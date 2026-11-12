@@ -37,6 +37,15 @@ export interface TopicCardsPort {
   deterministic?(input: { conversationId: string; text: string; throughSeq: number }): Promise<{ matches: { card: TopicCard; lastActiveAt: string | null }[]; complete: boolean; directed?: boolean }>;
   list(input: z.input<typeof topicListInput>): Promise<TopicListPage>;
   context(input: { topic: TopicRef; throughSeq: number; maintain: boolean; requestBudget?: {signal:AbortSignal;claimCall():void} }): Promise<TopicContext>;
-  candidates(input: { conversationId: string; queries: string[]; exclude: z.infer<typeof stewardScope>; limit?: number }): Promise<TopicCard[]>;
+  candidates(input: { conversationId: string; queries: string[]; exclude: z.infer<typeof stewardScope>; throughSeq: number; limit?: number }): Promise<{ items: TopicContext[]; complete: boolean }>;
   source(input: z.input<typeof topicSourceInput>): Promise<TopicSourcePage>;
 }
+
+/** Model-visible shortlist only. Authority and source IDs remain in host-side TopicContext. */
+export const routingCandidate = z.strictObject({
+  id: z.string().regex(/^topic_(?:[0-9]|[12][0-9]|3[01])$/),
+  title: z.string(), summary: z.string(), evidence: z.string(),
+  freshness: z.enum(["current", "stale", "insufficient"]), complete: z.boolean(),
+  previewTruncated: z.boolean(),
+});
+export type RoutingCandidate = z.infer<typeof routingCandidate>;

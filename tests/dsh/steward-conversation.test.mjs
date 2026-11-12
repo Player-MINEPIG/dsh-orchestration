@@ -517,7 +517,7 @@ test('auto routing uses bounded classifier requests for casual turns, direct add
     async function send(commandId,text,response,{target,program=false,replyTo}={}) {
       const classifierCount=()=>h.adapter.requests.filter(request=>request.messages[0]?.source?.kind==='dsh-steward-route-classifier').length;
       const before=classifierCount(),requestsBefore=h.adapter.requests.length;
-      if(!replyTo&&!program){const latest=service.snapshot({conversationId:'main'}).topicActivity.latestMessage?.scope ?? service.store.current('main');if(JSON.stringify(latest)!==JSON.stringify(target))h.adapter.script.push(JSON.stringify({kind:'search',queries:[target.kind==='workbench'?'普通闲聊':target.projectId===a.projectId?'Alpha':'Beta']}));h.adapter.script.push(JSON.stringify({kind:'route',target}));}h.adapter.script.push(response);
+      if(!replyTo&&!program){const latest=service.snapshot({conversationId:'main'}).topicActivity.latestMessage?.scope ?? service.store.current('main');if(JSON.stringify(latest)!==JSON.stringify(target))h.adapter.script.push(JSON.stringify({kind:'search',queries:[target.kind==='workbench'?'普通闲聊':target.projectId===a.projectId?'Alpha':'Beta']}));h.adapter.script.push(options=>{const input=JSON.parse(options.messages[0].content[0].text);if(input.stage==='candidates'){assert.equal(input.candidates.length,1);return JSON.stringify({kind:'candidate',id:input.candidates[0].id})}return JSON.stringify({kind:'route',target})});}h.adapter.script.push(response);
       await service.send({conversationId:'main',commandId,text,routingMode:'auto',...(replyTo?{replyTo}:{})});
       const snapshot=await waitFor(service,s=>s.messages.some(message=>message.text===response));
       if(program||replyTo){assert.equal(classifierCount(),before,'An exact recent title or canonical reply uses no routing model');assert.equal(h.adapter.requests.length,requestsBefore+1,'Only the destination native model runs for a direct title or reply');}
@@ -619,7 +619,7 @@ test('automatic quotation routes the next text to B without sharing the source h
     const source=initial.messages.find(message=>message.role==='assistant'&&message.text.includes('AUTO_QUOTE_SHARED_EXCERPT'));
     const input={conversationId:'main',commandId:'auto-quote-send',text:'请交给另一个项目核对这份资料。',routingMode:'auto',
       quote:{messageId:source.id,expectedRevision:source.revision,excerpt:'AUTO_QUOTE_SHARED_EXCERPT'}};
-    h.adapter.script.push(JSON.stringify({kind:'search',queries:['Auto quote B']}),JSON.stringify({kind:'route',target:{kind:'project',projectId:b.projectId}}),'Auto B received excerpt');
+    h.adapter.script.push(JSON.stringify({kind:'search',queries:['Auto quote B']}),JSON.stringify({kind:'candidate',id:'topic_0'}),'Auto B received excerpt');
     await service.send(input);
     const snapshot=await waitFor(service,s=>s.messages.some(message=>message.text==='Auto B received excerpt'));
     const shared=snapshot.messages.find(message=>message.commandId===input.commandId);
@@ -657,7 +657,7 @@ test('ambiguous quotation stays router-only with its exact excerpt frozen; inval
     const input={conversationId:'main',commandId:'ambiguous-quote-send',text:'请核对这份资料。',routingMode:'auto',
       quote:{messageId:source.id,expectedRevision:source.revision,excerpt:'WAITING_QUOTE_EXCERPT'}};
     const before=h.adapter.requests.length;
-    h.adapter.script.push(JSON.stringify({kind:'search',queries:['Ambiguous quote B']}),JSON.stringify({kind:'clarification',question:'交给哪个项目？',targets:[{kind:'project',projectId:b.projectId}]}));
+    h.adapter.script.push(JSON.stringify({kind:'search',queries:['Ambiguous quote B']}),JSON.stringify({kind:'clarification',question:'交给哪个项目？',candidateIds:['topic_0']}));
     await service.send(input);
     const pending=service.snapshot({conversationId:'main'}).router.find(item=>item.commandId===input.commandId);assert.equal(pending.phase,'clarifying');assert.match(pending.question,/请选择下列去向/);assert.equal(service.store.commandMessage('main',input.commandId),null);assert.equal(h.adapter.requests.length,before+2,'Both semantic stages stay in the router, without workbench or PM execution');
     const option=pending.options.find(option=>option.target?.kind==='project'&&option.target.projectId===b.projectId);assert.ok(option,'Clarification offers the retrieved and authorized B destination');

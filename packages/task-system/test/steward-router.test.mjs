@@ -6,10 +6,10 @@ import {canonical} from '../dist/ledger.js';
 const scope={kind:'project',projectId:'A'},other={kind:'project',projectId:'B'};
 const binding={kind:'managed',projectId:'A',nodeId:'host',sessionId:'A',generation:1,cwd:'/A'};
 const card=s=>({topic:{conversationId:'main',scope:s},version:'v1',binding:s.kind==='project'?{...binding,projectId:s.projectId,sessionId:s.projectId}:null,title:s.projectId??s.kind,summary:'goal',facts:[],coverageSeq:4,observedThroughSeq:4,freshness:'current',sources:[]});
-function fixture(){const db=new DatabaseSync(':memory:');db.exec('CREATE TABLE steward_commands(id TEXT)');const inputs=[],cards={async context(input){inputs.push(input);return{card:card(input.topic.scope),originals:[],complete:true,byteLimit:10240}},async candidates(){return[card(other)]}};return {db,inputs,router:new StewardRouter({managementDatabase:()=>db},cards)};}
+function fixture(){const db=new DatabaseSync(':memory:');db.exec('CREATE TABLE steward_commands(id TEXT)');const inputs=[],cards={async context(input){inputs.push(input);return{card:card(input.topic.scope),originals:[],complete:true,byteLimit:10240}},async candidates(){return{items:[{card:{...card(other),facts:[{state:'active',section:'goal',text:'goal'}]},originals:[],complete:true,byteLimit:10240}],complete:true}}};return {db,inputs,router:new StewardRouter({managementDatabase:()=>db},cards)};}
 const request=(id,text='开始')=>({conversationId:'main',commandId:id,text,routingMode:'auto',selection:{provider:'p',model:'m'},permissionPreset:'read-only',uploads:['server-minted']});
 const latest={scope,latestMessageId:'last',throughSeq:4};
-test('latest candidate is frozen and semantically checked even for start; unrelated index shortlist is bounded',async()=>{const f=fixture();try{const calls=[];const result=await f.router.prepare(request('x'),latest,async input=>{calls.push(input);return input.stage==='latest'?{kind:'search',queries:['B']}:{kind:'route',target:other}});assert.deepEqual(f.inputs[0].topic.scope,scope);assert.equal(calls.length,2);assert.deepEqual(result.delivery.target,other);assert.deepEqual(result.delivery.selection,request('x').selection);assert.deepEqual(result.delivery.uploads,['server-minted']);assert.equal(result.delivery.permissionPreset,'read-only');assert.equal(f.db.prepare('SELECT COUNT(*) n FROM steward_commands').get().n,0);assert.deepEqual(await f.router.prepare(request('x'),{...latest,scope:other},()=>{throw Error('no replay')}),result);}finally{f.db.close()}});
+test('latest candidate is frozen and semantically checked even for start; unrelated index shortlist is bounded',async()=>{const f=fixture();try{const calls=[];const result=await f.router.prepare(request('x'),latest,async input=>{calls.push(input);return input.stage==='latest'?{kind:'search',queries:['B']}:{kind:'candidate',id:'topic_0'}});assert.deepEqual(f.inputs[0].topic.scope,scope);assert.equal(calls.length,2);assert.deepEqual(result.delivery.target,other);assert.deepEqual(result.delivery.selection,request('x').selection);assert.deepEqual(result.delivery.uploads,['server-minted']);assert.equal(result.delivery.permissionPreset,'read-only');assert.equal(f.db.prepare('SELECT COUNT(*) n FROM steward_commands').get().n,0);assert.deepEqual(await f.router.prepare(request('x'),{...latest,scope:other},()=>{throw Error('no replay')}),result);}finally{f.db.close()}});
 test('provider failure and ambiguity retain complete durable original without executor delivery or workbench fallback',async()=>{const f=fixture();try{const input=request('original','complete original '.repeat(700));const value=await f.router.prepare(input,latest,async()=>{throw Error('secret provider failure')});assert.equal(value.phase,'clarifying');assert.equal(value.delivery,null);assert.equal(value.request.text,input.text);assert.equal(value.reason,'unavailable');assert.equal(JSON.stringify(f.router.list('main')).includes('secret'),false);assert.equal(f.db.prepare('SELECT COUNT(*) n FROM steward_commands').get().n,0);}finally{f.db.close()}});
 test('new work requires confirmation, then original immutable payload plus answer is delivered; retry has no model calls',async()=>{const f=fixture();try{const root=await f.router.prepare(request('orig','research something'),latest,async()=>({kind:'new-work',question:'交给管家工作区吗？'}));assert.equal(root.delivery,null);const answer={conversationId:'main',commandId:'ans',text:'是的',routeQuestionId:root.questionId,routeCreateTopic:true};const result=await f.router.prepare(answer,latest,undefined,undefined,undefined,{createTopic:()=>({kind:'workbench',topicId:'confirmed-new'})});assert.equal(result.delivery.commandId,'orig');assert.match(result.delivery.text,/research something/);assert.equal(f.router.get('orig').answers[0].text,'是的');assert.deepEqual(result.delivery.selection,root.request.selection);assert.deepEqual((await f.router.prepare(answer,latest,()=>{throw Error('no replay')})).delivery,result.delivery);}finally{f.db.close()}});
 test('unique unanswered question is only association candidate; new-topic answer is not forced into original',async()=>{const f=fixture();try{await f.router.prepare(request('old','old work'),latest,async()=>({kind:'new-work',question:'工作区？'}));const stages=[];const fresh=await f.router.prepare({conversationId:'main',commandId:'fresh',text:'聊点别的',routingMode:'auto'},latest,async input=>{stages.push(input.stage);return input.stage==='association'?{kind:'new-request'}:{kind:'route',target:scope}});assert.deepEqual(stages,['association','latest']);assert.equal(fresh.delivery.commandId,'fresh');assert.equal(f.router.get('old').delivery,null);}finally{f.db.close()}});
@@ -21,7 +21,7 @@ test('the unresolved-root capacity cannot block answering an existing question',
 
 test('empty retrieval offers a new ordinary topic without a second model call and freezes original payload',async()=>{
  const f=fixture();try{
-  f.router.cards.candidates=async()=>[];let calls=0;
+  f.router.cards.candidates=async()=>({items:[],complete:true});let calls=0;
   const root=await f.router.prepare(request('empty'),{...latest,scope:{kind:'personal'}},async()=>{calls++;return {kind:'search',queries:['no matching topic']}});
   assert.equal(calls,1);assert.equal(root.delivery,null);
   const options=f.router.list('main')[0].options;
@@ -166,5 +166,37 @@ test('persisted legacy independent-work option projects a typed new-topic action
   assert.equal(f.router.list('main')[0].options[0].action,'create-topic');assert.equal(f.db.prepare('SELECT data FROM steward_router WHERE command=?').get(root.commandId).data,raw);
   let creates=0;const result=await f.router.prepare({conversationId:'main',commandId:'old-options-yes',routeQuestionId:root.questionId,text:'是，另开话题'},latest,async input=>{assert.deepEqual(input.actions,['create-topic']);assert.deepEqual(input.candidates,[]);return {kind:'create-topic'}},undefined,undefined,{createTopic:()=>{creates++;return {kind:'workbench',topicId:'legacy-option-topic'}}});
   assert.equal(creates,1);assert.equal(result.delivery.target.topicId,'legacy-option-topic');
+ }finally{f.db.close()}
+});
+
+
+test('candidate IDs map all 32 authorized recipients; scopes, stale evidence and overflow never bypass confirmation',async()=>{
+ for(const mode of ['last','scope','incomplete','overflow']) {
+  const f=fixture();try {
+   const items=Array.from({length:32},(_,n)=>({card:{...card({kind:'project',projectId:`P${n}`}),facts:[{state:'active',section:'goal',text:`specific goal ${n}`}]},originals:[],complete:mode!=='incomplete',byteLimit:10240}));
+   f.router.cards.candidates=async input=>{assert.equal(input.limit,32);assert.equal(input.throughSeq,latest.throughSeq);return {items,complete:mode!=='overflow'}};
+   let calls=0;const original=request(`mapping-${mode}`);
+   const result=await f.router.prepare(original,latest,async input=>{calls++;if(input.stage==='latest')return {kind:'search',queries:['specific']};assert.equal(input.candidates.length,32);assert.equal(JSON.stringify(input.candidates).includes('projectId'),false);return mode==='scope'?{kind:'route',target:items[31].card.topic.scope}:{kind:'candidate',id:'topic_31'}});
+   if(mode==='last'){assert.deepEqual(result.delivery.target,items[31].card.topic.scope);assert.equal(result.binding.projectId,'P31');assert.deepEqual(result.delivery.uploads,original.uploads);assert.deepEqual(result.delivery.selection,original.selection);assert.equal(result.delivery.permissionPreset,original.permissionPreset)}
+   else{assert.equal(result.delivery,null);assert.equal(result.phase,'clarifying');assert.ok(result.options.length<=4)}
+   assert.equal(calls,mode==='overflow'?1:2);
+  }finally{f.db.close()}
+ }
+});
+
+
+test('candidate clarification maps at most four exact IDs, rejects duplicates and foreign IDs, and preserves free-text questions',async()=>{
+ for(const ids of [['topic_0'],['topic_0','topic_0'],['topic_31'],['topic_32'],undefined]) {
+  const f=fixture();try {
+   const result=await f.router.prepare(request(`choices-${ids}`),latest,async input=>input.stage==='latest'?{kind:'search',queries:['specific']}:{kind:'clarification',question:'Which intended recipient?',...(ids?{candidateIds:ids}:{})});
+   assert.equal(result.delivery,null);
+   if(ids?.length===1&&ids[0]==='topic_0')assert.deepEqual(result.options.map(option=>option.target),[other]);
+   else if(!ids)assert.deepEqual(result.options,[],'A genuine free-text question is not forced into recipient buttons');
+   else assert.ok(['invalid-output','unavailable'].includes(result.reason));
+  }finally{f.db.close()}
+ }
+ const f=fixture();try {
+  const value=await f.router.prepare(request('wrong-stage-ids'),latest,async()=>({kind:'clarification',question:'No IDs in latest stage',candidateIds:['topic_0']}));
+  assert.equal(value.delivery,null);assert.equal(value.reason,'unavailable');
  }finally{f.db.close()}
 });

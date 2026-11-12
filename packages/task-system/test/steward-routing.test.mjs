@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {compactRoutingCandidates,assertRoutingBudget} from '../dist/steward-routing-budget.js';
 import {createStewardSemanticCall,createStewardTopicCompactor,createStewardTriageCall} from '../dist/steward-routing.js';
 test('auxiliary router uses only explicit bounded input with no tools and preserves provenance',async()=>{let seen;const ctx={llm:{async *stream(request){seen=request;yield{type:'text-delta',text:JSON.stringify({kind:'route',target:{kind:'personal'}})}}}};const input={stage:'latest',text:'开始',context:{card:{topic:{scope:{kind:'personal'}}},originals:[{text:'合法的同话题前文'}]}};assert.deepEqual(await createStewardSemanticCall(ctx,{provider:'fixture',model:'script'})(input),{kind:'route',target:{kind:'personal'}});assert.deepEqual(seen.tools,[]);assert.deepEqual(JSON.parse(seen.messages[0].content[0].text),input);assert.equal(seen.messages[0].source.kind,'dsh-steward-route-classifier');assert.match(seen.system,/NOT sufficient alone/);assert.ok(Buffer.byteLength(JSON.stringify(seen))<32768);});
 test('full system/message envelope limits reject without model calls and incomplete provider output never becomes a route',async()=>{let calls=0;const ctx={llm:{async *stream(){calls++;yield{type:'finish',reason:{kind:'error'}}}}};const route=createStewardSemanticCall(ctx,{provider:'fixture',model:'script'});await assert.rejects(route({stage:'latest',text:'中'.repeat(16000)}),/budget|bound/);assert.equal(calls,0);await assert.rejects(route({stage:'latest',text:'hello'}),/provider failed/);assert.equal(calls,1);const compact=createStewardTopicCompactor(ctx,{provider:'fixture',model:'script'});await assert.rejects(compact({previous:{facts:[]},delta:[{text:'中'.repeat(16000)}]}),/budget/);assert.equal(calls,1);});
@@ -65,4 +66,31 @@ test('without a configured fallback JEV can decide, while abstention and failure
   if(!(answer instanceof Error)&&answer.choice==='topic_0')assert.deepEqual(await invoke(),{kind:'route',target:{kind:'project',projectId:'A'}});
   else await assert.rejects(invoke(),/No independent routing fallback/);
  }
+});
+
+
+test('32 compact candidates plus uncertain reach Jev and explicit fallback without exposing executable authority',async()=>{
+ const candidates=Array.from({length:32},(_,i)=>({id:`topic_${i}`,title:`话题${i}`,summary:'讨论近期研究目标与已有材料，保持当前范围和约束，区分证据、预测与尚待回答的问题。'.repeat(3).slice(0,100),evidence:`goal: specific bounded goal ${i}`,freshness:'current',complete:true,previewTruncated:false}));
+ const input={stage:'candidates',text:'An exact original request with its unique evidence',candidates};
+ const f=triageFixture({type:'choice',choice:'topic_31',confidence:0.99});
+ assert.deepEqual(await f.call(input),{kind:'candidate',id:'topic_31'});
+ assert.equal(Object.keys(f.requests[0].questions.recipient.criteria).length,33);
+ assert.deepEqual(JSON.parse(f.requests[0].state),input);assert.equal(f.fallbacks.length,0);
+ let seen;const ctx={get(name){return this[name]},llm:{async *stream(request){seen=request;yield {type:'text-delta',text:'{"kind":"candidate","id":"topic_31"}'}}}};
+ assert.deepEqual(await createStewardTriageCall(ctx,{provider:'explicit',model:'small'})(input),{kind:'candidate',id:'topic_31'});
+ assert.equal(JSON.parse(seen.messages[0].content[0].text).candidates.length,32);
+ assert.match(seen.system,/opaque IDs/);assert.deepEqual(seen.tools,[]);
+});
+
+
+test('compact evidence retains literal restrictions alongside goals, and omitted evidence cannot look complete',()=>{
+ const value=triageInput().context;
+ value.card.facts=[{state:'active',section:'goal',text:'Continue the research'}];
+ value.originals=[{role:'user',text:'Do not continue; the topic now concerns a different design.'}];
+ const [preview]=compactRoutingCandidates([value]);
+ assert.match(preview.evidence,/Continue the research/);assert.match(preview.evidence,/Do not continue/);assert.equal(preview.complete,true);
+ value.originals[0].text='关键约束'.repeat(300);
+ const [partial]=compactRoutingCandidates([value]);assert.equal(partial.complete,false);assert.equal(partial.previewTruncated,true);
+ assert.throws(()=>compactRoutingCandidates(Array(33).fill(value)),{code:'LIMIT'});
+ const original='中'.repeat(16000);assert.throws(()=>assertRoutingBudget({text:original}),{code:'LIMIT'});assert.equal(original.length,16000);
 });

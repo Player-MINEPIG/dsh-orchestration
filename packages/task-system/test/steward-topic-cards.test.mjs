@@ -183,13 +183,13 @@ test('derived term index finds bounded cards without supplying all project histo
     f.projects.get('A').goal = '';
     f.add('UniqueNebula operational requirement'); await context(f);
     for (let index = 0; index < 10; index++) f.projects.set(`P${index}`, { id: `P${index}`, title: `Nebula ${index}`, revision: '1', goal: 'A relevant goal' });
-    const candidates = await f.cards.candidates({ conversationId: 'main', queries: ['UniqueNebula', 'Nebula'], exclude: { kind: 'personal' }, limit: 4 });
-    assert.equal(candidates[0].topic.scope.projectId, 'A'); assert.ok(candidates.length <= 4);
-    assert.ok(candidates.every(card => bytes(card) <= 2048)); assert.ok(bytes(candidates) <= 8192);
-    assert.ok(f.calls.projects.every(call => call.page === 0 && call.limit === 4));
+    const candidates = await f.cards.candidates({ throughSeq: through, conversationId: 'main', queries: ['UniqueNebula', 'Nebula'], exclude: { kind: 'personal' }, limit: 4 });
+    assert.equal(candidates.items[0].card.topic.scope.projectId, 'A'); assert.ok(candidates.items.length <= 4);
+    assert.ok(candidates.items.every(context => context.byteLimit === 10240)); assert.equal(candidates.complete, false);
+    assert.ok(f.calls.projects.every(call => call.page === 0 && call.limit === 5));
     f.denied.add('A');
-    const denied = await f.cards.candidates({ conversationId: 'main', queries: ['UniqueNebula'], exclude: { kind: 'personal' } });
-    assert.equal(denied.length, 0);
+    const denied = await f.cards.candidates({ throughSeq: through, conversationId: 'main', queries: ['UniqueNebula'], exclude: { kind: 'personal' } });
+    assert.equal(denied.items.length, 0);
   } finally { f.close(); }
 });
 
@@ -199,12 +199,12 @@ test('personal history is a candidate only when its indexed terms match the requ
     f.store.accept({ commandId: 'personal-research', conversationId: 'main', text: 'UniqueNebula release prediction' }, personal.scope,
       { kind: 'personal', nodeId: 'host', sessionId: 'personal', generation: 1, cwd: '/personal' }, 0);
     await context(f, false, personal);
-    const matched = await f.cards.candidates({ conversationId: 'main', queries: ['UniqueNebula'], exclude: topic().scope });
-    assert.deepEqual(matched.map(card => card.topic.scope), [personal.scope]);
-    const excluded = await f.cards.candidates({ conversationId: 'main', queries: ['UniqueNebula'], exclude: personal.scope });
-    assert.deepEqual(excluded, []);
-    const unrelated = await f.cards.candidates({ conversationId: 'main', queries: ['ElectionPolicy'], exclude: topic().scope });
-    assert.deepEqual(unrelated, [], 'Unrelated personal history must not turn an empty search into a model candidate');
+    const matched = await f.cards.candidates({ throughSeq: through, conversationId: 'main', queries: ['UniqueNebula'], exclude: topic().scope });
+    assert.deepEqual(matched.items.map(context => context.card.topic.scope), [personal.scope]);
+    const excluded = await f.cards.candidates({ throughSeq: through, conversationId: 'main', queries: ['UniqueNebula'], exclude: personal.scope });
+    assert.deepEqual(excluded.items, []);
+    const unrelated = await f.cards.candidates({ throughSeq: through, conversationId: 'main', queries: ['ElectionPolicy'], exclude: topic().scope });
+    assert.deepEqual(unrelated.items, [], 'Unrelated personal history must not turn an empty search into a model candidate');
     assert.equal(f.calls.compact, 0);
   } finally { f.close(); }
 });
@@ -246,8 +246,8 @@ test('independent topic cards and exact-title lookup keep identities, original h
     const exact = await f.cards.deterministic({conversationId:'main',text:'继续「Shared name」',throughSeq:through});
     assert.equal(exact.matches.length,2);assert.equal(exact.matches.find(item=>item.card.topic.scope.topicId==='one').lastActiveAt,old);
     assert.equal(exact.matches.find(item=>item.card.topic.scope.topicId==='two').lastActiveAt,created);
-    const index = await f.cards.candidates({conversationId:'main',queries:['UniqueIndependent'],exclude:{kind:'project',projectId:'A'}});
-    assert.deepEqual(index.map(card=>card.topic.scope),[scope]);
+    const index = await f.cards.candidates({ throughSeq: through,conversationId:'main',queries:['UniqueIndependent'],exclude:{kind:'project',projectId:'A'}});
+    assert.deepEqual(index.items.map(context=>context.card.topic.scope),[scope]);
   } finally { f.close(); }
 });
 
@@ -354,3 +354,29 @@ test('later recipient clarification constraints remain in versioned topic origin
 test('last discussion is the latest scoped user/assistant original and its own timestamp; notifications, goals, refreshes and foreign conversations never replace it',async()=>{const f=fixture();try{f.projects.set('B',{id:'B',title:'Beta',revision:'1',goal:'This is a goal, not a discussion'});f.add('用户请求');const assistant=f.add('助手真正回复',{role:'assistant'});f.add('较晚通知',{role:'notification'});f.add('别的窗口请求',{conversationId:'other'});const list=()=>f.cards.list({conversationId:'main'});let page=await list();assert.deepEqual(page.items.find(item=>item.topic.scope.projectId==='A').lastDiscussion,{role:'assistant',excerpt:'助手真正回复',at:assistant.createdAt,hasAttachments:false,truncated:false});assert.equal(page.items.find(item=>item.topic.scope.projectId==='B').lastDiscussion,null);assert.equal((await list()).items.find(item=>item.topic.scope.projectId==='A').lastDiscussion.at,assistant.createdAt);const latest=f.add('新请求'+ '字'.repeat(400));page=await list();const last=page.items.find(item=>item.topic.scope.projectId==='A').lastDiscussion;assert.equal(last.role,'user');assert.equal(last.at,latest.createdAt);assert.equal(Array.from(last.excerpt).length,160);assert.equal(last.truncated,true);assert.equal(f.calls.compact,0);}finally{f.close();}});
 
 test('attachment-only last discussion remains factual without inventing text or changing its source',async()=>{const f=fixture();try{f.store.ensure('main');const input={conversationId:'main',commandId:'file-only-discussion',text:'',target:{kind:'project',projectId:'A'}};const message=f.store.accept(input,input.target,binding('A'),-1,null,{content:[{type:'file',attachment:{attachmentId:'test-file-ref',name:'proof.txt',bytes:3}}]});f.add('只是一条较晚通知',{role:'notification'});const last=(await f.cards.list({conversationId:'main'})).items.find(item=>item.topic.scope.projectId==='A').lastDiscussion;assert.deepEqual(last,{role:'user',excerpt:'',at:message.createdAt,hasAttachments:true,truncated:false});assert.equal(f.store.message(message.id).text,'');assert.equal(f.calls.compact,0);}finally{f.close();}});
+
+
+test('all 32 authorized cards survive lexical and project lookup; 33 raw hits expose overflow even when one is denied', async () => {
+  const f=fixture();try {
+    for(let n=0;n<32;n++) {
+      f.projects.set(`N${n}`,{id:`N${n}`,title:`Bounded ${n}`,revision:'1',goal:'unique32needle'});
+      f.add(`specific original ${n}`,{projectId:`N${n}`});
+      await context(f,false,topic(`N${n}`));
+    }
+    const input={conversationId:'main',queries:['unique32needle'],exclude:topic().scope,throughSeq:through,limit:32};
+    const full=await f.cards.candidates(input);
+    assert.equal(full.items.length,32);assert.equal(full.complete,true);
+    assert.equal(full.items.every(item=>item.complete&&item.card.freshness==='current'),true,'Complete short histories are usable evidence, not stale cached summaries');
+    const frozen=f.store.messages('main').at(-1).seq;
+    f.add('LATE_PRIVATE_NEW_CONSTRAINT',{projectId:'N0'});
+    const old=await f.cards.candidates({...input,throughSeq:frozen});
+    assert.equal(JSON.stringify(old).includes('LATE_PRIVATE_NEW_CONSTRAINT'),false);
+    f.projects.set('N32',{id:'N32',title:'Bounded 32',revision:'1',goal:'unique32needle'});
+    f.add('specific original 32',{projectId:'N32'});await context(f,false,topic('N32'));
+    f.denied.add('N0');
+    const overflow=await f.cards.candidates(input);
+    assert.equal(overflow.complete,false,'Authorization filtering cannot turn a truncated SQL probe into an exhaustive search');
+    assert.equal(overflow.items.some(item=>item.card.topic.scope.projectId==='N0'),false);
+    assert.ok(f.calls.projects.every(call=>call.limit<=33));
+  } finally {f.close()}
+});

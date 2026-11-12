@@ -208,36 +208,40 @@ export class StewardTopicCards implements TopicCardsPort {
     return { matches, complete, directed: !!explicit };
   }
 
-  async candidates(input: Parameters<TopicCardsPort["candidates"]>[0]): Promise<TopicCard[]> {
+  async candidates(input: Parameters<TopicCardsPort["candidates"]>[0]): ReturnType<TopicCardsPort["candidates"]> {
     const conversationId = z.string().min(1).max(200).parse(input.conversationId), exclude = stewardScope.parse(input.exclude);
     const queries = z.array(z.string().trim().min(1).max(200)).max(3).parse(input.queries);
-    const limit = z.number().int().min(1).max(4).parse(input.limit ?? 4), scopes: StewardScope[] = [];
-    const tokens = [...new Set(queries.flatMap(terms))].slice(0, 24);
+    const throughSeq = z.number().int().nonnegative().parse(input.throughSeq);
+    const limit = z.number().int().min(1).max(32).parse(input.limit ?? 32), scopes: StewardScope[] = [];
+    const allTokens = [...new Set(queries.flatMap(terms))], tokens = allTokens.slice(0, 24);
+    let complete = allTokens.length <= 24;
     if (tokens.length) {
+      // One extra authorized result detects overflow; exclusion must not consume a slot.
       const rows = this.db.prepare(`SELECT c.scope,COUNT(*) AS rank FROM steward_topic_terms t JOIN steward_topic_cards c ON c.topic_key=t.topic_key
-        WHERE t.conversation=? AND t.term IN (${tokens.map(() => "?").join(",")}) GROUP BY t.topic_key ORDER BY rank DESC,t.topic_key LIMIT 8`).all(conversationId, ...tokens);
+        WHERE t.conversation=? AND t.term IN (${tokens.map(() => "?").join(",")}) AND c.scope!=?
+        GROUP BY t.topic_key ORDER BY rank DESC,t.topic_key LIMIT ?`).all(conversationId, ...tokens, canonical(exclude), limit + 1);
+      complete &&= rows.length <= limit;
       for (const row of rows) scopes.push(stewardScope.parse(JSON.parse(String(row.scope))));
     }
-    // ProjectRuntime supplies authorized, SQL-prefiltered metadata pages, never histories.
+    // Bounded authorized metadata only: never scan every project's transcript.
     for (const query of queries) {
-      const page = await this.host.projects({ conversationId, query, page: 0, limit: 4 });
-      for (const project of page.items.slice(0, 4)) scopes.push({ kind: "project", projectId: project.projectId });
+      const page = await this.host.projects({ conversationId, query, page: 0, limit: limit + 1 });
+      complete &&= !page.hasMore;
+      for (const project of page.items) scopes.push({ kind: "project", projectId: project.projectId });
     }
-    const seen = new Set([canonical(exclude)]), output: TopicCard[] = [];
+    const seen = new Set([canonical(exclude)]), items: TopicContext[] = [];
     for (const scope of scopes) {
       const key = canonical(scope);
       if (seen.has(key)) continue;
       seen.add(key);
       try {
-        const topic = { conversationId, scope }, authority = await this.host.authorize(topic);
-        const card = this.snapshot(topic, authority, Number.MAX_SAFE_INTEGER).card;
-        const preview = this.routingCard(card, 2048);
-        if (size([...output, preview]) > 8192) break;
-        output.push(preview);
-        if (output.length >= limit) break;
+        // context() distinguishes complete literal histories from genuinely stale summaries.
+        const context = await this.context({ topic: { conversationId, scope }, throughSeq, maintain: false });
+        if (items.length === limit) { complete = false; break; }
+        items.push(context);
       } catch (error) { if (!(error instanceof TaskError && (error.code === "FORBIDDEN" || error.code === "NOT_FOUND"))) throw error; }
     }
-    return output;
+    return { items, complete };
   }
 
   async source(input: Parameters<TopicCardsPort["source"]>[0]): Promise<TopicSourcePage> {
