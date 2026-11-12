@@ -33,6 +33,10 @@ export async function testNativeStewardMedia(browser,{output}={}) {
     // Reload discards the explicitly unsent current draft, while the original immutable pending request remains recoverable.
     await page.reload();await page.getByRole('button',{name:'管家',exact:true}).click();await editor.waitFor();await model('Chosen fixture');await native.getByRole('button',{name:'恢复原文到输入框',exact:true}).click();await native.getByText('ambiguous.txt',{exact:true}).waitFor();await native.getByRole('button',{name:/选择模型.*跟随目标会话/}).waitFor();
     await topic();host.model.script.push('RESTORED_FILE_OK');await native.getByRole('button',{name:'发送消息',exact:true}).click();await native.getByText('RESTORED_FILE_OK',{exact:true}).waitFor();assert.equal(calls.at(-1).selection,undefined);
+    // Assistant text may precede turn/end; the next scenario needs a settled scope.
+    const restoredCommandId=calls.at(-1).commandId,restoredMessage=service.store.commandMessage('main',restoredCommandId),restoredAgent=host.ctx.agents.get(restoredMessage.source.sessionId);assert.ok(restoredAgent);
+    await restoredAgent.whenIdle();await host.ctx.sessions.flush(restoredAgent.session);
+    const restoredSettled=await service.reconcile({conversationId:'main',commandId:restoredCommandId});assert.equal(restoredSettled.commandMessage.state.kind,'completed');
     // A lost ACK must reconcile the exact saved command and receipts after reload without a second submission.
     await topic();await input.setInputFiles(file('lost.txt','LOST_ACK_BYTES'));let held,releaseReply,ackDropped;
     const replyReleased=new Promise(resolve=>releaseReply=resolve),dropped=new Promise(resolve=>ackDropped=resolve),beforeLost=calls.length,modelsBeforeLost=host.model.requests.length;
