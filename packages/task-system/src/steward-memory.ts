@@ -214,4 +214,3 @@ export class StewardMemoryBridge {
   }
   close() { this.disposed = true; this.stop?.(); }
 }
-

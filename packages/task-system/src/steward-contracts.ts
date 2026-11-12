@@ -187,4 +187,3 @@ export interface StewardSnapshot {
   requests: StewardRequestObservation[];
   requestObservation: { kind: "active" | "unavailable"; reason: string | null };
 }
-

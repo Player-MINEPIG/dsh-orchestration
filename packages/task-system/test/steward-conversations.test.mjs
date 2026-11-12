@@ -218,4 +218,3 @@ test('native request evidence is immutable across restart and reads return the l
     assert.equal(f.store.requests('other').length,0);
   } finally { f.close(); }
 });
-
