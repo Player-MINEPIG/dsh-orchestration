@@ -510,14 +510,14 @@ test('auto routing uses bounded classifier requests for casual turns, direct add
       await waitFor(service,s=>s.messages.some(message=>message.text===response));
     }
     h.adapter.script.push('ordinary topic ready');
-    await service.send({conversationId:'main',commandId:'auto-casual-topic',text:'普通闲聊',routeCreateTopic:true});
+    await service.send({conversationId:'main',commandId:'auto-casual-topic',text:'普通闲聊 PERSONAL_BACK_AUTO',routeCreateTopic:true});
     await waitFor(service,s=>s.messages.some(message=>message.text==='ordinary topic ready'));
     const casual=service.store.commandMessage('main','auto-casual-topic').scope;
     assert.equal(casual.kind,'workbench');assert.ok(casual.topicId);
     async function send(commandId,text,response,{target,program=false,replyTo}={}) {
       const classifierCount=()=>h.adapter.requests.filter(request=>request.messages[0]?.source?.kind==='dsh-steward-route-classifier').length;
       const before=classifierCount(),requestsBefore=h.adapter.requests.length;
-      if(!replyTo&&!program){const latest=service.snapshot({conversationId:'main'}).topicActivity.latestMessage?.scope ?? service.store.current('main');if(JSON.stringify(latest)!==JSON.stringify(target))h.adapter.script.push(JSON.stringify({kind:'search',queries:[target.kind==='workbench'?'普通闲聊':target.projectId===a.projectId?'Alpha':'Beta']}));h.adapter.script.push(options=>{const input=JSON.parse(options.messages[0].content[0].text);if(input.stage==='candidates'){assert.equal(input.candidates.length,1);return JSON.stringify({kind:'candidate',id:input.candidates[0].id})}return JSON.stringify({kind:'route',target})});}h.adapter.script.push(response);
+      if(!replyTo&&!program){const latest=service.snapshot({conversationId:'main'}).topicActivity.latestMessage?.scope ?? service.store.current('main');if(JSON.stringify(latest)!==JSON.stringify(target))h.adapter.script.push(JSON.stringify({kind:'search',queries:[target.kind==='workbench'?'普通闲聊':target.projectId===a.projectId?'Alpha':'Beta']}));h.adapter.script.push(options=>{const input=JSON.parse(options.messages[0].content[0].text);if(input.stage==='candidates'){assert.equal(input.candidates.length,1);assert.equal(input.candidates[0].complete,false);return JSON.stringify({kind:'inspect',candidateIds:[input.candidates[0].id]})}return JSON.stringify({kind:'route',target})});if(JSON.stringify(latest)!==JSON.stringify(target))h.adapter.script.push(options=>{const input=JSON.parse(options.messages[0].content[0].text);assert.equal(input.stage,'candidates');assert.equal(input.candidates[0].complete,true);return JSON.stringify({kind:'candidate',id:input.candidates[0].id});});}h.adapter.script.push(response);
       await service.send({conversationId:'main',commandId,text,routingMode:'auto',...(replyTo?{replyTo}:{})});
       const snapshot=await waitFor(service,s=>s.messages.some(message=>message.text===response));
       if(program||replyTo){assert.equal(classifierCount(),before,'An exact recent title or canonical reply uses no routing model');assert.equal(h.adapter.requests.length,requestsBefore+1,'Only the destination native model runs for a direct title or reply');}
@@ -533,7 +533,7 @@ test('auto routing uses bounded classifier requests for casual turns, direct add
     snapshot=await send('auto-old-reply','Beta 项目只是引用，继续旧问题','alpha reply',{replyTo:oldA.id});
     assert.deepEqual(snapshot.messages.find(message=>message.commandId==='auto-old-reply').scope,{kind:'project',projectId:a.projectId});
     const classifiers=h.adapter.requests.filter(request=>request.messages[0]?.source?.kind==='dsh-steward-route-classifier');
-    assert.equal(classifiers.length,3);assert.ok(classifiers.every(request=>request.messages.length===1));
+    assert.equal(classifiers.length,4);assert.ok(classifiers.every(request=>request.messages.length===1));
     for(const request of classifiers){assert.deepEqual(request.tools,[]);assert.ok(Buffer.byteLength(JSON.stringify(request))<=32768);}
     const before=snapshot.messages.length,requestsBefore=h.adapter.requests.length;
     h.adapter.script.push(JSON.stringify({kind:'route',target:{kind:'project',projectId:'UNKNOWN_PROJECT'}}));
@@ -611,7 +611,7 @@ test('automatic quotation routes the next text to B without sharing the source h
     projects.saveSettings({root:join(h.dir,'projects'),expectedRevision:0});
     const a=await projects.create({commandId:'auto-quote-a',title:'Auto quote A',goal:'AUTO_A_PRIVATE_GOAL'});
     const b=await projects.create({commandId:'auto-quote-b',title:'Auto quote B',goal:'AUTO_B_GOAL'});
-    h.adapter.script.push('Auto B discussion ready');await service.send({conversationId:'main',commandId:'auto-quote-recent-b',text:'建立B的近期讨论记录',target:{kind:'project',projectId:b.projectId}});
+    h.adapter.script.push('Auto B discussion ready');await service.send({conversationId:'main',commandId:'auto-quote-recent-b',text:'建立B的近期讨论记录，后续核对资料。',target:{kind:'project',projectId:b.projectId}});
     await waitFor(service,s=>s.messages.some(message=>message.text==='Auto B discussion ready'));
     h.adapter.script.push('AUTO_QUOTE_SHARED_EXCERPT AUTO_A_PRIVATE_REMAINDER');
     await service.send({conversationId:'main',commandId:'auto-quote-source',text:'AUTO_A_PRIVATE_INPUT',target:{kind:'project',projectId:a.projectId}});
@@ -619,7 +619,7 @@ test('automatic quotation routes the next text to B without sharing the source h
     const source=initial.messages.find(message=>message.role==='assistant'&&message.text.includes('AUTO_QUOTE_SHARED_EXCERPT'));
     const input={conversationId:'main',commandId:'auto-quote-send',text:'请交给另一个项目核对这份资料。',routingMode:'auto',
       quote:{messageId:source.id,expectedRevision:source.revision,excerpt:'AUTO_QUOTE_SHARED_EXCERPT'}};
-    h.adapter.script.push(JSON.stringify({kind:'search',queries:['Auto quote B']}),JSON.stringify({kind:'candidate',id:'topic_0'}),'Auto B received excerpt');
+    h.adapter.script.push(JSON.stringify({kind:'search',queries:['Auto quote B']}),JSON.stringify({kind:'inspect',candidateIds:['topic_0']}),JSON.stringify({kind:'candidate',id:'topic_0'}),'Auto B received excerpt');
     await service.send(input);
     const snapshot=await waitFor(service,s=>s.messages.some(message=>message.text==='Auto B received excerpt'));
     const shared=snapshot.messages.find(message=>message.commandId===input.commandId);

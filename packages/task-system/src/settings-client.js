@@ -2908,7 +2908,7 @@ h(
     const openPlugins = (ctx) => openSettingsSection(ctx, "plugins");
     const openModels = (ctx) => openSettingsSection(ctx, "models");
     const projectMethods = [
-      "stewardUpload", "stewardUploadRead", "stewardAttachmentRead", "stewardModelCatalog", "stewardValidateModel", "stewardPermissionCatalog", "stewardValidatePermission", "stewardSourceSession", "stewardTopics", "stewardTopic", "stewardTopicSource", "topicProjectOptions", "topicProjectConfigure", "topicTaskCreate", "topicTaskBind", "stewardProgress", "stewardDocument", "stewardSnapshot", "stewardSend", "stewardReconcile", "stewardResolve",
+      "stewardUpload", "stewardUploadRead", "stewardAttachmentRead", "stewardModelCatalog", "stewardValidateModel", "stewardPermissionCatalog", "stewardValidatePermission", "stewardSourceSession", "stewardTopics", "stewardTopic", "stewardTopicSource", "stewardTopicSessions", "stewardTopicRelationConfigure", "stewardCorrectionOptions", "stewardCorrect", "stewardCorrectionHandoff", "topicProjectOptions", "topicProjectConfigure", "topicTaskCreate", "topicTaskBind", "stewardProgress", "stewardDocument", "stewardSnapshot", "stewardSend", "stewardReconcile", "stewardResolve",
       "stewardMemoryRead", "stewardMemoryConfigure", "stewardRoutingRead", "stewardRoutingConfigure",
       "stewardGateRead", "stewardGateArm", "stewardGateDecide", "stewardGateAmend", "stewardGateContinue", "stewardGateAcceptContinue",
       "stewardGateIndependent",

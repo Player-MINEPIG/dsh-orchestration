@@ -210,7 +210,7 @@ export class StewardTopicCards implements TopicCardsPort {
 
   async candidates(input: Parameters<TopicCardsPort["candidates"]>[0]): ReturnType<TopicCardsPort["candidates"]> {
     const conversationId = z.string().min(1).max(200).parse(input.conversationId), exclude = stewardScope.parse(input.exclude);
-    const queries = z.array(z.string().trim().min(1).max(200)).max(3).parse(input.queries);
+    const queries = z.array(z.string().trim().min(1).max(16000)).max(3).parse(input.queries);
     const throughSeq = z.number().int().nonnegative().parse(input.throughSeq);
     const limit = z.number().int().min(1).max(32).parse(input.limit ?? 32), scopes: StewardScope[] = [];
     const allTokens = [...new Set(queries.flatMap(terms))], tokens = allTokens.slice(0, 24);
@@ -235,10 +235,11 @@ export class StewardTopicCards implements TopicCardsPort {
       if (seen.has(key)) continue;
       seen.add(key);
       try {
-        // context() distinguishes complete literal histories from genuinely stale summaries.
-        const context = await this.context({ topic: { conversationId, scope }, throughSeq, maintain: false });
+        const topic={conversationId,scope},authority=await this.host.authorize(topic);
+        const snapshot=this.snapshot(topic,authority,throughSeq),history=this.history(topic,throughSeq);
+        const card=this.routingCard(snapshot.card,2048);
         if (items.length === limit) { complete = false; break; }
-        items.push(context);
+        items.push({card,originals:[],complete:!snapshot.failure && card.freshness==="current" && card.coverageSeq>=history.lastSeq,byteLimit:CONTEXT_BYTES});
       } catch (error) { if (!(error instanceof TaskError && (error.code === "FORBIDDEN" || error.code === "NOT_FOUND"))) throw error; }
     }
     return { items, complete };

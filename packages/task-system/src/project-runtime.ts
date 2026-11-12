@@ -84,6 +84,8 @@ const TOOLS = [
   "task_execution_status",
   "task_checkin",
   "steward_recall",
+  "steward_evidence",
+  "steward_continuity",
 ];
 interface ProjectRow {
   taskId?: string;
@@ -1001,13 +1003,15 @@ export class ProjectRuntime {
   async taskConversation(taskId: string) {
     return this.prepareTaskConversation(taskId);
   }
-  sendTask(input: { taskId: string; commandId: string; text: string }) {
+  taskConversationForRead(taskId:string) { this.authorize(); return this.adhoc(taskId); }
+  sendTask(input: { taskId: string; commandId: string; text: string } & ProjectTurnContent) {
     this.authorize();
     this.agents();
     return this.sendOwned(
       this.adhoc(input.taskId),
       input.commandId,
       input.text,
+      input,
     );
   }
   projectForSession(session: string): string | undefined {

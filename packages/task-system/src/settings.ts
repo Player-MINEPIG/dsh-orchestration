@@ -1,3 +1,5 @@
+import { stewardCorrectionRead, stewardCorrect, stewardCorrectionHandoff } from "./steward-corrections.js";
+import { topicRelationInput } from "./steward-topic-relations.js";
 import { topicProjectOptionsInput, topicProjectConfigureInput, topicTaskCreateInput, topicTaskBindInput } from "./steward-topic-promotion.js";
 import { stewardRoutingRead, stewardRoutingConfigure } from "./steward-routing-settings.js";
 import { stewardProgressRead, stewardDocumentOpen } from "./steward-progress.js";
@@ -373,6 +375,8 @@ const projectInputs = {
   stewardUpload, stewardUploadRead, stewardAttachmentRead, stewardValidateModel: stewardSelection, stewardModelCatalog: z.strictObject({}), stewardPermissionCatalog: z.strictObject({}), stewardValidatePermission: z.strictObject({preset:z.string().min(1).max(160)}),
   stewardSourceSession,
   topicProjectOptions:topicProjectOptionsInput, topicProjectConfigure:topicProjectConfigureInput, topicTaskCreate:topicTaskCreateInput, topicTaskBind:topicTaskBindInput,
+  stewardCorrectionOptions:stewardCorrectionRead,stewardCorrect,stewardCorrectionHandoff,
+  stewardTopicSessions:topicDetailInput, stewardTopicRelationConfigure:topicRelationInput,
   stewardTopics: topicListInput, stewardTopic: topicDetailInput, stewardTopicSource: topicSourceInput,
   stewardProgress:stewardProgressRead, stewardDocument:stewardDocumentOpen,
   stewardSnapshot: stewardRead,
@@ -710,6 +714,11 @@ export class TaskPluginSettings extends TypertRemoteService {
   async stewardModelCatalog() { return this.stewardOperation(() => this.stewardService().modelCatalog()); }
   async stewardValidateModel(input: unknown) { return this.stewardOperation(() => this.stewardService().validateModel(input)); }
   async stewardSourceSession(input: unknown) { return this.stewardOperation(() => this.stewardService().sourceSession(stewardSourceSession.parse(input))); }
+  async stewardCorrectionOptions(input:unknown){return this.stewardOperation(()=>this.stewardService().correctionOptions(stewardCorrectionRead.parse(input)))}
+  async stewardCorrect(input:unknown){return this.stewardOperation(()=>this.stewardService().correct(stewardCorrect.parse(input)))}
+  async stewardCorrectionHandoff(input:unknown){return this.stewardOperation(()=>this.stewardService().correctionHandoff(stewardCorrectionHandoff.parse(input)))}
+  async stewardTopicSessions(input:unknown){return this.stewardOperation(()=>this.stewardService().topicSessions(topicDetailInput.parse(input)))}
+  async stewardTopicRelationConfigure(input:unknown){return this.stewardOperation(()=>this.stewardService().topicRelationConfigure(topicRelationInput.parse(input)))}
   async topicProjectOptions(input: unknown) { return this.stewardOperation(() => this.stewardService().topicProjectOptions(topicProjectOptionsInput.parse(input))); }
   async topicProjectConfigure(input: unknown) { return this.stewardOperation(() => this.stewardService().topicProjectConfigure(topicProjectConfigureInput.parse(input))); }
   async topicTaskCreate(input: unknown) { return this.stewardOperation(() => this.stewardService().topicTaskCreate(topicTaskCreateInput.parse(input))); }

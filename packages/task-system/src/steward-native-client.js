@@ -151,14 +151,15 @@ function createStewardNativeClient({ React, Context, modules, hostContext, creat
     },[seats.header,view.overviewOpen]);
     React.useLayoutEffect(()=>{const binding=source?.binding??null;bridge.previewSource=binding;queueMicrotask(()=>{if(bridge.previewSource===binding)void bridge.preview?.setSource(binding);});return()=>{delete bridge.previewSource;};},[source,bridge]);
     const sourceKey = JSON.stringify(view.sourceScope);
+    const sourceIdentity=view.sourceMessageId?JSON.stringify(view.topicActivity?.latestMessage?.source??view.sourceMessageId):null;
     const sourceToken = view.sourceScope.kind === 'project' ? view.projects?.find(project => project.projectId === view.sourceScope.projectId)?.bindingToken : null;
     React.useEffect(() => {
       const lifetime = new AbortController(); let reference;
-      const current = () => { const latest = bridge.getSnapshot(); return !lifetime.signal.aborted && latest.authorityId === view.authorityId && latest.conversationId === view.conversationId && JSON.stringify(latest.sourceScope) === sourceKey && (latest.sourceScope.kind !== 'project' || latest.projects?.find(project => project.projectId === latest.sourceScope.projectId)?.bindingToken === sourceToken); };
+      const current = () => { const latest = bridge.getSnapshot(); return !lifetime.signal.aborted && latest.authorityId === view.authorityId && latest.conversationId === view.conversationId && JSON.stringify(latest.sourceScope) === sourceKey && (latest.sourceMessageId?JSON.stringify(latest.topicActivity?.latestMessage?.source??latest.sourceMessageId):null)===sourceIdentity && (latest.sourceScope.kind !== 'project' || latest.projects?.find(project => project.projectId === latest.sourceScope.projectId)?.bindingToken === sourceToken); };
       handle.current?.rememberSourceFocus();
       setSource(null); setSourceError('');
       (async () => {
-        const value = await view.invoke('stewardSourceSession', { conversationId: view.conversationId, scope: view.sourceScope });
+        const value = await view.invoke('stewardSourceSession', { conversationId: view.conversationId, scope: view.sourceScope,...(view.sourceMessageId?{messageId:view.sourceMessageId}:{}) });
         if (!current()) return;
         await hostContext.get('sessions').refresh();
         if (!current()) return;
@@ -169,7 +170,7 @@ function createStewardNativeClient({ React, Context, modules, hostContext, creat
         else { reference.release(); references.current.delete(reference); }
       })().catch(error => { if (current()) setSourceError(error.message ?? String(error)); });
       return () => { lifetime.abort(); if (reference && references.current.get(reference) === false) { reference.release(); references.current.delete(reference); } };
-    }, [view.authorityId, view.conversationId, sourceKey, sourceToken, sourceRefresh]);
+    }, [view.authorityId, view.conversationId, sourceKey, sourceIdentity, sourceToken, sourceRefresh]);
     React.useEffect(() => { for (const [reference, published] of references.current) if (published && reference !== source?.reference) { reference.release(); references.current.delete(reference); } }, [source]);
     React.useEffect(() => () => { for (const reference of references.current.keys()) reference.release(); references.current.clear(); }, []);
     React.useEffect(() => {

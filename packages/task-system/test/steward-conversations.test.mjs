@@ -47,7 +47,7 @@ test('topic activity includes creation and exact window boundary, excludes expir
     assert.equal(activity.cutoffAt,cutoffAt);assert.equal(activity.hasMore,false);
     assert.deepEqual(activity.items.map(item => item.scope.projectId),['new','current','boundary']);
     assert.equal(activity.items.at(-1).lastActiveAt,cutoffAt);
-    assert.deepEqual(activity.latestMessage,{ id: latest.id, scope: latest.scope, createdAt: latest.createdAt });
+    assert.deepEqual(activity.latestMessage,{ id: latest.id, scope: latest.scope, source: latest.source, createdAt: latest.createdAt });
     assert.deepEqual(f.store.current('main'),personal,'Reading browse topics never changes the send destination');
     assert.equal(f.store.topicActivity('main',projects,1,observedAt).items.length,1);
     f.restart();assert.deepEqual(f.store.topicActivity('main',projects,30,observedAt),activity);

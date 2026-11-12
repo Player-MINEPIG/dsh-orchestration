@@ -167,8 +167,8 @@ export async function testNativeSteward(browser, { output } = {}) {
     assert.equal(calls.at(-1).replyTo, alphaMessage.id);
     await native.locator(`[data-message-id="${alphaMessage.id}"]`).getByRole('button', { name: '引用', exact: true }).click();
     assert.equal(await target.inputValue(),'auto','Quote keeps automatic routing available');
-    host.model.script.push(JSON.stringify({kind:'search',queries:['Steward Beta']}),JSON.stringify({kind:'route',target:{kind:'project',projectId:second.projectId}}),'Beta explicit quotation response');
-    await editor.fill('Discuss this explicitly shared excerpt');
+    host.model.script.push(JSON.stringify({kind:'search',queries:['Steward Beta']}),options=>{const input=JSON.parse(options.messages[0].content[0].text);assert.equal(input.stage,'candidates');assert.equal(input.candidates.length,1);assert.equal(input.candidates[0].complete,false);return JSON.stringify({kind:'inspect',candidateIds:[input.candidates[0].id]});},options=>{const input=JSON.parse(options.messages[0].content[0].text);assert.equal(input.stage,'candidates');assert.equal(input.candidates[0].complete,true);return JSON.stringify({kind:'candidate',id:input.candidates[0].id});},'Beta explicit quotation response');
+    await editor.fill('Discuss Beta using this explicitly shared excerpt');
     await native.getByRole('button', { name: '发送消息', exact: true }).click();
     await native.getByText('Beta explicit quotation response', { exact: true }).waitFor();
     assert.equal(calls.at(-1).routingMode,'auto');

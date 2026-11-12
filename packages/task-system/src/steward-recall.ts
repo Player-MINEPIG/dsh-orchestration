@@ -42,8 +42,9 @@ export class StewardRecall {
     if (!conversations.length) throw new TaskError("FORBIDDEN", "No canonical conversation belongs to this native session");
     const db = this.ledger.managementDatabase();
     const visible = `conversation IN (${conversations.map(() => "?").join(",")})
-      AND json_extract(data,'$.scope.kind')=? AND json_extract(data,'$.scope.projectId') IS ? AND json_extract(data,'$.scope.topicId') IS ?`;
-    const scopeArgs = [...conversations, kind, projectId, binding.kind === "workbench" ? binding.topicId ?? null : null];
+      AND json_extract(data,'$.scope.kind')=? AND json_extract(data,'$.scope.projectId') IS ? AND json_extract(data,'$.scope.topicId') IS ?${binding.kind === "workbench" ? " AND json_extract(data,'$.source')=?" : ""}`;
+    const scopeArgs = [...conversations, kind, projectId, binding.kind === "workbench" ? binding.topicId ?? null : null,
+      ...(binding.kind === "workbench" ? [canonical(binding)] : [])];
     const parentLookup = (id: string | null) => {
       if (!id) return null;
       const row = db.prepare(`SELECT id,json_extract(data,'$.revision') AS revision FROM steward_messages WHERE id=? AND ${visible}`).get(id, ...scopeArgs);

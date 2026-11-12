@@ -360,7 +360,7 @@ export async function testNativeProject(browser, { output } = {}) {
     await frame.locator('[data-action="task-settings"]').click();
     const settings=page.locator('[data-task-plugin-settings]');
     await settings.waitFor();
-    assert.equal(await settings.locator('[data-settings-area]').count(),5);
+    assert.deepEqual(await settings.locator('[data-settings-area]').evaluateAll(elements=>elements.map(element=>element.id).sort()),['task-connections','task-decisions','task-diagnostics','task-local','task-runtime','task-steward-router']);
     const concurrency=settings.locator('#task-setting-maxConcurrent');
     const saved=await concurrency.inputValue(),draft=String(Number(saved)+1);
     await concurrency.fill(draft);

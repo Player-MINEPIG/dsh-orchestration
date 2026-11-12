@@ -33,6 +33,7 @@ export class StewardConversations {
     this.db.exec("CREATE INDEX IF NOT EXISTS steward_message_reply ON steward_messages(conversation,json_extract(data,'$.replyTo'),seq)");
     this.db.exec("CREATE INDEX IF NOT EXISTS steward_message_activity ON steward_messages(conversation,json_extract(data,'$.createdAt'))");
     this.db.exec("CREATE INDEX IF NOT EXISTS steward_task_origin_task ON steward_task_origins(task)");
+    this.db.exec("CREATE INDEX IF NOT EXISTS steward_message_exact_source ON steward_messages(conversation,json_extract(data,'$.source'))");
   }
   observeRequest(input: StewardRequestObservation) {
     const value = stewardRequestObservation.parse(input);
@@ -165,9 +166,9 @@ export class StewardConversations {
       if (!previous || previous.lastActiveAt < lastActiveAt) topics.set(key, { scope, title, lastActiveAt });
     }
     const items = [...topics.values()].sort((a,b) => b.lastActiveAt.localeCompare(a.lastActiveAt) || canonical(a.scope).localeCompare(canonical(b.scope)));
-    const latest = this.db.prepare("SELECT id,json_extract(data,'$.scope') AS scope,json_extract(data,'$.createdAt') AS created FROM steward_messages WHERE conversation=? ORDER BY seq DESC LIMIT 1").get(conversationId);
+    const latest = this.db.prepare("SELECT id,json_extract(data,'$.scope') AS scope,json_extract(data,'$.source') AS source,json_extract(data,'$.createdAt') AS created FROM steward_messages WHERE conversation=? ORDER BY seq DESC LIMIT 1").get(conversationId);
     return { activeDays, cutoffAt, observedAt, items: items.slice(0,100), hasMore: items.length > 100,
-      latestMessage: latest ? { id: String(latest.id), scope: stewardScope.parse(JSON.parse(String(latest.scope))), createdAt: String(latest.created) } : null };
+      latestMessage: latest ? { id: String(latest.id), scope: stewardScope.parse(JSON.parse(String(latest.scope))), source:stewardBinding.parse(JSON.parse(String(latest.source))), createdAt: String(latest.created) } : null };
   }
   resolveScope(request: StewardSend): StewardScope {
     this.ensure(request.conversationId);
@@ -185,7 +186,7 @@ export class StewardConversations {
     return this.message(String(row.message));
   }
   requestId(messageId: string): string { return `steward-${messageId}`; }
-  accept(request: StewardSend, scope: StewardScope, binding: StewardBinding, afterSeq: number, quote: StewardQuote | null = null, delivery?: Pick<StewardMessage, "content" | "selection" | "permission" | "route" | "creationContext" | "routingClarification">, bindUploads?: (messageId: string) => void): StewardMessage {
+  accept(request: StewardSend, scope: StewardScope, binding: StewardBinding, afterSeq: number, quote: StewardQuote | null = null, delivery?: Pick<StewardMessage, "content" | "selection" | "permission" | "route" | "creationContext" | "routingClarification" | "contextEvidence" | "workPlan" | "recipient" | "admission">, bindUploads?: (messageId: string) => void): StewardMessage {
     this.db.exec("BEGIN IMMEDIATE");
     try {
       const previous = this.replay(request);
@@ -222,6 +223,15 @@ export class StewardConversations {
     const value = stewardMessage.parse({ ...input, id, seq: Number(result.lastInsertRowid) });
     this.db.prepare("UPDATE steward_messages SET data=? WHERE id=?").run(canonical(value), id);
     return value;
+  }
+  markSubmitted(id:string) {
+    const message=this.message(id);if(message.admission==="submitted")return;
+    this.db.prepare("UPDATE steward_messages SET data=? WHERE id=?").run(canonical({...message,admission:"submitted",revision:message.revision+1}),id);
+  }
+  withdrawBeforeAdmission(id:string,expectedRevision:number,commandId:string) {
+    const message=this.message(id);
+    if(message.revision!==expectedRevision)throw new TaskError("CONFLICT","原请求状态已变化，不能撤回后重新投递。");
+    this.db.prepare("UPDATE steward_messages SET data=? WHERE id=?").run(canonical({...message,state:{kind:"released",reason:`Corrected before native admission: ${commandId}`},revision:message.revision+1}),id);
   }
   setState(id: string, state: z.infer<typeof stewardState>) {
     const message = this.message(id);

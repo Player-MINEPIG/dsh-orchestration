@@ -1,3 +1,4 @@
+import { workerRead, ordinaryTaskRead } from "./steward-evidence.js";
 import { continuationReply } from "./remote/ports.js";
 import type { RemoteExecutionService } from "./remote/index.js";
 import { CheckinCommand } from "./task-checkins.js";
@@ -360,6 +361,7 @@ declare module "@deepseek-ai/dsh-llm" {
 }
 
 const READ_TOOLS = [
+  "steward_evidence",
   "task_query",
   "task_history",
   "task_wait",
@@ -851,6 +853,7 @@ export class NativeExecutionProvider {
             tool !== "codex_delegate" &&
             tool !== "workflow_input_read" &&
             tool !== "steward_recall" &&
+            tool !== "steward_continuity" &&
             tool !== "run_code" &&
             (policyTools === undefined || policyTools.includes(tool)),
         );
@@ -859,6 +862,7 @@ export class NativeExecutionProvider {
       (tool) =>
         tool !== "workflow_input_read" &&
         tool !== "steward_recall" &&
+            tool !== "steward_continuity" &&
         tool !== "codex_delegate" &&
         (policyTools === undefined || policyTools.includes(tool)) &&
         (this.owner.config.trustedUnconfinedTools ||
@@ -2744,6 +2748,21 @@ export async function apply(ctx: Context, input: Config): Promise<void> {
       if (service.native?.scopeFor(exec.agent)) throw new TaskError("FORBIDDEN", "Owned task execution cannot read steward conversation history");
       return json(service.steward.recall.read(exec.agent.id, args));
     },
+  }));
+  ctx.tools.register(defineTool({
+    name:"steward_evidence",description:"Ask one specific question about this actual session's authorized evidence. References are optional: without IDs discover bounded current-scope messages/authority records; follow returned versioned references for exact reads. A received quote or context-evidence grant permits only its supplied text, never the donor's full history. Owned workers can read only their verified TaskContext and its reports. Missing, stale and insufficient evidence is explicit; this tool never dispatches or retries work.",
+    parameters:{question:{type:"string",required:true},references:{type:"array",items:{type:"object",additionalProperties:false,properties:{kind:{type:"string"},messageId:{type:"string"},expectedRevision:{type:"string"},recordKind:{type:"string"},recordId:{type:"string"},offset:{type:"integer"}}}},query:{type:"string"},beforeSeq:{type:"integer"}},output,
+    execute:async(args,exec)=>{
+      if(!exec.agent)throw new TaskError("FORBIDDEN","Evidence requires the actual requesting session");
+      const owned=service.native?.scopeFor(exec.agent);
+      if(owned){const executionContext=owned.external?owned.claim.executionContext:ledger.executionContext(owned.ref.runId);return json(workerRead({...owned.claim,executionContext},args))}
+      const assigned=service.steward.taskEvidenceMaterial(exec.agent.id);if(assigned)return json(ordinaryTaskRead(assigned,args));
+      return json(service.steward.evidence.read(exec.agent.id,args));
+    },
+  }));
+  ctx.tools.register(defineTool({
+    name:"steward_continuity",description:"Inspect this actual session's current bounded checkpoint, source versions, task state and human acceptance gates. Reports stale/missing evidence instead of restoring superseded decisions. A checkpoint is data only and never permission to retry an old run or bypass a gate.",parameters:{checkpointId:{type:"string"}},output,
+    execute:async(args,exec)=>{if(!exec.agent||service.native?.scopeFor(exec.agent))throw new TaskError("FORBIDDEN","Continuity requires a current steward coordinator session");return json(await service.steward.continuity.inspect(exec.agent.id,args))},
   }));
   if (config.executionEnabled && config.scriptExecutionWorkspaces.length) {
     ctx.inject(["subprocess"], scriptCtx => {

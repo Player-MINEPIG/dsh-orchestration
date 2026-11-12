@@ -29,7 +29,7 @@ test('ambiguous, low-confidence, invalid and unavailable JEV results use only th
  }
 });
 test('no eligible recipient never sends a singleton JEV question, and absent fallback fails closed',async()=>{
- const f=triageFixture({type:'choice',choice:'topic_0'}),input=triageInput();input.context.card.topic.scope={kind:'personal'};
+ const f=triageFixture({type:'choice',choice:'topic_0'}),input={stage:'candidates',text:'A request with no eligible candidate',candidates:[]};
  await f.call(input);assert.equal(f.requests.length,0);assert.equal(f.fallbacks.length,1);
  const ctx={get(){return undefined}};
  await assert.rejects(createStewardTriageCall(ctx,null)(input),/No independent routing fallback/);
@@ -93,4 +93,20 @@ test('compact evidence retains literal restrictions alongside goals, and omitted
  const [partial]=compactRoutingCandidates([value]);assert.equal(partial.complete,false);assert.equal(partial.previewTruncated,true);
  assert.throws(()=>compactRoutingCandidates(Array(33).fill(value)),{code:'LIMIT'});
  const original='中'.repeat(16000);assert.throws(()=>assertRoutingBudget({text:original}),{code:'LIMIT'});assert.equal(original.length,16000);
+});
+
+test('Jev candidate protocol remains 32 choices plus uncertain and incomplete selections request inspection only',async()=>{
+ const candidates=Array.from({length:32},(_,i)=>({id:`topic_${i}`,title:`Topic ${i}`,summary:'summary',evidence:'specific evidence',freshness:'current',complete:i!==31,previewTruncated:i===31}));let observed;
+ const ctx={decisionModels:{async ask(input){observed=input;return {provider:'jev',model:'own',answers:{recipient:{type:'choice',choice:'topic_31',confidence:0.95}}}}}};ctx.get=name=>ctx[name];
+ assert.deepEqual(await createStewardTriageCall(ctx,null)({stage:'candidates',text:'Find the exact supplied requirement',candidates}),{kind:'inspect',candidateIds:['topic_31']});assert.equal(Object.keys(observed.questions.recipient.criteria).length,33);assert.equal(observed.questions.recipient.criteria.independent,undefined);
+});
+test('recipient classification exposes only opaque authorized roles and shares the existing model-call budget',async()=>{
+ let observed,calls=0;const ctx={decisionModels:{async ask(input){observed=input;calls++;return {provider:'jev',model:'own',answers:{recipient:{type:'choice',choice:'seat_1',confidence:0.99}}}}}};ctx.get=name=>ctx[name];const classify=createStewardTriageCall(ctx,null);const input={stage:'recipient',text:'Read the existing execution report',recipients:[{id:'seat_0',role:'PM',responsibility:'Coordinate',artifacts:[],scopeLabel:'Current topic'},{id:'seat_1',role:'Executor',responsibility:'Own the existing result',artifacts:['report.md'],scopeLabel:'Current topic'}]};assert.deepEqual(await classify(input),{kind:'recipient',id:'seat_1'});assert.deepEqual(Object.keys(observed.questions.recipient.criteria),['uncertain','seat_0','seat_1']);assert.equal(observed.provider,undefined);assert.equal(observed.model,undefined);await classify(input);await classify(input);await assert.rejects(classify(input),{code:'LIMIT'});assert.equal(calls,3);
+});
+test('a dependent continuation choice is available only when the trusted original offers that action',async()=>{
+ for(const allowed of [false,true]){const ctx={decisionModels:{async ask(){return {provider:'jev',model:'own',answers:{recipient:{type:'choice',choice:'continue_dependent',confidence:1}}}}}};ctx.get=name=>ctx[name];const input={stage:'answer',text:'The effective budget is 5000',original:'Compare both specs, then recommend using the budget.',question:'What is the budget?',candidates:[],actions:allowed?['continue-dependent']:[]};if(allowed)assert.deepEqual(await createStewardTriageCall(ctx,null)(input),{kind:'continue-dependent'});else await assert.rejects(createStewardTriageCall(ctx,null)(input),/No independent routing fallback/);}
+});
+
+test('latest Jev may search only with complete bounded local keywords, without changing candidate choice cardinality',async()=>{
+ const ctx={decisionModels:{async ask(input){assert.ok(input.questions.recipient.criteria.search);return {provider:'jev',model:'own',answers:{recipient:{type:'choice',choice:'search',confidence:1}}}}}};ctx.get=name=>ctx[name];const input={...triageInput(),text:'scopeboundedsharedneedle'};assert.deepEqual(await createStewardTriageCall(ctx,null)(input),{kind:'search',queries:['scopeboundedsharedneedle']});
 });

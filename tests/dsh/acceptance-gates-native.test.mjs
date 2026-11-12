@@ -50,13 +50,17 @@ test('actual managed PM tools cannot persist planning before acceptance or shed 
     assert.equal(ledger.getDecision(attempted[0]), undefined);
     assert.equal(ledger.snapshot().tasks.length, before.tasks.length);
     assert.equal(ledger.snapshot().runs.length, before.runs.length);
-    retiredHandle = await h.ctx.agents.resume({resumeSessionId: SessionId(originalSession), agentOptions: {provider: 'test-offline', model: 'script'}});
-    const retired = retiredHandle.agent;
+    // The steward can retain the official controller's original writer for browsing.
+    // Reuse that real Agent; only acquire a fresh handle when no writer exists.
+    const existing = h.ctx.agents.get(SessionId(originalSession));
+    if (existing) await existing.whenIdle();
+    else retiredHandle = await h.ctx.agents.resume({resumeSessionId: SessionId(originalSession), agentOptions: {provider: 'test-offline', model: 'script'}});
+    const retired = existing ?? retiredHandle.agent;
     await projects.handoff(projectId);
     assert.throws(() => h.ctx.taskSystem.withDispatchOrigin(retired, () => ledger.createTask('retired-root', {title: 'A retired session cannot become unscoped'})), error => error.code === 'STALE_PROJECT_SESSION');
     const rejected = await h.ctx.tools.execute({callId: ToolCallId('retired-native-call'), name: 'task_dispatch', arguments: {commandId: 'retired-plan', title: 'A retired project plan'}, agent: retired, signal: new AbortController().signal});
     assert.equal(rejected.isError, true);
-    await retiredHandle.dispose(); retiredHandle = undefined;
+    await retiredHandle?.dispose(); retiredHandle = undefined;
     const currentSession = projects.placementProject(projectId).session;
     assert.throws(() => ledger.withDispatchOrigin({kind: 'session', nodeId: 'foreign-peer', sessionId: currentSession}, () => ledger.createTask('foreign-root', {title: 'Peer-forged local PM'})), error => error.code === 'FORBIDDEN');
     const repair = ledger.createRun('native-repair-run', {taskId: 'native-repair', route: {nodeId: 'local', provider: 'test-offline', model: 'script', requiredCapabilities: []}}).value;

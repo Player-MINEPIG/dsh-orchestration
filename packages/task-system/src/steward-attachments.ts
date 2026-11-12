@@ -66,13 +66,13 @@ export class StewardAttachments {
     this.resolve(conversationId,ids);
     for(const id of ids){const previous=this.db.prepare("SELECT command,conversation FROM steward_router_uploads WHERE upload=?").get(id);if(previous && (previous.command!==commandId||previous.conversation!==conversationId))throw new TaskError("CONFLICT","Attachment already belongs to another router request");this.db.prepare("INSERT OR IGNORE INTO steward_router_uploads VALUES(?,?,?)").run(id,commandId,conversationId);}
   }
-  authorizedFileMessages(path: string): string[] {
+  authorizedFiles(path: string): { messageId: string; attachmentId: string }[] {
     const rows = this.db.prepare("SELECT data FROM steward_uploads WHERE json_extract(data,'$.filePath')=? AND json_extract(data,'$.messageId') IS NOT NULL").all(path);
     return rows.flatMap(row => {
       const value = readyUpload.parse(JSON.parse(String(row.data))), part = value.content[0];
       if (part?.type !== "file" || !value.messageId) return [];
       const host = this.storage().fileHostPath(part.attachment);
-      return host && this.ctx.get("fs")?.processPathFromHostPath(host) === path ? [value.messageId] : [];
+      return host && this.ctx.get("fs")?.processPathFromHostPath(host) === path ? [{ messageId: value.messageId, attachmentId: part.attachment.attachmentId }] : [];
     });
   }
   resolve(conversationId: string, ids: readonly string[]): AdmittedPromptContentPart[] {

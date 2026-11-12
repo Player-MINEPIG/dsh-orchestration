@@ -135,7 +135,7 @@ export async function testStewardScopeResponses(browser, { output } = {}) {
     await gate.getByText('ALPHA_GATE_RESPONSE', { exact: true }).waitFor();
     assert.equal(calls.some(call => call.method === pending.method), false, 'Uncertain action is never replayed automatically');
     await page.getByRole('button', { name: '关闭验收卡', exact: true }).click();
-    await target.selectOption('personal');
+    await target.selectOption(`project:${a.projectId}`);
     await page.getByRole('textbox', { name: '消息', exact: true }).fill('USER_MESSAGE_OUTSIDE_NOTIFICATION_TAIL');
     await page.getByRole('button', { name: '发送', exact: true }).click();
     const submitted = page.locator('[data-role="user"]').filter({ hasText: 'USER_MESSAGE_OUTSIDE_NOTIFICATION_TAIL' });

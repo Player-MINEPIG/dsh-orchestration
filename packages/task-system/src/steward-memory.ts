@@ -141,7 +141,7 @@ export class StewardMemoryBridge {
     this.assertStewardReader(sessionId);
     const candidates = this.store.sourcesForSession(sessionId, this.task.config.nodeId).map(source => source.binding);
     const live = candidates.filter(binding => {
-      if ((binding.kind === "personal" || binding.kind === "workbench")) return true;
+      if ((binding.kind === "personal" || binding.kind === "workbench")) return this.task.steward?.sourceIsCurrent(binding) ?? true;
       try {
         const current = this.task.projects?.placementProject(binding.projectId);
         return current?.session === binding.sessionId && current.generation === binding.generation && current.cwd === binding.cwd;

@@ -81,7 +81,11 @@
     "packages/task-system/test/steward-routing-settings.test.mjs",
     "packages/task-system/test/steward-topic-cards.test.mjs",
     "packages/task-system/test/steward-topics.test.mjs",
-    "packages/task-system/test/steward-topic-overview.test.mjs"
+    "packages/task-system/test/steward-topic-relations.test.mjs",
+    "packages/task-system/test/steward-recipients.test.mjs",
+    "packages/task-system/test/steward-continuity-evidence.test.mjs",
+    "packages/task-system/test/steward-topic-overview.test.mjs",
+    "packages/task-system/test/steward-correction-recovery.test.mjs"
   ],
   "native": [
     "packages/task-system/test/project-native-client.test.mjs",
@@ -141,10 +145,14 @@
     "tests/dsh/steward-continuity-native.test.mjs",
     "tests/dsh/steward-permission-native.test.mjs",
     "tests/dsh/steward-topic-router-native.test.mjs",
+    "tests/dsh/steward-routing-independence-native.test.mjs",
+    "tests/dsh/steward-continuity-evidence-native.test.mjs",
+    "tests/dsh/steward-correction-native.test.mjs",
     "tests/dsh/steward-32-candidates-native.test.mjs",
     "tests/dsh/native-reconciliation.test.mjs",
     "tests/dsh/managed-retry-native.test.mjs",
-    "tests/dsh/steward-progress.test.mjs"
+    "tests/dsh/steward-progress.test.mjs",
+    "tests/dsh/steward-recipients-native.test.mjs"
   ],
   "ui": [
     "packages/task-system/test/executor-alerts.test.mjs",

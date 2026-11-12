@@ -366,7 +366,8 @@ test('all 32 authorized cards survive lexical and project lookup; 33 raw hits ex
     const input={conversationId:'main',queries:['unique32needle'],exclude:topic().scope,throughSeq:through,limit:32};
     const full=await f.cards.candidates(input);
     assert.equal(full.items.length,32);assert.equal(full.complete,true);
-    assert.equal(full.items.every(item=>item.complete&&item.card.freshness==='current'),true,'Complete short histories are usable evidence, not stale cached summaries');
+    assert.equal(full.items.every(item=>!item.complete && item.originals.length===0),true,'Shortlist metadata never claims complete transcript evidence; only selected sources are refined');
+    const refined=await f.cards.context({topic:topic('N31'),throughSeq:through,maintain:false});assert.equal(refined.complete,true,'The selected short history can still provide complete authorized evidence');
     const frozen=f.store.messages('main').at(-1).seq;
     f.add('LATE_PRIVATE_NEW_CONSTRAINT',{projectId:'N0'});
     const old=await f.cards.candidates({...input,throughSeq:frozen});

@@ -11,7 +11,7 @@ export const stewardScope = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("project"), projectId: key }),
 ]);
 export type StewardScope = z.infer<typeof stewardScope>;
-export const stewardSourceSession = z.strictObject({ conversationId: key, scope: stewardScope });
+export const stewardSourceSession = z.strictObject({ conversationId: key, scope: stewardScope, messageId:key.optional(),recipient:z.strictObject({id:key,token:key}).optional() });
 export const stewardQuoteInput = z.strictObject({
   messageId: key, expectedRevision: z.number().int().nonnegative(),
   excerpt: z.string().min(1).max(2000).refine(text => text.trim().length > 0),
@@ -31,12 +31,13 @@ export const stewardAttachmentRead = z.strictObject({ conversationId: key, messa
 export const stewardSend = z.strictObject({
   conversationId: key, commandId: key, text: z.string().trim().max(16000),
   uploads: z.array(key).max(32).optional(), selection: stewardSelection.optional(), permissionPreset: key.optional(),
-  target: stewardScope.optional(), replyTo: key.optional(), contextAnchor: z.discriminatedUnion("kind", [z.strictObject({ kind: z.literal("canonical"), messageId: key, throughSeq: z.number().int().nonnegative() }), z.strictObject({ kind: z.literal("predecessor"), commandId: key })]).optional(),
+  target: stewardScope.optional(), recipient: z.strictObject({id:key,token:key}).optional(), replyTo: key.optional(), contextAnchor: z.discriminatedUnion("kind", [z.strictObject({ kind: z.literal("canonical"), messageId: key, throughSeq: z.number().int().nonnegative() }), z.strictObject({ kind: z.literal("predecessor"), commandId: key })]).optional(),
   routingMode: z.literal("auto").optional(),
   latestTopic: z.strictObject({ scope: stewardScope, latestMessageId: key.nullable(), throughSeq: z.number().int().nonnegative() }).optional(),
   routeQuestionId: key.optional(), routeCreateTopic: z.literal(true).optional(),
   quote: stewardQuoteInput.optional(),
 }).superRefine((value, ctx) => {
+  if(value.recipient&&(value.routeCreateTopic||value.replyTo))ctx.addIssue({code:"custom",path:["recipient"],message:"明确会话不能同时改投新话题或覆盖回复来源"});
   if (value.routeCreateTopic && (value.replyTo || value.target && (value.target.kind !== "workbench" || value.target.topicId)))
     ctx.addIssue({ code: "custom", path: ["routeCreateTopic"], message: "A new-topic intent cannot redirect a reply or existing topic" });
   if (!value.text && !value.uploads?.length) ctx.addIssue({ code: "custom", path: ["text"], message: "A message requires text or an attachment" });
@@ -115,9 +116,17 @@ export const stewardManifest = z.strictObject({
   evidence: z.literal("selection-only"),
   resources: z.array(z.strictObject({ id: key, version: key })),
 });
+export const stewardContextEvidence = z.array(z.strictObject({
+  topic:z.strictObject({conversationId:key,scope:stewardScope}),
+  originals:z.array(z.strictObject({source:z.strictObject({kind:z.literal("message"),id:key,revision:z.number().int().nonnegative(),seq:z.number().int().positive(),scope:stewardScope,binding:stewardBinding}),
+    role:z.enum(["user","assistant","notification"]),text:z.string().max(8192),replyTo:key.optional()})).max(16),
+})).max(3).refine(value=>new TextEncoder().encode(JSON.stringify(value)).length<=8192,"Shared evidence exceeds its bounded grant");
+export const stewardWorkPlan=z.strictObject({mode:z.enum(["independent-readonly","handoff-review"]),independentText:z.string().max(16000),dependentText:z.string().max(16000),questionId:key});
 export const stewardMessage = z.strictObject({
   id: key, seq: z.number().int().positive(), conversationId: key,
   role: z.enum(["user", "assistant", "notification"]), text: z.string(), content: stewardContent.optional(), selection: stewardSelection.optional(), permission: stewardPermission.optional(), commandId: key.nullable().default(null),
+  admission:z.enum(["not-started","submitted"]).optional(), workPlan:stewardWorkPlan.optional(), contextEvidence:stewardContextEvidence.optional(),
+  recipient:z.strictObject({topic:stewardScope,sourceScope:stewardScope,seatId:key,reason:z.enum(["reply","task-owner","explicit","role","project-coordinator","default"])}).optional(),
   routingClarification: z.strictObject({questionId:key,question:z.string().max(500),answers:z.array(z.strictObject({commandId:key,text:z.string().max(16000)})).min(1).max(8)}).optional(),
   creationContext: z.strictObject({ instructionId: key, messageIds: z.array(key).min(1).max(11) }).optional(),
   scope: stewardScope, route: z.strictObject({ reason: z.enum(["unassigned", "clarification", "unavailable", "timeout", "provider", "invalid-output", "continuation"]), notice: z.string().max(500), anchorMessageId: key.optional(), responseMessageId: key.optional() }).optional(), replyTo: key.nullable(), createdAt: z.string(),
@@ -165,7 +174,7 @@ export interface StewardSnapshot {
   topicActivity: {
     activeDays: number; cutoffAt: string; observedAt: string;
     items: { scope: StewardScope; title: string; lastActiveAt: string }[]; hasMore: boolean;
-    latestMessage: { id: string; scope: StewardScope; createdAt: string } | null;
+    latestMessage: { id: string; scope: StewardScope; source?:StewardBinding; createdAt: string } | null;
   };
   topicMaintenance: {scope:StewardScope;throughSeq:number;state:"running"|"ready"|"unavailable";reason:string|null}[];
   topics: (import("./steward-topics.js").StewardIndependentTopic & { scope: Extract<StewardScope, {kind:"workbench"}> })[];
