@@ -1321,3 +1321,26 @@ test('native Tasks in one registered cwd execute concurrently while each Run ret
   for(const claim of [first.claim,second])assert.equal(h.ledger.getRun(claim.run.runId).state,'succeeded');
  }finally{release();await Promise.allSettled(jobs);await h.dispose();}
 });
+
+test('single-host settings save the local executor default and a fresh task claims, submits and returns without a remote peer',async()=>{
+ const h=await harness({config:{autoExecute:true},script:[{name:'task_submit_result',args:{outcome:'success',summary:'Synthetic local dispatch verified',reportBody:'No external actions performed'}},'Synthetic result received']});
+ try{
+  h.ledger.registerNode('local-settings-node',{nodeId:'local',roles:['both'],enabled:true,workspaceIds:[],capabilities:[],models:[{provider:'test-offline',model:'script'}],maxConcurrent:1});
+  const {TaskPluginSettings}=await import('../../packages/task-system/dist/settings.js');
+  const settings=Object.assign(Object.create(TaskPluginSettings.prototype),{ctx:h.ctx});
+  const view=await settings.refreshNodeModels({nodeId:'local'});
+  assert.equal(view.policy.revision,0);assert.ok(view.catalog.positiveSnapshot);
+  const saved=await settings.saveNodeModelDefault({nodeId:'local',expectedRevision:0,expectedCatalogRevision:view.catalog.positiveSnapshot.revision,choice:{provider:'test-offline',model:'script'}});
+  assert.equal(saved.policy.revision,1);
+  const parent=await h.ctx.agents.create({sessionId:SessionId('local-dispatch-origin'),meta:{cwd:h.dir},agentOptions:{provider:'test-offline',model:'script'}});
+  const dispatched=await tool(h.ctx,'task_dispatch',{commandId:'local-default-dispatch',title:'Synthetic read-only local task',description:'Submit a synthetic result; perform no external actions',nodeId:'local'},parent.agent);
+  assert.equal(dispatched.isError,false,JSON.stringify(dispatched.error));
+  const run=h.ledger.snapshot().runs[0];assert.equal(run.route.provider,'test-offline');assert.equal(run.route.model,'script');
+  await until(()=>{h.ctx.taskSystem.tick();return h.ledger.getRun(run.runId).state==='succeeded';},10000);
+  await until(()=>{h.ctx.taskSystem.tick();return h.ledger.history(run.taskId).resultReturns[0]?.state==='completed';},10000);
+  const history=h.ledger.history(run.taskId);
+  assert.equal(history.reports.filter(row=>row.body==='No external actions performed').length,1);
+  assert.equal(history.resultReturns.length,1);assert.equal(h.adapter.requests.length,2);
+  assert.equal(history.runs.length,1,'No retry of any existing task');
+ }finally{await h.dispose();}
+});

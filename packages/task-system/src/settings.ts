@@ -1,6 +1,14 @@
+import { stewardCorrectionRead, stewardCorrect, stewardCorrectionHandoff } from "./steward-corrections.js";
+import { topicRelationInput } from "./steward-topic-relations.js";
+import { topicProjectOptionsInput, topicProjectConfigureInput, topicTaskCreateInput, topicTaskBindInput } from "./steward-topic-promotion.js";
+import { stewardRoutingRead, stewardRoutingConfigure } from "./steward-routing-settings.js";
+import { stewardProgressRead, stewardDocumentOpen } from "./steward-progress.js";
+import { topicListInput, topicDetailInput, topicSourceInput } from "./steward-topic-types.js";
 import { ExecutorDemandReads } from "./remote/executor-reads.js";
 import { demandReadInputs, parseDemandRead } from "./demand-read-inputs.js";
 import type { DemandReadMethod } from "./demand-reads.js";
+import { stewardUpload, stewardUploadRead, stewardAttachmentRead, stewardSelection, stewardSourceSession, stewardRead, stewardSend, stewardResolve, stewardGateRead, stewardGateArm, stewardGateDecide, stewardGateAmend, stewardGateContinue, stewardGateAcceptContinue, stewardGateIndependent } from "./steward-contracts.js";
+import { stewardMemoryRead, stewardMemoryConfigure } from "./steward-memory.js";
 import { ProtocolError } from "./remote/protocol.js";
 import { ExpectedExecutionMs } from "./execution-expectation.js";
 import { CentralTaskControl } from "./central-control.js";
@@ -50,6 +58,7 @@ declare module "@deepseek-ai/dsh-typert-protocol" {
   interface RemoteErrorDetailsMap {
     "task/startup": { readonly reason: string };
     "task/project": { readonly reason: string };
+    "task/steward": { readonly reason: string; readonly detail: string; readonly admission?: "stored" | "in-flight" | "not-admitted"; readonly actionOutcome?: "not-applied" | "may-have-applied" };
   }
 }
 import { z } from "zod";
@@ -363,6 +372,21 @@ export function hasTaskConfigOverride(patches: readonly unknown[]): boolean {
 
 const projectInputs = {
   ...demandReadInputs,
+  stewardUpload, stewardUploadRead, stewardAttachmentRead, stewardValidateModel: stewardSelection, stewardModelCatalog: z.strictObject({}), stewardPermissionCatalog: z.strictObject({}), stewardValidatePermission: z.strictObject({preset:z.string().min(1).max(160)}),
+  stewardSourceSession,
+  topicProjectOptions:topicProjectOptionsInput, topicProjectConfigure:topicProjectConfigureInput, topicTaskCreate:topicTaskCreateInput, topicTaskBind:topicTaskBindInput,
+  stewardCorrectionOptions:stewardCorrectionRead,stewardCorrect,stewardCorrectionHandoff,
+  stewardTopicSessions:topicDetailInput, stewardTopicRelationConfigure:topicRelationInput,
+  stewardTopics: topicListInput, stewardTopic: topicDetailInput, stewardTopicSource: topicSourceInput,
+  stewardProgress:stewardProgressRead, stewardDocument:stewardDocumentOpen,
+  stewardSnapshot: stewardRead,
+  stewardSend,
+  stewardReconcile: stewardRead,
+  stewardResolve,
+  stewardMemoryRead,
+  stewardMemoryConfigure,
+  stewardRoutingRead, stewardRoutingConfigure,
+  stewardGateRead, stewardGateArm, stewardGateDecide, stewardGateAmend, stewardGateContinue, stewardGateAcceptContinue, stewardGateIndependent,
   nodeModelSettings:z.object({nodeId:z.string().min(1).max(128)}).strict(),
   refreshNodeModels:z.object({nodeId:z.string().min(1).max(128)}).strict(),
   saveNodeModelDefault:z.object({nodeId:z.string().min(1).max(128),expectedRevision:z.number().int().nonnegative(),expectedCatalogRevision:z.string().min(1),choice:ExecutionModelChoice}).strict(),
@@ -478,6 +502,8 @@ const projectInputs = {
       runId: z.string().min(1).nullable(),
       confirmationRevision: z.number().int().positive().default(1),
       retryPrompt: z.string().max(20000).optional(),
+      retryRouting: z.object({nodeId:z.string().min(1).max(128).optional(),executionModel:ExecutionModelChoice.optional()}).strict().optional(),
+      expectedExecutionMs: ExpectedExecutionMs.optional(),
       returnMessageId: z.string().min(1).max(200).optional(),
       action: z.enum([
         "complete-materials",
@@ -549,7 +575,10 @@ export class TaskPluginSettings extends TypertRemoteService {
   async taskGraphPage(input:unknown) { return this.demandProduct("taskGraphPage",input); }
   async taskSessionAccess(input:unknown) { return this.demandProduct("taskSessionAccess",input); }
   async projectListPage(input:unknown) { return this.demandProduct("projectListPage",input); }
-  async projectDetail(input:unknown) { return this.demandProduct("projectDetail",input); }
+  async projectDetail(input:unknown) {
+    const request=parseDemandRead("projectDetail",input),detail=z.object({}).passthrough().parse(await this.demandProduct("projectDetail",request)),task=this.ctx.get("taskSystem");
+    return {...detail,linkedTopics:request.view!=="executor"&&task?.steward&&deploymentPolicy(task.config).centralMode==="host"?task.steward.projectTopics(request.projectId):[]};
+  }
   async projectCreateOptions(input:unknown) { return this.demandProduct("projectCreateOptions",input); }
   async projectResourcesPage(input:unknown) { return this.demandProduct("projectResourcesPage",input); }
   async scheduleListPage(input:unknown) { return this.demandProduct("scheduleListPage",input); }
@@ -655,6 +684,76 @@ export class TaskPluginSettings extends TypertRemoteService {
     }};
     return readSessionDemandPage(input,{sessionId,roots,pendingDispatches:operations.pending,codexJobs:history.codexJobs,jobs:this.ctx.get('jobs') as SessionJobRegistry|undefined,localCodex:this.ctx.get('localCodex')?.store,ledgerSource,localExecutorSource:view==='executor'?localSource:undefined,taskOverlaySources:overrideIds.length?[localSource]:[]});
   }
+  private stewardService() {
+    const task = this.ctx.get("taskSystem");
+    if (!task?.steward || deploymentPolicy(task.config).centralMode !== "host")
+      throw new RemoteError("task/project", "Steward conversation requires a local planner", { reason: "PLANNER_REQUIRED" });
+    return task.steward;
+  }
+  private async stewardOperation<T>(operation: () => T | Promise<T>): Promise<T> {
+    try { return await operation(); }
+    catch (error) {
+      if (error instanceof TaskError || error instanceof ProtocolError) throw new RemoteError("task/steward", "Steward operation rejected", { reason: error.code, detail: error.message.slice(0,2000) });
+      throw error;
+    }
+  }
+  private async stewardHumanOperation<T>(commandId: string, kind: "simple" | "continue" | "accept-continue" | "independent", operation: () => T | Promise<T>): Promise<T> {
+    try { return await operation(); }
+    catch (error) {
+      if (error instanceof TaskError || error instanceof ProtocolError) throw new RemoteError("task/steward", "Steward action rejected", {
+        reason: error.code, detail: error.message.slice(0,2000), actionOutcome: this.stewardService().humanActionApplied(commandId,kind) ? "may-have-applied" : "not-applied",
+      });
+      throw error;
+    }
+  }
+  async stewardUpload(input: unknown) { return this.stewardOperation(() => this.stewardService().upload(input)); }
+  async stewardUploadRead(input: unknown) { return this.stewardOperation(() => this.stewardService().uploadRead(input)); }
+  async stewardAttachmentRead(input: unknown) { return this.stewardOperation(() => this.stewardService().attachmentRead(input)); }
+  async stewardPermissionCatalog() { return this.stewardOperation(() => this.stewardService().permissions.catalog()); }
+  async stewardValidatePermission(input: unknown) { const value=z.strictObject({preset:z.string().min(1).max(160)}).parse(input);return this.stewardOperation(() => this.stewardService().permissions.resolve(value.preset)); }
+  async stewardModelCatalog() { return this.stewardOperation(() => this.stewardService().modelCatalog()); }
+  async stewardValidateModel(input: unknown) { return this.stewardOperation(() => this.stewardService().validateModel(input)); }
+  async stewardSourceSession(input: unknown) { return this.stewardOperation(() => this.stewardService().sourceSession(stewardSourceSession.parse(input))); }
+  async stewardCorrectionOptions(input:unknown){return this.stewardOperation(()=>this.stewardService().correctionOptions(stewardCorrectionRead.parse(input)))}
+  async stewardCorrect(input:unknown){return this.stewardOperation(()=>this.stewardService().correct(stewardCorrect.parse(input)))}
+  async stewardCorrectionHandoff(input:unknown){return this.stewardOperation(()=>this.stewardService().correctionHandoff(stewardCorrectionHandoff.parse(input)))}
+  async stewardTopicSessions(input:unknown){return this.stewardOperation(()=>this.stewardService().topicSessions(topicDetailInput.parse(input)))}
+  async stewardTopicRelationConfigure(input:unknown){return this.stewardOperation(()=>this.stewardService().topicRelationConfigure(topicRelationInput.parse(input)))}
+  async topicProjectOptions(input: unknown) { return this.stewardOperation(() => this.stewardService().topicProjectOptions(topicProjectOptionsInput.parse(input))); }
+  async topicProjectConfigure(input: unknown) { return this.stewardOperation(() => this.stewardService().topicProjectConfigure(topicProjectConfigureInput.parse(input))); }
+  async topicTaskCreate(input: unknown) { return this.stewardOperation(() => this.stewardService().topicTaskCreate(topicTaskCreateInput.parse(input))); }
+  async topicTaskBind(input: unknown) { return this.stewardOperation(() => this.stewardService().topicTaskBind(topicTaskBindInput.parse(input))); }
+  async stewardTopics(input: unknown) { return this.stewardOperation(() => this.stewardService().topicList(input)); }
+  async stewardTopic(input: unknown) { return this.stewardOperation(() => this.stewardService().topicDetail(input)); }
+  async stewardTopicSource(input: unknown) { return this.stewardOperation(() => this.stewardService().topicSource(input)); }
+  async stewardProgress(input:unknown){return this.stewardOperation(()=>this.stewardService().progress.read(input));}
+  async stewardDocument(input:unknown){return this.stewardOperation(()=>this.stewardService().progress.open(input));}
+  async stewardSnapshot(input: unknown) { return this.stewardOperation(() => this.stewardService().snapshot(stewardRead.parse(input))); }
+  async stewardSend(input: unknown) {
+    return this.stewardOperation(async () => {
+      const service = this.stewardService(), request = stewardSend.parse(input);
+      try { return await service.send(request); }
+      catch (error) {
+        if (error instanceof TaskError || error instanceof ProtocolError) throw new RemoteError("task/steward", "Steward send rejected", {
+          reason: error.code, detail: error.message.slice(0,2000), admission: service.commandStatus(request.conversationId, request.commandId),
+        });
+        throw error;
+      }
+    });
+  }
+  async stewardReconcile(input: unknown) { return this.stewardOperation(() => this.stewardService().reconcile(stewardRead.parse(input))); }
+  async stewardResolve(input: unknown) { return this.stewardOperation(() => this.stewardService().resolve(stewardResolve.parse(input))); }
+  async stewardRoutingRead(input: unknown) { stewardRoutingRead.parse(input); return this.stewardOperation(() => this.stewardService().routingConfiguration()); }
+  async stewardRoutingConfigure(input: unknown) { const value=stewardRoutingConfigure.parse(input); return this.stewardOperation(() => this.stewardService().configureRouting(value)); }
+  async stewardMemoryRead(input: unknown) { return this.stewardOperation(() => this.stewardService().memoryConfiguration(stewardMemoryRead.parse(input))); }
+  async stewardMemoryConfigure(input: unknown) { return this.stewardOperation(() => this.stewardService().configureMemory(stewardMemoryConfigure.parse(input))); }
+  async stewardGateRead(input: unknown) { return this.stewardOperation(() => this.stewardService().gateRead(stewardGateRead.parse(input))); }
+  async stewardGateArm(input: unknown) { const request=stewardGateArm.parse(input);return this.stewardHumanOperation(request.commandId,"simple",()=>this.stewardService().gateArm(request)); }
+  async stewardGateDecide(input: unknown) { const request=stewardGateDecide.parse(input);return this.stewardHumanOperation(request.commandId,"simple",()=>this.stewardService().gateDecide(request)); }
+  async stewardGateAmend(input: unknown) { const request=stewardGateAmend.parse(input);return this.stewardHumanOperation(request.commandId,"simple",()=>this.stewardService().gateAmend(request)); }
+  async stewardGateContinue(input: unknown) { const request=stewardGateContinue.parse(input);return this.stewardHumanOperation(request.commandId,"continue",()=>this.stewardService().gateContinue(request)); }
+  async stewardGateAcceptContinue(input: unknown) { const request=stewardGateAcceptContinue.parse(input);return this.stewardHumanOperation(request.commandId,"accept-continue",()=>this.stewardService().gateAcceptContinue(request)); }
+  async stewardGateIndependent(input: unknown) { const request=stewardGateIndependent.parse(input);return this.stewardHumanOperation(request.commandId,"independent",()=>this.stewardService().gateIndependent(request)); }
   private workflowService() {
     const service = this.ctx.get("taskSystem");
     if (!service || deploymentPolicy(service.config).centralMode === "remote") throw new RemoteError("task/project", "Workflow center requires a planner", {reason:"PLANNER_REQUIRED"});
@@ -709,7 +808,7 @@ export class TaskPluginSettings extends TypertRemoteService {
       if (error instanceof TaskError || error instanceof ProtocolError)
         throw new RemoteError("task/project", "Project operation rejected", {
           reason: error.code,
-          ...(["WORKFLOW_SCOPE","WORKFLOW_UNBOUND"].includes(error.code) ? {detail:error.message} : {}),
+          ...(["WORKFLOW_SCOPE","WORKFLOW_UNBOUND","CLARIFICATION"].includes(error.code) ? {detail:error.message} : {}),
         });
       throw error;
     }
@@ -1066,7 +1165,7 @@ export class TaskPluginSettings extends TypertRemoteService {
     const task=this.ctx.get("taskSystem") as TaskSystemService|undefined;
     if(!task || deploymentPolicy(task.config).centralMode === "remote")throw new TaskError("FORBIDDEN","Scheduler settings required");
     const node=task.ledger.getNode(nodeId);
-    if(!node.enabled || nodeId===task.config.nodeId)throw new TaskError("EXECUTOR_REQUIRED","Connect the executor before setting its default model");
+    if(!node.enabled || (nodeId===task.config.nodeId && !deploymentPolicy(task.config).executionEnabled))throw new TaskError("EXECUTOR_REQUIRED","Enable or connect the executor before setting its default model");
     return task.ledger;
   }
   async nodeModelSettings(input:unknown){return this.projectOperation(()=>{const value=projectInputs.nodeModelSettings.parse(input);return this.modelAuthority(value.nodeId).executionModels.view(value.nodeId);});}

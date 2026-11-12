@@ -15,7 +15,13 @@ export type CheckinRef = z.infer<typeof CheckinRefs>[number];
 export type SessionContinuationReceipt = string | {reply:string;checkInTasks:CheckinRef[];withdrawn?:true};
 export function continuationReply(receipt:SessionContinuationReceipt) { return typeof receipt === "string" ? {reply:receipt} : receipt; }
 
-type SessionCheckinBase = {eventId:string;origin:Extract<import("../contracts.js").DispatchOrigin,{kind:"session"}>};
+export const ManualCheckScopes = z.array(z.strictObject({
+  taskId: z.string().min(1).max(200),
+  commandId: z.string().min(1).max(200),
+  runId: z.string().min(1).max(200).optional(),
+})).min(1).max(8);
+export type ManualCheckScope = z.infer<typeof ManualCheckScopes>[number];
+type SessionCheckinBase = {manualChecks?: ManualCheckScope[];eventId:string;origin:Extract<import("../contracts.js").DispatchOrigin,{kind:"session"}>};
 export type SessionCheckin = SessionCheckinBase & (
   | {kind?:"task";tasks:CheckinRef[];automatic:boolean}
   | {kind:"execution-deadline";runId:string;tasks:[];automatic:true}

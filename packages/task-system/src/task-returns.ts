@@ -1,3 +1,4 @@
+import { applyCheckinSurface, checkinTools } from "./task-checkin-surface.js";
 import { sessionContinuation } from "./remote/ports.js";
 import { TaskError } from "./ledger.js";
 import type { Context } from "@deepseek-ai/cordis";
@@ -150,13 +151,18 @@ export class TaskReturnDelivery {
     abort.throwIfAborted();
     const eventId = sessionContinuation(message)!.eventId;
     let liveMask: (()=>void) | undefined;
-    let liveAllowedTools: Set<string> | undefined;
     const refresh = async () => {
       if (!message.checkIn || !this.refreshCheckIn) return true;
       const current = await this.refreshCheckIn(message);
       if (current === "obsolete") return false;
       if (!current) throw new TaskError("CHECKIN_BUSY", "Task check-in is deferred by current task facts");
       message = current; return true;
+    };
+    const assertCheckinModel = (agent: Agent) => {
+      const composition=origin.composition;
+      const state=z.object({pending:z.object({provider:z.string(),model:z.string()}).nullable()}).safeParse(this.ctx.get("sessionProjections")?.stateOf(agent.session,"modelSelection"));
+      const selected=state.success && state.data.pending ? state.data.pending : agent.session.requestHeader()?.config ?? agent.options;
+      if (composition && (selected.provider!==composition.provider || selected.model!==composition.model)) throw new TaskError("CHECKIN_COMPOSITION_UNAVAILABLE", "Responsible session model differs from its captured check-in binding");
     };
     const previousHandle = state.handle;
     try {
@@ -170,10 +176,9 @@ export class TaskReturnDelivery {
         const otherInput = [...agent.inbox.nextTurn,...agent.inbox.nextStep].some(input=>!("eventId" in input.source) || input.source.eventId!==eventId);
         if (agent.status !== "idle" || otherInput) throw new TaskError("CHECKIN_BUSY", "Responsible session is active; check-in deferred");
         const composition=origin.composition;
-        if (composition && (agent.options.provider!==composition.provider || agent.options.model!==composition.model)) throw new TaskError("CHECKIN_COMPOSITION_UNAVAILABLE", "Responsible session model differs from its captured check-in binding");
+        assertCheckinModel(agent);
         originalTools=composition?.tools;
         if (!originalTools) throw new TaskError("CHECKIN_COMPOSITION_UNAVAILABLE", "Original check-in capability mask unavailable");
-        liveAllowedTools=new Set(originalTools);
       }
       if (!agent) {
         const header=foldRequestHeader(events);
@@ -203,7 +208,7 @@ export class TaskReturnDelivery {
                   throw new Error("Original session continuation adapter unavailable");
               }
             }
-            ctx.tools.guard(exec=>allowed.has(exec.name) ? undefined : "Tool is outside the original session capability mask");
+            if (!message.checkIn) ctx.tools.guard(exec=>allowed.has(exec.name) ? undefined : "Tool is outside the original session capability mask");
             if (origin.parentLease) {
               ctx.tools.guard(exec => exec.name.startsWith("task_") ? "The original task lease expired; this result continuation does not grant a lease" : undefined);
               ctx.systemPrompt.section({name:"task-result-continuation",order:110,interpolate:false,text:()=>"这是原会话接收的子任务结果续接。历史执行租约未恢复，不得使用历史租约结算或重做任务。核对中央报告后完成本次汇总；如需新执行，通过统一派发工具获得新授权。"});
@@ -215,8 +220,7 @@ export class TaskReturnDelivery {
         agent = handle.agent;
       }
       if (originalTools) {
-        const available = new Set(agent.ctx.tools.schemas(agent).map(tool => tool.name));
-        if (originalTools.some(tool => !available.has(tool))) throw new Error("Original session tools unavailable; retained for retry");
+        if ((message.checkIn ? checkinTools(message,originalTools) : originalTools).some(tool => !agent.ctx.tools.get(tool,agent))) throw new Error("Original session tools unavailable; retained for retry");
       }
       if (origin.cwd && agent.session.header.cwd !== origin.cwd) throw new Error("Original session workspace changed");
       await this.ctx.sessions.flush(agent.session);
@@ -226,10 +230,10 @@ export class TaskReturnDelivery {
       abort.throwIfAborted();
       if (!await refresh()) {liveMask?.();return {completion:Promise.resolve("Check-in no longer relevant"),withdrawn:true};}
       if (message.checkIn) {
+        assertCheckinModel(agent);
         const otherInput=[...agent.inbox.nextTurn,...agent.inbox.nextStep].some(input=>!("eventId" in input.source) || input.source.eventId!==eventId);
         if (agent.status!=="idle" || otherInput) throw new TaskError("CHECKIN_BUSY", "Responsible session became active before admission");
-        const allowed=liveAllowedTools;
-        if(allowed)liveMask=agent.ctx.tools.guard(exec=>allowed.has(exec.name) ? undefined : "Tool is outside the original session capability mask");
+        liveMask = applyCheckinSurface(agent,message,originalTools ?? []);
       }
       const pending = [...agent.inbox.nextTurn, ...agent.inbox.nextStep].find(input => (input.source.kind === "dsh-task-result" || input.source.kind === "dsh-task-checkin") && input.source.eventId === eventId);
       if (pending) {
