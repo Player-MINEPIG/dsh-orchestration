@@ -186,7 +186,7 @@ export class StewardConversations {
     return this.message(String(row.message));
   }
   requestId(messageId: string): string { return `steward-${messageId}`; }
-  accept(request: StewardSend, scope: StewardScope, binding: StewardBinding, afterSeq: number, quote: StewardQuote | null = null, delivery?: Pick<StewardMessage, "content" | "selection" | "permission" | "route" | "creationContext" | "routingClarification" | "contextEvidence" | "workPlan" | "recipient" | "admission">, bindUploads?: (messageId: string) => void): StewardMessage {
+  accept(request: StewardSend, scope: StewardScope, binding: StewardBinding, afterSeq: number, quote: StewardQuote | null = null, delivery?: Pick<StewardMessage, "content" | "selection" | "permission" | "route" | "creationContext" | "routingClarification" | "contextEvidence" | "workPlan" | "recipient" | "admission" | "sourceContextWithheld">, bindUploads?: (messageId: string) => void): StewardMessage {
     this.db.exec("BEGIN IMMEDIATE");
     try {
       const previous = this.replay(request);

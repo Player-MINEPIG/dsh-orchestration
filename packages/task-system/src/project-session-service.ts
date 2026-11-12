@@ -160,6 +160,7 @@ export class ProjectSessionService {
     if (this.task.config.centralMode === "host") this.carrier.publish(this.task.config.nodeId, this.catalog());
     else this.ownerCarrier.start();
     await this.owner.recover();
+    if (this.closed) return;
     this.timer = setInterval(() => {
       if (this.closed || this.configurationPaused) return;
       try {

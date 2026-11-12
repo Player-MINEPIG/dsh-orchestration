@@ -1,5 +1,6 @@
 import {test} from 'node:test';
 import {Workbench} from '../dist/workbench.js';
+import {ProjectSessionService} from '../dist/project-session-service.js';
 import {registerExecutor} from '../../../tests/dsh/executor-fixture.mjs';
 import {TaskPluginSettings} from '../dist/settings.js';
 import {DatabaseSync} from 'node:sqlite';
@@ -47,4 +48,12 @@ test('authenticated peers may message only task sessions visible in their actual
 test('shutdown drains a real 512 KiB native upload receipt before closing authority storage', {skip:!official},async()=>{
  const h=await createNativeHarness({config:{role:'planner',executionEnabled:false,projectAgentOptions:{provider:'test-offline',model:'script'}}});try{await attach(h);const runtime=h.ctx.taskSystem.projects,portal=h.ctx.taskSystem.sessionPortal;runtime.saveSettings({root:join(h.dir,'upload-projects'),expectedRevision:0});const {projectId}=await runtime.create({commandId:'upload-project',title:'Upload shutdown',goal:'Preserve a finite native outcome during shutdown'});const path=join(h.dir,'upload-workspace');mkdirSync(path);const workspace=await h.ctx.workspaceRegistry.create(path,'Upload owner');await portal.executionSettings(projectId);await portal.saveExecutionSettings({commandId:'upload-placement',projectId,expectedRevision:0,allowedNodeIds:null,executionBindings:{},coordinatorWorkspace:{kind:'registered',nodeId:'local',workspaceId:workspace.id,catalogRevision:portal.catalog().revision}});const bytes=512*1024,started=await portal.nativeConversation({projectId,commandId:'upload-start',operation:{kind:'file-upload-start',bytes,name:'shutdown.txt'}});for(let index=0,offset=0;offset<bytes;index++,offset+=24576)await portal.nativeConversation({projectId,commandId:'upload-part-'+index,operation:{kind:'file-upload-part',uploadId:started.uploadId,index,data:Buffer.alloc(Math.min(24576,bytes-offset),97).toString('base64')}});const active=portal.nativeConversation({projectId,commandId:'upload-finish-close',operation:{kind:'file-upload-finish',uploadId:started.uploadId}}).then(value=>({value}),error=>({code:error.code}));await new Promise(resolve=>setImmediate(resolve));await Promise.all([h.ctx.taskSystem.close(),h.ctx.taskSystem.close()]);assert.deepEqual(await active,{code:'PROJECT_SESSION_PENDING'});await assert.rejects(portal.nativeConversation({projectId,commandId:'after-close',operation:{kind:'native-capabilities'}}),{code:'UNAVAILABLE'});const read=new DatabaseSync(join(h.dir,'tasks.sqlite'),{readOnly:true});try{const owner=read.prepare('SELECT result FROM project_session_owner_calls WHERE id=?').get('upload-finish-close'),central=read.prepare('SELECT result FROM project_session_carrier_calls WHERE id=?').get('upload-finish-close');assert.ok(owner.result);assert.equal(central.result,owner.result);const result=JSON.parse(owner.result);assert.ok(result.kind==='value'||result.kind==='error');}finally{read.close();}
  }finally{await h.dispose();}
+});
+
+
+test('shutdown cannot gain a referenced refresh timer after delayed owner recovery',async()=>{
+ const h=await createNativeHarness({config:{role:'planner',executionEnabled:false,schedulerEnabled:false}}),portal=new ProjectSessionService(h.ctx.taskSystem,h.ctx);
+ let release;const barrier=new Promise(resolve=>release=resolve),recover=portal.owner.recover.bind(portal.owner);portal.owner.recover=async()=>{await barrier;return recover();};const starting=portal.start();
+ try{await portal.close();release();await starting;assert.equal(Boolean(portal.timer),false,'A closed service must not allocate a repeating timer when recovery resumes');}
+ finally{release();await starting;if(portal.timer)clearInterval(portal.timer);await h.dispose();}
 });

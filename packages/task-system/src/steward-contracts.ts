@@ -125,7 +125,7 @@ export const stewardWorkPlan=z.strictObject({mode:z.enum(["independent-readonly"
 export const stewardMessage = z.strictObject({
   id: key, seq: z.number().int().positive(), conversationId: key,
   role: z.enum(["user", "assistant", "notification"]), text: z.string(), content: stewardContent.optional(), selection: stewardSelection.optional(), permission: stewardPermission.optional(), commandId: key.nullable().default(null),
-  admission:z.enum(["not-started","submitted"]).optional(), workPlan:stewardWorkPlan.optional(), contextEvidence:stewardContextEvidence.optional(),
+  admission:z.enum(["not-started","submitted"]).optional(), workPlan:stewardWorkPlan.optional(), contextEvidence:stewardContextEvidence.optional(), sourceContextWithheld:z.literal(true).optional(),
   recipient:z.strictObject({topic:stewardScope,sourceScope:stewardScope,seatId:key,reason:z.enum(["reply","task-owner","explicit","role","project-coordinator","default"])}).optional(),
   routingClarification: z.strictObject({questionId:key,question:z.string().max(500),answers:z.array(z.strictObject({commandId:key,text:z.string().max(16000)})).min(1).max(8)}).optional(),
   creationContext: z.strictObject({ instructionId: key, messageIds: z.array(key).min(1).max(11) }).optional(),

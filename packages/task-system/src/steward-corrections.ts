@@ -249,6 +249,7 @@ export class StewardCorrections {
   private materialDigest(message: StewardMessage) {
     return digest(canonical({text:message.text,content:message.content,selection:message.selection,
       permission:message.permission,quote:message.quote,scope:message.scope,source:message.source,
+      routingClarification:message.routingClarification,contextEvidence:message.contextEvidence,sourceContextWithheld:message.sourceContextWithheld,
       commandId:message.commandId}));
   }
   private command(operation: string) { return "corrected-" + digest(operation).slice(0, 32); }
