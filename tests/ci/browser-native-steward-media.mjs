@@ -38,7 +38,7 @@ export async function testNativeStewardMedia(browser,{output}={}) {
     const replyReleased=new Promise(resolve=>releaseReply=resolve),dropped=new Promise(resolve=>ackDropped=resolve),beforeLost=calls.length,modelsBeforeLost=host.model.requests.length;
     await page.route('**/api/taskPluginSettings/stewardSend',async route=>{
       held=route.request().postDataJSON().payload.args.input;lostCommandId=held.commandId;
-      try{const response=await route.fetch(),body=await response.json();lostAckProof={status:response.status(),ok:body.result?.ok===true,errorCode:body.result?.error?.code??body.result?.error?.details?.reason??null};await route.abort();}
+      try{const response=await route.fetch(),body=await response.json();const error=body.result?.error;lostAckProof={status:response.status(),ok:body.result?.ok===true,errorCode:error?.code??null,error:error?{keys:Object.keys(error),code:error.code,message:error.message,details:error.details,data:error.data}:null,frozen:{commandId:held.commandId,uploads:held.uploads??[],target:held.target},uploads:(held.uploads??[]).map(id=>host.ctx.taskSystem.ledger.managementDatabase().prepare("SELECT id,conversation,json_extract(data,'$.messageId') messageId,json_array_length(data,'$.content') contentParts FROM steward_uploads WHERE id=?").get(id)??{id,missing:true})};await route.abort();}
       catch(error){lostAckProof={...lostAckProof,transportError:error.name};}
       finally{ackDropped();releaseReply();}
     });
