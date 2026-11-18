@@ -2,6 +2,9 @@ name: Current product checks
 on:
   pull_request:
     branches: [dev]
+  push:
+    branches: [dev]
+    paths-ignore: ['AGENTS.md', 'README.md', 'docs/**', '.codex/**', 'packages/*/README.md', 'packages/*/docs/**']
   workflow_dispatch:
     inputs:
       operation:
@@ -32,7 +35,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: ${{ inputs.operation == 'promote' && 'release-main' || format('{0}-{1}', github.workflow, github.ref) }}
+  group: ${{ inputs.operation == 'promote' && 'release-main' || format('{0}-{1}-{2}-{3}', github.workflow, github.event_name, inputs.operation || 'checks', github.ref) }}
   cancel-in-progress: ${{ inputs.operation != 'promote' }}
 defaults:
   run:
@@ -41,6 +44,53 @@ env:
   TZ: UTC
   DSH_TELEMETRY_DISABLED: '1'
 jobs:
+  pr-checks:
+    name: PR checks
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DSH_BROWSER_CHANNEL: chrome
+      DSH_BROWSER_OUTPUT: .runtime/ci-results/browser
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.19.0'
+      - name: Lightweight contracts and checks selected by changed paths
+        run: node scripts/ci/pr-checks.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pr-evidence-${{ github.sha }}
+          path: .runtime/ci-results
+          if-no-files-found: ignore
+
+  deployment-package:
+    name: Deployment package
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/dev' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.19.0'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run build
+      - run: node scripts/ci/deployment-package.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deployment-package-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            .runtime/deployment-package/deployment.json
+            .runtime/deployment-package/packages
+          if-no-files-found: error
+          retention-days: 30
+
   candidate:
     name: Candidate boundary
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.operation == 'verify' }}
@@ -61,12 +111,12 @@ jobs:
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
   core:
     needs: candidate
-    if: ${{ !cancelled() && (github.event_name == 'pull_request' || (inputs.operation == 'verify' && needs.candidate.result == 'success')) }}
+    if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && inputs.operation == 'verify' && needs.candidate.result == 'success' }}
     name: Core (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ fromJSON(github.event_name == 'workflow_dispatch' && '["ubuntu-latest","macos-latest"]' || '["ubuntu-latest"]') }}
+        os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:
@@ -101,12 +151,12 @@ jobs:
           path: .runtime/ci-results
   native:
     needs: candidate
-    if: ${{ !cancelled() && (github.event_name == 'pull_request' || (inputs.operation == 'verify' && needs.candidate.result == 'success')) }}
+    if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && inputs.operation == 'verify' && needs.candidate.result == 'success' }}
     name: Native DSH (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ fromJSON(github.event_name == 'workflow_dispatch' && '["ubuntu-latest","macos-latest"]' || '["ubuntu-latest"]') }}
+        os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
     steps:
@@ -131,7 +181,7 @@ jobs:
           path: .runtime/ci-results
   ui:
     needs: candidate
-    if: ${{ !cancelled() && (github.event_name == 'pull_request' || (inputs.operation == 'verify' && needs.candidate.result == 'success')) }}
+    if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && inputs.operation == 'verify' && needs.candidate.result == 'success' }}
     name: UI (${{ matrix.timezone }})
     strategy:
       fail-fast: false
@@ -168,7 +218,7 @@ jobs:
           path: .runtime/ci-results
   distribution:
     needs: candidate
-    if: ${{ !cancelled() && (github.event_name == 'pull_request' || (inputs.operation == 'verify' && needs.candidate.result == 'success')) }}
+    if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && inputs.operation == 'verify' && needs.candidate.result == 'success' }}
     name: Installed packages
     runs-on: ubuntu-latest
     timeout-minutes: 25

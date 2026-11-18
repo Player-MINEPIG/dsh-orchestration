@@ -127,6 +127,11 @@ export async function testNativeSteward(browser, { output } = {}) {
     assert.equal(JSON.stringify(personalRequest.messages).includes('ALPHA_PRIVATE_FIRST'), false);
     assert.equal(JSON.stringify(personalRequest.messages).includes('BETA_PRIVATE_FIRST'), false);
 
+    // Native response text can render before its canonical user receipt becomes terminal.
+    const frozenCommand = calls.find(call => call.text === 'freeze personal before paint').commandId;
+    const frozenMessage = host.ctx.taskSystem.steward.store.commandMessage('main', frozenCommand);
+    await native.locator(`[data-message-id="${frozenMessage.id}"]`).filter({ hasText: '本轮已回复' }).waitFor();
+
     let releaseAdmission, enteredAdmission;
     const admissionHeld = new Promise(resolve => { releaseAdmission = resolve; });
     const admissionEntered = new Promise(resolve => { enteredAdmission = resolve; });

@@ -22,9 +22,13 @@ const output = resolve(process.env.DSH_BROWSER_OUTPUT || join(tmpdir(), 'dsh-ci-
 mkdirSync(output, { recursive: true });
 const browser = await chromium.launch({ headless: true, ...(process.env.DSH_BROWSER_CHANNEL ? { channel: process.env.DSH_BROWSER_CHANNEL } : {}) });
 const results = [];
+const groups = JSON.parse(process.env.DSH_BROWSER_GROUPS || '[]');
+let selected = 0;
 console.log(`Browser evidence: ${output}`);
 try {
   for (const [name, run] of [['settings', testSettings], ['executor alerts', testExecutorAlerts], ['responsible task check-ins', testTaskCheckins], ['task center polling selection', testTaskCenterSelection], ['production native project conversation', testNativeProject], ['steward delayed scope responses', testStewardScopeResponses], ['native steward conversation', testNativeSteward], ['native steward models and media',testNativeStewardMedia], ['steward project creation and request permissions',testStewardProjectPermissions], ['steward independent workbench',testStewardWorkbench], ['steward continuity and pending presentation',testStewardContinuity], ['steward semantic topic router and overview',testStewardTopicRouter], ['steward topic placement, recipients and correction',testStewardTopicControls], ['steward readable progress and native files',testStewardProgress], ['remaining active frontend surfaces', testActiveSurfaces]]) {
+    if (groups.length && !groups.some(group => name.includes(group))) continue;
+    selected++;
     try {
       const result = await run(browser, { output });
       results.push({ name, status: 'passed', result });
@@ -34,4 +38,5 @@ try {
       throw error;
     } finally { writeFileSync(join(output, 'results.json'), JSON.stringify(results, null, 2) + '\n'); }
   }
+  if (!selected) throw new Error('No browser groups matched DSH_BROWSER_GROUPS');
 } finally { await browser.close(); }
