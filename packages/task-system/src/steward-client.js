@@ -233,19 +233,30 @@ function createStewardClient(React) {
       alive.current = true;
       initialized.current = false;
       current.current = null; appendCursor.current = 0;
-      let stopped = false, timer;
+      let stopped = false, timer, waiting, plannerRequired = false;
+      setRefreshError("");
       async function refresh() {
+        const known = current.current;
+        waiting = !known ? setTimeout(() => {
+          if (!stopped) setRefreshError("连接尚未就绪，请确认当前 DSH 页面已连接；可重新加载页面后再试。");
+        }, 10000) : undefined;
         try {
-          const known = current.current;
           const value = await invoke("stewardReconcile", { conversationId, limit: 50,
             ...(known ? { afterSeq: appendCursor.current, knownIds: known.messages.map(message => message.id) } : {}) });
           if (!stopped) { accept(value, known ? "append" : "latest"); setRefreshError(""); }
         }
-        catch (failure) { if (!stopped) setRefreshError(failure.message ?? String(failure)); }
-        finally { if (!stopped) timer = setTimeout(refresh, 1500); }
+        catch (failure) {
+          plannerRequired = failure.details?.reason === "PLANNER_REQUIRED";
+          if (!stopped) setRefreshError(plannerRequired
+            ? "本机未提供中央规划服务，管家对话保存在中央节点。请在浏览器打开中央节点的 DSH 页面，再点击侧栏“管家”；本机仍可使用普通会话与执行任务。"
+            : ["FORBIDDEN", "UNAUTHORIZED"].includes(failure.details?.reason)
+              ? `无法访问管家，请核对当前登录身份与访问权限：${failureText(failure)}`
+              : `管家暂时无法读取，正在自动重连：${failureText(failure)}`);
+        }
+        finally { clearTimeout(waiting); if (!stopped && !plannerRequired) timer = setTimeout(refresh, 1500); }
       }
       void refresh();
-      return () => { stopped = true; alive.current = false; clearTimeout(timer); };
+      return () => { stopped = true; alive.current = false; clearTimeout(timer); clearTimeout(waiting); };
     }, [conversationId, invoke]);
     React.useEffect(() => {
       if (!pendingKey) return;
@@ -455,7 +466,12 @@ function createStewardClient(React) {
       snapshot ? h(NativeConversation, { nativeClient, handle: nativeHandle, renderSlot, SessionProvider, view: { ...snapshot, visible, messages:displayedMessages, openProgressRecord:setProgressRecord, invoke, sourceScope, sourceMessageId:inspectionScope?undefined:snapshot?.topicActivity?.latestMessage?.id, sourceScopeLabel: label(sourceScope), browseMode: inspectionScope ? "fixed" : "latest", hasOlder, draft: text,
         overviewOpen:overview, renderOverview:()=>h(TopicOverview,{invoke,conversationId,initialScope:sourceScope,openSession:id=>{setOverview(false);openSession(id);},openTask:id=>{setOverview(false);openTask(id);},onChanged:()=>void latest(),onClose:()=>setOverview(false),onApply:(scope,recipient,humanLabel)=>{chooseTopic(scopeKey(scope),recipient,humanLabel);setOverview(false);}}),
         projects: snapshot?.projects ?? [], pending:displayPending, renderPendingRecovery, scopeKey, renderActions, renderDecision:message=>message.gate&&h('button',{type:'button',className:'steward-progress-open',onClick:()=>{setGateProject(message.scope.projectId);setGateNotice(message.gate);}},'查看本次验收候选'), renderControls: nativeControls, topicOptions, browseOptions, renderSendTopic, renderBrowseTopic, renderSettings:()=>h('button',{type:'button',className:'steward-settings-button',onClick:()=>openSettings('task-steward-router')},'管家设置'), chooseBrowse,
-        chooseTopic, prepare: prepareNative, complete: completeNative, stage: stageNative, preparationFailed: (request, failure) => updatePending(request, "not-admitted", `附件未保存，本条未发送：${failureText(failure)}`), submit: submitNative, onDraft: setText, loadOlder, notice: setError, setStatus: setNativeStatus } }) : h('p', null, '正在恢复管家…'));
+        chooseTopic, prepare: prepareNative, complete: completeNative, stage: stageNative, preparationFailed: (request, failure) => updatePending(request, "not-admitted", `附件未保存，本条未发送：${failureText(failure)}`), submit: submitNative, onDraft: setText, loadOlder, notice: setError, setStatus: setNativeStatus } }) : h('div', { className: 'steward-startup', style: { padding: 24 } },
+        h('h1', { style: { fontSize: 22, marginTop: 0 } }, '管家'),
+        refreshError ? h(React.Fragment, null,
+          h('p', { role: 'alert' }, refreshError),
+          h('button', { type: 'button', className: 'steward-settings-button', onClick: () => window.location.reload() }, '重新加载页面'))
+          : h('p', { role: 'status' }, '正在恢复管家…')));
     return h("section", { className: `steward${nativeClient ? " steward-native" : ""}`, "aria-label": "管家对话" },
       h("style", null, styles),correctionControls(),
       h("header", null, h("div", null, h("h1", null, "管家"), h("small", null, "一个窗口 · 闲聊与各项目独立会话")),
