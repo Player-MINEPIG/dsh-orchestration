@@ -53,6 +53,13 @@ export function selectBrowserGroups(paths) {
   return [...groups];
 }
 
+export async function prepareCheckRuntime(suites) {
+  if (!suites.some(suite => ['native', 'official', 'browser', 'distribution'].includes(suite))) return;
+  const { ensureOfficialRuntime } = await import('./runtime-install.mjs');
+  const runtime = ensureOfficialRuntime();
+  process.env.DSH_OFFICIAL_ROOT = runtime.root;
+}
+
 function run(command, args) {
   const result = spawnSync(command, args, { stdio: 'inherit' });
   if (result.error) throw result.error;
@@ -72,7 +79,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   run(process.execPath, ['--test', ...execFileSync('git', ['ls-files', 'tests/ci/*.test.mjs'], { encoding: 'utf8' }).trim().split('\n')]);
   if (plan.build || plan.suites.length) run('npm', ['ci', '--ignore-scripts']);
   if (plan.build) { run('npm', ['run', 'build']); run('npm', ['run', 'build:fixtures']); }
-  if (plan.suites.some(suite => ['native', 'official', 'browser', 'distribution'].includes(suite))) run('npm', ['run', 'setup:runtime']);
+  await prepareCheckRuntime(plan.suites);
   process.env.DSH_BROWSER_GROUPS = JSON.stringify(selectBrowserGroups(paths));
   for (const suite of plan.suites) run('npm', ['run', `test:${suite}`]);
 }
