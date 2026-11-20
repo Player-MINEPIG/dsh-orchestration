@@ -74,3 +74,15 @@ test('actual Typert contracts read/save project settings and owner local grants,
   console.log('actual Remote→Gateway project settings/grant contracts passed:',calls.map(c=>c.method).join(','));
  } finally {await remote?.dispose();await h.dispose();}
 });
+
+test('connection restart confirmation survives the real settings RPC and ConfigEditor restart', async () => {
+ const {spawnSync}=await import('node:child_process');
+ const {fileURLToPath}=await import('node:url');
+ const {resolve}=await import('node:path');
+ const result=spawnSync(process.execPath,[fileURLToPath(new URL('./official-planner-listener.mjs',import.meta.url))],{
+   cwd:resolve(fileURLToPath(new URL('../..',import.meta.url))),
+   env:{...process.env,DSH_TASK_SETTINGS_PACKAGE:fileURLToPath(new URL('../../packages/task-system',import.meta.url))},
+   encoding:'utf8',timeout:30000,
+ });
+ assert.equal(result.status,0,`${result.stdout}\n${result.stderr}`);
+});

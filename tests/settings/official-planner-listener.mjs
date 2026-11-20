@@ -118,5 +118,18 @@ try {
  assert.equal(ctx.get('remoteExecution').settingsSnapshot().role,'planner');assert.equal(ctx.get('remoteExecution').nativeWorker,undefined);
  const {connect}=await import('node:net');const socket=connect({host:'127.0.0.1',port});await new Promise((done,fail)=>{socket.once('connect',done);socket.once('error',fail)});socket.destroy();
  const current=await invoke('connectionSettings');await invoke('saveConnectionSettings',{input:{expected:current.revision,value:{...current.values,listenerEnabled:false}}});
+ const ledger=ctx.get('taskSystem').ledger;
+ ledger.registerWorkspace('confirm-workspace',{workspaceId:'confirm',nodeId:'remote-worker',path:tmp,label:'Confirmation',state:'ready',createdAt:new Date().toISOString()});
+ ledger.registerNode('confirm-node',{nodeId:'remote-worker',roles:['executor'],models:[{provider:'fixture',model:'fixture',reasoningEfforts:[]}],capabilities:[],workspaceIds:['confirm'],enabled:true,lastSeenAt:new Date().toISOString()});
+ const task=ledger.createTask('confirm-task',{title:'Preserved task'}).value;
+ const run=ledger.createRun('confirm-run',{taskId:task.taskId,route:{nodeId:'remote-worker',provider:'fixture',model:'fixture',workspaceId:'confirm',requiredCapabilities:[]}}).value;
+ ledger.claim('confirm-claim',{runId:run.runId,nodeId:'remote-worker',ttlMs:60000});
+ const records=JSON.stringify({task:ledger.getTask(task.taskId),run:ledger.getRun(run.runId)}),draft=await invoke('connectionSettings');
+ const request={expected:draft.revision,value:{...draft.values,routePath:'/confirmed-commands'}};
+ await assert.rejects(invoke('saveConnectionSettings',{input:request}),error=>error.details?.reason==='CONNECTION_RESTART_CONFIRMATION_REQUIRED');
+ assert.equal(JSON.stringify({task:ledger.getTask(task.taskId),run:ledger.getRun(run.runId)}),records);
+ const saved=await invoke('saveConnectionSettings',{input:{...request,confirmTaskInterruption:true}});
+ assert.equal(saved.values.routePath,'/confirmed-commands');
+ assert.equal(JSON.stringify({task:ledger.getTask(task.taskId),run:ledger.getRun(run.runId)}),records);
  console.log(JSON.stringify({ok:true,plannerWithoutUpstreamCanActivateValidListener:true,remoteEffectiveRole:'planner',independentExecutorRoleIgnored:true,productionWrites:0,modelCalls:0}));
 } finally {if(ctx)await ctx.fiber.dispose();rmSync(tmp,{recursive:true,force:true});}

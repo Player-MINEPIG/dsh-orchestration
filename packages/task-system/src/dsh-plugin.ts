@@ -2284,13 +2284,13 @@ export class TaskSystemService extends Service {
         );
     }
   }
-  beginConfigurationEdit(): () => void {
+  beginConfigurationEdit(connectionRestart?: "request" | "confirmed"): () => void {
     if (
       this.configurationPaused || this.returnJob || this.steward.active ||
       [...this.providers].some((provider) => provider.activeCount > 0)
     )
       throw new TaskError("CONFIGURATION_BUSY", "Native execution is active");
-    const release = this.ledger.beginConfigurationEdit();
+    const release = this.ledger.beginConfigurationEdit(connectionRestart);
     this.configurationPaused = true;
     return () => {
       this.configurationPaused = false;

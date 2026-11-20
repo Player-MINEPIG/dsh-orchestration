@@ -44,7 +44,7 @@ export async function testSettings(browser, { output } = {}) {
             h(settings.StartupRow, { t: key => settings.zh[key] ?? key, target, row, writable: options.writable !== false, decisionAvailable: options.decisionAvailable !== false,
               readExecutionPresets: async () => ({ items: [{ id: 'ptc', label: 'PTC', available: true }, { id: 'codex', label: 'Codex', available: true }] }),
               saveCoordinator: fixture.coordinator,
-              saveStartup: async input => { settings.saveStartupDescriptor.parameters[0].codec.create().parse(input); fixture.writes.push(structuredClone(input)); if (fixture.fail) throw { details: { reason: 'STARTUP_CONFLICT' } }; fixture.values = { ...fixture.values, ...input.changes }; },
+              saveStartup: async input => { settings.saveStartupDescriptor.parameters[0].codec.create().parse(input); fixture.writes.push(structuredClone(input)); if (fixture.fail) throw { details: { reason: 'STARTUP_CONFLICT' } }; if (fixture.failureCode && !input.confirmTaskInterruption) throw {rpcError:{details:{reason:fixture.failureCode}}}; fixture.values = { ...fixture.values, ...input.changes }; },
               checkConnection: async input => { fixture.checks.push(structuredClone(input)); return { connected: true, paused: true }; },
               onSaved: async () => { fixture.reads++; row.values = fixture.values; return { [target]: { values: fixture.values } }; },
             }),
@@ -54,9 +54,21 @@ export async function testSettings(browser, { output } = {}) {
         }
         root.render(h(View));
       };
+      window.mountConnection = () => {
+        root.unmount(); root = ReactDOM.createRoot(document.getElementById('root'));
+        const fixture=window.fixture={writes:[],liveSaves:0,coordinator:new settings.SettingsSaveCoordinator(),snapshot:{exists:true,writable:true,revision:'r1',paused:true,executionNodes:[],peersStatus:[],values:{nodeId:'fixture',authMode:'trusted-network',listenerEnabled:true,listenAddress:'127.0.0.1',listenPort:18440,routePath:'/commands',serviceAudience:'planner',peers:[],outbound:null}}};
+        function View() {
+          const [,render]=React.useState(0);
+          React.useEffect(()=>fixture.coordinator.subscribe(()=>render(v=>v+1)),[]);
+          React.useEffect(()=>fixture.coordinator.register('live',{meta:{dirty:true,restart:false},save:async()=>{fixture.liveSaves++;fixture.coordinator.update('live',{dirty:false,restart:false});return true;},discard:()=>{}}),[]);
+          const state=fixture.coordinator.snapshot();
+          return h(React.Fragment,null,h(settings.ConnectionSettings,{role:'planner',saveCoordinator:fixture.coordinator,read:async()=>structuredClone(fixture.snapshot),save:async input=>{fixture.writes.push(structuredClone(input));if(!input.confirmTaskInterruption)throw {rpcError:{details:{reason:'CONNECTION_RESTART_CONFIRMATION_REQUIRED'}}};fixture.snapshot={...fixture.snapshot,revision:'r2',values:input.value};return structuredClone(fixture.snapshot);},onSaved:async()=>{}}),h('button',{id:'fixture-save',disabled:state.busy||state.invalid||!state.count,onClick:()=>fixture.coordinator.saveAll()},'Save fixture'),h('output',{id:'fixture-save-state'},JSON.stringify(state)));
+        }
+        root.render(h(View));
+      };
       window.mountStartupSettings = () => {
         root.unmount(); root = ReactDOM.createRoot(document.getElementById('root'));
-        const fixture = window.fixture = { reads: 0, writes: [], snapshot: { writable: true, applies: 'plugin-restart', remote: null, task: { entryId: 'task-system', decisionAvailable: true, values: { role: 'both', centralMode: 'host', executionEnabled: true, nodeId: 'immutable-node', databasePath: '/fixture/tasks.sqlite', executionAgentPreset: 'ptc', executionTools: null, planningDecisionEnabled: true, sessionDecisionEnabled: false } } } };
+        const fixture = window.fixture = { reads: 0, writes: [], snapshot: { restartBlockers:[{runId:'recovery',title:'Recovery',state:'uncertain'}],writable: true, applies: 'plugin-restart', remote: null, task: { entryId: 'task-system', decisionAvailable: true, values: { role: 'both', centralMode: 'host', executionEnabled: true, nodeId: 'immutable-node', databasePath: '/fixture/tasks.sqlite', executionAgentPreset: 'ptc', executionTools: null, planningDecisionEnabled: true, sessionDecisionEnabled: false } } } };
         root.render(h(settings.StartupSettings, { t: key => settings.zh[key] ?? key,
           nodeModelApi: {
             read: async ({nodeId}) => ({nodeId,policy:{revision:0},catalog:{state:"fresh",positiveSnapshot:{revision:"local-catalog",expiresAt:Date.now()+60000,complete:true,models:[{provider:"test-offline",model:"script",reasoningEffort:"high"}]}}}),
@@ -113,7 +125,10 @@ export async function testSettings(browser, { output } = {}) {
     await page.locator('[data-task-scheduler-decision] [role=switch]').uncheck();
     assert.equal(await page.evaluate(() => fixture.writes.length), 0);
     await page.evaluate(() => { fixture.fail = true; });
-    await page.locator('#fixture-save').click();
+    const conflictDialog=page.waitForEvent('dialog'),conflictClick=page.locator('#fixture-save').click();
+    const conflict=await conflictDialog;
+    assert.equal(conflict.type(),'alert');assert.match(conflict.message(),/配置.*变化|配置.*更改|配置.*修改/);
+    await conflict.accept();await conflictClick;
     await page.getByText(/STARTUP_CONFLICT/).waitFor();
     assert.equal(await role.inputValue(), 'host');
     assert.equal(await page.locator('[data-task-scheduler-decision] [role=switch]').isChecked(), false);
@@ -139,6 +154,7 @@ export async function testSettings(browser, { output } = {}) {
     assert.equal(await page.locator('[data-task-executor-decision]').count(), 0);
 
     await page.evaluate(() => mountStartupSettings());
+    await page.getByText(/连接变更可在提示后确认重启/).waitFor();
     const localModels=page.locator('[data-local-node-model-settings]');
     await localModels.getByRole('heading',{name:'本机执行节点'}).waitFor();
     await localModels.getByLabel('默认执行模型',{exact:true}).selectOption({label:'test-offline / script'});
@@ -189,6 +205,40 @@ export async function testSettings(browser, { output } = {}) {
     await port.waitFor();
     assert.equal(await port.isDisabled(), true);
     assert.equal(await page.getByRole('switch', { name: '启用执行端连接' }).isDisabled(), true);
+
+    await page.evaluate(() => mountStartup('remote'));
+    await port.fill('18442');
+    await page.evaluate(() => {fixture.failureCode='CONNECTION_RESTART_CONFIRMATION_REQUIRED';});
+    let dialogPromise=page.waitForEvent('dialog');
+    let clicking=page.locator('#fixture-save').click();
+    let dialog=await dialogPromise;
+    assert.equal(dialog.type(),'confirm');assert.match(dialog.message(),/仍然保存并重启插件/);
+    await dialog.dismiss();await clicking;
+    await page.waitForFunction(()=>!fixture.coordinator.snapshot().busy);
+    assert.equal(await port.inputValue(),'18442');
+    assert.equal(await page.evaluate(()=>fixture.writes.length),1);
+    assert.match(await page.locator('#fixture-save-state').innerText(),/已取消保存/);
+    assert.equal(await page.getByRole('alert').count(),0);
+    dialogPromise=page.waitForEvent('dialog');
+    clicking=page.locator('#fixture-save').click();
+    dialog=await dialogPromise;await dialog.accept();await clicking;
+    await page.waitForFunction(()=>fixture.reads===1);
+    let writes=await page.evaluate(()=>fixture.writes);
+    assert.equal(writes.length,3);assert.equal(writes[2].confirmTaskInterruption,true);
+    assert.deepEqual(writes[2].expected,writes[1].expected);assert.deepEqual(writes[2].changes,writes[1].changes);
+
+    await page.evaluate(()=>mountConnection());
+    await page.locator('#task-connection-routePath').fill('/new-commands');
+    dialogPromise=page.waitForEvent('dialog');clicking=page.locator('#fixture-save').click();
+    dialog=await dialogPromise;await dialog.dismiss();await clicking;await clicking;
+    await page.waitForFunction(()=>!fixture.coordinator.snapshot().busy);
+    assert.equal(await page.evaluate(()=>fixture.liveSaves),1);
+    dialogPromise=page.waitForEvent('dialog');clicking=page.locator('#fixture-save').click();
+    dialog=await dialogPromise;await dialog.accept();await clicking;
+    await page.waitForFunction(()=>fixture.snapshot.revision==='r2');
+    assert.equal(await page.evaluate(()=>fixture.liveSaves),1,'successful live participant must not be replayed');
+    writes=await page.evaluate(()=>fixture.writes);
+    assert.equal(writes.length,3);assert.deepEqual(writes[2],{...writes[1],confirmTaskInterruption:true});
 
     await page.evaluate(() => mountGrants());
     await page.getByText('/fixture/one', { exact: true }).waitFor();

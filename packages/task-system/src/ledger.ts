@@ -919,17 +919,13 @@ export class TaskLedger {
         state: run.state,
       }));
   }
-  beginConfigurationEdit(): () => void {
-    if (
-      this.configurationPaused ||
-      this.list<Run>("run").some(
-        (run) =>
-          !run.historyOnly &&
-          !run.observationOnly &&
-          ["running", "uncertain"].includes(run.state),
-      )
-    )
-      fail("CONFIGURATION_BUSY", "Execution or recovery is active");
+  beginConfigurationEdit(connectionRestart?: "request" | "confirmed"): () => void {
+    if (this.configurationPaused)
+      fail("CONFIGURATION_BUSY", "Configuration is already changing");
+    if (connectionRestart !== "confirmed" && this.list<Run>("run").some(
+      run => !run.historyOnly && !run.observationOnly && ["running", "uncertain"].includes(run.state),
+    ))
+      fail(connectionRestart === "request" ? "CONNECTION_RESTART_CONFIRMATION_REQUIRED" : "CONFIGURATION_BUSY", "Execution or recovery records are present");
     this.configurationPaused = true;
     return () => {
       this.configurationPaused = false;
