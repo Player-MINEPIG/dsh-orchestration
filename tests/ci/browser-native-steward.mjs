@@ -3,6 +3,7 @@ import { startHost } from './browser-native-project.mjs';
 import { join, resolve } from 'node:path';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { RemoteError } from '@deepseek-ai/dsh-typert-protocol';
 
 export async function testNativeSteward(browser, { output } = {}) {
   const memoryManagerPath = resolve('.runtime/steward-plugins/manager');
@@ -14,6 +15,17 @@ export async function testNativeSteward(browser, { output } = {}) {
   page.on('framenavigated', frame => { if (frame === page.mainFrame()) console.log('native steward navigation', new URL(frame.url()).pathname); });
   page.on('console', message => { if (message.type() === 'error') console.log('BROWSER', message.text()); });
   page.on('request', request => { if(request.url().includes('/api/taskPluginSettings/sessionTaskPage'))taskQueries.push(request.postDataJSON()?.payload?.args?.input?.sessionId); if(request.url().includes('/api/dsh-memory-manager/query'))memoryQueries.push(new URL(request.url()).searchParams.get('sessionId')); if (request.url().includes('/api/taskPluginSettings/stewardSend')) calls.push(request.postDataJSON()?.payload?.args?.input); });
+  const settings = host.ctx.taskPluginSettings, reconcile = settings.stewardReconcile;
+  let startupFailure = 'pending', startupReads = 0, releaseStartup;
+  const heldStartup = new Promise(resolve => { releaseStartup = resolve; });
+  settings.stewardReconcile = function(input) {
+    startupReads++;
+    if (startupFailure === 'pending') return heldStartup.then(() => reconcile.call(this, input));
+    if (startupFailure === 'executor') return reconcile.call(Object.assign(Object.create(Object.getPrototypeOf(this)), { ctx: { get: () => ({ config: { role: 'executor' }, steward: {} }) } }), input);
+    if (startupFailure === 'permission') throw new RemoteError('task/steward', 'Steward operation rejected', { reason: 'FORBIDDEN', detail: 'Synthetic access denied' });
+    if (startupFailure === 'temporary') throw new RemoteError('task/steward', 'Steward operation rejected', { reason: 'UNAVAILABLE', detail: 'Synthetic startup unavailable' });
+    return reconcile.call(this, input);
+  };
   try {
     await host.ctx.taskSystem.steward.configureRouting({ commandId: 'native-steward-router-model', expectedRevision: 0, fallback: { provider: 'test-offline', model: 'script' } });
     await page.goto(host.url);
@@ -21,8 +33,37 @@ export async function testNativeSteward(browser, { output } = {}) {
     const preview = page.getByRole('dialog', { name: '预览版说明', exact: true });
     await preview.getByRole('button', { name: '继续', exact: true }).click();
     await page.getByRole('button', { name: '管家', exact: true }).click();
+    const startup = page.getByRole('region', { name: '管家对话', exact: true });
+    const reloadSteward = async () => {
+      await startup.getByRole('button', { name: '重新加载页面', exact: true }).click();
+      await page.waitForFunction(() => !document.querySelector('[data-dsh-boot]'));
+      await page.getByRole('button', { name: '管家', exact: true }).click();
+    };
+    await startup.getByRole('alert').filter({ hasText: '连接尚未就绪' }).waitFor();
+    assert.equal(startupReads, 1, 'A pending initial RPC is not duplicated by the connection hint');
+    if (output) await page.screenshot({ path: join(output, 'native-steward-pending-startup.png'), fullPage: true });
+    startupFailure = 'executor';
+    await reloadSteward();
+    await startup.getByRole('alert').filter({ hasText: '本机未提供中央规划服务' }).waitFor();
+    releaseStartup();
+    assert.equal(await startup.getByText('正在恢复管家…', { exact: true }).count(), 0);
+    const deniedReads = startupReads;
+    await page.waitForTimeout(1700);
+    assert.equal(startupReads, deniedReads, 'An executor role rejection waits for an explicit reconnect');
+    assert.equal(calls.length, 0, 'Startup recovery never sends a user request');
+    if (output) await page.screenshot({ path: join(output, 'native-steward-executor-startup.png'), fullPage: true });
+    startupFailure = 'permission';
+    await reloadSteward();
+    await startup.getByRole('alert').filter({ hasText: '无法访问管家，请核对当前登录身份与访问权限：Synthetic access denied' }).waitFor();
+    startupFailure = 'temporary';
+    await reloadSteward();
+    await startup.getByRole('alert').filter({ hasText: '管家暂时无法读取，正在自动重连：Synthetic startup unavailable' }).waitFor();
+    if (output) await page.screenshot({ path: join(output, 'native-steward-temporary-startup.png'), fullPage: true });
+    startupFailure = null;
     const native = page.locator('[data-steward-native-host]'), editor = native.locator('[contenteditable="true"]:visible');
     await editor.waitFor();
+    assert.equal(await startup.getByRole('alert').count(), 0, 'Successful automatic reconnect clears the startup error');
+    settings.stewardReconcile = reconcile;
     assert.equal(await page.locator('.steward-log').count(), 0);
     assert.equal(await page.locator('textarea[aria-label="消息"]').count(), 0);
     assert.equal(await native.locator('[data-composer-card]:visible').count(), 1);
@@ -265,7 +306,7 @@ export async function testNativeSteward(browser, { output } = {}) {
     if (output) await page.screenshot({ path: join(output, 'native-steward-failure.png'), fullPage: true }).catch(() => {});
     console.log('FOCUS',await page.evaluate(()=>({active:document.activeElement?.outerHTML,anchor:getSelection()?.anchorOffset,focus:getSelection()?.focusOffset})));console.log('MODEL REQUESTS',host.model.requests.length);console.log('CANONICAL',JSON.stringify(await host.ctx.taskSystem.steward.snapshot({conversationId:'main',limit:30})));console.log('STEWARD BODY', (await page.locator('body').innerText()).slice(-2500));
     throw error;
-  } finally { await context.close(); await host.close(); }
+  } finally { releaseStartup(); await context.close(); await host.close(); }
 }
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const { chromium } = await import('playwright');
