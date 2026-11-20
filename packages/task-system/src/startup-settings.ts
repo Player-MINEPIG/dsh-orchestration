@@ -97,6 +97,7 @@ export const SaveStartupInput = z.discriminatedUnion("target", [
   z
     .object({
       target: z.literal("remote"),
+      confirmTaskInterruption: z.boolean().optional(),
       expected: RemoteStartupValues,
       changes: RemoteStartupValues.omit({role:true}).partial().strict(),
     })
@@ -410,11 +411,19 @@ export async function saveStartupSettings(ctx: Context, value: unknown) {
     if(policy.centralMode === "remote")reject("STARTUP_DATABASE_DENIED","Only a scheduler may select its task database");
     try { input.changes.databasePath=await validateTaskDatabasePath(input.changes.databasePath); } catch(error) { reject("STARTUP_DATABASE_INVALID",error instanceof Error?error.message:"Database path is invalid"); }
   }
+  const connectionOnly = input.target === "remote" && Object.keys(input.changes).every(
+    key => ["endpoint", "audience", "trustedNetworkTarget", "paused"].includes(key),
+  );
+  if (input.target === "remote" && input.confirmTaskInterruption && !connectionOnly)
+    reject("STARTUP_CONFIRMATION_DENIED", "Only connection changes may interrupt task records");
+  const connectionRestart = connectionOnly
+    ? input.target === "remote" && input.confirmTaskInterruption ? "confirmed" : "request"
+    : undefined;
   const releases: (() => void)[] = [];
   try {
     if (restart) {
-      releases.push(task.beginConfigurationEdit());
-      if (remote) releases.push(await remote.beginConfigurationEdit());
+      releases.push(task.beginConfigurationEdit(connectionRestart));
+      if (remote) releases.push(await remote.beginConfigurationEdit(connectionRestart));
     }
     await host.edit(entry, (current) => {
       const actual =
@@ -634,6 +643,8 @@ export async function saveStartupSettings(ctx: Context, value: unknown) {
   } catch (error) {
     if (error instanceof StartupSettingsError) throw error;
     const code = (error as { code?: unknown })?.code;
+    if (code === "CONNECTION_RESTART_CONFIRMATION_REQUIRED")
+      reject("CONNECTION_RESTART_CONFIRMATION_REQUIRED", "Task records require confirmation before restarting the connection");
     if (code === "CONFIGURATION_BUSY")
       reject(
         "STARTUP_BUSY",

@@ -24,6 +24,8 @@ import {
 import { validateNetworkTarget } from "./remote/network-client.js";
 import { StartupSettingsError } from "./startup-settings.js";
 import type { TaskSystemService } from "./dsh-plugin.js";
+import { TaskError } from "./ledger.js";
+import { ProtocolError } from "./remote/protocol.js";
 import type { RemoteExecutionService } from "./remote/index.js";
 
 export const connectionOperations = EXECUTOR_OPERATIONS;
@@ -90,7 +92,7 @@ export const ConnectionSnapshot = z
   })
   .strict();
 export const SaveConnectionInput = z
-  .object({ expected: z.string(), value: ConnectionValues })
+  .object({ expected: z.string(), value: ConnectionValues, confirmTaskInterruption: z.boolean().optional() })
   .strict();
 type Raw = Record<string, unknown>;
 const raw = z.record(z.string(), z.unknown());
@@ -339,11 +341,12 @@ export async function saveConnectionSettings(ctx: Context, input: unknown) {
     );
   const releases: Array<() => void> = [];
   try {
-    releases.push(task.beginConfigurationEdit());
+    const connectionRestart = request.confirmTaskInterruption ? "confirmed" : "request";
+    releases.push(task.beginConfigurationEdit(connectionRestart));
     const remote = ctx.get("remoteExecution") as
       | RemoteExecutionService
       | undefined;
-    if (remote) releases.push(await remote.beginConfigurationEdit());
+    if (remote) releases.push(await remote.beginConfigurationEdit(connectionRestart));
     if (entry) {
       const original = structuredClone(asRaw(entry.options.config));
       const value = nextConfig(original, request.value, false);
@@ -482,6 +485,12 @@ export async function saveConnectionSettings(ctx: Context, input: unknown) {
       await (hmr ? hmr.runExclusive(install) : install());
     }
     return await readConnectionSettings(ctx);
+  } catch (error) {
+    if (error instanceof TaskError || error instanceof ProtocolError) {
+      if (["CONFIGURATION_BUSY", "CONNECTION_RESTART_CONFIRMATION_REQUIRED"].includes(error.code))
+        reject(error.code, error.message);
+    }
+    throw error;
   } finally {
     for (const release of releases.reverse()) release();
   }

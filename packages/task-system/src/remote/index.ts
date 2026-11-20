@@ -599,19 +599,16 @@ export class RemoteExecutionService extends Service {
       acknowledgedAt: this.lastHeartbeatAcknowledgedAt,
     };
   }
-  async beginConfigurationEdit(): Promise<() => void> {
-    insist(
-      this.active &&
-        !this.configurationPaused &&
-        !(this.store?.dispatches() ?? []).some(
-          (record) =>
-            !["acknowledged", "cancelled", "retry_scheduled"].includes(
-              record.state,
-            ),
-        ),
-      "CONFIGURATION_BUSY",
+  async beginConfigurationEdit(connectionRestart?: "request" | "confirmed"): Promise<() => void> {
+    insist(this.active && !this.configurationPaused, "CONFIGURATION_BUSY", 409);
+    const checkRecords = () => insist(
+      connectionRestart === "confirmed" || !(this.store?.dispatches() ?? []).some(
+        record => !["acknowledged", "cancelled", "retry_scheduled"].includes(record.state),
+      ),
+      connectionRestart === "request" ? "CONNECTION_RESTART_CONFIRMATION_REQUIRED" : "CONFIGURATION_BUSY",
       409,
     );
+    checkRecords();
     this.configurationPaused = true;
     const releases: (() => void)[] = [];
     let resumeProjectSessions: (() => void) | undefined;
@@ -624,17 +621,8 @@ export class RemoteExecutionService extends Service {
       for (const worker of this.workers)
         releases.push(await worker.beginConfigurationEdit());
       await this.heartbeatPending?.catch(() => {});
-      insist(
-        this.active &&
-          !(this.store?.dispatches() ?? []).some(
-            (record) =>
-              !["acknowledged", "cancelled", "retry_scheduled"].includes(
-                record.state,
-              ),
-          ),
-        "CONFIGURATION_BUSY",
-        409,
-      );
+      insist(this.active, "CONFIGURATION_BUSY", 409);
+      checkRecords();
       if (this.client) releases.push(this.client.beginConfigurationEdit());
       if (this.gateway) releases.push(this.gateway.beginConfigurationEdit());
       let released = false;

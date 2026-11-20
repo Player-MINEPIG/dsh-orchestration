@@ -24,7 +24,7 @@ function fixture(t) {
   const taskRow={options:{id:'task-system',name:'@dsh-task/task-system/plugin',config:raw}},remoteRow={options:{id:'task-remote-execution',name:'@dsh-task/task-system/remote',config:remoteRaw}}
   const rows=[taskRow,remoteRow],writes=[]
   const host={entries:()=>rows,edit:async(entry,change)=>{await host.before?.();const next=change(structuredClone(entry.options.config),{});if(host.fail) throw Error('Configuration for task-system is overridden by a home patch or command-line overlay');entry.options.config=next;if(entry===taskRow) Object.assign(task.config,next);writes.push(next)}}
-  const task={ledger,config:{...raw},steward:{active:false},applyLiveNodeCapacities(){return TaskSystemService.prototype.applyLiveNodeCapacities.call(this)},providers:new Set(),configurationPaused:false,beginConfigurationEdit(){return TaskSystemService.prototype.beginConfigurationEdit.call(this)}}
+  const task={ledger,config:{...raw},steward:{active:false},applyLiveNodeCapacities(){return TaskSystemService.prototype.applyLiveNodeCapacities.call(this)},providers:new Set(),configurationPaused:false,beginConfigurationEdit(mode){return TaskSystemService.prototype.beginConfigurationEdit.call(this,mode)}}
   const store=new RecoveryStore(':memory:');t.after(()=>store.close())
   const remoteCtx=new Context();remoteCtx.provide('taskSystem',task)
   const remote=new RemoteExecutionService(remoteCtx,remoteRaw,ledger,store)
@@ -76,13 +76,13 @@ test('invalid default workspace is never provisioned or granted by the startup R
 test('active claimed work blocks connection changes before ConfigEditor is called',async t=>{
   const f=fixture(t),task=f.ledger.createTask('task',{title:'active'}).value,run=f.ledger.createRun('run',{taskId:task.taskId,route:{nodeId:'worker',provider:'fixture',model:'fixture',workspaceId:'default',requiredCapabilities:[]}}).value
   f.ledger.claim('claim',{runId:run.runId,nodeId:'worker',ttlMs:60000})
-  await assert.rejects(saveStartupSettings(f.ctx,input(f,'remote',{audience:'another'})),{code:'STARTUP_BUSY'});assert.equal(f.writes.length,0)
+  await assert.rejects(saveStartupSettings(f.ctx,input(f,'remote',{audience:'another'})),{code:'CONNECTION_RESTART_CONFIRMATION_REQUIRED'});assert.equal(f.writes.length,0)
 })
 test('native external work and unresolved remote recovery block startup edits',async t=>{
   const f=fixture(t);f.task.providers.add({activeCount:1})
   await assert.rejects(saveStartupSettings(f.ctx,input(f,'task',{role:'executor'})),{code:'STARTUP_BUSY'})
   f.task.providers.clear();f.store.createDispatch({attemptId:'attempt',state:'uncertain',claim:{task:{taskId:'recovery',title:'Recovery'},run:{runId:'recovery'}},lease:{},sessionId:'session'})
-  await assert.rejects(saveStartupSettings(f.ctx,input(f,'remote',{audience:'another'})),{code:'STARTUP_BUSY'});assert.equal(f.writes.length,0);assert.equal(f.task.configurationPaused,false)
+  await assert.rejects(saveStartupSettings(f.ctx,input(f,'remote',{audience:'another'})),{code:'CONNECTION_RESTART_CONFIRMATION_REQUIRED'});assert.equal(f.writes.length,0);assert.equal(f.task.configurationPaused,false)
 })
 test('admissions are held throughout asynchronous persistence and released after failure',async t=>{
   const f=fixture(t),task=f.ledger.createTask('task',{title:'queued'}).value,run=f.ledger.createRun('run',{taskId:task.taskId,route:{nodeId:'worker',provider:'fixture',model:'fixture',workspaceId:'default',requiredCapabilities:[]}}).value
@@ -395,5 +395,46 @@ test('failed peer capability save cannot change the bound scheduler node',async 
   await assert.rejects(saveConnectionSettings(f.ctx,{expected:before.revision,value:{...before.values,peers:before.values.peers.map(peer=>({...peer,capabilities:['activity.reports.v1']}))}}));
   assert.deepEqual(f.ledger.getNode('peer'),node);
   assert.deepEqual(f.remoteRow.options.config,config);
+  assert.equal(f.writes.length,0);
+});
+
+for (const entry of ['outbound', 'peers']) {
+  test(`confirmed ${entry} connection save preserves running and uncertain recovery records`, async t => {
+    const f=fixture(t);
+    const task=f.ledger.createTask('confirm-task',{title:'Keep this task'}).value;
+    const run=f.ledger.createRun('confirm-run',{taskId:task.taskId,route:{nodeId:'worker',provider:'fixture',model:'fixture',workspaceId:'default',requiredCapabilities:[]}}).value;
+    f.ledger.claim('confirm-claim',{runId:run.runId,nodeId:'worker',ttlMs:60000});
+    f.store.createDispatch({attemptId:'confirm-dispatch',state:'uncertain',claim:{task:{taskId:'recovery',title:'Recovery'},run:{runId:'recovery'}},lease:{},sessionId:'keep-session'});
+    const records=JSON.stringify({task:f.ledger.getTask(task.taskId),run:f.ledger.getRun(run.runId),attempts:f.ledger.snapshot().attempts,dispatches:f.store.dispatches()});
+    const connection=await readConnectionSettings(f.ctx);
+    const request=entry==='outbound' ? input(f,'remote',{audience:'updated',paused:false}) : {expected:connection.revision,value:{...connection.values,routePath:'/new-commands'}};
+    const save=entry==='outbound' ? saveStartupSettings : saveConnectionSettings;
+    await assert.rejects(save(f.ctx,request),{code:'CONNECTION_RESTART_CONFIRMATION_REQUIRED'});
+    assert.equal(f.writes.length,0);
+    await save(f.ctx,{...request,confirmTaskInterruption:true});
+    assert.equal(f.writes.length,1);
+    assert.equal(JSON.stringify({task:f.ledger.getTask(task.taskId),run:f.ledger.getRun(run.runId),attempts:f.ledger.snapshot().attempts,dispatches:f.store.dispatches()}),records);
+    assert.equal(f.task.configurationPaused,false);
+    assert.equal(f.remote.configurationPaused,false);
+  });
+}
+test('confirmed connection cannot bypass native activity, config locks, CAS or unrelated startup edits',async t=>{
+  const f=fixture(t);
+  const request={...input(f,'remote',{audience:'updated'}),confirmTaskInterruption:true};
+  f.task.providers.add({activeCount:1});
+  await assert.rejects(saveStartupSettings(f.ctx,request),{code:'STARTUP_BUSY'});
+  f.task.providers.clear();
+  f.task.configurationPaused=true;
+  await assert.rejects(saveStartupSettings(f.ctx,request),{code:'STARTUP_BUSY'});
+  f.task.configurationPaused=false;
+  const releaseRemote=await f.remote.beginConfigurationEdit();
+  await assert.rejects(saveStartupSettings(f.ctx,request),{code:'STARTUP_BUSY'});
+  releaseRemote();assert.equal(f.task.configurationPaused,false);
+  f.remoteRow.options.config.coordinator.audience='concurrent';
+  await assert.rejects(saveStartupSettings(f.ctx,request),{code:'STARTUP_CONFLICT'});
+  await assert.rejects(saveStartupSettings(f.ctx,{...input(f,'remote',{audience:'updated',taskSessionsEnabled:false}),confirmTaskInterruption:true}),{code:'STARTUP_CONFIRMATION_DENIED'});
+  await assert.rejects(saveStartupSettings(f.ctx,{...input(f,'task',{databasePath:'/tmp/other.sqlite'}),confirmTaskInterruption:true}));
+  const connection=await readConnectionSettings(f.ctx);f.remoteRow.options.config.routePath='/concurrent-path';
+  await assert.rejects(saveConnectionSettings(f.ctx,{expected:connection.revision,value:connection.values,confirmTaskInterruption:true}),{code:'STARTUP_CONFLICT'});
   assert.equal(f.writes.length,0);
 });

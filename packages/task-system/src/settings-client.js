@@ -935,10 +935,12 @@ window.__ModuleLoader__.load({
                   !value ||
                   !["task", "remote"].includes(value.target) ||
                   Object.keys(value).some(
-                    (key) => !["target", "expected", "changes"].includes(key),
+                    (key) => !["target", "expected", "changes", "confirmTaskInterruption"].includes(key),
                   )
                 )
                   throw new Error("Invalid startup edit");
+                if (value.confirmTaskInterruption !== undefined && (value.target !== "remote" || typeof value.confirmTaskInterruption !== "boolean"))
+                  throw new Error("Invalid connection restart confirmation");
                 parseStartupValues(value.expected, value.target);
                 parseStartupValues(value.changes, value.target, true);
                 return value;
@@ -960,6 +962,30 @@ window.__ModuleLoader__.load({
       },
     };
     const startupNeedsRestart = (target, changes) => Object.keys(changes).some(key => !(target === "task" ? ["nodeCapacities", "planningDecisionEnabled", "sessionDecisionEnabled"] : ["concurrency", "pollIntervalMs"]).includes(key));
+    const saveErrorCode = error => {
+      const failure=error?.rpcError ?? error;
+      return failure?.details?.reason ?? failure?.code ?? "SETTINGS_SAVE_FAILED";
+    };
+    async function saveWithConnectionConfirmation(save, input) {
+      const request=structuredClone(input);
+      try { return await save(request); }
+      catch (error) {
+        if (saveErrorCode(error) !== "CONNECTION_RESTART_CONFIRMATION_REQUIRED") throw error;
+        if (!window.confirm("保存失败：仍有运行中或待确认的任务记录。是否仍然保存并重启插件？连接会暂时中断，任务和恢复记录将保留；未完成任务可能需要重新连接后继续确认。"))
+          throw {code:"SETTINGS_SAVE_CANCELLED"};
+        return save({...request,confirmTaskInterruption:true});
+      }
+    }
+    function reportSaveFailure(coordinator, error) {
+      if (coordinator) {coordinator.failureHandled=true;coordinator.saveCancelled=saveErrorCode(error)==="SETTINGS_SAVE_CANCELLED";}
+      const code=saveErrorCode(error);
+      if (code !== "SETTINGS_SAVE_CANCELLED") {
+        const message=code==="CONFIGURATION_BUSY" || code==="STARTUP_BUSY"
+          ? "插件正在执行任务或写入、回传数据，暂时不能安全重启。请稍后重试。"
+          : zh[`startupError_${code}`] ?? `保存失败（${code}），请检查设置后重试。`;
+        window.alert?.(`${message}\n草稿已保留。`);
+      }
+    }
     class SettingsSaveCoordinator {
       constructor() { this.items = new Map(); this.listeners = new Set(); this.saving = false; this.message = ""; }
       subscribe(fn) { this.listeners.add(fn); return () => this.listeners.delete(fn); }
@@ -969,10 +995,10 @@ window.__ModuleLoader__.load({
       snapshot() { const dirty=[...this.items.values()].filter(row=>row.meta?.dirty); return {count:dirty.length,retained:[...this.items.values()].filter(row=>row.meta?.retainedDirty).length,invalid:dirty.some(row=>row.meta.invalid),busy:this.saving || [...this.items.values()].some(row=>row.meta?.busy),restart:dirty.some(row=>row.meta.restart),message:this.message}; }
       async saveAll() {
         const before=this.snapshot(); if (!before.count || before.invalid || before.busy) return false;
-        this.saving=true;this.message="";this.emit();let saved=0;
+        this.saving=true;this.failureHandled=false;this.saveCancelled=false;this.message="";this.emit();let saved=0;
         const items=[...this.items.values()].filter(row=>row.meta?.dirty).sort((a,b)=>Number(a.meta.restart)-Number(b.meta.restart) || Number(b.id==="startup-task")-Number(a.id==="startup-task"));
-        try { for (const row of items) { if (await row.save() !== true) {this.message=saved ? "部分设置已保存；未完成的草稿已保留。请查看错误提示。" : "未能保存，草稿已保留。请查看错误提示。";return false;} saved++; } this.message=this.snapshot().retained?"所选设置已保存，未提交的草稿保留。":"设置已保存。";return true; }
-        catch {this.message=saved ? "部分设置已保存；其余草稿已保留。" : "未能保存，草稿已保留。";return false;}
+        try { for (const row of items) { if (await row.save() !== true) {if (!this.failureHandled) window.alert?.("设置保存失败，未完成的草稿已保留。请查看错误提示后重试。");this.message=this.saveCancelled ? (saved ? "部分设置已保存；已取消后续保存，草稿已保留。" : "已取消保存，草稿已保留。") : saved ? "部分设置已保存；未完成的草稿已保留。请查看错误提示。" : "未能保存，草稿已保留。请查看错误提示。";return false;} saved++; } this.message=this.snapshot().retained?"所选设置已保存，未提交的草稿保留。":"设置已保存。";return true; }
+        catch(error) {reportSaveFailure(this,error);this.message=saved ? "部分设置已保存；其余草稿已保留。" : "未能保存，草稿已保留。";return false;}
         finally {this.saving=false;this.emit();}
       }
       discardAll() { if (this.snapshot().busy) return; for (const row of this.items.values()) row.discard(); this.message="";this.emit(); }
@@ -1705,7 +1731,7 @@ window.__ModuleLoader__.load({
           return;
         setStatus({ saving: true });
         try {
-          await saveStartup({
+          await saveWithConnectionConfirmation(saveStartup, {
             target,
             expected,
             changes: update.changes,
@@ -1717,6 +1743,8 @@ window.__ModuleLoader__.load({
           setStatus({ saving: false, saved: true });
           return true;
         } catch (error) {
+          reportSaveFailure(saveCoordinator,error);
+          if (saveErrorCode(error)==="SETTINGS_SAVE_CANCELLED") {setStatus({saving:false});return false;}
           setStatus({
             saving: false,
             failed: true,
@@ -2229,12 +2257,12 @@ h(
       const projected=value?{...current.values,...Object.fromEntries(schedulerKeys.filter(()=>planner && !schedulerRetained).map(key=>[key,value[key]])),...(planner?{listenerEnabled:value.listenerEnabled}:{}),...(executor && !outboundRetained?{outbound:selectedOutbound}:{})}:null;
       const dirty=!!draft && JSON.stringify(projected)!==JSON.stringify(current?.values);
       const hiddenDraft=!!draft && (schedulerRetained || outboundRetained || (!planner && schedulerKeys.some(key=>JSON.stringify(value[key])!==JSON.stringify(current.values[key]))) || (!executor && JSON.stringify(value.outbound)!==JSON.stringify(current.values.outbound)));
-      const saveConfig=async()=>{if(!current?.writable || !value || status.saving || (executor && !paused && current?.exists && outboundParsed?.invalid.length))return false;setStatus({saving:true});try{const result=await save({expected:expected ?? current.revision,value:projected});
+      const saveConfig=async()=>{if(!current?.writable || !value || status.saving || (executor && !paused && current?.exists && outboundParsed?.invalid.length))return false;setStatus({saving:true});try{const result=await saveWithConnectionConfirmation(save,{expected:expected ?? current.revision,value:projected});
         const retained={...result.values,...Object.fromEntries(schedulerKeys.filter(()=>!planner || schedulerRetained).map(key=>[key,value[key]])),...(!executor || outboundRetained?{outbound:value.outbound}:{})};
         if(!current.exists && !executor && value.outbound && JSON.stringify(value.outbound)!==JSON.stringify(current.values.outbound)){
           onCreatedDraft?.({...outboundFields(value.outbound.endpoint,value.outbound.audience,value.outbound.target),...value.outbound._fields,connectionTouched:true});retained.outbound=result.values.outbound;
         }
-        replace(result);setDraft(JSON.stringify(retained)===JSON.stringify(result.values)?null:retained);setExpected(result.revision);setStatus({saving:false,saved:true});await onSaved();return true;}catch(error){setStatus({saving:false,error:error?.details?.reason ?? error?.code ?? "CONNECTION_SAVE_FAILED"});return false;}};
+        replace(result);setDraft(JSON.stringify(retained)===JSON.stringify(result.values)?null:retained);setExpected(result.revision);setStatus({saving:false,saved:true});await onSaved();return true;}catch(error){reportSaveFailure(saveCoordinator,error);setStatus(saveErrorCode(error)==="SETTINGS_SAVE_CANCELLED"?{saving:false}:{saving:false,error:saveErrorCode(error)});return false;}};
       useSaveParticipant(saveCoordinator,"connection-settings",{meta:{dirty,retainedDirty:hiddenDraft,invalid:!current?.writable || (planner && value?.listenerEnabled && !schedulerReady) || (executor && !paused && current?.exists && !!outboundParsed?.invalid.length),busy:status.saving,restart:true},save:saveConfig,discard:()=>{setDraft(null);setExpected(null);setStatus({saving:false});}});
       if(!value)return h("p",{role:state.failed?"alert":"status"},state.failed?"连接设置读取失败，请刷新重试。":"正在读取连接设置…");
       const field=(key,label,numeric=false)=>h("label",{className:"task-connection-field"},h("span",null,label),h("input",{id:`task-connection-${key}`,style:controlStyle,value:value[key] ?? "",inputMode:numeric?"numeric":undefined,disabled:status.saving || !current.writable || (value.authMode!=="trusted-network" && ["listenAddress","listenPort"].includes(key)),onChange:event=>edit(key,numeric?(event.target.value?Number(event.target.value):null):event.target.value)}));
@@ -2323,7 +2351,7 @@ h(
         "section",
         { "data-task-startup-settings": true },
         state.value?.restartBlockers?.length ? h("details", {"data-task-restart-blockers":true},
-          h("summary",null,`有 ${state.value.restartBlockers.length} 项执行／恢复记录会阻止重启类变更；即时设置可正常保存`),
+          h("summary",null,`有 ${state.value.restartBlockers.length} 项执行／恢复记录；连接变更可在提示后确认重启，其他重启变更需先处理记录；即时设置可正常保存`),
           ...state.value.restartBlockers.map(run=>h("p",{key:run.runId,style:hintStyle},`${run.title} · ${run.state} · ${run.runId}`))) : null,
         state.failed
           ? h(
