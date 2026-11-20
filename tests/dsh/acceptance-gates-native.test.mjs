@@ -18,7 +18,7 @@ async function waitFor(service, commandId) {
 
 test('actual managed PM tools cannot persist planning before acceptance or shed scope after retirement; trusted continuation admits downstream', {timeout: 30000}, async () => {
   const h = await createNativeHarness({executionRoot: true, config: {role: 'both', schedulerEnabled: false, autoExecute: false, projectAgentOptions: {provider: 'test-offline', model: 'script'}}});
-  let retiredHandle;
+  let retiredHandle, releaseFlush, restoreFlush;
   try {
     const service = h.ctx.taskSystem.steward, projects = h.ctx.taskSystem.projects, ledger = h.ledger;
     projects.saveSettings({root: join(h.dir, 'projects'), expectedRevision: 0});
@@ -41,9 +41,24 @@ test('actual managed PM tools cannot persist planning before acceptance or shed 
       attempted.push(commandId);
       return {name: 'task_dispatch', args: {commandId, title, description: 'A formal downstream planning operation', nodeId: 'local'}};
     };
+    const heldFlush=Promise.withResolvers(), flushEntered=Promise.withResolvers();
+    const flush=h.ctx.sessions.flush.bind(h.ctx.sessions);let holdFlush=true;
+    releaseFlush=()=>{holdFlush=false;heldFlush.resolve();};
+    restoreFlush=()=>{h.ctx.sessions.flush=flush;};
+    h.ctx.sessions.flush=async session=>{
+      if(holdFlush && session.id===originalSession && toolResults.length && h.ctx.agents.get(SessionId(originalSession))?.status==='idle') {
+        flushEntered.resolve();await heldFlush.promise;
+      }
+      return flush(session);
+    };
     const before = ledger.snapshot();
     h.adapter.script.push(dispatch('Forbidden decomposition'), 'The gate blocked formal planning.');
     await service.send({conversationId: 'main', commandId: 'native-blocked', text: 'Try to decompose before acceptance', target: {kind: 'project', projectId}});
+    const flushDeadline=setTimeout(()=>flushEntered.reject(new Error('Managed coordinator did not reach its final durability barrier')),15000);
+    try { await flushEntered.promise; } finally {clearTimeout(flushDeadline);}
+    await h.ctx.agents.get(SessionId(originalSession)).whenIdle();
+    await assert.rejects(projects.handoff(projectId),{code:'BUSY'});
+    releaseFlush();restoreFlush();
     await waitFor(service, 'native-blocked');
     assert.equal(toolResults.at(-1).isError, true);
     assert.match(toolResults.at(-1).content, /ACCEPTANCE_REQUIRED|acceptance gate/, JSON.stringify(toolResults.at(-1)));
@@ -56,6 +71,11 @@ test('actual managed PM tools cannot persist planning before acceptance or shed 
     if (existing) await existing.whenIdle();
     else retiredHandle = await h.ctx.agents.resume({resumeSessionId: SessionId(originalSession), agentOptions: {provider: 'test-offline', model: 'script'}});
     const retired = existing ?? retiredHandle.agent;
+    const settledBy=Date.now()+15000;
+    while((await projects.conversation(projectId)).turns.some(turn=>['running','queued'].includes(turn.state))) {
+      assert.ok(Date.now()<settledBy,'managed project turn durably settles before handoff');
+      await new Promise(done=>setTimeout(done,20));
+    }
     await projects.handoff(projectId);
     assert.throws(() => h.ctx.taskSystem.withDispatchOrigin(retired, () => ledger.createTask('retired-root', {title: 'A retired session cannot become unscoped'})), error => error.code === 'STALE_PROJECT_SESSION');
     const rejected = await h.ctx.tools.execute({callId: ToolCallId('retired-native-call'), name: 'task_dispatch', arguments: {commandId: 'retired-plan', title: 'A retired project plan'}, agent: retired, signal: new AbortController().signal});
@@ -78,5 +98,5 @@ test('actual managed PM tools cannot persist planning before acceptance or shed 
     projects.tick();
     assert.ok(ledger.history(downstream.taskId).runs.length);
     assert.equal(ledger.acceptanceGateView('native-gate').invocationCount, 1);
-  } finally { await retiredHandle?.dispose(); await h.dispose(); }
+  } finally { releaseFlush?.();restoreFlush?.();await retiredHandle?.dispose(); await h.dispose(); }
 });

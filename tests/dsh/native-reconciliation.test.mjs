@@ -1,4 +1,6 @@
 import test from "node:test";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 import { join } from "node:path";
 import { createRequire } from "node:module";
@@ -40,8 +42,7 @@ async function fixture(
     },
     script,
   });
-  await attachProjectSessionHost(h);
-  try{await setup?.(h);}catch(error){await h.dispose();throw error;}
+  try{await attachProjectSessionHost(h);await setup?.(h);}catch(error){await h.dispose();throw error;}
   const projects = h.ctx.taskSystem.projects,
     ledger = h.ledger;
   projects.saveSettings({ root: join(h.dir, "projects"), expectedRevision: 0 });
@@ -833,4 +834,12 @@ for(const inputKind of ['old-child','foreign-child','old-notice','foreign-notice
   const source=await h.ctx.sessionPersistence.open(live.id,'read');try{const {events}=await source.read();assert.ok(events.some(event=>event.type==='turn/end'&&event.data.reason.kind==='error'&&event.data.reason.error.message==='Another input reached the task-owned session'));}finally{await source.close();}
   assert.equal(h.ledger.snapshot().runs.length,2);
  }finally{await child?.dispose();await h.dispose();}
+});
+
+test('failed session-host fixture setup releases its native harness and the test process exits', () => {
+  const env={...process.env};delete env.DSH_OFFICIAL_ROOT;delete env.NODE_TEST_CONTEXT;
+  const result=spawnSync(process.execPath,['--test','--test-name-pattern=^a real bound PM inspects',fileURLToPath(import.meta.url)],{env,encoding:'utf8',timeout:15000});
+  assert.equal(result.error,undefined,result.error?.message);
+  assert.equal(result.status,1);
+  assert.match(result.stdout+result.stderr,/ERR_INVALID_ARG_TYPE/);
 });

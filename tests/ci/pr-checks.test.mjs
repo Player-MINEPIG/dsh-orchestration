@@ -1,7 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { selectChecks, selectBrowserGroups } from '../../scripts/ci/pr-checks.mjs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { selectChecks, selectBrowserGroups, prepareCheckRuntime } from '../../scripts/ci/pr-checks.mjs';
 
 test('documentation and CI controller edits require only lightweight safety contracts', () => {
   assert.deepEqual(selectChecks(['docs/DEVELOPMENT.md', 'AGENTS.md', '.github/workflows/ci.yml', 'scripts/ci/pr-checks.mjs']), { build: false, suites: [] });
@@ -53,4 +56,25 @@ test('workflow keeps PR, ordinary artifacts and formal release verification sepa
   }
   assert.match(workflow, /name: PR checks/);
   assert.match(workflow, /github.event_name == 'push' && github.ref == 'refs\/heads\/dev'/);
+});
+
+test('selected native checks receive the exact prepared runtime; lightweight checks do not prepare one', async () => {
+  const root=mkdtempSync(join(tmpdir(),'dsh-pr-runtime-'));
+  const before={root:process.env.DSH_CI_RUNTIME_ROOT,official:process.env.DSH_OFFICIAL_ROOT};
+  try {
+    process.env.DSH_CI_RUNTIME_ROOT=root;process.env.DSH_OFFICIAL_ROOT='stale-runtime';
+    await prepareCheckRuntime(['core','ui']);
+    assert.equal(process.env.DSH_OFFICIAL_ROOT,'stale-runtime');
+    for (const name of ['dsh','dsh-web-app']) {
+      const dir=join(root,'node_modules','@deepseek-ai',name);mkdirSync(dir,{recursive:true});
+      writeFileSync(join(dir,'package.json'),JSON.stringify({version:'0.2.1-rc.2'}));
+    }
+    const bin=join(root,'node_modules','@deepseek-ai','dsh','lib');mkdirSync(bin);writeFileSync(join(bin,'bin.js'),'');
+    await prepareCheckRuntime(['native']);
+    assert.equal(process.env.DSH_OFFICIAL_ROOT,root);
+  } finally {
+    if(before.root===undefined)delete process.env.DSH_CI_RUNTIME_ROOT;else process.env.DSH_CI_RUNTIME_ROOT=before.root;
+    if(before.official===undefined)delete process.env.DSH_OFFICIAL_ROOT;else process.env.DSH_OFFICIAL_ROOT=before.official;
+    rmSync(root,{recursive:true,force:true});
+  }
 });
