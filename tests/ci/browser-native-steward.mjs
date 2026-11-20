@@ -251,6 +251,8 @@ export async function testNativeSteward(browser, { output } = {}) {
     await page.locator(`[data-pending-command="${lostCommand}"]`).waitFor({ state: 'detached' });
     assert.equal(await native.getByText('lost acknowledgment original', { exact: true }).count(), 1);
     await page.unroute('**/api/taskPluginSettings/stewardSend');
+    const routing = await host.ctx.taskSystem.steward.routingConfiguration();
+    await host.ctx.taskSystem.steward.configureRouting({ commandId: 'native-window-no-maintenance-model', expectedRevision: routing.revision, fallback: null });
     const seed = (await host.ctx.taskSystem.steward.snapshot({ conversationId: 'main', limit: 100 })).messages[0];
     let releaseWindowAdmission, enteredWindowAdmission;
     const windowAdmissionHeld = new Promise(resolve => { releaseWindowAdmission = resolve; });
